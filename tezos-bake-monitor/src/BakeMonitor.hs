@@ -7,7 +7,7 @@ import System.Process
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Text (Text)
-import Control.Lens.Combinators
+import Control.Lens.Combinators (over, set, makeLenses, _head)
 import Data.Aeson (FromJSON, ToJSON, encode)
 import GHC.Generics
 import Control.Concurrent.MVar
@@ -16,8 +16,9 @@ import Control.Concurrent
 import Control.Monad
 import Data.Time
 import Control.Monad.Trans
-import Data.Monoid
-import Safe
+import Data.Monoid ((<>), mempty)
+import Safe (headDef)
+import Options.Applicative
 
 -- Type for common sorts of categories of message that the baker emits while baking.
 -- We're mainly interested in counting the blocks that are injected, but some of the rest is potentially useful.
@@ -91,13 +92,27 @@ makeLenses 'Top
 baked_horizon = 20
 error_horizon = 20
 
-main = do
-  args <- getArgs
-  case args of
-    (x:xs) -> mainArgs x xs
-    [] -> putStrLn "Usage: tezos-bake-monitor <tezos-client commandline...>"
+opts :: Parser (IO ())
+opts = mainArgs
+  <$> option auto
+      (  long "port"
+      <> short 'p'
+      <> help "Port to listen on"
+      <> showDefault
+      <> value 9800
+      <> metavar "PORT"
+      )
+  <*> argument str
+      (  metavar "CLIENT"
+      )
+  <*> many (argument str (metavar "ARGS..."))
 
-mainArgs x xs = do
+main = join $ do
+  customExecParser
+    (prefs $ showHelpOnEmpty <> showHelpOnError)
+    (info (opts <**> helper) idm)
+
+mainArgs port x xs = do
   (_, Just out, _, ph) <- createProcess (proc x xs)
     { std_out = CreatePipe
     }
@@ -133,4 +148,4 @@ mainArgs x xs = do
         c <- liftIO $ readMVar dataRef
         writeLBS (encode c)
 
-  httpServe (setPort 9800 mempty) rootHandler
+  httpServe (setPort port mempty) rootHandler
