@@ -3,22 +3,23 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 
+import Common.Api
+import Common.App
 import Control.Monad
-import Data.Monoid
-import Data.Either.Combinators
 import Control.Monad.Trans
-import Reflex.Dom
-import qualified Obelisk.ExecutableConfig
-import Focus.Route
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text.Encoding as T
+import Data.Either.Combinators
+import Data.Monoid
 import Data.Text (Text)
+import Focus.Api
 import Focus.JS.App
 import Focus.JS.Run
 import Focus.Request
-import Common.App
+import Focus.Route
 import Focus.WebSocket
-import Common.Api ()
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text.Encoding as T
+import qualified Obelisk.ExecutableConfig
+import Reflex.Dom
 
 main :: IO ()
 main = do
@@ -45,8 +46,13 @@ headTag = do
 app
   :: Either RouteEnv Text
   -> (() -> Widget () (), () -> Widget () ())
-app r = (\() -> headTag, \() -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
+app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
 appMain :: MonadFocusFrontendWidget Bake t m => m ()
 appMain = do
-  text "hi"
+  address <- value <$> textInput def
+  btn <- button "Add Address"
+  requestingIdentity $ ffor (tag (current address) btn) $ \addr -> public (PublicRequest_AddClient addr)
+  v <- watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
+  display v
+  return ()

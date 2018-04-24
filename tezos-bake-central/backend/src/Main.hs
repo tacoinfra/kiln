@@ -13,12 +13,14 @@ import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Logger (runNoLoggingT)
 import Data.Aeson
+import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Default
 import Data.Monoid
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Clock
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
@@ -28,6 +30,7 @@ import Focus.Backend.Account
 import Focus.Backend.App
 import Focus.Backend.DB
 import Focus.Backend.DB.PsqlSimple
+import Focus.Backend.Listen
 import Focus.Backend.Schema.TH
 import Focus.Backend.Snap
 import Focus.Concurrent (worker)
@@ -49,24 +52,30 @@ clientWorker :: (MonadIO m)
              => Pool Postgresql
              -> m (IO ())
 clientWorker db = do
-  worker (seconds 60) $ do
+  worker (seconds 5) $ do
     putStrLn "Update cycle."
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
-      let maxTime = Just (addUTCTime (-60) now)
+      let maxTime = Just (addUTCTime (-5) now)
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
                            ORDER BY updated NULLS FIRST |]
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
+        liftIO $ T.putStrLn address
         request <- parseRequest ("http://" <> T.unpack address <> "/")
         response <- httpJSON request
-        update [Client_updatedField =. Just now] (AutoKeyField ==. fromId cid)
-        update [ClientInfo_reportField =. T.decodeUtf8 (BSL.toStrict (encode (getResponseBody response :: Value))) ] (ClientInfo_clientField ==. cid)
+        liftIO $ print response
+        let encoded = T.decodeUtf8 (BSL.toStrict (encode (getResponseBody response :: Value)))
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
+                        VALUES (?cid, ?encoded)
+                        ON CONFLICT (client) DO UPDATE SET report = ?encoded |]
+        updateAndNotify cid [Client_updatedField =. Just now]
 
 main :: IO ()
 main = withFocus $ do
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
+  cfg <- liftIO $ inject "route"
   liftIO $ withDb "db" $ \db -> do
     runNoLoggingT . runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
@@ -79,15 +88,15 @@ main = withFocus $ do
       (notifyHandler db)
       (viewSelectorHandler csk db)
       (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
-    liftIO . flip finally wsFinalizer . quickHttpServe $ route
-      [ ("", rootHandler)
+    cwFinalizer <- clientWorker db
+    liftIO . flip finally (wsFinalizer >> cwFinalizer) . quickHttpServe $ route
+      [ ("", rootHandler cfg)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
       ]
 
-rootHandler :: MonadSnap m => m ()
-rootHandler = do
-  cfg <- liftIO $ inject "route"
+rootHandler :: MonadSnap m => ByteString -> m ()
+rootHandler cfg = do
   serveApp "" $ def
     & appConfig_initialHead .~ Just cfg
 
