@@ -13,6 +13,7 @@
      reflex
      reflex-dom
      these
+     obelisk-executable-config
   ];
   backendDepends = p: with p; [
      data-default

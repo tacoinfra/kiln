@@ -12,6 +12,7 @@ import Data.Aeson
 import Data.Typeable
 import Data.Align
 import Data.Semigroup (Semigroup, (<>))
+import Data.Text (Text)
 import Data.These
 import Reflex (FunctorMaybe(..), Group(..), Additive)
 import Reflex.Query.Class
@@ -30,7 +31,7 @@ data BakeViewSelector a = BakeViewSelector
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
-  { _bakeView_clients :: AppendMap (Id Client) (AppendMap ClientInfo a)
+  { _bakeView_clients :: AppendMap (Id Client) (AppendMap (Text, Maybe ClientInfo) a)
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 

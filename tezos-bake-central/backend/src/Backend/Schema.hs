@@ -19,8 +19,17 @@ import Common.Schema
 
 mkFocusPersist (Just "migrateSchema") [groundhog|
   - entity: Client
+  - entity: ClientInfo
+    constructors:
+      - name: ClientInfo
+        fields:
+          - name: _clientInfo_client
+            reference:
+              table: Client
+              onDelete: cascade
 |]
 
 fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
-  [
+  [ (''Client, 'ClientKey)
+  , (''ClientInfo, 'ClientInfoKey)
   ]
