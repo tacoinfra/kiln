@@ -21,7 +21,7 @@ import Focus.Schema
 
 import Backend.Schema
 import Common.App
-import Common.Schema
+import Common.Schema hiding (Error)
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
