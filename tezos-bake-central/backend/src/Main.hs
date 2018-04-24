@@ -49,14 +49,15 @@ seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
 clientWorker :: (MonadIO m)
-             => Pool Postgresql
+             => Int -- delay between checking for updates, in seconds
+             -> Pool Postgresql
              -> m (IO ())
-clientWorker db = do
-  worker (seconds 5) $ do
+clientWorker delay db = do
+  worker (seconds delay) $ do
     putStrLn "Update cycle."
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
-      let maxTime = Just (addUTCTime (-5) now)
+      let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
@@ -88,7 +89,7 @@ main = withFocus $ do
       (notifyHandler db)
       (viewSelectorHandler csk db)
       (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
-    cwFinalizer <- clientWorker db
+    cwFinalizer <- clientWorker 10 db
     liftIO . flip finally (wsFinalizer >> cwFinalizer) . quickHttpServe $ route
       [ ("", rootHandler cfg)
       , ("/listen", handleListen)
