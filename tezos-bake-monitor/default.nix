@@ -8,5 +8,5 @@
           heist = dontCheck super.heist;
         };
     };
-    inherit (haskellPackages) cabal cabal-install text aeson snap safe optparse-applicative;
+    inherit (haskellPackages) cabal cabal-install text aeson snap safe async optparse-applicative http-client http-client-tls http-types bytestring;
   in haskellPackages.callPackage (import ./tezos-bake-monitor.nix) {}

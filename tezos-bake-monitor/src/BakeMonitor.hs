@@ -1,24 +1,37 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TypeApplications #-}
 
-import Snap
-import System.Process
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import Data.Text (Text)
-import Control.Lens.Combinators (over, set, makeLenses, _head)
-import Data.Aeson (FromJSON, ToJSON, encode)
-import GHC.Generics
-import Control.Concurrent.MVar
-import System.Environment (getArgs)
 import Control.Concurrent
+import Control.Concurrent.Async
+import Control.Concurrent.MVar
+import Control.Lens.Combinators (views, over, set, makeLenses, _head)
+import Control.Exception
 import Control.Monad
-import Data.Time
 import Control.Monad.Trans
+import Data.Aeson (FromJSON, ToJSON, encode, decode, Value)
+import Data.Monoid
 import Data.Monoid ((<>), mempty)
-import Safe (headDef)
+import Data.Text (Text)
+import Data.Time
+import GHC.Generics
+import Network.HTTP.Client
+import Network.HTTP.Client.TLS
+import Network.HTTP.Types.Status(Status(..))
+import Network.HTTP.Types.Header
 import Options.Applicative
+-- import qualified Data.ByteString.Lazy as LBS
+-- import qualified Data.ByteString as BS
+import qualified Data.Text as T
+-- import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
+import Safe (headDef)
+import Snap hiding (method)
+import System.Environment (getArgs)
+import System.Process
+
+-- TODO: write a pid file for the spawned baker client
 
 -- Type for common sorts of categories of message that the baker emits while baking.
 -- We're mainly interested in counting the blocks that are injected, but some of the rest is potentially useful.
@@ -54,12 +67,14 @@ instance ToJSON Count
 
 makeLenses 'Count
 
+
 data Baked = Baked
   { _baked_seq :: !Integer
   , _baked_hash :: Text
   , _baked_time :: UTCTime
+  , _baked_block :: Maybe (Maybe Value) -- would like to use json value but 'instances...'
   }
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Eq, Show, Generic)
 
 instance FromJSON Baked
 instance ToJSON Baked
@@ -77,12 +92,25 @@ instance ToJSON Error
 
 makeLenses 'Error
 
+data TopV = TopV
+  { _topV_counts :: Count
+  , _topV_last_baked :: [MVar Baked]
+  , _topV_errors :: [Error]
+  }
+
+makeLenses 'TopV
+
 data Top = Top
   { _top_counts :: Count
   , _top_last_baked :: [Baked]
   , _top_errors :: [Error]
   }
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Eq, Show, Generic)
+
+currentTop :: TopV -> IO Top
+currentTop (TopV counts bakedVs errors) = do
+  bakeds <- traverse readMVar bakedVs
+  return $ Top counts bakeds errors
 
 instance FromJSON Top
 instance ToJSON Top
@@ -102,50 +130,109 @@ opts = mainArgs
       <> value 9800
       <> metavar "PORT"
       )
+  <*> strOption
+      (  long "rpchost"
+      <> short 'r'
+      <> help "Node url to listen on"
+      <> showDefault
+      <> value "http://127.0.0.1:8730"
+      <> metavar "NODERPC"
+      )
   <*> argument str
       (  metavar "CLIENT"
       )
   <*> many (argument str (metavar "ARGS..."))
+
+fetchBlockFromFragment :: Text -> Manager -> MVar (Baked) -> Text -> IO ()
+fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
+  where
+    rpcBoilerplate req = req
+      { method = "POST"
+      , requestBody = "{}"
+      , requestHeaders =
+        [ (hContentType, "application/json")
+        , (hUserAgent, "tezos-bake-monitor")
+        , (hAccept, "*/*")
+        ]
+      }
+    sulk = liftIO $ T.putStrLn $ "ran out of fuel getting block for " <> fragment
+    goFragment 0 = sulk
+    goFragment gas = do
+      let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ T.concat [nodeHost, "/blocks/head/complete/", fragment]
+      print request
+      result' <- liftIO $ try $ httpLbs request mgr
+      case result' of
+        Left err -> do
+          liftIO $ putStrLn $ ("bad response from node" <> ) $ show @ HttpException $ err
+          return ()
+        Right result -> case responseStatus result of
+          Status 200 _ -> case decode (responseBody result) of
+            Just (blockId:_) -> goBlock blockId 20
+            _ -> do
+              liftIO $ threadDelay (1000000) -- TODO backoff man^H^H^Hexponentially
+              goFragment (gas - 1)
+          Status code phrase -> do
+            liftIO $ putStrLn $ ("bad response from node" <> ) $ show $ Status code phrase
+
+    goBlock _ 0 = sulk
+    goBlock blockId gas = do
+      let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ T.concat [nodeHost, "/blocks/", blockId]
+      print request
+      result' <- liftIO $ try $ httpLbs request mgr
+      case result' of
+        Left err -> do
+          liftIO $ putStrLn $ ("bad response from node" <> ) $ show @ HttpException $ err
+          return ()
+        Right result -> case responseStatus result of
+          Status 200 _ ->
+            liftIO $ modifyMVar_ bucket $ return . (set baked_block $ Just $ decode $ responseBody result)
+          Status code phrase -> do
+            liftIO $ putStrLn $ ("bad response from node" <> ) $ show $ Status code phrase
 
 main = join $ do
   customExecParser
     (prefs $ showHelpOnEmpty <> showHelpOnError)
     (info (opts <**> helper) idm)
 
-mainArgs port x xs = do
+mainArgs port nodeRPC x xs = do
   (_, Just out, _, ph) <- createProcess (proc x xs)
     { std_out = CreatePipe
     }
   started <- getCurrentTime
-  dataRef <- newMVar $ Top
+  dataRef <- newMVar $ TopV
     (Count 0 0 0)
     []
     []
-  forkIO . forever $ do
-    msg <- T.hGetLine out
-    now <- getCurrentTime
-    case classify msg of
-      MessageType_Selected -> modifyMVar_ dataRef $ return . over (top_counts . count_selected) (+1)
-      MessageType_Injected h ->
-        modifyMVar_ dataRef $ return
-          . over (top_counts . count_injected) (+1)
-          . over top_last_baked (\bs -> take 20 $
-              ( over baked_seq (+1)
-              . set baked_hash h
-              . set baked_time now
-              $ headDef (Baked 0 h now) bs)
-            : bs)
-      MessageType_Error ->
-        modifyMVar_ dataRef $ return
-          . over (top_counts . count_errors) (+1)
-          . over top_errors (take 20 . (Error now msg :))
-      MessageType_ErrorCont ->
-        modifyMVar_ dataRef $ return
-          . over (top_errors . _head . error_text) (`T.append` msg)
-      _ -> return ()
-    T.putStrLn (T.pack (show now) <> ": " <> msg)
+
+  let bakerTask = forever $ do
+        httpMgr <- liftIO $ newManager tlsManagerSettings
+        msg <- T.hGetLine out
+        now <- getCurrentTime
+        case classify msg of
+          MessageType_Selected -> modifyMVar_ dataRef $ return . over (topV_counts . count_selected) (+1)
+          MessageType_Injected h -> do
+            modifyMVar_ dataRef $ \tops -> do
+              bakedV <- newMVar (Baked (views (topV_counts . count_injected) (+1) tops) h now Nothing)
+              forkIO $ fetchBlockFromFragment nodeRPC httpMgr bakedV h
+              return
+                . over (topV_counts . count_injected) (+1)
+                . over topV_last_baked (\bs -> take 20 $ bakedV : bs)
+                $ tops
+
+          MessageType_Error ->
+            modifyMVar_ dataRef $ return
+              . over (topV_counts . count_errors) (+1)
+              . over topV_errors (take 20 . (Error now msg :))
+          MessageType_ErrorCont ->
+            modifyMVar_ dataRef $ return
+              . over (topV_errors . _head . error_text) (`T.append` msg)
+          _ -> return ()
+        T.putStrLn (T.pack (show now) <> ": " <> msg)
+  countRef <- newMVar (Count 0 0 0)
   let rootHandler = do
-        c <- liftIO $ readMVar dataRef
+        c' <- liftIO $ readMVar dataRef
+        c <- liftIO $ currentTop c'
         writeLBS (encode c)
 
-  httpServe (setPort port mempty) rootHandler
+  let httpTask = httpServe (setPort port mempty) rootHandler
+  void $ race bakerTask httpTask
