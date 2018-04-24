@@ -1,4 +1,4 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs }:
   let
     dontCheck = pkgs.haskell.lib.dontCheck;
     haskellPackages = pkgs.haskellPackages.override
