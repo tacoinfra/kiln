@@ -72,7 +72,7 @@ appMain = divClass "ui container" $ do
           in (name, reports)) v'
     list (_unAppendMap <$> clients) $ \x -> divClass "card" $ divClass "content" $ do
       divClass "header" $ dynText $ fst <$> x
-      let baked = sortOn (_baked_time) . nub . concat . fmap _top_last_baked . catMaybes . fmap rightToMaybe . snd <$> x
+      let baked = reverse . sortOn (_baked_time) . nub . concat . fmap _top_last_baked . catMaybes . fmap rightToMaybe . snd <$> x
       el "description" $ el "ul" $ simpleList baked $ \b -> do
         el "li" $ do
           el "strong" $ dynText $ T.pack . show . _baked_time <$> b
