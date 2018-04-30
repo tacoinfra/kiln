@@ -122,7 +122,7 @@ fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
           Status 200 _ -> case decode (responseBody result) of
             Just (blockId:_) -> goBlock blockId
             _ -> do
-              liftIO $ threadDelay 10*10^6 -- TODO backoff man^H^H^Hexponentially
+              liftIO $ threadDelay (10*10^6) -- TODO backoff man^H^H^Hexponentially
               goFragment (gas - 1)
           Status code phrase -> do
             liftIO $ putStrLn $ ("bad response from node" <> ) $ show $ Status code phrase
