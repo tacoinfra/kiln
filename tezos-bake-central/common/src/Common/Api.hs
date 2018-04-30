@@ -16,7 +16,6 @@ import Focus.App
 import Focus.Request
 import Common.App
 import Common.Schema (ClientAddress())
-import Data.Text (Text)
 import Focus.Schema ()
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where

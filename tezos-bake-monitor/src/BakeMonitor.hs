@@ -31,6 +31,8 @@ import Snap hiding (method)
 import System.Environment (getArgs)
 import System.Process
 
+import Tezos.BakeMonitor.Types
+
 -- TODO: write a pid file for the spawned baker client
 
 -- Type for common sorts of categories of message that the baker emits while baking.
@@ -55,42 +57,10 @@ classify t
   | "  " `T.isPrefixOf` t = MessageType_ErrorCont
   | otherwise = MessageType_Unknown
 
-data Count = Count
-  { _count_selected :: !Integer
-  , _count_injected :: !Integer
-  , _count_errors :: !Integer
-  }
-  deriving (Eq, Ord, Show, Generic)
-
-instance FromJSON Count
-instance ToJSON Count
-
-makeLenses 'Count
-
-
-data Baked = Baked
-  { _baked_seq :: !Integer
-  , _baked_hash :: Text
-  , _baked_time :: UTCTime
-  , _baked_block :: Maybe (Maybe Value) -- would like to use json value but 'instances...'
-  }
-  deriving (Eq, Show, Generic)
-
-instance FromJSON Baked
-instance ToJSON Baked
-
-makeLenses 'Baked
-
-data Error = Error
-  { _error_time :: UTCTime
-  , _error_text :: Text
-  }
-  deriving (Eq, Ord, Show, Generic)
-
-instance FromJSON Error
-instance ToJSON Error
-
-makeLenses 'Error
+currentTop :: TopV -> IO Report
+currentTop (TopV counts bakedVs errors) = do
+  bakeds <- traverse readMVar bakedVs
+  return $ Report counts bakeds errors
 
 data TopV = TopV
   { _topV_counts :: Count
@@ -99,23 +69,6 @@ data TopV = TopV
   }
 
 makeLenses 'TopV
-
-data Top = Top
-  { _top_counts :: Count
-  , _top_last_baked :: [Baked]
-  , _top_errors :: [Error]
-  }
-  deriving (Eq, Show, Generic)
-
-currentTop :: TopV -> IO Top
-currentTop (TopV counts bakedVs errors) = do
-  bakeds <- traverse readMVar bakedVs
-  return $ Top counts bakeds errors
-
-instance FromJSON Top
-instance ToJSON Top
-
-makeLenses 'Top
 
 baked_horizon = 20
 error_horizon = 20
@@ -155,7 +108,7 @@ fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
         , (hAccept, "*/*")
         ]
       }
-    sulk = liftIO $ T.putStrLn $ "ran out of fuel getting block for " <> fragment
+    sulk = liftIO $ T.putStrLn $ "Ran out of retries (tried 20 times) getting block for " <> fragment
     goFragment 0 = sulk
     goFragment gas = do
       let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ T.concat [nodeHost, "/blocks/head/complete/", fragment]
@@ -167,15 +120,14 @@ fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
           return ()
         Right result -> case responseStatus result of
           Status 200 _ -> case decode (responseBody result) of
-            Just (blockId:_) -> goBlock blockId 20
+            Just (blockId:_) -> goBlock blockId
             _ -> do
-              liftIO $ threadDelay (1000000) -- TODO backoff man^H^H^Hexponentially
+              liftIO $ threadDelay 10*10^6 -- TODO backoff man^H^H^Hexponentially
               goFragment (gas - 1)
           Status code phrase -> do
             liftIO $ putStrLn $ ("bad response from node" <> ) $ show $ Status code phrase
 
-    goBlock _ 0 = sulk
-    goBlock blockId gas = do
+    goBlock blockId = do
       let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ T.concat [nodeHost, "/blocks/", blockId]
       print request
       result' <- liftIO $ try $ httpLbs request mgr
@@ -185,7 +137,7 @@ fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
           return ()
         Right result -> case responseStatus result of
           Status 200 _ ->
-            liftIO $ modifyMVar_ bucket $ return . (set baked_block $ Just $ decode $ responseBody result)
+            liftIO $ modifyMVar_ bucket $ return . (set baked_block $ decode $ responseBody result)
           Status code phrase -> do
             liftIO $ putStrLn $ ("bad response from node" <> ) $ show $ Status code phrase
 

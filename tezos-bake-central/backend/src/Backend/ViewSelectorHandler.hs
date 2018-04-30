@@ -33,6 +33,6 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       return (mempty :: BakeView a)
         { _bakeView_clients = Map.fromList $ do
             (cid, address, report) <- rs
-            return (cid, Map.singleton (address, fmap (ClientInfo cid) report) a)
+            return (cid, (First (Just (address, ClientInfo cid <$> report)), a))
         }
       
