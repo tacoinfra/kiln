@@ -31,7 +31,7 @@ data BakeViewSelector a = BakeViewSelector
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
-  { _bakeView_clients :: AppendMap (Id Client) (AppendMap (Text, Maybe ClientInfo) a)
+  { _bakeView_clients :: AppendMap (Id Client) (AppendMap (ClientAddress, Maybe ClientInfo) a)
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
