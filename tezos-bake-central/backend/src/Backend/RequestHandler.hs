@@ -24,14 +24,12 @@ import Focus.Backend.DB (runDb)
 import Focus.Backend.DB.PsqlSimple
 import Focus.Backend.Listen
 import Focus.Schema
-import Focus.Backend.Schema.TH
 import Control.Monad.Logger (runNoLoggingT)
-import Database.PostgreSQL.Simple
 
 import Common.App
 import Common.Api
 import Common.Schema
-import Backend.Schema
+import Backend.Schema ()
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)

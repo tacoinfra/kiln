@@ -11,8 +11,7 @@ import GHC.Generics
 import Data.Aeson
 import Data.Typeable
 import Data.Align
-import Data.Semigroup (Semigroup, (<>))
-import Data.Text (Text)
+import Data.Semigroup (Semigroup, (<>), First(..))
 import Data.These
 import Reflex (FunctorMaybe(..), Group(..), Additive)
 import Reflex.Query.Class
@@ -31,9 +30,9 @@ data BakeViewSelector a = BakeViewSelector
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
-  { _bakeView_clients :: AppendMap (Id Client) (AppendMap (ClientAddress, Maybe ClientInfo) a)
+  { _bakeView_clients :: AppendMap (Id Client) (First (Maybe (ClientAddress, Maybe ClientInfo)), a)
   }
-  deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
+  deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView a -> BakeView a
 cropBakeView vs v =
@@ -55,16 +54,23 @@ instance FunctorMaybe BakeViewSelector where
     { _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     }
 
+{-
 instance Align BakeView where
   nil = BakeView nil
   alignWith f u v = BakeView
-    { _bakeView_clients = alignWith (alignTheseWith f) (_bakeView_clients u) (_bakeView_clients v)
+    { _bakeView_clients = alignTheseWith f (_bakeView_clients u) (_bakeView_clients v)
     }
+-}
 
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
-    { _bakeView_clients = fmap (fmapMaybe f) $ _bakeView_clients a
+    { _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
     }
+
+fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
+fmapMaybeSnd f = fmapMaybe $ \(e, a) -> case f a of
+  Nothing -> Nothing
+  Just b  -> Just (e, b)
 
 alignTheseWith :: Align f => (These a b -> c) -> These (f a) (f b) -> f c
 alignTheseWith f = these (fmap (f . This)) (fmap (f . That)) (alignWith f)
@@ -81,11 +87,11 @@ instance Group (BakeViewSelector SelectedCount) where
 
 instance Additive (BakeViewSelector SelectedCount)
 
-instance Monoid a => Monoid (BakeView a) where
-  mempty = nil
-  mappend = alignWith (mergeThese mappend)
+instance (Semigroup a) => Monoid (BakeView a) where
+  mempty = BakeView mempty
+  mappend u v = BakeView { _bakeView_clients = _bakeView_clients u <> _bakeView_clients v }
 
-instance Monoid a => Semigroup (BakeView a) where
+instance Semigroup a => Semigroup (BakeView a) where
   (<>) = mappend
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

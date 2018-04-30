@@ -12,16 +12,13 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Logger (runNoLoggingT)
-import Data.Aeson
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BSL
 import Data.Default
 import Data.Monoid
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import qualified Data.Text.Encoding as T
 import Data.Time.Clock
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
@@ -31,7 +28,6 @@ import Focus.Backend.App
 import Focus.Backend.DB
 import Focus.Backend.DB.PsqlSimple
 import Focus.Backend.Listen
-import Focus.Backend.Schema.TH
 import Focus.Backend.Snap
 import Focus.Concurrent (worker)
 import Focus.Schema
@@ -41,6 +37,8 @@ import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding (id, (.))
 import qualified Web.ClientSession as CS
 import Snap
+
+import Tezos.BakeMonitor.Types
 
 import Common.Schema
 import Common.Api ()
@@ -67,10 +65,10 @@ clientWorker delay db = do
         request <- parseRequest ("http://" <> T.unpack address <> "/")
         response <- httpJSON request
         liftIO $ print response
-        let encoded = T.decodeUtf8 (BSL.toStrict (encode (getResponseBody response :: Value)))
+        let report = Json (getResponseBody response :: Report)
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
-                        VALUES (?cid, ?encoded)
-                        ON CONFLICT (client) DO UPDATE SET report = ?encoded |]
+                        VALUES (?cid, ?report)
+                        ON CONFLICT (client) DO UPDATE SET report = ?report |]
         updateAndNotify cid [Client_updatedField =. Just now]
 
 main :: IO ()

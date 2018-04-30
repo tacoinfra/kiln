@@ -3,7 +3,6 @@
 
 module Backend.NotifyHandler where
 
-import Control.Applicative
 import Control.Monad.IO.Class
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control
@@ -21,7 +20,7 @@ import Focus.Schema
 
 import Backend.Schema
 import Common.App
-import Common.Schema hiding (Error)
+import Common.Schema
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -34,13 +33,15 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
         Success cid -> do
           client <- get $ fromId (cid :: Id Client)
           infos <- select (ClientInfo_clientField ==. cid)
-          return $ case liftA2 (,) client (_bakeViewSelector_clients aggVS) of
-            Nothing -> (mempty :: BakeView a)
-              { _bakeView_clients = Map.singleton cid Map.empty
-              }
-            Just (c, a) -> (mempty :: BakeView a)
-              { _bakeView_clients = Map.singleton cid (Map.singleton (_client_address c, listToMaybe infos) a)
-              }
+          return $ case _bakeViewSelector_clients aggVS of
+            Nothing -> mempty :: BakeView a
+            Just a ->
+             let clientWithInfo = First $ do
+                   addr <- _client_address <$> client
+                   return (addr, listToMaybe infos)
+             in (mempty :: BakeView a)
+                  { _bakeView_clients = Map.singleton cid (clientWithInfo, a)
+                  }
         Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient

@@ -1,10 +1,18 @@
-{}: (import ./focus {}).mkDerivation {
+{}: 
+let
+  focus = import ./focus {};
+  # tezos-bake-monitor-lib = p: import ../tezos-bake-monitor-lib { pkgs = p; };
+in focus.mkDerivation {
   name = "tezos-bake-central";
   version = "0.0.1";
+  haskellPackagesOverrides = self: super: {
+    tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+  };
   commonDepends = p: with p; [
     either
     data-default
     file-embed
+    tezos-bake-monitor-lib
   ];
   frontendDepends = p: with p; [
     data-default
