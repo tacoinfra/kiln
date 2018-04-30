@@ -62,18 +62,32 @@ app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRou
 
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
 appMain = divClass "ui container" $ do
+  v <- fmap _bakeView_clients <$> watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
+  let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
+      clients = ffor v $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
+          case r of
+            (First Nothing) -> Nothing
+            (First (Just (name, Nothing))) -> Just (name, Left "No response yet.")
+            (First (Just (name, Just ci))) -> Just (name, Right . unJson $ _clientInfo_report ci)
   el "h1" $ text "Baker Central"
   address <- value <$> textInput def
   btn <- button "Add Baker"
   requestingIdentity $ ffor (tag (current address) btn) $ \addr -> public (PublicRequest_AddClient addr)
   divClass "ui cards" $ do
-    v <- fmap _bakeView_clients <$> watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
-    let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
-        clients = ffor v $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
-          case r of
-            (First Nothing) -> Nothing
-            (First (Just (name, Nothing))) -> Just (name, Left "No response yet.")
-            (First (Just (name, Just ci))) -> Just (name, Right . unJson $ _clientInfo_report ci)
+    divClass "card" $ divClass "content" $ do
+      let aggCounts (Left _) = (mempty, Sum 1)
+      let aggCounts (Right r) = (_report_counts r, Sum 0)
+      divClass "header" $ text "Summary"
+      dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
+        divClass "counts" $ el "ul" $ do
+          el "li" $ text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
+          el "li" $ text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
+          el "li" $ text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
+          el "li" $ text $ ("Waiting:" <>) . T.pack . show $ getSum e
+      divClass "header" $ text "Bakers"
+      divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do
+        el "li" $ text (fst x)
+
     list (_unAppendMap <$> clients) $ \x -> divClass "card" $ divClass "content" $ do
       dyn . ffor x $ \(name, mReport) -> do
         divClass "header" $ text name
