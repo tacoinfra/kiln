@@ -72,6 +72,9 @@ appMain = divClass "ui container" $ do
           in (name, reports)) v'
     list (_unAppendMap <$> clients) $ \x -> divClass "card" $ divClass "content" $ do
       divClass "header" $ dynText $ fst <$> x
+      -- TODO, remove client from view
+      unbtn <- button "Remove Baker"
+      requestingIdentity $ ffor (tag (current x) unbtn) $ \(addr, _) -> public (PublicRequest_RemoveClient addr)
       let baked = reverse . sortOn (_baked_time) . nub . concat . fmap _top_last_baked . catMaybes . fmap rightToMaybe . snd <$> x
       el "description" $ el "ul" $ simpleList baked $ \b -> do
         el "li" $ do

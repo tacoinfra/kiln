@@ -15,17 +15,17 @@ module Common.Api where
 import Focus.App
 import Focus.Request
 import Common.App
-import Common.Schema ()
+import Common.Schema (ClientAddress())
 import Data.Text (Text)
 import Focus.Schema ()
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
     PublicRequest_AddClient
-      :: Text -- address of client to subscribe to
+      :: ClientAddress -- address of client to subscribe to
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
     PublicRequest_RemoveClient
-      :: Text -- address of client to unsubscribe from
+      :: ClientAddress -- address of client to unsubscribe from
       -> PublicRequest Bake ()
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
