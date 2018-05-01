@@ -62,7 +62,7 @@ mailFor toAddr errs =
   let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
       toA = Address Nothing toAddr
       body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' fromA toA "Error from Tezos bake monitor" body
+  in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
 
 clientWorker :: (MonadIO m)
