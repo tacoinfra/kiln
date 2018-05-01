@@ -184,8 +184,9 @@ bumpBlockSeen h now = over topV_lastseen (\bs -> take 20 $ (Baked 0 h now Nothin
 
 mainArgs :: Int -> Text -> FilePath -> String -> IO ()
 mainArgs port nodeRPC client identity = do
+  let [rpcAddr, rpcPort] = T.splitOn ":" nodeRPC
   (_, Just out, Just err, ph) <- createProcess
-    (proc client ["--addr", T.unpack nodeRPC, "launch", "daemon", identity, "-B", "-E", "-D"])
+    (proc client ["--addr", T.unpack rpcAddr, "--port", T.unpack rpcPort, "launch", "daemon", identity, "-B", "-E", "-D"])
       { std_out = CreatePipe
       , std_err = CreatePipe
       }
