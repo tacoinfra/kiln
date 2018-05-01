@@ -7,6 +7,7 @@ module Tezos.BakeMonitor.Types where
 import Control.Lens.TH
 import Data.Aeson (Value, ToJSON(..), FromJSON(..))
 import Data.Text (Text)
+import qualified Data.Text.Lazy as LT
 import Data.Time.Clock
 import Data.Typeable
 import GHC.Generics
@@ -15,6 +16,8 @@ data Report = Report
   { _report_counts :: Count
   , _report_last_baked :: [Baked]
   , _report_errors :: [Error]
+  , _report_failedbaker :: [LT.Text]
+  , _report_last_seen :: [Baked]
   }
   deriving (Eq, Show, Generic, Typeable)
 

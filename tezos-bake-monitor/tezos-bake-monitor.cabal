@@ -38,3 +38,4 @@ executable tezos-bake-monitor
     optparse-applicative >=0.14
   hs-source-dirs:      src
   default-language:    Haskell2010
+  ghc-options: -threaded -rtsopts -Wall

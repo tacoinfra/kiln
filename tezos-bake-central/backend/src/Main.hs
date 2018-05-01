@@ -14,6 +14,7 @@ import Control.Monad.Trans
 import Control.Monad.Logger (runNoLoggingT)
 import Data.ByteString (ByteString)
 import Data.Default
+import Data.Function (on)
 import Data.Monoid
 import Data.Pool
 import Data.Text (Text)
@@ -37,6 +38,7 @@ import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding (id, (.))
 import qualified Web.ClientSession as CS
 import Snap
+import Safe
 
 import Tezos.BakeMonitor.Types
 
@@ -45,6 +47,9 @@ import Common.Api ()
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
+
+-- TODO: make this alert properly?
+badNews x = liftIO $ putStrLn ("Bad news!" <> show x)
 
 clientWorker :: (MonadIO m)
              => Int -- delay between checking for updates, in seconds
@@ -66,6 +71,12 @@ clientWorker delay db = do
         response <- httpJSON request
         liftIO $ print response
         let report = Json (getResponseBody response :: Report)
+        let Json r' = report
+        case maximumByMay (compare `on` _baked_time) $ _report_last_seen r' of
+          Nothing -> liftIO $ badNews "baker has not seen a block!"
+          -- TODO: configurable timeout
+          Just b -> when (addUTCTime (fromIntegral 30) (_baked_time b) < now) $ badNews "baker has not seen a block!"
+
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?report)
                         ON CONFLICT (client) DO UPDATE SET report = ?report |]
