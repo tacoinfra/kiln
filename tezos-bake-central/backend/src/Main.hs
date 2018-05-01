@@ -91,7 +91,7 @@ clientWorker toAddr delay db = do
         case maximumByMay (compare `on` _baked_time) $ _report_last_seen report of
           -- Nothing -> liftIO $ mailFor toAddr ("baker " <> address <> " has not seen a block!")
           -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromIntegral 30) (_baked_time b) < now) $ void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a recently!\n" <> T.pack (show b))]) Nothing
+          Just b -> when (addUTCTime (fromIntegral 30) (_baked_time b) < now) $ void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\n" <> T.pack (show b))]) Nothing
 
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
