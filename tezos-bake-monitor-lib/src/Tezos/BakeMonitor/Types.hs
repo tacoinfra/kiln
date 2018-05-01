@@ -32,7 +32,6 @@ instance Monoid Count where
   mempty = Count 0 0 0
   Count s i e `mappend` Count s' i' e' = Count (s + s') (i + i') (e + e')
 
-
 instance FromJSON Count
 instance ToJSON Count
 
