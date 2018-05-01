@@ -61,7 +61,7 @@ app
 app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
-appMain = divClass "ui container" $ do
+appMain = divClass "ui" $ do
   v <- fmap _bakeView_clients <$> watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
   let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
       clients = ffor v $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
@@ -98,6 +98,11 @@ appMain = divClass "ui container" $ do
           Right report -> do
             let counts = _report_counts report
                 baked = _report_last_baked report
+            forM_ (_report_tezzies report) $ \tz -> do
+              divClass "balance" $ do
+                text "Current Balance: "
+                text (T.pack . show $ tz)
+                text "ꜩ"
             divClass "counts" $ do
               text $ T.unwords
                 [ "Selected:"
