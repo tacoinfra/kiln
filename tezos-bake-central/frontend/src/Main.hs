@@ -123,5 +123,5 @@ appMain = divClass "ui" $ do
                 el "strong" $ text $ T.pack . show . _baked_time $ b
                 el "ul" $ do
                   el "li" $ text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
-                  el "li" $ text $ ("Hash: " <>) . _baked_hash $ b
+                  el "li" $ text $ ("Hash: " <>) . unBlockHash . _baked_hash $ b
   return ()

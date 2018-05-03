@@ -1,17 +1,31 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Tezos.BakeMonitor.Types where
 
 import Control.Lens.TH
-import Data.Aeson (Value, ToJSON(..), FromJSON(..))
+import Data.Aeson (ToJSON(..), FromJSON(..))
+import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Text (Text)
 import qualified Data.Text.Lazy as LT
 import Data.Time.Clock
 import Data.Typeable
 import GHC.Generics
+import Network.HTTP.Client
+import Network.HTTP.Types.Status(Status(..))
+
+data Ident = Ident
+  { _ident_hash :: Text
+  , _ident_nickname :: Maybe Text
+  }
+  deriving (Eq, Show, Generic, Typeable)
+
+instance FromJSON Ident
+instance ToJSON Ident
 
 data Report = Report
   { _report_counts :: Count
@@ -40,11 +54,14 @@ instance Monoid Count where
 instance FromJSON Count
 instance ToJSON Count
 
+newtype BlockHash = BlockHash {unBlockHash :: Text}
+  deriving (Eq, Ord, Show, ToJSON, FromJSON, Generic, Typeable)
+
 data Baked = Baked
   { _baked_seq :: !Integer
-  , _baked_hash :: Text
+  , _baked_hash :: BlockHash
   , _baked_time :: UTCTime
-  , _baked_block :: Maybe Value
+  -- , _baked_block :: Maybe Value
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -59,6 +76,14 @@ data Error = Error
 
 instance FromJSON Error
 instance ToJSON Error
+
+data RpcResponse a =
+    RpcResponse_HttpException HttpException
+  | RpcResponse_UnexpectedStatus Status
+  | RpcResponse_NonJSON LBS.ByteString
+  | RpcResponse_Success a
+  deriving (Functor, Foldable, Traversable)
+
 
 makeLenses 'Report
 makeLenses 'Count
