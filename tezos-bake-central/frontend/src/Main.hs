@@ -90,7 +90,7 @@ appMain = divClass "ui" $ do
   divClass "ui cards" $ do
     divClass "card" $ divClass "content" $ do
       let aggCounts (Left _) = (mempty, Sum 1)
-      let aggCounts (Right r) = (_report_counts r, Sum 0)
+          aggCounts (Right r) = (_report_counts r, Sum 0)
       divClass "header" $ text "Summary"
       text "These are the totals of various events across all monitored bakers."
       dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do

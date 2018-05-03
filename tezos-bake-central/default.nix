@@ -25,6 +25,9 @@ in focus.mkDerivation {
     obelisk-executable-config
   ];
   backendDepends = p: with p; [
+    stm
+    mime-mail
+    safe
     monad-logger
     data-default
     resource-pool
