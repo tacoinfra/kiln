@@ -7,11 +7,12 @@
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
-import Control.Lens.Combinators (views, over, set, makeLenses, _head)
+import Control.Lens.Combinators (views, over, set, makeLenses, _head, preview)
 import Control.Exception
 import Control.Monad
 import Control.Monad.Trans
 import Data.Aeson (FromJSON, ToJSON, encode, decode, Value)
+import Data.Aeson.Lens
 import Data.Char
 import Data.Maybe (catMaybes)
 import Data.Monoid
@@ -74,9 +75,9 @@ classify t
 
 
 currentTop :: TopV -> IO Report
-currentTop (TopV counts bakedVs errors failures seen tezzies) = do
+currentTop (TopV counts bakedVs errors failures seen tezzies protoInfo) = do
   bakeds <- traverse readMVar bakedVs
-  return $ Report counts bakeds errors failures seen tezzies
+  return $ Report counts bakeds errors failures seen tezzies protoInfo
 
 data TopV = TopV
   { _topV_counts :: Count
@@ -85,6 +86,7 @@ data TopV = TopV
   , _topV_failedbaker :: [LT.Text]
   , _topV_lastseen :: [Baked]
   , _topV_tezzies :: Maybe Micro
+  , _topV_protoInfo :: Maybe ProtoInfo
   }
 
 makeLenses 'TopV
@@ -152,6 +154,24 @@ tezosRpc mgr rpcText = do
           Just v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
 
+getProtoInfo :: Manager -> IO (Maybe ProtoInfo)
+getProtoInfo mgr = do
+  r <- tezosRpc mgr "/blocks/head/proto/constants"
+  return $ case r of
+    RpcResponse_Success v -> do
+      let readKey k = ((/10^6) . fromInteger) <$> preview (key k . _Integer) (v :: Value)
+      bsd <- readKey "block_security_deposit"
+      esd <- readKey "endorsement_security_deposit"
+      br <- readKey "block_reward"
+      er <- readKey "endorsement_reward"
+      return $ ProtoInfo
+        { _protoInfo_blockSecurityDeposit = bsd
+        , _protoInfo_endorsementSecurityDeposit = esd
+        , _protoInfo_blockReward = br
+        , _protoInfo_endorsementReward = er
+        }
+    _ -> Nothing
+
 fetchBlockFromFragment :: Text -> Manager -> MVar Baked -> Text -> IO ()
 fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
   where
@@ -197,6 +217,7 @@ mainArgs port nodeRPC client identity = do
     []
     []
     Nothing
+    Nothing
 
   let updateData f = modifyMVar_ dataRef $ return . f
 
@@ -206,6 +227,8 @@ mainArgs port nodeRPC client identity = do
     balanceLine <- readProcess client ["get", "balance", "for", identity] ""
     let balance = readMaybe (filter (\c -> isDigit c || c == '.') balanceLine)
     updateData (set topV_tezzies balance)
+    protoInfo <- getProtoInfo httpMgr
+    updateData (set topV_protoInfo protoInfo)
     threadDelay (60*10^6)
 
   -- consume from stdout looking for data.

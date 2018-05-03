@@ -20,11 +20,23 @@ data Report = Report
   , _report_failedbaker :: [LT.Text]
   , _report_last_seen :: [Baked]
   , _report_tezzies :: Maybe Micro
+  , _report_protoInfo :: Maybe ProtoInfo
   }
   deriving (Eq, Show, Generic, Typeable)
 
 instance FromJSON Report
 instance ToJSON Report
+
+data ProtoInfo = ProtoInfo
+  { _protoInfo_endorsementSecurityDeposit :: Micro
+  , _protoInfo_blockSecurityDeposit :: Micro
+  , _protoInfo_blockReward :: Micro
+  , _protoInfo_endorsementReward :: Micro
+  }
+  deriving (Eq, Show, Generic, Typeable)
+
+instance FromJSON ProtoInfo
+instance ToJSON ProtoInfo
 
 data Count = Count
   { _count_selected :: !Integer

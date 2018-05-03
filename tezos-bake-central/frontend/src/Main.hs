@@ -12,6 +12,7 @@ import Control.Monad.Trans
 import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap, _unAppendMap)
 import Data.Either.Combinators
+import Data.Fixed
 import Data.List
 import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
@@ -60,6 +61,17 @@ app
   -> (() -> Widget () (), () -> Widget () ())
 app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
+tezzies :: Micro -> Text
+tezzies n = T.pack (show n) <> "ꜩ"
+
+buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
+buttonWithInfo label tooltip =
+  fmap (domEvent Click . fst) <$> elAttr' "button" ("class" =: "ui button" <> "data-tooltip" =: tooltip) $ do
+    text label
+
+tooltip :: (DomBuilder t m) => Text -> m a -> m a
+tooltip t = elAttr "div" ("data-tooltip" =: t)
+
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
 appMain = divClass "ui" $ do
   v <- fmap _bakeView_clients <$> watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
@@ -70,28 +82,32 @@ appMain = divClass "ui" $ do
             (First (Just (name, Nothing))) -> Just (name, Left "No response yet.")
             (First (Just (name, Just ci))) -> Just (name, Right . unJson $ _clientInfo_report ci)
   el "h1" $ text "Baker Central"
-  address <- value <$> textInput def
-  btn <- button "Add Baker"
-  requestingIdentity $ ffor (tag (current address) btn) $ \addr -> public (PublicRequest_AddClient addr)
+  addressInput <- textInput def
+  addButton <- buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
+  let address = value addressInput
+      addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
+  requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
   divClass "ui cards" $ do
     divClass "card" $ divClass "content" $ do
       let aggCounts (Left _) = (mempty, Sum 1)
       let aggCounts (Right r) = (_report_counts r, Sum 0)
       divClass "header" $ text "Summary"
+      text "These are the totals of various events across all monitored bakers."
       dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
         divClass "counts" $ el "ul" $ do
-          el "li" $ text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
-          el "li" $ text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
-          el "li" $ text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
-          el "li" $ text $ ("Waiting:" <>) . T.pack . show $ getSum e
+          el "li" . tooltip "This occurs whenever one of the bakers selects a candidate block" . text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
+          el "li" . tooltip "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
+          el "li" . tooltip "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
+          el "li" . tooltip "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
       divClass "header" $ text "Bakers"
+      text "This is the list of all currently monitored bakers."
       divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do
         el "li" $ text (fst x)
 
     list (_unAppendMap <$> clients) $ \x -> divClass "card" $ divClass "content" $ do
       dyn . ffor x $ \(name, mReport) -> do
         divClass "header" $ text name
-        eRemove <- button "Remove Baker"
+        eRemove <- buttonWithInfo "Remove" "Remove this baker from view. It will continue running."
         requestingIdentity $ (public (PublicRequest_RemoveClient name) <$ eRemove)
         case mReport of
           Left e -> text e
@@ -99,19 +115,30 @@ appMain = divClass "ui" $ do
             let counts = _report_counts report
                 baked = _report_last_baked report
             forM_ (_report_tezzies report) $ \tz -> do
-              divClass "balance" $ do
+              elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
-                text (T.pack . show $ tz)
-                text "ꜩ"
+                text (tezzies tz)
+              forM_ (_report_protoInfo report) $ \protoInfo -> do
+                let bSD = _protoInfo_blockSecurityDeposit protoInfo
+                    eSD = _protoInfo_endorsementSecurityDeposit protoInfo
+                    failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
+                case failures of
+                  (t:ts) -> do
+                    text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> "."
+                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> "."
+                    text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
+                  [] | tz < 4 * (bSD + eSD) -> do
+                    text $ "The identity in use by this baker is running somewhat low on tezzies."
+                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> "."
+                    text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+
             divClass "counts" $ do
-              text $ T.unwords
-                [ "Selected:"
-                , T.pack . show $ _count_selected counts
-                , "Injected:"
-                , T.pack . show $ _count_injected counts
-                , "Errors:"
-                , T.pack . show $ _count_errors counts
-                ]
+              tooltip "This counts the number of times that a candidate block was selected by this baker for baking since it began running." . text $
+                "Selected:" <> (T.pack . show $ _count_selected counts)
+              tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
+                "Injected:" <> (T.pack . show $ _count_injected counts)
+              tooltip "This counts the number of errors that this baker has encountered since it began running. The most recent errors will be detailed below, if any have occurred." . text $
+                "Errors:" <> (T.pack . show $ _count_errors counts)
             case _report_errors report of
               [] -> blank
               es -> divClass "errors" . el "ul" . forM_ es $ \e -> do
