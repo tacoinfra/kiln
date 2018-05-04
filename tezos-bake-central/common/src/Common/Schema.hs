@@ -1,7 +1,10 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Common.Schema where
 
+import Control.Lens
 import Data.Aeson
+import Data.Aeson.TH
 import Data.Text (Text)
 import GHC.Generics
 import Data.Typeable
@@ -27,3 +30,13 @@ data ClientInfo = ClientInfo
 instance HasId ClientInfo
 instance FromJSON ClientInfo
 instance ToJSON ClientInfo
+
+data Node = Node
+  { _node_address :: ClientAddress
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId Node
+instance FromJSON Node
+instance ToJSON Node
+

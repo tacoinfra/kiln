@@ -7,7 +7,8 @@
 module Tezos.BakeMonitor.Types where
 
 import Control.Lens.TH
-import Data.Aeson (ToJSON(..), FromJSON(..))
+import Data.Aeson (ToJSON(..), FromJSON(..), fieldLabelModifier)
+import Data.Aeson.TH
 import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Text (Text)
@@ -80,10 +81,21 @@ instance ToJSON Error
 data RpcResponse a =
     RpcResponse_HttpException HttpException
   | RpcResponse_UnexpectedStatus Status
-  | RpcResponse_NonJSON LBS.ByteString
+  | RpcResponse_NonJSON String LBS.ByteString
   | RpcResponse_Success a
   deriving (Functor, Foldable, Traversable)
 
+-- there are tons of fields i am not trying to parse here
+data BlockInfo = BlockInfo
+  { _blockInfo_hash :: BlockHash
+  , _blockInfo_level :: Int
+  , _blockInfo_proto :: Int -- really a Word8 :|
+  , _blockInfo_predecessor :: BlockHash
+  }
+  deriving (Eq, Show, Generic, Typeable)
+
+$(deriveJSON defaultOptions{fieldLabelModifier = drop (length "_blockInfo_")} ''BlockInfo)
+makeLenses 'BlockInfo
 
 makeLenses 'Report
 makeLenses 'Count

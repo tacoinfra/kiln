@@ -12,13 +12,11 @@ module Tezos.NodeRPC where
 import Control.Exception
 import Control.Monad.Reader
 import Data.Aeson
-import Data.Foldable
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
 import GHC.Generics
 import Network.HTTP.Client
-import Network.HTTP.Client.TLS
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status(Status(..))
 import qualified Data.Text as T
@@ -40,6 +38,7 @@ newtype BlockPrefix = BlockPrefix Text
 
 data NodeRPCRequest a where
   Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
+  Block :: BlockHash -> NodeRPCRequest BlockInfo
 
 doRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 doRPCImpl rpcSelector = do
@@ -64,22 +63,16 @@ doRPCImpl rpcSelector = do
     Right result -> case responseStatus result of
       Status 200 _ -> do
         let body = responseBody result
-        return $ case decode body of
-          Nothing -> RpcResponse_NonJSON body
-          Just v -> RpcResponse_Success v
+        return $ case eitherDecode body of
+          Left err -> RpcResponse_NonJSON err body
+          Right v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
 
 
 doRPC :: MonadIO m => NodeRPCRequest a -> NodeRPCT m (RpcResponse a)
 doRPC = \case
-  Complete (BlockPrefix pfx) -> (fmap.fmap) BlockHash <$> doRPCImpl ("/blocks/head/complete/" <> pfx)
+  Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
+  Block (BlockHash hash) -> doRPCImpl ("/blocks/" <> hash)
 
 
-
-client :: IO ()
-client = do
-  httpMgr <- liftIO $ newManager tlsManagerSettings
-  let ctx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
-  x <- flip runReaderT ctx $ doRPC $ Complete $ BlockPrefix "asdf"
-  traverse_ print x
 

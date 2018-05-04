@@ -67,7 +67,7 @@ fetchBlockFromFragment nodeAddr httpMgr = flip runReaderT (NodeRPCContext httpMg
     go pfx = doRPC (Complete pfx) >>= \case
         RpcResponse_HttpException e -> error $ "bad response from node" <> show e <> "for prefix" <> show pfx
         RpcResponse_UnexpectedStatus s -> error $ "bad response from node" <> show s <> "for prefix" <> show pfx
-        RpcResponse_NonJSON raw -> error $ "Non JSON response from node: " <> show raw <> "for prefix" <> show pfx
+        RpcResponse_NonJSON clue raw -> error $ "Non JSON response from node: " <> show clue <> "\n" <> show raw <> "for prefix" <> show pfx
         RpcResponse_Success v -> case v of
             (blockId:_) -> return blockId
             _ -> error $ "Block Prefix not known to node" <> "for prefix" <> show pfx

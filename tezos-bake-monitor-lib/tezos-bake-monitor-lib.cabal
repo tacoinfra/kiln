@@ -25,7 +25,6 @@ library
     async,
     bytestring,
     http-client,
-    http-client-tls,
     http-types,
     lens,
     mtl,
@@ -39,3 +38,13 @@ library
   default-language:    Haskell2010
   ghc-options: -Wall
 
+executable tezos-test-bake-monitor-rpc
+  main-is:             Test.hs
+  hs-source-dirs:      src-bin
+  build-depends:
+    mtl,
+    tezos-bake-monitor-lib,
+    http-client,
+    http-client-tls,
+    base
+  ghc-options: -Wall
