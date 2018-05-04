@@ -18,6 +18,7 @@ import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
 import Data.Semigroup
 import Data.Text (Text)
+import Data.Time.Format
 import Focus.Api
 import Focus.JS.App
 import Focus.JS.Request
@@ -72,8 +73,11 @@ buttonWithInfo label tooltip =
 tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
 
+tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
+tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
+
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
-appMain = divClass "ui" $ do
+appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   v <- fmap _bakeView_clients <$> watchViewSelector (pure $ BakeViewSelector { _bakeViewSelector_clients = Just 1 })
   let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
       clients = ffor v $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
@@ -95,10 +99,10 @@ appMain = divClass "ui" $ do
       text "These are the totals of various events across all monitored bakers."
       dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
         divClass "counts" $ el "ul" $ do
-          el "li" . tooltip "This occurs whenever one of the bakers selects a candidate block" . text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
-          el "li" . tooltip "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
-          el "li" . tooltip "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
-          el "li" . tooltip "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
+          tooltipPos "right center" "This occurs whenever one of the bakers selects a candidate block" . text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
+          tooltipPos "right center" "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
+          tooltipPos "right center" "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
+          tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
       divClass "header" $ text "Bakers"
       text "This is the list of all currently monitored bakers."
       divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do
@@ -131,24 +135,27 @@ appMain = divClass "ui" $ do
                     text $ "The identity in use by this baker is running somewhat low on tezzies."
                     text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> "."
                     text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+                  _ -> blank
 
             divClass "counts" $ do
               tooltip "This counts the number of times that a candidate block was selected by this baker for baking since it began running." . text $
                 "Selected:" <> (T.pack . show $ _count_selected counts)
               tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
                 "Injected:" <> (T.pack . show $ _count_injected counts)
-              tooltip "This counts the number of errors that this baker has encountered since it began running. The most recent errors will be detailed below, if any have occurred." . text $
+              tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
                 "Errors:" <> (T.pack . show $ _count_errors counts)
             case _report_errors report of
               [] -> blank
-              es -> divClass "errors" . el "ul" . forM_ es $ \e -> do
-                el "li" $ do
-                  divClass "timestamp" . text . T.pack . show . _error_time $ e
-                  divClass "errortext" . el "strong" . text . T.pack . show . _error_text $ e
-            el "description" . el "ul" . forM_ baked $ \b -> do
-              el "li" $ do
-                el "strong" $ text $ T.pack . show . _baked_time $ b
-                el "ul" $ do
-                  el "li" $ text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
-                  el "li" $ text $ ("Hash: " <>) . _baked_hash $ b
+              es -> divClass "errors" $ do
+                divClass "header" $ text "Errors"
+                el "ul" . forM_ es $ \e -> do
+                  el "li" $ do
+                    divClass "timestamp" . text . T.pack . show . _error_time $ e
+                    divClass "errortext" . el "strong" . text . T.pack . show . _error_text $ e
+            divClass "header" $ text "Baked Blocks"
+            el "description" . forM_ baked $ \b -> do
+              el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
+              el "div" $ do
+                text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
+                text $ (" Hash: " <>) . _baked_hash $ b
   return ()

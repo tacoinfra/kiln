@@ -125,14 +125,20 @@ opts = mainArgs
       <> metavar "TEZOS-IDENTITY"
       )
 
+data Node = Node
+  { _node_host :: Text
+  , _node_manager :: Manager
+  }
+
 data RpcResponse a =
     RpcResponse_HttpException HttpException
   | RpcResponse_UnexpectedStatus Status
   | RpcResponse_NonJSON LBS.ByteString
   | RpcResponse_Success a
+  deriving (Show)
 
-tezosRpc :: FromJSON a => Manager -> Text -> IO (RpcResponse a)
-tezosRpc mgr rpcText = do
+tezosRpc :: FromJSON a => Node -> Text -> IO (RpcResponse a)
+tezosRpc node rpcText = do
   let rpcBoilerplate req = req
         { method = "POST"
         , requestBody = "{}"
@@ -142,8 +148,8 @@ tezosRpc mgr rpcText = do
           , (hAccept, "*/*")
           ]
         }
-  let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ rpcText
-  result' <- liftIO $ try $ httpLbs request mgr
+  let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ _node_host node <> rpcText
+  result' <- liftIO $ try $ httpLbs request (_node_manager node)
   case result' of
     Left err -> return (RpcResponse_HttpException err)
     Right result -> case responseStatus result of
@@ -154,11 +160,11 @@ tezosRpc mgr rpcText = do
           Just v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
 
-getProtoInfo :: Manager -> IO (Maybe ProtoInfo)
-getProtoInfo mgr = do
-  r <- tezosRpc mgr "/blocks/head/proto/constants"
-  return $ case r of
-    RpcResponse_Success v -> do
+getProtoInfo :: Node -> IO (Maybe ProtoInfo)
+getProtoInfo node = do
+  r <- tezosRpc node "/blocks/head/proto/constants"
+  case r of
+    RpcResponse_Success v -> return $ do
       let readKey k = ((/10^6) . fromInteger) <$> preview (key k . _Integer) (v :: Value)
       bsd <- readKey "block_security_deposit"
       esd <- readKey "endorsement_security_deposit"
@@ -170,14 +176,17 @@ getProtoInfo mgr = do
         , _protoInfo_blockReward = br
         , _protoInfo_endorsementReward = er
         }
-    _ -> Nothing
+    _ -> do
+      putStrLn "FAILED TO OBTAIN PROTOCOL INFO FROM NODE:"
+      print r
+      return Nothing
 
-fetchBlockFromFragment :: Text -> Manager -> MVar Baked -> Text -> IO ()
-fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
+fetchBlockFromFragment :: Node -> MVar Baked -> Text -> IO ()
+fetchBlockFromFragment node bucket fragment = goFragment 20
   where
     goFragment 0 = liftIO $ T.putStrLn $ "Ran out of retries (tried 20 times) getting block for " <> fragment
     goFragment gas = do
-      tezosRpc mgr (T.concat [nodeHost, "/blocks/head/complete/", fragment]) >>= \case
+      tezosRpc node (T.concat ["/blocks/head/complete/", fragment]) >>= \case
         RpcResponse_HttpException e -> liftIO $ putStrLn $ "bad response from node" <> show e
         RpcResponse_UnexpectedStatus s -> liftIO $ putStrLn $ "bad response from node" <> show s
         RpcResponse_NonJSON raw -> liftIO $ putStrLn $ "Non JSON response from node: " <> show raw
@@ -188,7 +197,7 @@ fetchBlockFromFragment nodeHost mgr bucket fragment = goFragment 20
               goFragment (gas - 1)
 
     goBlock blockId = do
-      tezosRpc mgr (T.concat [nodeHost, "/blocks/", blockId]) >>= \case
+      tezosRpc node (T.concat ["/blocks/", blockId]) >>= \case
         RpcResponse_Success v -> liftIO $ modifyMVar_ bucket $ return . (set baked_block v)
         RpcResponse_NonJSON raw -> liftIO $ putStrLn $ "Non JSON response from node: " <> show raw 
         RpcResponse_HttpException e -> liftIO $ putStrLn $ "bad response from node " <> show e
@@ -223,12 +232,13 @@ mainArgs port nodeRPC client identity = do
   let updateData f = modifyMVar_ dataRef $ return . f
 
   httpMgr <- liftIO $ newManager tlsManagerSettings
+  let node = Node { _node_host = "http://" <> nodeRPC, _node_manager = httpMgr }
 
   void . forkIO $ forever $ do
     balanceLine <- readProcess client ["get", "balance", "for", identity] ""
     let balance = readMaybe (filter (\c -> isDigit c || c == '.') balanceLine)
     updateData (set topV_tezzies balance)
-    protoInfo <- getProtoInfo httpMgr
+    protoInfo <- getProtoInfo node
     updateData (set topV_protoInfo protoInfo)
     threadDelay (60*10^6)
 
@@ -241,7 +251,7 @@ mainArgs port nodeRPC client identity = do
       MessageType_Injected h -> do
         modifyMVar_ dataRef $ \tops -> do
           bakedV <- newMVar (Baked (views (topV_counts . count_injected) (+1) tops) h now Nothing)
-          forkIO $ fetchBlockFromFragment ("http://" <> nodeRPC) httpMgr bakedV h
+          forkIO $ fetchBlockFromFragment node bakedV h
           return
             . over (topV_counts . count_injected) (+1)
             . over topV_last_baked (\bs -> take 20 $ bakedV : bs)
