@@ -128,12 +128,12 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
                     failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
                 case failures of
                   (t:ts) -> do
-                    text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> "."
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> "."
+                    text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
+                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
                     text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
                   [] | tz < 4 * (bSD + eSD) -> do
-                    text $ "The identity in use by this baker is running somewhat low on tezzies."
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> "."
+                    text $ "The identity in use by this baker is running somewhat low on tezzies. "
+                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
                     text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
                   _ -> blank
 
