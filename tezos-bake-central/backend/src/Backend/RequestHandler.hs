@@ -9,6 +9,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+
 module Backend.RequestHandler where
 
 import Data.Functor.Identity

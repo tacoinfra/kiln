@@ -2,6 +2,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+
 module Backend.ViewSelectorHandler where
 
 import Control.Lens
@@ -35,4 +37,4 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
             (cid, address, report) <- rs
             return (cid, (First (Just (address, ClientInfo cid <$> report)), a))
         }
-      
+

@@ -27,6 +27,7 @@ library
     http-client,
     http-types,
     lens,
+    lens-aeson,
     mtl,
     process,
     semigroups,

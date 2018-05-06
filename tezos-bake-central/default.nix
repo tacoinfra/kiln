@@ -25,23 +25,26 @@ in focus.mkDerivation {
     obelisk-executable-config
   ];
   backendDepends = p: with p; [
-    stm
-    mime-mail
-    safe
-    monad-logger
+    clientsession
     data-default
-    resource-pool
-    monad-control
     groundhog
     groundhog-postgresql
+    http-client
+    http-client-tls
     http-conduit
+    http-types
+    mime-mail
+    monad-control
+    monad-logger
+    obelisk-asset-serve-snap
+    obelisk-executable-config-inject
     postgresql-simple
-    clientsession
+    resource-pool
+    safe
     snap
     snap-core
     snap-loader-static
     snap-server
-    obelisk-executable-config-inject
-    obelisk-asset-serve-snap
+    stm
   ];
 }

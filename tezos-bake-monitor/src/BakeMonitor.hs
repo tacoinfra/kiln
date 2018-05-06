@@ -5,10 +5,13 @@
 
 import Control.Concurrent
 import Control.Concurrent.Async
+import Control.Concurrent.MVar
+import Control.Exception
 import Control.Lens.Combinators (views, over, set, _head)
 import Control.Monad
+import Control.Monad
 import Control.Monad.Reader
--- import Control.Monad.Trans
+import Control.Monad.Trans
 import Data.Aeson (encode)
 import Data.Char
 import Data.Maybe (catMaybes)
@@ -19,13 +22,12 @@ import GHC.IO.Exception
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import Options.Applicative
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
--- import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.IO as LT
 import Snap hiding (method)
 import System.Process
 import Text.Read
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy.IO as LT
 
 import Tezos.BakeMonitor.Types
 import Tezos.NodeRPC
@@ -71,7 +73,6 @@ fetchBlockFromFragment nodeAddr httpMgr = flip runReaderT (NodeRPCContext httpMg
         RpcResponse_Success v -> case v of
             (blockId:_) -> return blockId
             _ -> error $ "Block Prefix not known to node" <> "for prefix" <> show pfx
-
 
 opts :: Parser (IO ())
 opts = mainArgs
@@ -123,12 +124,13 @@ mainArgs monitorPort nodeRPC clientExecutable identity = do
       , std_err = CreatePipe
       }
   dataRef <- newMVar $ Report
-    (Count 0 0 0)
-    []
-    []
-    []
-    []
-    Nothing
+    { _report_counts = (Count 0 0 0)
+    , _report_last_baked = []
+    , _report_errors = []
+    , _report_failedbaker = []
+    , _report_last_seen = []
+    , _report_tezzies = Nothing
+    }
 
   let updateData f = modifyMVar_ dataRef $ return . f
 
@@ -153,7 +155,6 @@ mainArgs monitorPort nodeRPC clientExecutable identity = do
         return . bumpBlockSeen blockHash now . over (report_counts . count_selected) (+1) $ tops
       MessageType_Injected h -> do
         modifyMVar_ dataRef $ \tops -> do
-
           blockHash <- fetchBlockFromFragment ("http://" <> nodeRPC) httpMgr h
           let bakedV = (Baked (views (report_counts . count_injected) (+1) tops) blockHash now)
           return

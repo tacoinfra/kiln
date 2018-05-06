@@ -41,6 +41,17 @@ data Report = Report
 instance FromJSON Report
 instance ToJSON Report
 
+data ProtoInfo = ProtoInfo
+  { _protoInfo_endorsementSecurityDeposit :: Micro
+  , _protoInfo_blockSecurityDeposit :: Micro
+  , _protoInfo_blockReward :: Micro
+  , _protoInfo_endorsementReward :: Micro
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance FromJSON ProtoInfo
+instance ToJSON ProtoInfo
+
 data Count = Count
   { _count_selected :: !Integer
   , _count_injected :: !Integer

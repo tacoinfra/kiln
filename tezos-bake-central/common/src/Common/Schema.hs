@@ -2,9 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Common.Schema where
 
-import Control.Lens
 import Data.Aeson
-import Data.Aeson.TH
 import Data.Text (Text)
 import GHC.Generics
 import Data.Typeable
@@ -40,3 +38,12 @@ instance HasId Node
 instance FromJSON Node
 instance ToJSON Node
 
+data Parameters = Parameters
+  { _parameters_node :: Id Node
+  , _parameters_protoInfo :: ProtoInfo
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId Parameters
+instance FromJSON Parameters
+instance ToJSON Parameters

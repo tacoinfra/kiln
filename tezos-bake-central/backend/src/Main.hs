@@ -1,3 +1,5 @@
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -13,6 +15,7 @@ import Control.Lens
 import Control.Exception
 import Control.Monad
 import Control.Monad.Trans
+import Control.Monad.Trans.Control
 import Control.Monad.Reader
 import Control.Monad.Logger (runNoLoggingT)
 import Data.ByteString (ByteString)
@@ -21,9 +24,8 @@ import qualified Data.AppendMap as AMap
 import Data.Default
 import Data.Function (on)
 import Data.IORef
-import Data.List
+import Data.List hiding (head)
 import Data.Monoid
-import Data.Maybe (catMaybes)
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -52,7 +54,7 @@ import Network.HTTP.Types.Status(Status(..))
 import Network.Mail.Mime
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
-import Prelude hiding (id, (.))
+import Prelude hiding (head, id, (.))
 import qualified Web.ClientSession as CS
 import Snap
 import Safe
@@ -86,12 +88,6 @@ mailFor toAddr errs =
 -- if %0 != %2; sulk
 
 
-data BlockHealthData = BlockHealthData
-  { best_head :: BlockInfo
-  , seen_block :: Maybe BlockInfo
-  , nth_parent :: Maybe BlockInfo
-  }
-
 data ForkInfo = ForkInfo Node ForkStatus Baked
 data ForkStatus
   = ForkStatus_Good
@@ -100,18 +96,20 @@ data ForkStatus
   | ForkStatus_Forked
   | ForkStatus_BadNode (RpcResponse Void)
 
-cheekyShow = T.pack . \case
+
+showForkInfo :: ForkStatus -> Text
+showForkInfo = T.pack . \case
   ForkStatus_Good -> "good"
   ForkStatus_TooNew -> "new"
   ForkStatus_TooOld -> "old"
   ForkStatus_Forked -> "forked"
   ForkStatus_BadNode _ -> "err"
 
-looksCromulent :: [ForkInfo] -> IO ()
-looksCromulent xs = print total >> print (fmap length <$> counts)
+alertForkyBlocks :: [ForkInfo] -> IO ()
+alertForkyBlocks xs = print total >> print (fmap length <$> counts)
   where
     sing :: ForkInfo -> AMap.AppendMap Node (AMap.AppendMap Text [Baked])
-    sing (ForkInfo n h b) = AMap.singleton n $ AMap.singleton (cheekyShow h) [b]
+    sing (ForkInfo n h b) = AMap.singleton n $ AMap.singleton (showForkInfo h) [b]
     total = length xs
     counts = foldMap sing xs
 
@@ -122,8 +120,8 @@ factorResponse (RpcResponse_UnexpectedStatus bad) = Left $ RpcResponse_Unexpecte
 factorResponse (RpcResponse_NonJSON clue bad) = Left $ RpcResponse_NonJSON clue bad
 factorResponse (RpcResponse_Success ok) = Right ok
 
-cromulent1 :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
-cromulent1 now rpt node = do
+scanForkInfo :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
+scanForkInfo now rpt node = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
   traverse (flip runReaderT ctx . checkChainHealth now 30) $ {- catMaybes $ maximumByMay (compare `on` _baked_time) <$> -} concat [_report_last_baked rpt, _report_last_seen rpt]
@@ -160,6 +158,38 @@ checkChainHealth now delay seenBaked = do
                 if _blockInfo_predecessor seen == _blockInfo_predecessor ancestor
                 then return ForkStatus_Good
                 else return ForkStatus_Forked
+addSomeNodes
+  :: (MonadBaseControl IO m, MonadIO m)
+  => [Node]
+  -> Pool Postgresql
+  -> m ()
+addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $ do
+  flip traverse nodes $ \(Node addr) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
+    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr]
+    _ -> insertAndNotify_ $ Node {_node_address = addr}
+
+
+nodeWorker
+  :: (MonadIO m)
+  => Int -- delay between checking for updates, in seconds
+  -> Pool Postgresql
+  -> m (IO ())
+nodeWorker delay db = do
+  httpMgr <- liftIO $ newManager tlsManagerSettings
+  worker (seconds delay) $ do
+    putStrLn "Update cycle."
+    runNoLoggingT . runDb (Identity db) $ do
+      nodes <- [queryQ| SELECT id, address FROM "Node" |]
+      flip traverse nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+        let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
+        params <- flip runReaderT ctx $ doRPC ProtoConstants
+        flip traverse params $ \protoInfo -> do
+          [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
+            (Only (pid :: Id Parameters): _) ->
+              updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
+            _ ->
+              insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
+
 
 
 clientWorker :: (MonadIO m)
@@ -189,15 +219,15 @@ clientWorker nodes toAddr delay db = do
         let report = getResponseBody response :: Report
             reportJson = Json report
         case maximumByMay (compare `on` _baked_time) $ _report_last_seen report of
-          -- Nothing -> liftIO $ mailFor toAddr ("baker " <> address <> " has not seen a block!")
+          Nothing -> return () -- liftIO $ mailFor toAddr ("baker " <> address <> " has not seen a block!")
           -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromIntegral 30) (_baked_time b) < now) $ void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\n" <> T.pack (show b))]) Nothing
+          Just b -> when (addUTCTime (fromInteger 30) (_baked_time b) < now) $ void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\n" <> T.pack (show b))]) Nothing
 
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
-        asdf <- traverse (cromulent1 now report) nodes -- (Node . snd <$> nodes)
-        liftIO $looksCromulent $ concat $ asdf
+        forkInfo <- traverse (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
+        liftIO $ alertForkyBlocks $ concat $ forkInfo
         updateAndNotify cid [Client_updatedField =. Just now]
         case sort (_report_errors report) of
           [] -> return ()
@@ -233,6 +263,11 @@ main = withFocus $ do
     -- Start a thread to send queued emails
     addFinalizer =<< (runNoLoggingT $ emailWorker (seconds 10) (Identity db) email)
 
+    -- TODO: in the real thing, users should manage their own list of nodes,
+    -- with some bootstrapping by using the well known address
+    addSomeNodes nodes db
+
+
     (handleListen, wsFinalizer) <- serveDbOverWebsockets db
       (requestHandler csk db)
       (notifyHandler db)
@@ -240,6 +275,7 @@ main = withFocus $ do
       (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
+    addFinalizer =<< nodeWorker 30 db
     addFinalizer =<< clientWorker nodes userEmailAddress 10 db
 
     liftIO (quickHttpServe $ route

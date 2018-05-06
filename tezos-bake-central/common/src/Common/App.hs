@@ -21,16 +21,19 @@ import Focus.App
 import Focus.Schema
 
 import Common.Schema
+import Tezos.BakeMonitor.Types
 
 data Bake = Bake
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_clients :: Maybe a -- not bothering with partial information listing yet.
+  , _bakeViewSelector_parameters :: Maybe a -- not bothering with partial information listing yet.
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
   { _bakeView_clients :: AppendMap (Id Client) (First (Maybe (ClientAddress, Maybe ClientInfo)), a)
+  , _bakeView_parameters :: AppendMap (Id Node) (First (Maybe (ProtoInfo)), a)
   }
   deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -39,19 +42,25 @@ cropBakeView vs v =
   let clients = case _bakeViewSelector_clients vs of
         Nothing -> mempty
         Just _ -> _bakeView_clients v
+      parameters = case _bakeViewSelector_parameters vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_parameters v
   in BakeView
       { _bakeView_clients = clients
+      , _bakeView_parameters = parameters
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil
+  nil = BakeViewSelector nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
+    , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     }
 
 instance FunctorMaybe BakeViewSelector where
   fmapMaybe f a = BakeViewSelector
     { _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
+    , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
     }
 
 {-
@@ -59,12 +68,14 @@ instance Align BakeView where
   nil = BakeView nil
   alignWith f u v = BakeView
     { _bakeView_clients = alignTheseWith f (_bakeView_clients u) (_bakeView_clients v)
+    { _bakeView_parameters = alignTheseWith f (_bakeView_parameters u) (_bakeView_parameters v)
     }
 -}
 
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
     { _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
+    , _bakeView_parameters = fmapMaybeSnd f $ _bakeView_parameters a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -88,8 +99,11 @@ instance Group (BakeViewSelector SelectedCount) where
 instance Additive (BakeViewSelector SelectedCount)
 
 instance (Semigroup a) => Monoid (BakeView a) where
-  mempty = BakeView mempty
-  mappend u v = BakeView { _bakeView_clients = _bakeView_clients u <> _bakeView_clients v }
+  mempty = BakeView mempty mempty
+  mappend u v = BakeView
+    { _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
+    , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
+    }
 
 instance Semigroup a => Semigroup (BakeView a) where
   (<>) = mappend

@@ -31,8 +31,8 @@ notifyHandler
 notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
   let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
         Success cid -> do
-          client <- get $ fromId (cid :: Id Client)
-          infos <- select (ClientInfo_clientField ==. cid)
+          client :: Maybe Client <- get $ fromId (cid :: Id Client)
+          infos :: [ClientInfo] <- select (ClientInfo_clientField ==. cid)
           return $ case _bakeViewSelector_clients aggVS of
             Nothing -> mempty :: BakeView a
             Just a ->
@@ -43,8 +43,19 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   { _bakeView_clients = Map.singleton cid (clientWithInfo, a)
                   }
         Error e -> parseErr notifyMessage e
+      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success nid -> do
+          params :: [Parameters] <- select (Parameters_nodeField ==. nid)
+          node :: Maybe Node <- get $ fromId (nid :: Id Node)
+          return $ case _bakeViewSelector_parameters aggVS of
+            Nothing -> mempty :: BakeView a
+            Just a -> (mempty :: BakeView a)
+                  { _bakeView_parameters = Map.singleton nid (First $ _parameters_protoInfo <$> listToMaybe params, a)
+                  }
+        Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
+    "Parameters" -> handleParameters
     _ -> do
       liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
       return mempty
