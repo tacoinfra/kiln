@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
@@ -22,7 +23,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.AppendMap as AMap
 import Data.Default
+import Data.Either.Validation
 import Data.Function (on)
+import Data.Foldable
 import Data.IORef
 import Data.List hiding (head)
 import Data.Monoid
@@ -88,7 +91,12 @@ mailFor toAddr errs =
 -- if %0 != %2; sulk
 
 
-data ForkInfo = ForkInfo Node ForkStatus Baked
+data ForkInfo = ForkInfo
+  { _forkInfo_node :: Node
+  , _forkInfo_forkStatus :: ForkStatus
+  , _forkInfo_baked :: Baked
+  }
+
 data ForkStatus
   = ForkStatus_Good
   | ForkStatus_TooNew
@@ -97,21 +105,33 @@ data ForkStatus
   | ForkStatus_BadNode (RpcResponse Void)
 
 
-showForkInfo :: ForkStatus -> Text
-showForkInfo = T.pack . \case
+showForkStatus :: ForkStatus -> Text
+showForkStatus = T.pack . \case
   ForkStatus_Good -> "good"
   ForkStatus_TooNew -> "new"
-  ForkStatus_TooOld -> "old"
+  ForkStatus_TooOld -> "block not in chain"
   ForkStatus_Forked -> "forked"
-  ForkStatus_BadNode _ -> "err"
+  ForkStatus_BadNode _ -> "no response from node"
 
-alertForkyBlocks :: [ForkInfo] -> IO ()
-alertForkyBlocks xs = print total >> print (fmap length <$> counts)
-  where
-    sing :: ForkInfo -> AMap.AppendMap Node (AMap.AppendMap Text [Baked])
-    sing (ForkInfo n h b) = AMap.singleton n $ AMap.singleton (showForkInfo h) [b]
-    total = length xs
-    counts = foldMap sing xs
+onBadForkState :: (ForkInfo -> a) -> ForkInfo -> Validation a ()
+onBadForkState k fi = case _forkInfo_forkStatus fi of
+  ForkStatus_TooOld -> Failure $ k fi
+  ForkStatus_Forked -> Failure $ k fi
+  _ -> Success ()
+
+showBadFork :: ForkInfo -> [Error]
+showBadFork (ForkInfo node status baked) = pure $ Error (_baked_time baked) $ T.concat
+          [ "node: ", _node_address node
+          , " BAKER STATE:" , showForkStatus status
+          , " for block:", unBlockHash $ _baked_hash baked
+          , " @ ",  T.pack $ show $ _baked_time baked
+          , "\n"
+          ]
+
+validateForkyBlocks :: Applicative f => ([Error] -> f ()) -> [ForkInfo] -> f ()
+validateForkyBlocks f xs = case traverse (onBadForkState (showBadFork)) xs of
+  Success _ -> pure ()
+  Failure bad -> f bad
 
 
 factorResponse :: RpcResponse a -> Either (RpcResponse Void) a
@@ -124,7 +144,8 @@ scanForkInfo :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
 scanForkInfo now rpt node = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
-  traverse (flip runReaderT ctx . checkChainHealth now 30) $ {- catMaybes $ maximumByMay (compare `on` _baked_time) <$> -} concat [_report_last_baked rpt, _report_last_seen rpt]
+  -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_last_baked rpt, _report_last_seen rpt]
+  traverse (flip runReaderT ctx . checkChainHealth now 30) $ _report_last_baked rpt
 
 checkChainHealth
   :: MonadIO m
@@ -227,7 +248,8 @@ clientWorker nodes toAddr delay db = do
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
         forkInfo <- traverse (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
-        liftIO $ alertForkyBlocks $ concat $ forkInfo
+        liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
+
         updateAndNotify cid [Client_updatedField =. Just now]
         case sort (_report_errors report) of
           [] -> return ()
@@ -240,6 +262,9 @@ clientWorker nodes toAddr delay db = do
                 liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
                 _ <- queueEmail (mailFor toAddr new) Nothing
                 return ()
+        -- TODO.  debounce below as above
+        flip validateForkyBlocks (concat $ forkInfo) $ \errors -> do
+          void $ queueEmail (mailFor toAddr errors) Nothing
 
 main :: IO ()
 main = withFocus $ do
