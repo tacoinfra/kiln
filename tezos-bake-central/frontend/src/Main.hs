@@ -164,5 +164,5 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
               el "div" $ do
                 text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
-                text $ (" Hash: " <>) . unBlockHash . _baked_hash $ b
+                text $ (" Hash: " <>) . T.take 14 . unBlockHash . _baked_hash $ b
   return ()
