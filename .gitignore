@@ -1,0 +1,16 @@
+
+## /!\ /!\ Update .dockerignore accordingly /!\ /!\
+
+.DS_Store
+__pycache__
+*.pyc
+*~
+\#*\#
+
+*.rej
+*.orig
+
+*/result
+*/result-[0-9]*
+frontendJs
+db
