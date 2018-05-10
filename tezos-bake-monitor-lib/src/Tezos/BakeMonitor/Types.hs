@@ -16,7 +16,9 @@ import Data.Aeson.TH
 import qualified Data.ByteString.Lazy as LBS
 import Data.Scientific
 import Data.Fixed
+import Data.Function
 import Data.Text (Text)
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import Data.Time.Clock
@@ -78,9 +80,15 @@ instance FromJSON Tezzies where
   parseJSON x = (microTezzies . (floor :: Scientific -> Int64)) <$> parseJSON x
             <|> (microTezzies . (read :: String -> Int64)) <$> parseJSON x
 
--- | TODO: just use Focus.Schema.Json
-newtype PeriodSequence = PeriodSequence [Int]
-  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON)
+newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
+  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor)
+
+instance Foldable PeriodSequenceF where
+  foldMap f (PeriodSequence xs) = go xs where
+    go (x :| []) = fix (f x `mappend`)
+    go (x :| (y:ys)) = f x `mappend` go (y :| ys)
+
+type PeriodSequence = PeriodSequenceF Int
 
 data ProtoInfo = ProtoInfo
   { _protoInfo_blockReward :: Tezzies
