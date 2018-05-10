@@ -29,6 +29,7 @@ import Data.Foldable
 import Data.IORef
 import Data.List hiding (head)
 import Data.Monoid
+import Data.Maybe (listToMaybe)
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -140,12 +141,12 @@ factorResponse (RpcResponse_UnexpectedStatus bad) = Left $ RpcResponse_Unexpecte
 factorResponse (RpcResponse_NonJSON clue bad) = Left $ RpcResponse_NonJSON clue bad
 factorResponse (RpcResponse_Success ok) = Right ok
 
-scanForkInfo :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo now rpt node = do
+scanForkInfo :: MonadIO m => Int -> UTCTime -> Report -> Node -> m [ForkInfo]
+scanForkInfo delay now rpt node = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
   -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_last_baked rpt, _report_last_seen rpt]
-  traverse (flip runReaderT ctx . checkChainHealth now 30) $ _report_last_baked rpt
+  traverse (flip runReaderT ctx . checkChainHealth now delay) $ _report_last_baked rpt
 
 checkChainHealth
   :: MonadIO m
@@ -228,10 +229,13 @@ clientWorker nodes toAddr delay db = do
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
 
+      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
                            ORDER BY updated NULLS FIRST |]
+
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
         request <- parseRequest ("http://" <> T.unpack address <> "/")
@@ -247,7 +251,7 @@ clientWorker nodes toAddr delay db = do
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
-        forkInfo <- traverse (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
+        forkInfo <- traverse (scanForkInfo blockHeightTimeout now report) nodes
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
