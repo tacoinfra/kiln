@@ -11,13 +11,10 @@ module Tezos.NodeRPC where
 
 import Control.Exception
 import Control.Monad.Reader
-import Control.Lens.Combinators (preview)
 import Data.Aeson
-import Data.Fixed
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
-import Data.Aeson.Lens (key, _Integer)
 import Data.ByteString.Lazy as LBS
 import GHC.Generics
 import Network.HTTP.Client
@@ -81,21 +78,7 @@ doRPC :: MonadIO m => NodeRPCRequest a -> NodeRPCT m (RpcResponse a)
 doRPC = \case
   Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
   Block (BlockHash hash) -> doRPCImpl ("/blocks/" <> hash)
-  ProtoConstants -> flip doRPCImpl' ("/blocks/head/proto/constants") $ \bs -> do
-    -- TODO: just make this the *Json instance
-    v <- eitherDecode bs
-    let readKey :: Text -> Either String Micro
-        readKey k = maybe (Left $ "missing:" <> T.unpack k) Right $ ((/10^6) . fromInteger) <$> preview (key k . _Integer) (v :: Value)
-    bsd <- readKey "block_security_deposit"
-    esd <- readKey "endorsement_security_deposit"
-    br <- readKey "block_reward"
-    er <- readKey "endorsement_reward"
-    return $ ProtoInfo
-      { _protoInfo_blockSecurityDeposit = bsd
-      , _protoInfo_endorsementSecurityDeposit = esd
-      , _protoInfo_blockReward = br
-      , _protoInfo_endorsementReward = er
-      }
+  ProtoConstants -> doRPCImpl ("/blocks/head/proto/constants")
 
 
 
