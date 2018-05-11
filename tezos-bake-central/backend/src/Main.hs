@@ -161,14 +161,14 @@ clientWorker nodes toAddr delay db = do
 
         forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
+              rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_baked_hash b), _baked_level b, blockReward) | b <- _report_lastBaked report]
-              minLevel = headLevel - _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
+                [(cid, unBlockHash (_baked_hash b), _baked_level b + rewardDelay, blockReward) | b <- _report_lastBaked report]
           when (not . null $ _report_lastBaked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
                             ON CONFLICT DO NOTHING |]
-            _ <- [executeQ| DELETE FROM "PendingReward" WHERE level < ?minLevel |]
+            _ <- [executeQ| DELETE FROM "PendingReward" WHERE level < ?headLevel |]
             return ()
           return ()
 
