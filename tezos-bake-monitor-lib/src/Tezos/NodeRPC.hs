@@ -8,7 +8,6 @@
 
 module Tezos.NodeRPC where
 
-
 import Control.Exception
 import Control.Monad.Reader
 import Control.Lens.Combinators (preview)
@@ -32,13 +31,22 @@ data NodeRPCContext = NodeRPCContext
   , _nodeRPCContext_node :: Text
   }
 
+newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-type NodeRPCT m = ReaderT NodeRPCContext m
+runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
+runNodeRPCT c (NodeRPCT x) = runReaderT x c
 
+class MonadTezosNode m where
+  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
+  nodeAddress :: m Text
+
+instance MonadIO m => MonadTezosNode (NodeRPCT m) where
+  nodeRPC = doRPC
+  nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 newtype BlockPrefix = BlockPrefix Text
   deriving (Eq, Show, Generic, Typeable)
-
 
 data NodeRPCRequest a where
   Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
@@ -49,7 +57,7 @@ doRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 doRPCImpl = doRPCImpl' eitherDecode
 
 doRPCImpl' :: (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
-doRPCImpl' decoder rpcSelector = do
+doRPCImpl' decoder rpcSelector = NodeRPCT $ do
   mgr <- asks _nodeRPCContext_httpManager
   node <- asks _nodeRPCContext_node
 
@@ -76,7 +84,6 @@ doRPCImpl' decoder rpcSelector = do
           Right v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
 
-
 doRPC :: MonadIO m => NodeRPCRequest a -> NodeRPCT m (RpcResponse a)
 doRPC = \case
   Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
@@ -84,18 +91,21 @@ doRPC = \case
   ProtoConstants -> flip doRPCImpl' ("/blocks/head/proto/constants") $ \bs -> do
     -- TODO: just make this the *Json instance
     v <- eitherDecode bs
-    let readKey :: Text -> Either String Micro
-        readKey k = maybe (Left $ "missing:" <> T.unpack k) Right $ ((/10^6) . fromInteger) <$> preview (key k . _Integer) (v :: Value)
-    bsd <- readKey "block_security_deposit"
-    esd <- readKey "endorsement_security_deposit"
-    br <- readKey "block_reward"
-    er <- readKey "endorsement_reward"
+    let readIntegerKey :: (Num a) => Text -> Either String a
+        readIntegerKey k = maybe (Left $ "missing:" <> T.unpack k) Right $ fromInteger <$> preview (key k . _Integer) (v :: Value)
+        readMicroKey :: Text -> Either String Micro
+        readMicroKey k = fmap (/10^(6 :: Int)) $ readIntegerKey k
+    bsd <- readMicroKey "block_security_deposit"
+    esd <- readMicroKey "endorsement_security_deposit"
+    br <- readMicroKey "block_reward"
+    er <- readMicroKey "endorsement_reward"
+    pc <- readIntegerKey "preserved_cycles"
+    bpc <- readIntegerKey "blocks_per_cycle"
     return $ ProtoInfo
       { _protoInfo_blockSecurityDeposit = bsd
       , _protoInfo_endorsementSecurityDeposit = esd
       , _protoInfo_blockReward = br
       , _protoInfo_endorsementReward = er
+      , _protoInfo_preservedCycles = pc
+      , _protoInfo_blocksPerCycle = bpc
       }
-
-
-

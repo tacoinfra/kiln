@@ -14,9 +14,12 @@ import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Data.Fixed
 import Data.Int(Int64)
+import Data.Word
 import Focus.Backend.Account ()
 import Focus.Backend.DB.Groundhog (groundhog, mkFocusPersist)
 import Focus.Backend.Schema.TH
+import Database.PostgreSQL.Simple.ToField
+import Database.PostgreSQL.Simple.FromField
 
 import Common.Schema
 import Tezos.BakeMonitor.Types
@@ -25,11 +28,16 @@ import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Data.Proxy
 
+instance FromField Word64 where
+  fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
+
+-- TODO: Move all of this into focus
+instance ToField (Fixed a) where
+  toField (MkFixed x) = toField x
+
 instance HasResolution a => PrimitivePersistField (Fixed a) where
-  toPrimitivePersistValue p x = toPrimitivePersistValue p $ (floor :: Fixed a -> Int64) $ x * (fromInteger $ resolution (Proxy :: Proxy a))
-  fromPrimitivePersistValue p x = (fromIntegral x' :: Fixed a) / (fromInteger $ resolution (Proxy :: Proxy a))
-    where
-      x' :: Int64 = fromPrimitivePersistValue p x
+  toPrimitivePersistValue p (MkFixed x) = toPrimitivePersistValue p (fromInteger x :: Int64)
+  fromPrimitivePersistValue p x = MkFixed (toInteger (fromPrimitivePersistValue p x :: Int64))
 
 instance HasResolution a => PersistField (Fixed a) where
   persistName _ = "Fixed"
@@ -77,6 +85,13 @@ mkFocusPersist (Just "migrateSchema") [groundhog|
               table: Node
               onDelete: cascade
   - embedded: ProtoInfo
+  - entity: PendingReward
+    constructors:
+      - name: PendingReward
+        uniques:
+          - name: _pendingReward_uniqeness
+            type: constraint
+            fields: [_pendingReward_client, _pendingReward_hash]
 |]
 
 fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
@@ -84,4 +99,5 @@ fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Node, 'NodeKey)
   , (''Parameters, 'ParametersKey)
+  , (''PendingReward, 'PendingRewardKey)
   ]

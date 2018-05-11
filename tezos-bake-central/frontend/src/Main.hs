@@ -78,10 +78,10 @@ tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  vs <- watchViewSelector (pure ( BakeViewSelector
+  vs <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     , _bakeViewSelector_parameters = Just 1
-    }))
+    }
   let dparameters :: Dynamic t (Maybe ProtoInfo)
       dparameters = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters vs)
 
@@ -124,7 +124,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
           Left e -> text e
           Right report -> do
             let counts = _report_counts report
-                baked = _report_last_baked report
+                baked = _report_lastBaked report
             forM_ (_report_tezzies report) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
@@ -163,6 +163,6 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
             el "description" . forM_ baked $ \b -> do
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
               el "div" $ do
-                text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
+                text $ ("Level: "<>) . T.pack . show . _baked_level $ b
                 text $ (" Hash: " <>) . T.take 14 . unBlockHash . _baked_hash $ b
   return ()
