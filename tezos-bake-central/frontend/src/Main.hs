@@ -20,6 +20,7 @@ import Data.Monoid hiding (First(..), (<>))
 import Data.Semigroup
 import Data.Text (Text)
 import Data.Time.Format
+import Data.Word
 import Focus.Api
 import Focus.JS.App
 import Focus.JS.Run
@@ -78,19 +79,30 @@ tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  vs <- watchViewSelector . pure $ mempty
+  theView <- watchViewSelector . pure $ BakeViewSelector
     { _bakeViewSelector_clients = Just 1
     , _bakeViewSelector_parameters = Just 1
+    , _bakeViewSelector_level = Just 1
     }
   let dparameters :: Dynamic t (Maybe ProtoInfo)
-      dparameters = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters vs)
+      dparameters = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters theView)
 
-  let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
-      clients = ffor (fmap _bakeView_clients vs) $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
+      dlevel :: Dynamic t (Maybe Word64)
+      dlevel = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
+
+      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
+      clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \k (First r,_) ->
           case r of
-            (First Nothing) -> Nothing
-            (First (Just (name, Nothing))) -> Just (name, Left "No response yet.")
-            (First (Just (name, Just ci))) -> Just (name, Right . unJson $ _clientInfo_report ci)
+            Nothing -> Nothing
+            (Just (name, Nothing)) -> Just (name, Left "No response yet.")
+            (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
+
+      rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Word64 Micro))
+      rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> r) (_bakeView_rewards v)
+
+  el "div" $ display dlevel
+  el "div" $ display rewards
+
   el "h1" $ text "Baker Central"
   addressInput <- textInput def
   addButton <- buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
