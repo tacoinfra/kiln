@@ -46,5 +46,12 @@ in focus.mkDerivation {
     snap-loader-static
     snap-server
     stm
+    diagrams-svg
+    Chart-diagrams
+    colour
+    Chart
+    diagrams-core
+    diagrams-lib
+    svg-builder
   ];
 }

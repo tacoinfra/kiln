@@ -16,10 +16,13 @@ import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap, _unAppendMap)
 import Data.Either.Combinators
 import Data.Fixed
+import Data.Foldable (foldl')
+import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
 import Data.Semigroup
 import Data.Text (Text)
 import Data.Time.Format
+import Data.Word
 import Focus.Api
 import Focus.JS.App
 import Focus.JS.Run
@@ -32,6 +35,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+
+import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 import Tezos.BakeMonitor.Types
 
@@ -78,19 +83,36 @@ tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
 appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  vs <- watchViewSelector (pure ( BakeViewSelector
+  theView <- watchViewSelector . pure $ BakeViewSelector
     { _bakeViewSelector_clients = Just 1
     , _bakeViewSelector_parameters = Just 1
-    }))
+    , _bakeViewSelector_level = Just 1
+    }
   let dparameters :: Dynamic t (Maybe ProtoInfo)
-      dparameters = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters vs)
+      dparameters = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters theView)
 
-  let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
-      clients = ffor (fmap _bakeView_clients vs) $ \v' -> flip Map.mapMaybeWithKey v' $ \k (r,_) ->
+      dlevel :: Dynamic t (Maybe Word64)
+      dlevel = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
+
+      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
+      clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \k (First r,_) ->
           case r of
-            (First Nothing) -> Nothing
-            (First (Just (name, Nothing))) -> Just (name, Left "No response yet.")
-            (First (Just (name, Just ci))) -> Just (name, Right . unJson $ _clientInfo_report ci)
+            Nothing -> Nothing
+            (Just (name, Nothing)) -> Just (name, Left "No response yet.")
+            (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
+
+      rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
+      rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
+
+      cumulate :: (Ord a, Integral a, Num b) => a -> AppendMap a b -> [(a,b)]
+      cumulate l m = (-l,0) : foldr (\(x,y) xs _ s -> let y' = s + y in (x - l, y') : xs x y') (\m s -> []) (Map.toList m) 0 0
+
+      cumulativeRewards :: Dynamic t (Maybe [(Integer, Micro)])
+      cumulativeRewards = do
+        mLevel :: Maybe Integer <- fmap fromIntegral <$> dlevel
+        rs <- rewards
+        return . ffor mLevel $ \l -> cumulate l $ foldl' (Map.unionWith (+)) Map.empty rs
+
   el "h1" $ text "Baker Central"
   addressInput <- textInput def
   addButton <- buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
@@ -110,6 +132,15 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
           tooltipPos "right center" "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
           tooltipPos "right center" "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
           tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
+      (graphEl, _) <- el' "div" blank
+      graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
+        Nothing -> Nothing
+        Just cr -> case drop 2 cr of
+          [] -> Nothing
+          _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
+      performEvent_ . ffor graphText $ \theSVG -> do
+        setInnerHTML (_element_raw graphEl) theSVG
+
       divClass "header" $ text "Bakers"
       text "This is the list of all currently monitored bakers."
       divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do
@@ -124,7 +155,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
           Left e -> text e
           Right report -> do
             let counts = _report_counts report
-                baked = _report_last_baked report
+                baked = _report_lastBaked report
             forM_ (_report_tezzies report) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
@@ -163,6 +194,6 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
             el "description" . forM_ baked $ \b -> do
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
               el "div" $ do
-                text $ ("Sequence: "<>) . T.pack . show . _baked_seq $ b
+                text $ ("Level: "<>) . T.pack . show . _baked_level $ b
                 text $ (" Hash: " <>) . T.take 14 . unBlockHash . _baked_hash $ b
   return ()

@@ -33,29 +33,44 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
         Success cid -> do
           client :: Maybe Client <- get $ fromId (cid :: Id Client)
           infos :: [ClientInfo] <- select (ClientInfo_clientField ==. cid)
-          return $ case _bakeViewSelector_clients aggVS of
-            Nothing -> mempty :: BakeView a
-            Just a ->
-             let clientWithInfo = First $ do
-                   addr <- _client_address <$> client
-                   return (addr, listToMaybe infos)
-             in (mempty :: BakeView a)
+          case _bakeViewSelector_clients aggVS of
+            Nothing -> return (mempty :: BakeView a)
+            Just a -> do
+              rewards <- selectAll
+              let clientWithInfo = First $ do
+                    addr <- _client_address <$> client
+                    return (addr, listToMaybe infos)
+                    -- AppendMap (Id Client) (First (AppendMap Word64 Micro), a)
+                  rewardMap' = Map.fromListWith (Map.unionWith (+))
+                    [(_pendingReward_client r, Map.singleton (_pendingReward_level r) (_pendingReward_amount r)) | (_,r) <- rewards]
+                  rewardMap = fmap (\x -> (First x, a)) rewardMap'
+              return $ (mempty :: BakeView a)
                   { _bakeView_clients = Map.singleton cid (clientWithInfo, a)
+                  , _bakeView_rewards = rewardMap
                   }
         Error e -> parseErr notifyMessage e
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
           params :: [Parameters] <- select (Parameters_nodeField ==. nid)
-          node :: Maybe Node <- get $ fromId (nid :: Id Node)
           return $ case _bakeViewSelector_parameters aggVS of
             Nothing -> mempty :: BakeView a
             Just a -> (mempty :: BakeView a)
-                  { _bakeView_parameters = Map.singleton nid (First $ _parameters_protoInfo <$> listToMaybe params, a)
-                  }
+              { _bakeView_parameters = Map.singleton nid (First $ _parameters_protoInfo <$> listToMaybe params, a)
+              }
+        Error e -> parseErr notifyMessage e
+      handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success nid -> do
+          node :: Maybe Node <- get $ fromId nid
+          return $ case _bakeViewSelector_level aggVS of
+            Nothing -> mempty
+            Just a -> (mempty :: BakeView a)
+              { _bakeView_level = Map.singleton nid (First (_node_headLevel =<< node), a)
+              }
         Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
+    "Node" -> handleNode
     _ -> do
       liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
       return mempty

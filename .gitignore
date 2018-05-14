@@ -9,7 +9,8 @@ __pycache__
 
 *.rej
 *.orig
-
+*.js_*
+*/dist-frontend-ghcjs/*
 */result
 */result-[0-9]*
 frontendJs

@@ -6,10 +6,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-import Backend.RequestHandler
-import Backend.NotifyHandler
-import Backend.ViewSelectorHandler
-import Backend.Schema
 import Control.Category ((.))
 import Control.Concurrent.STM
 import Control.Lens
@@ -17,17 +13,14 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
-import Control.Monad.Reader
 import Control.Monad.Logger (runNoLoggingT)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.AppendMap as AMap
 import Data.Default
-import Data.Either.Validation
-import Data.Function (on)
 import Data.Foldable
 import Data.IORef
 import Data.List hiding (head)
+import Data.Maybe
 import Data.Monoid
 import Data.Maybe (listToMaybe)
 import Data.Pool
@@ -36,7 +29,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock
-import Data.Void
+import Data.Word
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import Focus.Config
@@ -54,24 +47,26 @@ import Focus.Schema
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import Network.HTTP.Simple
-import Network.HTTP.Types.Status(Status(..))
 import Network.Mail.Mime
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding (head, id, (.))
 import qualified Web.ClientSession as CS
 import Snap
-import Safe
 
 import Tezos.BakeMonitor.Types
 import Tezos.NodeRPC
 
+import Backend.RequestHandler
+import Backend.NotifyHandler
+import Backend.ViewSelectorHandler
+import Backend.Schema
+import Backend.ChainHealth
 import Common.Schema
 import Common.Api ()
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
-
 
 mailFor :: Text -> [Error] -> Mail
 mailFor toAddr errs =
@@ -80,116 +75,15 @@ mailFor toAddr errs =
       body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
   in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
--- problem:: many baked blocks do not appear on chain
--- problem:: any parent of seen blocks do not appear on chain
--- problem:: blocks are not seen frequently
-
--- rough sketch, 
--- %seen <- consider some block (say, the most recent, seen block or the most recent baked block)
--- %lvl, %parent <-  ask the node for %seen level, and the ID of its parent. (level - 1)
--- %1 ask the same node for the head and its level (level')
--- %2 ask the same node for head$(level' - level - 1)
--- if %0 != %2; sulk
-
-
-data ForkInfo = ForkInfo
-  { _forkInfo_node :: Node
-  , _forkInfo_forkStatus :: ForkStatus
-  , _forkInfo_baked :: Baked
-  }
-
-data ForkStatus
-  = ForkStatus_Good
-  | ForkStatus_TooNew
-  | ForkStatus_TooOld
-  | ForkStatus_Forked
-  | ForkStatus_BadNode (RpcResponse Void)
-
-
-showForkStatus :: ForkStatus -> Text
-showForkStatus = T.pack . \case
-  ForkStatus_Good -> "good"
-  ForkStatus_TooNew -> "new"
-  ForkStatus_TooOld -> "block not in chain"
-  ForkStatus_Forked -> "forked"
-  ForkStatus_BadNode _ -> "no response from node"
-
-onBadForkState :: (ForkInfo -> a) -> ForkInfo -> Validation a ()
-onBadForkState k fi = case _forkInfo_forkStatus fi of
-  ForkStatus_TooOld -> Failure $ k fi
-  ForkStatus_Forked -> Failure $ k fi
-  _ -> Success ()
-
-showBadFork :: ForkInfo -> [Error]
-showBadFork (ForkInfo node status baked) = pure $ Error (_baked_time baked) $ T.concat
-          [ "node: ", _node_address node
-          , " BAKER STATE:" , showForkStatus status
-          , " for block:", unBlockHash $ _baked_hash baked
-          , " @ ",  T.pack $ show $ _baked_time baked
-          , "\n"
-          ]
-
-validateForkyBlocks :: Applicative f => ([Error] -> f ()) -> [ForkInfo] -> f ()
-validateForkyBlocks f xs = case traverse (onBadForkState (showBadFork)) xs of
-  Success _ -> pure ()
-  Failure bad -> f bad
-
-
-factorResponse :: RpcResponse a -> Either (RpcResponse Void) a
-factorResponse (RpcResponse_HttpException bad) = Left $ RpcResponse_HttpException bad
-factorResponse (RpcResponse_UnexpectedStatus bad) = Left $ RpcResponse_UnexpectedStatus bad
-factorResponse (RpcResponse_NonJSON clue bad) = Left $ RpcResponse_NonJSON clue bad
-factorResponse (RpcResponse_Success ok) = Right ok
-
-scanForkInfo :: MonadIO m => Int -> UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo delay now rpt node = do
-  httpMgr <- liftIO $ newManager tlsManagerSettings
-  let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
-  -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_last_baked rpt, _report_last_seen rpt]
-  traverse (flip runReaderT ctx . checkChainHealth now delay) $ _report_last_baked rpt
-
-checkChainHealth
-  :: MonadIO m
-  => UTCTime
-  -> Int -- ^ max unseen age, in seconds
-  -> Baked
-  -> NodeRPCT m ForkInfo
-checkChainHealth now delay seenBaked = do
-    addr <- asks (Node . _nodeRPCContext_node)
-    x <- go
-    return $ ForkInfo addr x seenBaked
-  where
-    go = (factorResponse <$> (doRPC $ Block $ BlockHash "head")) >>= \case
-      Left bad -> (liftIO $ putStrLn "no head") >> (return $ ForkStatus_BadNode bad)
-      Right head -> do
-        -- liftIO $ putStrLn ("head:" <> show head)
-        (factorResponse <$> (doRPC $ Block $ _baked_hash seenBaked)) >>= \case
-          Left (RpcResponse_UnexpectedStatus (Status 404 _)) -> do
-            let maxTime = addUTCTime (- fromIntegral delay) now
-            if (_baked_time seenBaked >= maxTime)
-            then return ForkStatus_TooNew
-            else return ForkStatus_TooOld
-          Left bad -> (liftIO $ putStrLn "not seen") >> (return $ ForkStatus_BadNode bad)
-          Right seen -> do
-            -- liftIO $ putStrLn ("seen:" <> show seen)
-            let ancestorBlockHash = (BlockHash $ (unBlockHash $ _blockInfo_hash head) <> "~" <> T.pack (show (_blockInfo_level head - _blockInfo_level seen)))
-            (factorResponse <$> (doRPC $ Block $ ancestorBlockHash)) >>= \case
-              Left bad -> (liftIO $ putStrLn "no ancestor") >> (return $ ForkStatus_BadNode bad)
-              Right ancestor -> do
-                -- liftIO $ putStrLn ("ancestor:" <> show ancestor)
-                if _blockInfo_predecessor seen == _blockInfo_predecessor ancestor
-                then return ForkStatus_Good
-                else return ForkStatus_Forked
 addSomeNodes
   :: (MonadBaseControl IO m, MonadIO m)
   => [Node]
   -> Pool Postgresql
   -> m ()
 addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $ do
-  flip traverse nodes $ \(Node addr) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
-    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr]
-    _ -> insertAndNotify_ $ Node {_node_address = addr}
-
+  forM_ nodes $ \n@(Node addr level) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
+    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr, Node_headLevelField =. level]
+    _ -> insertAndNotify_ n
 
 nodeWorker
   :: (MonadIO m)
@@ -202,17 +96,35 @@ nodeWorker delay db = do
     putStrLn "Update cycle."
     runNoLoggingT . runDb (Identity db) $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
-      flip traverse nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+      forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        params <- flip runReaderT ctx $ doRPC ProtoConstants
-        flip traverse params $ \protoInfo -> do
+        params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
+        forM_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
+        forM_ headBlockRsp $ \headBlockInfo -> do
+          updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
 
-
+-- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
+-- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
+getLatestProtoInfo :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Word64, ProtoInfo))
+getLatestProtoInfo = do
+  nodeIds <- [queryQ| SELECT n.id, n."headLevel"
+                      FROM "Node" n LEFT JOIN "Parameters" p ON p.node = n.id
+                      WHERE n."headLevel" IS NOT NULL
+                      ORDER BY n."headLevel" DESC
+                      LIMIT 1 |]
+  case nodeIds of
+    ((nid, headLevel):_) -> do
+      rs <- project Parameters_protoInfoField $ (Parameters_nodeField ==. (nid :: Id Node)) `limitTo` 1
+      return $ case rs of
+        (info:_) -> Just (headLevel, info)
+        _ -> Nothing
+    [] -> return Nothing
 
 clientWorker :: (MonadIO m)
              => [Node] -- [(Id Node, Text)]
@@ -228,13 +140,13 @@ clientWorker nodes toAddr delay db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
-
       params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
       let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
                            ORDER BY updated NULLS FIRST |]
+      mLevelAndProto <- getLatestProtoInfo
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
@@ -243,15 +155,29 @@ clientWorker nodes toAddr delay db = do
         -- liftIO $ print response
         let report = getResponseBody response :: Report
             reportJson = Json report
-        case maximumByMay (compare `on` _baked_time) $ _report_last_seen report of
-          Nothing -> return () -- liftIO $ mailFor toAddr ("baker " <> address <> " has not seen a block!")
+
+        case _report_lastSeen report of
+          Nothing -> return ()
           -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromInteger 30) (_baked_time b) < now) $ void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\n" <> T.pack (show b))]) Nothing
+          Just b -> when (addUTCTime (fromInteger 30) b < now) $
+            void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
+
+        forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
+          let blockReward = _protoInfo_blockReward protoInfo
+              rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
+              insertValues = Values ["int8", "varchar", "int8", "int8"]
+                [(cid, unBlockHash (_baked_hash b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_lastBaked report]
+          when (not . null $ _report_lastBaked report) $ do
+            _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
+                            ?insertValues
+                            ON CONFLICT DO NOTHING |]
+            return ()
+          return ()
 
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
-        forkInfo <- traverse (scanForkInfo blockHeightTimeout now report) nodes
+        forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
@@ -295,7 +221,6 @@ main = withFocus $ do
     -- TODO: in the real thing, users should manage their own list of nodes,
     -- with some bootstrapping by using the well known address
     addSomeNodes nodes db
-
 
     (handleListen, wsFinalizer) <- serveDbOverWebsockets db
       (requestHandler csk db)

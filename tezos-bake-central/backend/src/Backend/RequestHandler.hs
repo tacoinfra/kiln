@@ -33,6 +33,23 @@ import Common.Api
 import Common.Schema
 import Backend.Schema ()
 
+-- Temporary graph rendering
+import Data.Word
+import Control.Lens
+import Data.Colour
+import Data.Colour.SRGB
+import Data.Default
+import Graphics.Rendering.Chart
+import Graphics.Rendering.Chart.Backend.Diagrams hiding (SVG)
+import Diagrams.Core (renderDia)
+import Diagrams.Backend.SVG (SVG(..), Options(..))
+import Diagrams.TwoD.Size (mkWidth)
+import qualified Graphics.Svg.Core as SVG (renderText)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import Data.Fixed
+
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
   => CS.Key
@@ -46,10 +63,31 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           _ <- insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
           return ()
         PublicRequest_RemoveClient addr -> do
+          _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
           cids <- [queryQ| DELETE FROM "Client" WHERE "address" = ?addr RETURNING id |]
           forM_ cids $ \(Only cid) -> notifyEntityId NotificationType_Delete (cid :: Id Client)
           return ()
-
+        PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
     ApiRequest_Private key r ->
       case r of
         PrivateRequest_NoOp -> return ()
+
+renderGraph :: (Integral a, Real b) => Text -> [(a,b)] -> IO Text
+renderGraph t xs = do
+  let chart = toRenderable layout
+      plot1 = plot_lines_style . line_color .~ (opaque $ sRGB 0.1 0.5 0.1)
+            $ plot_lines_values .~ [[(fromIntegral l :: Integer,realToFrac x :: Double) | (l,x) <- xs]]
+            $ def
+      layout = layout_title .~ T.unpack t
+             $ layout_plots .~ [toPlot plot1]
+             $ def
+  env <- defaultEnv vectorAlignmentFns 300 300
+  let (diagram, _) = runBackendR env chart
+      svgOptions = SVGOptions
+        { _size = mkWidth 250
+        , _svgDefinitions = Nothing
+        , _idPrefix = ""
+        , _svgAttributes = []
+        , _generateDoctype = False
+        }
+  return (TL.toStrict (SVG.renderText (renderDia SVG svgOptions diagram)))

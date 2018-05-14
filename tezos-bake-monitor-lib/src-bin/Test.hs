@@ -16,7 +16,7 @@ main = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   let ctx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
   let step :: Show a => NodeRPCRequest a -> IO ()
-      step x = (flip runReaderT ctx $ doRPC $ x) >>= \case
+      step x = (runNodeRPCT ctx . nodeRPC $ x) >>= \case
           RpcResponse_HttpException bad -> error $ show bad
           RpcResponse_UnexpectedStatus bad -> error $ show bad
           RpcResponse_NonJSON clue bad -> error $ (clue <> "\n" <> show bad)

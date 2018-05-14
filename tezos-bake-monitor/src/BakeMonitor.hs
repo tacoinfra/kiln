@@ -2,26 +2,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -fno-warn-unused-do-bind #-} -- for the parsers specifically
 
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Concurrent.MVar
-import Control.Exception
 import Control.Lens.Combinators (views, over, set, _head)
 import Control.Monad
-import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Trans
 import Data.Aeson (encode)
+import Data.Attoparsec.Text hiding (take, option)
+import qualified Data.Attoparsec.Text as P
 import Data.Char
-import Data.Maybe (catMaybes)
 import Data.Monoid ((<>), mempty)
 import Data.Text (Text)
 import Data.Time
+import Data.Word
 import GHC.IO.Exception
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
-import Options.Applicative
+import Options.Applicative hiding (Parser)
+import qualified Options.Applicative as O
 import Snap hiding (method)
 import System.Process
 import Text.Read
@@ -38,35 +38,61 @@ import Tezos.NodeRPC
 -- We're mainly interested in counting the blocks that are injected, but some of the rest is potentially useful.
 data MessageType =
     MessageType_Selected BlockPrefix  -- Select candidate block after BKidogWLoxoM (slot 1) fitness: 00::00000000000000df
-  | MessageType_Injected BlockPrefix -- Injected block BKiNQABfPLcg for my-ident after BKiNpAqXuqEx  (level 222, slot 0, fitness 00::00000000000000de, operations 0+0+0+0)
+  | MessageType_Injected BlockPrefix Word64 {- level -} -- Injected block BKiNQABfPLcg for my-ident after BKiNpAqXuqEx  (level 222, slot 0, fitness 00::00000000000000de, operations 0+0+0+0)
   | MessageType_NoNonce BlockPrefix   -- No nonce to reveal for block BKiNmhYodVSR
   | MessageType_Error      -- Error while endorsing:
   | MessageType_ErrorCont  -- Error, dumping error stack:
                            --   Wrong predecessor BKiQtCxSQRGcr3QPX7RR62VNnM9DXNv4NnJ6HjJso3f9W87FLHT, expected BKiUhCVyeftvggKDw3UjHhXSXdmUnV4epidsyHnS5B2XEA2gcEh
                            -- ^^ note these two spaces.
   | MessageType_Unknown    -- Anything else.
+  deriving Show
 
-snipBlockPrefix :: (BlockPrefix -> MessageType) -> Text -> Text -> Maybe MessageType
-snipBlockPrefix ctor pfx line
-  | pfx `T.isPrefixOf` line = Just . ctor . BlockPrefix . T.takeWhile (/= ' ')  . T.drop (T.length pfx) $ line
-  | otherwise = Nothing
+blockPrefix :: Parser BlockPrefix
+blockPrefix = BlockPrefix <$> P.takeWhile isAlphaNum
+
+errorCont :: Parser MessageType
+errorCont = do
+  string "Error, dumping error stack:" <|> string "  "
+  return $ MessageType_ErrorCont
+
+errorLine :: Parser MessageType
+errorLine = do
+  string "Error"
+  return $ MessageType_Error
+
+selectCandidate :: Parser MessageType
+selectCandidate = do
+  string "Select candidate block after "
+  bp <- blockPrefix
+  return $ MessageType_Selected bp
+
+injectedBlock :: Parser MessageType
+injectedBlock = do
+  string "Injected block "
+  bp <- blockPrefix
+  P.takeWhile (/= '(')
+  string "(level "
+  n <- decimal
+  return $ MessageType_Injected bp n
+
+noNonce :: Parser MessageType
+noNonce = do
+  string "No nonce to reveal for block "
+  bp <- blockPrefix
+  return $ MessageType_NoNonce bp
+
+messageType :: Parser MessageType
+messageType = errorCont <|> errorLine <|> selectCandidate <|> injectedBlock <|> noNonce
 
 classify :: Text -> MessageType
-classify t
-  | "error stack:" `T.isSuffixOf` t = MessageType_ErrorCont
-  | "Error" `T.isPrefixOf` t = MessageType_Error
-  | "  " `T.isPrefixOf` t = MessageType_ErrorCont
-  | otherwise = head $ catMaybes
-      [ snipBlockPrefix MessageType_Selected "Select candidate block after " t
-      , snipBlockPrefix MessageType_Injected "Injected block " t
-      , snipBlockPrefix MessageType_NoNonce "No nonce to reveal for block " t
-      , Just MessageType_Unknown
-      ]
+classify t = case parseOnly messageType t of
+  Left _ -> MessageType_Unknown
+  Right x -> x
 
 fetchBlockFromFragment :: Text -> Manager -> BlockPrefix -> IO BlockHash
-fetchBlockFromFragment nodeAddr httpMgr = flip runReaderT (NodeRPCContext httpMgr nodeAddr) . go
+fetchBlockFromFragment nodeAddr httpMgr = runNodeRPCT (NodeRPCContext httpMgr nodeAddr) . go
   where
-    go pfx = doRPC (Complete pfx) >>= \case
+    go pfx = nodeRPC (Complete pfx) >>= \case
         RpcResponse_HttpException e -> error $ "bad response from node" <> show e <> "for prefix" <> show pfx
         RpcResponse_UnexpectedStatus s -> error $ "bad response from node" <> show s <> "for prefix" <> show pfx
         RpcResponse_NonJSON clue raw -> error $ "Non JSON response from node: " <> show clue <> "\n" <> show raw <> "for prefix" <> show pfx
@@ -74,7 +100,7 @@ fetchBlockFromFragment nodeAddr httpMgr = flip runReaderT (NodeRPCContext httpMg
             (blockId:_) -> return blockId
             _ -> error $ "Block Prefix not known to node" <> "for prefix" <> show pfx
 
-opts :: Parser (IO ())
+opts :: O.Parser (IO ())
 opts = mainArgs
   <$> option auto
       (  long "port"
@@ -105,19 +131,18 @@ opts = mainArgs
       <> metavar "TEZOS-IDENTITY"
       )
 
-
 main :: IO ()
 main = join $ do
   customExecParser
     (prefs $ showHelpOnEmpty <> showHelpOnError)
     (info (opts <**> helper) idm)
 
-bumpBlockSeen :: BlockHash -> UTCTime -> Report -> Report
-bumpBlockSeen h now = over report_last_seen (\bs -> take 20 $ (Baked 0 h now) : bs)
+bumpBlockSeen :: UTCTime -> Report -> Report
+bumpBlockSeen now = over report_lastSeen (\old -> max (Just now) old)
 
 mainArgs :: Int -> Text -> FilePath -> String -> IO ()
-mainArgs monitorPort nodeRPC clientExecutable identity = do
-  let [rpcAddr, rpcPort] = T.splitOn ":" nodeRPC
+mainArgs monitorPort nodeRPCLocation clientExecutable identity = do
+  let [rpcAddr, rpcPort] = T.splitOn ":" nodeRPCLocation
   (_, Just out, Just err, ph) <- createProcess
     (proc clientExecutable ["--addr", T.unpack rpcAddr, "--port", T.unpack rpcPort, "launch", "daemon", identity, "-B", "-E", "-D"])
       { std_out = CreatePipe
@@ -125,10 +150,10 @@ mainArgs monitorPort nodeRPC clientExecutable identity = do
       }
   dataRef <- newMVar $ Report
     { _report_counts = (Count 0 0 0)
-    , _report_last_baked = []
+    , _report_lastBaked = []
     , _report_errors = []
-    , _report_failedbaker = []
-    , _report_last_seen = []
+    , _report_failedBaker = []
+    , _report_lastSeen = Nothing
     , _report_tezzies = Nothing
     }
 
@@ -150,38 +175,41 @@ mainArgs monitorPort nodeRPC clientExecutable identity = do
     msg <- T.hGetLine out
     now <- getCurrentTime
     case classify msg of
-      MessageType_Selected h -> modifyMVar_ dataRef $ \tops -> do
-        blockHash <- fetchBlockFromFragment ("http://" <> nodeRPC) httpMgr h
-        return . bumpBlockSeen blockHash now . over (report_counts . count_selected) (+1) $ tops
-      MessageType_Injected h -> do
+      MessageType_Selected _ -> modifyMVar_ dataRef $ \tops -> do
+        return . bumpBlockSeen now . over (report_counts . count_selected) (+1) $ tops
+      MessageType_Injected h level -> do
         modifyMVar_ dataRef $ \tops -> do
-          blockHash <- fetchBlockFromFragment ("http://" <> nodeRPC) httpMgr h
-          let bakedV = (Baked (views (report_counts . count_injected) (+1) tops) blockHash now)
+          blockHash <- fetchBlockFromFragment ("http://" <> nodeRPCLocation) httpMgr h
+          let bakedV = Baked
+                { _baked_seq = views (report_counts . count_injected) (+1) tops
+                , _baked_hash = blockHash
+                , _baked_time = now
+                , _baked_level = level
+                }
           return
             . over (report_counts . count_injected) (+1)
-            . over report_last_baked (\bs -> take 20 $ bakedV : bs)
-            . bumpBlockSeen blockHash now
+            . over report_lastBaked (\bs -> take 20 $ bakedV : bs)
+            . bumpBlockSeen now
             $ tops
-
       MessageType_Error ->
         updateData
           $ over (report_counts . count_errors) (+1)
           . over report_errors (take 20 . (Error now msg :))
       MessageType_ErrorCont ->
         updateData $ over (report_errors . _head . error_text) (`T.append` msg)
-      MessageType_NoNonce h -> do
-        blockHash <- fetchBlockFromFragment ("http://" <> nodeRPC) httpMgr h
-        updateData (bumpBlockSeen blockHash now)
+      MessageType_NoNonce _ -> do
+        updateData (bumpBlockSeen now)
       MessageType_Unknown -> return ()
 
     T.putStrLn (T.pack (show now) <> ": " <> msg)
+    print (classify msg)
 
   let bakerTask = waitForProcess ph >>= \case
         ExitSuccess -> error "this is really not supposed to happen..."
         _ -> modifyMVar_ dataRef $ \tops -> do
           stdErrors <- LT.hGetContents err
           LT.putStr stdErrors
-          return $ over report_failedbaker (stdErrors:) tops
+          return $ over report_failedBaker (stdErrors:) tops
 
   let rootHandler = do
         c <- liftIO $ readMVar dataRef

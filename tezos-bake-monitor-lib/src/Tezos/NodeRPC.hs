@@ -8,7 +8,6 @@
 
 module Tezos.NodeRPC where
 
-
 import Control.Exception
 import Control.Monad.Reader
 import Data.Aeson
@@ -29,24 +28,36 @@ data NodeRPCContext = NodeRPCContext
   , _nodeRPCContext_node :: Text
   }
 
+newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-type NodeRPCT m = ReaderT NodeRPCContext m
+runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
+runNodeRPCT c (NodeRPCT x) = runReaderT x c
 
+class MonadTezosNode m where
+  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
+  nodeAddress :: m Text
+
+instance MonadIO m => MonadTezosNode (NodeRPCT m) where
+  nodeRPC = \case
+    Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
+    Block (BlockHash hash) -> nodeRPCImpl ("/blocks/" <> hash)
+    ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
+  nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 newtype BlockPrefix = BlockPrefix Text
   deriving (Eq, Show, Generic, Typeable)
-
 
 data NodeRPCRequest a where
   Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
   Block :: BlockHash -> NodeRPCRequest BlockInfo
   ProtoConstants :: NodeRPCRequest ProtoInfo
 
-doRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
-doRPCImpl = doRPCImpl' eitherDecode
+nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
+nodeRPCImpl = nodeRPCImpl' eitherDecode
 
-doRPCImpl' :: (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
-doRPCImpl' decoder rpcSelector = do
+nodeRPCImpl' :: (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
+nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
   mgr <- asks _nodeRPCContext_httpManager
   node <- asks _nodeRPCContext_node
 
@@ -72,13 +83,3 @@ doRPCImpl' decoder rpcSelector = do
           Left err -> RpcResponse_NonJSON err body
           Right v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
-
-
-doRPC :: MonadIO m => NodeRPCRequest a -> NodeRPCT m (RpcResponse a)
-doRPC = \case
-  Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
-  Block (BlockHash hash) -> doRPCImpl ("/blocks/" <> hash)
-  ProtoConstants -> doRPCImpl ("/blocks/head/proto/constants")
-
-
-

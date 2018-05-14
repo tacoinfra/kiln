@@ -23,6 +23,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import Data.Time.Clock
 import Data.Typeable
+import Data.Word
 import GHC.Generics
 import Network.HTTP.Client hiding (Proxy)
 import Network.HTTP.Types.Status(Status(..))
@@ -40,10 +41,10 @@ instance ToJSON Ident
 
 data Report = Report
   { _report_counts :: Count
-  , _report_last_baked :: [Baked]
+  , _report_lastBaked :: [Baked]
   , _report_errors :: [Error]
-  , _report_failedbaker :: [LT.Text]
-  , _report_last_seen :: [Baked]
+  , _report_failedBaker :: [LT.Text]
+  , _report_lastSeen :: Maybe UTCTime
   , _report_tezzies :: Maybe Tezzies
   }
   deriving (Eq, Show, Generic, Typeable)
@@ -139,7 +140,7 @@ data Baked = Baked
   { _baked_seq :: !Integer
   , _baked_hash :: BlockHash
   , _baked_time :: UTCTime
-  -- , _baked_block :: Maybe Value
+  , _baked_level :: Word64
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -165,8 +166,8 @@ data RpcResponse a =
 -- there are tons of fields i am not trying to parse here
 data BlockInfo = BlockInfo
   { _blockInfo_hash :: BlockHash
-  , _blockInfo_level :: Int
-  , _blockInfo_proto :: Int -- really a Word8 :|
+  , _blockInfo_level :: Word64
+  , _blockInfo_proto :: Word64
   , _blockInfo_predecessor :: BlockHash
   }
   deriving (Eq, Show, Generic, Typeable)
