@@ -48,5 +48,10 @@ in focus.mkDerivation {
     stm
     diagrams-svg
     Chart-diagrams
+    colour
+    Chart
+    diagrams-core
+    diagrams-lib
+    svg-builder
   ];
 }
