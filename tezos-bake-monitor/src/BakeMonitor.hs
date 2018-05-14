@@ -92,7 +92,7 @@ classify t = case parseOnly messageType t of
 fetchBlockFromFragment :: Text -> Manager -> BlockPrefix -> IO BlockHash
 fetchBlockFromFragment nodeAddr httpMgr = runNodeRPCT (NodeRPCContext httpMgr nodeAddr) . go
   where
-    go pfx = doRPC (Complete pfx) >>= \case
+    go pfx = nodeRPC (Complete pfx) >>= \case
         RpcResponse_HttpException e -> error $ "bad response from node" <> show e <> "for prefix" <> show pfx
         RpcResponse_UnexpectedStatus s -> error $ "bad response from node" <> show s <> "for prefix" <> show pfx
         RpcResponse_NonJSON clue raw -> error $ "Non JSON response from node: " <> show clue <> "\n" <> show raw <> "for prefix" <> show pfx
