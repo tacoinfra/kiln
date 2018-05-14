@@ -89,11 +89,11 @@ checkChainHealth
   -> NodeRPCT m ForkInfo
 checkChainHealth now delay seenBaked = do
     addr <- nodeAddress
-    (level, status) <- (factorResponse <$> (doRPC $ Block $ BlockHash "head")) >>= \case
+    (level, status) <- (factorResponse <$> (nodeRPC $ Block $ BlockHash "head")) >>= \case
       Left bad -> (liftIO $ putStrLn "no head") >> (return (Nothing, ForkStatus_BadNode bad))
       Right headInfo -> do
         -- liftIO $ putStrLn ("head:" <> show head)
-        status <- (factorResponse <$> (doRPC $ Block $ _baked_hash seenBaked)) >>= \case
+        status <- (factorResponse <$> (nodeRPC $ Block $ _baked_hash seenBaked)) >>= \case
           Left (RpcResponse_UnexpectedStatus (Status 404 _)) -> do
             let maxTime = addUTCTime (- fromIntegral delay) now
             return $ if (_baked_time seenBaked >= maxTime)
@@ -105,7 +105,7 @@ checkChainHealth now delay seenBaked = do
           Right seen -> do
             -- liftIO $ putStrLn ("seen:" <> show seen)
             let ancestorBlockHash = BlockHash $ (unBlockHash $ _blockInfo_hash headInfo) <> "~" <> T.pack (show (_blockInfo_level headInfo - _blockInfo_level seen))
-            (factorResponse <$> (doRPC $ Block $ ancestorBlockHash)) >>= \case
+            (factorResponse <$> (nodeRPC $ Block $ ancestorBlockHash)) >>= \case
               Left bad -> (liftIO $ putStrLn "no ancestor") >> (return $ ForkStatus_BadNode bad)
               Right ancestor -> do
                 -- liftIO $ putStrLn ("ancestor:" <> show ancestor)

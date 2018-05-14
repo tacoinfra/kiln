@@ -98,14 +98,14 @@ nodeWorker delay db = do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
       forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        params <- runNodeRPCT ctx $ doRPC ProtoConstants
+        params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
         forM_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . doRPC $ Block (BlockHash "head")
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
 
@@ -166,7 +166,7 @@ clientWorker nodes toAddr delay db = do
           let blockReward = _protoInfo_blockReward protoInfo
               rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_baked_hash b), _baked_level b + rewardDelay, blockReward) | b <- _report_lastBaked report]
+                [(cid, unBlockHash (_baked_hash b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_lastBaked report]
           when (not . null $ _report_lastBaked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues

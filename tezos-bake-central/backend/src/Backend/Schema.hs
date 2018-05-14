@@ -50,6 +50,9 @@ instance PrimitivePersistField Tezzies where
   toPrimitivePersistValue p (Tezzies x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tezzies $ fromPrimitivePersistValue p v
 
+instance ToField Tezzies where
+  toField (Tezzies n) = toField n
+
 instance PersistField Tezzies where
   persistName _ = "Tezzies"
   toPersistValues = primToPersistValue
