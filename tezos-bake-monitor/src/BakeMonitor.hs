@@ -16,6 +16,7 @@ import Data.Char
 import Data.Monoid ((<>), mempty)
 import Data.Text (Text)
 import Data.Time
+import Data.Word
 import GHC.IO.Exception
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
@@ -37,7 +38,7 @@ import Tezos.NodeRPC
 -- We're mainly interested in counting the blocks that are injected, but some of the rest is potentially useful.
 data MessageType =
     MessageType_Selected BlockPrefix  -- Select candidate block after BKidogWLoxoM (slot 1) fitness: 00::00000000000000df
-  | MessageType_Injected BlockPrefix Integer {- level -} -- Injected block BKiNQABfPLcg for my-ident after BKiNpAqXuqEx  (level 222, slot 0, fitness 00::00000000000000de, operations 0+0+0+0)
+  | MessageType_Injected BlockPrefix Word64 {- level -} -- Injected block BKiNQABfPLcg for my-ident after BKiNpAqXuqEx  (level 222, slot 0, fitness 00::00000000000000de, operations 0+0+0+0)
   | MessageType_NoNonce BlockPrefix   -- No nonce to reveal for block BKiNmhYodVSR
   | MessageType_Error      -- Error while endorsing:
   | MessageType_ErrorCont  -- Error, dumping error stack:

@@ -16,6 +16,8 @@ import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap, _unAppendMap)
 import Data.Either.Combinators
 import Data.Fixed
+import Data.Foldable (foldl')
+import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
 import Data.Semigroup
 import Data.Text (Text)
@@ -33,6 +35,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+
+import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 import Tezos.BakeMonitor.Types
 
@@ -97,11 +101,17 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
             (Just (name, Nothing)) -> Just (name, Left "No response yet.")
             (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
 
-      rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Word64 Micro))
-      rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> r) (_bakeView_rewards v)
+      rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
+      rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
-  el "div" $ display dlevel
-  el "div" $ display rewards
+      cumulate :: (Ord a, Integral a, Num b) => a -> AppendMap a b -> [(a,b)]
+      cumulate l m = (-l,0) : foldr (\(x,y) xs _ s -> let y' = s + y in (x - l, y') : xs x y') (\m s -> []) (Map.toList m) 0 0
+
+      cumulativeRewards :: Dynamic t (Maybe [(Integer, Micro)])
+      cumulativeRewards = do
+        mLevel :: Maybe Integer <- fmap fromIntegral <$> dlevel
+        rs <- rewards
+        return . ffor mLevel $ \l -> cumulate l $ foldl' (Map.unionWith (+)) Map.empty rs
 
   el "h1" $ text "Baker Central"
   addressInput <- textInput def
@@ -122,6 +132,15 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
           tooltipPos "right center" "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
           tooltipPos "right center" "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
           tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
+      (graphEl, _) <- el' "div" blank
+      graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
+        Nothing -> Nothing
+        Just cr -> case drop 2 cr of
+          [] -> Nothing
+          _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
+      performEvent_ . ffor graphText $ \theSVG -> do
+        setInnerHTML (_element_raw graphEl) theSVG
+
       divClass "header" $ text "Bakers"
       text "This is the list of all currently monitored bakers."
       divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do

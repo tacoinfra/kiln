@@ -168,7 +168,6 @@ clientWorker nodes toAddr delay db = do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
                             ON CONFLICT DO NOTHING |]
-            _ <- [executeQ| DELETE FROM "PendingReward" WHERE level < ?headLevel |]
             return ()
           return ()
 

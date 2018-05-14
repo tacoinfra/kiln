@@ -18,6 +18,10 @@ import Common.App
 import Common.Schema (ClientAddress())
 import Focus.Schema ()
 
+import Data.Word
+import Data.Fixed
+import Data.Text (Text)
+
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
     PublicRequest_AddClient
@@ -26,6 +30,10 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveClient
       :: ClientAddress -- address of client to unsubscribe from
       -> PublicRequest Bake ()
+    PublicRequest_RenderGraph -- temporary while I write a Reflex backend for Chart
+      :: Text
+      -> [(Integer,Micro)]
+      -> PublicRequest Bake Text
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
