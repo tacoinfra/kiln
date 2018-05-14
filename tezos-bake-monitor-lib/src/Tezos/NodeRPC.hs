@@ -10,13 +10,10 @@ module Tezos.NodeRPC where
 
 import Control.Exception
 import Control.Monad.Reader
-import Control.Lens.Combinators (preview)
 import Data.Aeson
-import Data.Fixed
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
-import Data.Aeson.Lens (key, _Integer)
 import Data.ByteString.Lazy as LBS
 import GHC.Generics
 import Network.HTTP.Client
@@ -42,7 +39,10 @@ class MonadTezosNode m where
   nodeAddress :: m Text
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
-  nodeRPC = doRPC
+  nodeRPC = \case
+    Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
+    Block (BlockHash hash) -> doRPCImpl ("/blocks/" <> hash)
+    ProtoConstants -> doRPCImpl ("/blocks/head/proto/constants")
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 newtype BlockPrefix = BlockPrefix Text
@@ -83,29 +83,3 @@ doRPCImpl' decoder rpcSelector = NodeRPCT $ do
           Left err -> RpcResponse_NonJSON err body
           Right v -> RpcResponse_Success v
       Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
-
-doRPC :: MonadIO m => NodeRPCRequest a -> NodeRPCT m (RpcResponse a)
-doRPC = \case
-  Complete (BlockPrefix pfx) -> doRPCImpl ("/blocks/head/complete/" <> pfx)
-  Block (BlockHash hash) -> doRPCImpl ("/blocks/" <> hash)
-  ProtoConstants -> flip doRPCImpl' ("/blocks/head/proto/constants") $ \bs -> do
-    -- TODO: just make this the *Json instance
-    v <- eitherDecode bs
-    let readIntegerKey :: (Num a) => Text -> Either String a
-        readIntegerKey k = maybe (Left $ "missing:" <> T.unpack k) Right $ fromInteger <$> preview (key k . _Integer) (v :: Value)
-        readMicroKey :: Text -> Either String Micro
-        readMicroKey k = fmap (/10^(6 :: Int)) $ readIntegerKey k
-    bsd <- readMicroKey "block_security_deposit"
-    esd <- readMicroKey "endorsement_security_deposit"
-    br <- readMicroKey "block_reward"
-    er <- readMicroKey "endorsement_reward"
-    pc <- readIntegerKey "preserved_cycles"
-    bpc <- readIntegerKey "blocks_per_cycle"
-    return $ ProtoInfo
-      { _protoInfo_blockSecurityDeposit = bsd
-      , _protoInfo_endorsementSecurityDeposit = esd
-      , _protoInfo_blockReward = br
-      , _protoInfo_endorsementReward = er
-      , _protoInfo_preservedCycles = pc
-      , _protoInfo_blocksPerCycle = bpc
-      }

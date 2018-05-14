@@ -27,6 +27,7 @@ import Tezos.BakeMonitor.Types
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Data.Proxy
+import Focus.Schema (Json(..))
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -44,6 +45,26 @@ instance HasResolution a => PersistField (Fixed a) where
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
   dbType _ _ = DbTypePrimitive DbInt64 False Nothing Nothing
+
+instance PrimitivePersistField Tezzies where
+  toPrimitivePersistValue p (Tezzies x) = toPrimitivePersistValue p x
+  fromPrimitivePersistValue p v = Tezzies $ fromPrimitivePersistValue p v
+
+instance PersistField Tezzies where
+  persistName _ = "Tezzies"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p (Tezzies x) = dbType p x
+
+instance PersistField PeriodSequence where
+  persistName _ = "PeriodSequence"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p (PeriodSequence x) = dbType p (Json x)
+
+instance PrimitivePersistField PeriodSequence where
+  toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
+  fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
 mkFocusPersist (Just "migrateSchema") [groundhog|
   - entity: Client

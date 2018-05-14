@@ -67,8 +67,8 @@ app
   -> (() -> Widget () (), () -> Widget () ())
 app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
-tezzies :: Micro -> Text
-tezzies n = T.pack (show n) <> "ꜩ"
+tezzies :: Tezzies -> Text
+tezzies (Tezzies n) = T.pack (show n) <> "ꜩ"
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo label t =

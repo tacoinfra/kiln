@@ -167,7 +167,7 @@ mainArgs monitorPort nodeRPCLocation clientExecutable identity = do
   void . forkIO $ forever $ do
     balanceLine <- readProcess clientExecutable ["get", "balance", "for", identity] ""
     let balance = readMaybe (filter (\c -> isDigit c || c == '.') balanceLine)
-    updateData (set report_tezzies balance)
+    updateData (set report_tezzies $ fmap Tezzies balance)
     threadDelay (60*10^(6 :: Int))
 
   -- consume from stdout looking for data.

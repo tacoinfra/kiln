@@ -22,6 +22,7 @@ import Data.IORef
 import Data.List hiding (head)
 import Data.Maybe
 import Data.Monoid
+import Data.Maybe (listToMaybe)
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -139,6 +140,8 @@ clientWorker nodes toAddr delay db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
+      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
