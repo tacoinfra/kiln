@@ -63,8 +63,12 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           _ <- insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
           return ()
         PublicRequest_RemoveClient addr -> do
+          liftIO $ print ("Removing client", addr)
           _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
-          cids <- [queryQ| DELETE FROM "Client" WHERE "address" = ?addr RETURNING id |]
+          cids <- [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
+          let inCids = In (map fromOnly cids)
+          _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
+          liftIO $ print ("Removed client ids", cids)
           forM_ cids $ \(Only cid) -> notifyEntityId NotificationType_Delete (cid :: Id Client)
           return ()
         PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
