@@ -22,7 +22,7 @@ import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
 
 import Common.Schema
-import Tezos.BakeMonitor.Types
+-- import Tezos.BakeMonitor.Types
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic

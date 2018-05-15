@@ -18,6 +18,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default
 import Data.Foldable
+import Data.Function hiding ((.))
 import Data.IORef
 import Data.List hiding (head)
 import Data.Maybe
@@ -52,10 +53,11 @@ import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding (head, id, (.))
 import qualified Web.ClientSession as CS
+import Safe
 import Snap
 
-import Tezos.BakeMonitor.Types
-import Tezos.NodeRPC
+-- import Tezos.BakeMonitor.Types
+import Backend.NodeRPC
 
 import Backend.RequestHandler
 import Backend.NotifyHandler
@@ -65,8 +67,24 @@ import Backend.ChainHealth
 import Common.Schema
 import Common.Api ()
 
+import Data.Aeson hiding (Error)
+import Data.Aeson.Lens
+import Data.Aeson.Types hiding (Error)
+
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
+
+sneakyFix :: Report -> Report
+-- sneakyFix = report_errors.traverse.event_detail.errorEvent_trace.traverse %~ frobValue
+sneakyFix = fromJust . parseMaybe parseJSON . frobValue . toJSON
+  where
+    frobValue :: Value -> Value
+    frobValue (String x) = String -- k""
+        $ T.replace "\n" ""
+        $ T.replace "'" ""
+        $ T.replace "\\" ""
+        $ x
+    frobValue y = ((members %~ frobValue) . (values %~ frobValue)) y
 
 mailFor :: Text -> [Error] -> Mail
 mailFor toAddr errs =
@@ -93,7 +111,7 @@ nodeWorker
 nodeWorker delay db = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   worker (seconds delay) $ do
-    putStrLn "Update cycle."
+    putStrLn "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
       forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
@@ -135,7 +153,7 @@ clientWorker :: (MonadIO m)
 clientWorker nodes toAddr delay db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
-    putStrLn "Update cycle."
+    putStrLn "Update client cycle."
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
@@ -150,30 +168,36 @@ clientWorker nodes toAddr delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
-        request <- parseRequest ("http://" <> T.unpack address <> "/")
+        liftIO $ putStrLn "aaaaa"
+        request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
         -- liftIO $ print response
         let report = getResponseBody response :: Report
-            reportJson = Json report
+            reportJson = Json $ sneakyFix report
+        liftIO $ putStrLn "BBBBBB"
 
-        case _report_lastSeen report of
+        case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromInteger 30) b < now) $
+          Just b -> when (addUTCTime (fromInteger 30) ( b) < now) $
             void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
         forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
               rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
+              -- XXX: Parse level from blockheader
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_baked_hash b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_lastBaked report]
-          when (not . null $ _report_lastBaked report) $ do
+                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), (4 :: Int) + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
+              -- insertValues = Values ["int8", "varchar", "int8", "int8"]
+              --   [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
+          when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
                             ON CONFLICT DO NOTHING |]
             return ()
           return ()
 
+        liftIO $ putStrLn "CCCCCC"
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
@@ -181,11 +205,12 @@ clientWorker nodes toAddr delay db = do
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
-        case sort (_report_errors report) of
+        liftIO $ putStrLn "DDDDDDD"
+        case sortBy (compare `on` _event_time) (_report_errors report) of
           [] -> return ()
           es -> do
             lastError <- liftIO $ readIORef lastErrorRef
-            let (new,_) = span ((>= lastError) . Just . _error_time) es
+            let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
             case new of
               [] -> return ()
               (x:_) -> do

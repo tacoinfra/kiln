@@ -7,6 +7,7 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Lens
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Pool (Pool)
@@ -28,6 +29,7 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+  liftIO $ print $ void vs
   case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do
