@@ -18,7 +18,6 @@ import Common.App
 import Common.Schema (ClientAddress())
 import Focus.Schema ()
 
-import Data.Word
 import Data.Fixed
 import Data.Text (Text)
 

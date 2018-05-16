@@ -36,6 +36,7 @@ import qualified Data.Text.Encoding as T
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
 
+import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 import Tezos.BakeMonitor.Types
@@ -81,7 +82,7 @@ tooltip t = elAttr "div" ("data-tooltip" =: t)
 tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
 tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
-appMain :: forall t m. MonadFocusFrontendWidget Bake t m => m ()
+appMain :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   theView <- watchViewSelector . pure $ BakeViewSelector
     { _bakeViewSelector_clients = Just 1
@@ -95,23 +96,31 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       dlevel = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
 
       clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
-      clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \k (First r,_) ->
+      clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
           case r of
             Nothing -> Nothing
             (Just (name, Nothing)) -> Just (name, Left "No response yet.")
             (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
 
       rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
-      rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
+      rewards = ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
       cumulate :: (Ord a, Integral a, Num b) => a -> AppendMap a b -> [(a,b)]
       cumulate l m = (-l,0) : foldr (\(x,y) xs _ s -> let y' = s + y in (x - l, y') : xs x y') (\m s -> []) (Map.toList m) 0 0
 
-      cumulativeRewards :: Dynamic t (Maybe [(Integer, Micro)])
+      cumulate :: (Ord a, Integral a, Num b) => a -> b -> AppendMap a b -> [(a,b)]
+      cumulate l p m = foldr (\(x,y) xs s -> let y' = s + y in (x - l, s) : (x - l, y') : xs y') (\_ -> []) (Map.toList m) p
+
+      cumulativeRewards :: Dynamic t (Maybe (Micro, [(Integer, Micro)]))
       cumulativeRewards = do
-        mLevel :: Maybe Integer <- fmap fromIntegral <$> dlevel
-        rs <- rewards
-        return . ffor mLevel $ \l -> cumulate l $ foldl' (Map.unionWith (+)) Map.empty rs
+        (mLevel :: Maybe Integer) <- fmap fromIntegral <$> dlevel
+        totalRs <- totalRewards
+        return . ffor mLevel $ \level ->
+          let (before, x, after) = Map.splitLookup (level - 200) totalRs -- NB: we need to push this splitting into the backend
+              principal = sum before + fromMaybe 0 x -- just in the sense of where the graph starts
+              (past, x', _future) = Map.splitLookup level after
+              total = principal + sum past + fromMaybe 0 x'
+          in (total, cumulate level principal after)
 
   el "h1" $ text "Baker Central"
   addressInput <- textInput def
@@ -143,7 +152,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
 
       divClass "header" $ text "Bakers"
       text "This is the list of all currently monitored bakers."
-      divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \x -> forM_ x $ \x -> do
+      divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \byCid -> forM_ byCid $ \x -> do
         el "li" $ text (fst x)
 
     list (_unAppendMap <$> clients) $ \x -> divClass "card" $ divClass "content" $ do
@@ -165,7 +174,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
                     eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                     failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
                 case failures of
-                  (t:ts) -> do
+                  (t:_) -> do
                     text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
                     text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
                     text $ "You'll need to transfer sufficient tezzies into the account before it can continue."

@@ -19,7 +19,6 @@ import Reflex (FunctorMaybe(..), Group(..), Additive)
 import Reflex.Query.Class
 
 import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as Map
 import Focus.App
 import Focus.Schema
 

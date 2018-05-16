@@ -34,7 +34,6 @@ import Common.Schema
 import Backend.Schema ()
 
 -- Temporary graph rendering
-import Data.Word
 import Control.Lens
 import Data.Colour
 import Data.Colour.SRGB
@@ -48,7 +47,6 @@ import qualified Graphics.Svg.Core as SVG (renderText)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
-import Data.Fixed
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)

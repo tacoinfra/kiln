@@ -20,9 +20,7 @@ import Data.Default
 import Data.Foldable
 import Data.IORef
 import Data.List hiding (head)
-import Data.Maybe
 import Data.Monoid
-import Data.Maybe (listToMaybe)
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -140,8 +138,9 @@ clientWorker nodes toAddr delay db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
-      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
-      let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
+      -- TODO: params and blockHeightTimeout were unused! Is this code simply deletable, or did we mean to do something with these values?
+      -- params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      -- let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
@@ -162,7 +161,7 @@ clientWorker nodes toAddr delay db = do
           Just b -> when (addUTCTime (fromInteger 30) b < now) $
             void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
-        forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
+        forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
               rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]

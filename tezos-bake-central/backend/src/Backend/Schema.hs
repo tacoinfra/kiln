@@ -26,7 +26,6 @@ import Tezos.BakeMonitor.Types
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
-import Data.Proxy
 import Focus.Schema (Json(..))
 
 instance FromField Word64 where
