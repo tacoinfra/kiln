@@ -75,18 +75,6 @@ import Data.Aeson.Types hiding (Error)
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
-sneakyFix :: Report -> Report
--- sneakyFix = report_errors.traverse.event_detail.errorEvent_trace.traverse %~ frobValue
-sneakyFix = fromJust . parseMaybe parseJSON . frobValue . toJSON
-  where
-    frobValue :: Value -> Value
-    frobValue (String x) = String -- k""
-        $ T.replace "\n" ""
-        $ T.replace "'" ""
-        $ T.replace "\\" ""
-        $ x
-    frobValue y = ((members %~ frobValue) . (values %~ frobValue)) y
-
 mailFor :: Text -> [Error] -> Mail
 mailFor toAddr errs =
   let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
@@ -175,7 +163,7 @@ clientWorker nodes toAddr delay db = do
         response <- httpJSON request
         -- liftIO $ print response
         let report = getResponseBody response :: Report
-            reportJson = Json $ sneakyFix report
+            reportJson = Json report
 
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
