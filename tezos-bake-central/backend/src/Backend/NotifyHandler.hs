@@ -18,6 +18,7 @@ import Focus.Backend.Listen
 import Focus.Backend.Schema.TH
 import Focus.Schema
 
+import Backend.BalanceTracking
 import Backend.Schema
 import Common.App
 import Common.Schema hiding (Error)
@@ -31,19 +32,15 @@ notifyHandler
 notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
   let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
         Success cid -> do
-          client :: Maybe Client <- get $ fromId (cid :: Id Client)
-          infos :: [ClientInfo] <- select (ClientInfo_clientField ==. cid)
+          (client :: Maybe Client) <- get $ fromId (cid :: Id Client)
+          (infos :: [ClientInfo]) <- select (ClientInfo_clientField ==. cid)
           case _bakeViewSelector_clients aggVS of
             Nothing -> return (mempty :: BakeView a)
             Just a -> do
-              rewards <- selectAll
+              rewardMap <- getAllRewards a
               let clientWithInfo = First $ do
                     addr <- _client_address <$> client
                     return (addr, listToMaybe infos)
-                    -- AppendMap (Id Client) (First (AppendMap Word64 Micro), a)
-                  rewardMap' = Map.fromListWith (Map.unionWith (+))
-                    [(_pendingReward_client r, Map.singleton (_pendingReward_level r) (_pendingReward_amount r)) | (_,r) <- rewards]
-                  rewardMap = fmap (\x -> (First x, a)) rewardMap'
               return $ (mempty :: BakeView a)
                   { _bakeView_clients = Map.singleton cid (clientWithInfo, a)
                   , _bakeView_rewards = rewardMap
@@ -51,7 +48,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
         Error e -> parseErr notifyMessage e
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
-          params :: [Parameters] <- select (Parameters_nodeField ==. nid)
+          (params :: [Parameters]) <- select (Parameters_nodeField ==. nid)
           return $ case _bakeViewSelector_parameters aggVS of
             Nothing -> mempty :: BakeView a
             Just a -> (mempty :: BakeView a)
@@ -60,7 +57,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
         Error e -> parseErr notifyMessage e
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
-          node :: Maybe Node <- get $ fromId nid
+          (node :: Maybe Node) <- get $ fromId nid
           return $ case _bakeViewSelector_level aggVS of
             Nothing -> mempty
             Just a -> (mempty :: BakeView a)

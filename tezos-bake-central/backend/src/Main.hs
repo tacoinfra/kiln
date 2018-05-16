@@ -23,7 +23,6 @@ import Data.IORef
 import Data.List hiding (head)
 import Data.Maybe
 import Data.Monoid
-import Data.Maybe (listToMaybe)
 import Data.Pool
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -67,10 +66,6 @@ import Backend.ChainHealth
 import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
-
-import Data.Aeson hiding (Error)
-import Data.Aeson.Lens
-import Data.Aeson.Types hiding (Error)
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -194,11 +189,14 @@ clientWorker nodes toAddr delay db = do
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
             void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
-        forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
+        forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
-              rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
+              rewardDelay l =
+                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
+                    rc = c + _protoInfo_preservedCycles protoInfo
+                in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), blockLevel b + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
+                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues

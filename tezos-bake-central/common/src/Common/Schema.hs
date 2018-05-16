@@ -35,8 +35,6 @@ import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Base16 as BS
 import Data.Monoid
 
-import Language.Haskell.TH.Syntax
-
 -- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
 data Ident = Ident
   { _ident_hash :: Text
@@ -47,7 +45,10 @@ data Ident = Ident
 instance FromJSON Ident
 instance ToJSON Ident
 
-newtype PublicKeyHash = PublicKeyHash Text
+-- TODO:  all of the hashey things in Tezos are some mystery hash in base58
+-- with a wonky 1.5-2 letter prefix.  maybe capture that and get read/show
+-- instances once and for all...
+newtype PublicKeyHash = PublicKeyHash { unPublicKeyHash :: Text }
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON)
 
 newtype Tezzies = Tezzies { getTezzies :: Micro }

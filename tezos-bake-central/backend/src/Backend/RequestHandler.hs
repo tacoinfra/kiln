@@ -34,7 +34,6 @@ import Common.Schema
 import Backend.Schema ()
 
 -- Temporary graph rendering
-import Data.Word
 import Control.Lens
 import Data.Colour
 import Data.Colour.SRGB
@@ -48,7 +47,6 @@ import qualified Graphics.Svg.Core as SVG (renderText)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
-import Data.Fixed
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
@@ -63,8 +61,12 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           _ <- insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
           return ()
         PublicRequest_RemoveClient addr -> do
+          liftIO $ print (T.pack "Removing client", addr)
           _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
-          cids <- [queryQ| DELETE FROM "Client" WHERE "address" = ?addr RETURNING id |]
+          cids <- [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
+          let inCids = In (map fromOnly cids)
+          _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
+          liftIO $ print (T.pack "Removed client ids", cids)
           forM_ cids $ \(Only cid) -> notifyEntityId NotificationType_Delete (cid :: Id Client)
           return ()
         PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
