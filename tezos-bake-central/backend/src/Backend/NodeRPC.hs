@@ -23,6 +23,7 @@ import Network.HTTP.Types.Status(Status(..))
 import qualified Data.Text as T
 
 import Common.Schema
+import Focus.Backend.DB.PsqlSimple(PostgresRaw)
 
 data RpcResponse a =
     RpcResponse_HttpException HttpException
@@ -38,7 +39,8 @@ data NodeRPCContext = NodeRPCContext
   }
 
 newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
-  deriving (Functor, Applicative, Monad, MonadIO)
+  deriving (Functor, Applicative, Monad, MonadIO, PostgresRaw)
+
 
 runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
 runNodeRPCT c (NodeRPCT x) = runReaderT x c
@@ -52,6 +54,7 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
     Block (BlockHash hash) -> nodeRPCImpl ("/blocks/" <> hash)
     ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
+    Contract (BlockHash block) (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> block <> "/proto/context/contracts/" <> publicKey)
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 newtype BlockPrefix = BlockPrefix Text
@@ -61,6 +64,7 @@ data NodeRPCRequest a where
   Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
   Block :: BlockHash -> NodeRPCRequest BlockInfo
   ProtoConstants :: NodeRPCRequest ProtoInfo
+  Contract :: BlockHash -> PublicKeyHash -> NodeRPCRequest Account
 
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode

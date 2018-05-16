@@ -103,7 +103,9 @@ nodeWorker delay db = do
     putStrLn "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
-      forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+
+      clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
+      heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
         forM_ params $ \protoInfo -> do
@@ -115,6 +117,23 @@ nodeWorker delay db = do
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
+        return (nodeAddr, headBlockRsp)
+      let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
+          head = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
+      case head of
+        Nothing -> liftIO $ putStrLn "no visible nodes"
+        Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
+          let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
+          let headHash = _blockInfo_hash blockInfo
+          runNodeRPCT ctx $ forM_ (_clientConfig_delegates $ ci) $ \delegate -> do
+            accountResp <- nodeRPC (Contract headHash delegate)
+            forM_ accountResp $ \account -> do
+              let balance = _account_balance account
+              void $ [executeQ| UPDATE "ClientInfo"
+                                SET balance = ?balance
+                                WHERE id = ?clientInfoId
+                              |]
+      return ()
 
 -- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
 -- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.

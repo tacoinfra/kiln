@@ -159,6 +159,16 @@ data BlockInfo = BlockInfo
   , _blockInfo_level :: Word64
   , _blockInfo_proto :: Word64
   , _blockInfo_predecessor :: BlockHash
+
+  , _blockInfo_chainId :: ChainId
+  -- , _blockInfo_context :: ContextHash
+  , _blockInfo_fitness :: Fitness
+  -- , _blockInfo_operations :: [[Operation]]
+  , _blockInfo_operationsHash :: BlockHash
+  , _blockInfo_protocol :: Protocol
+  -- , _blockInfo_protocolData :: Base16ByteString BS.ByteString
+  , _blockInfo_timestamp :: UTCTime
+  , _blockInfo_validationPass :: Int
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -341,11 +351,19 @@ data ClientDaemonWorker
 
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
-  , _clientConfig_delegates :: [Text] -- Ident
+  , _clientConfig_delegates :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
   , _clientConfig_nodeUri :: ClientAddress
   }
   deriving (Show, Eq, Typeable, Generic)
+
+data Account = Account
+  { _account_manager :: PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
+  , _account_balance :: Tezzies -- "2052452947621"
+  , _account_spendable :: Bool -- true
+  -- , _account_delegate :: {"setable":false,"value":"tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"}
+  , _account_counter :: Int64 -- 1540
+  }
 
 
 
@@ -354,7 +372,8 @@ $(concat <$> traverse (deriveJSON defaultOptions
       { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
       , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
-  [ ''BakedEvent
+  [ ''Account
+  , ''BakedEvent
   , ''BlockInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
