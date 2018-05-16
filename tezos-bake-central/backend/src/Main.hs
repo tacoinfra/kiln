@@ -159,9 +159,14 @@ clientWorker nodes toAddr delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
+        -- | TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+        configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
+        configResponse <- httpJSON configRequest
+        let clientConfig = getResponseBody configResponse :: ClientConfig
+            clientConfigJson = Json clientConfig
+
         request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
-        -- liftIO $ print response
         let report = getResponseBody response :: Report
             reportJson = Json report
 
@@ -182,9 +187,10 @@ clientWorker nodes toAddr delay db = do
             return ()
           return ()
 
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
-                        VALUES (?cid, ?reportJson)
-                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
+                        VALUES (?cid, ?reportJson, ?clientConfigJson)
+                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson
+                                                         , config = ?clientConfigJson |]
         forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 

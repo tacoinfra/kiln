@@ -41,9 +41,6 @@ import GHCJS.DOM.Element (setInnerHTML) -- for now
 -- import Tezos.BakeMonitor.Types
 import Common.BlockHeader
 
-report_tezzies :: Report -> Maybe Tezzies
-report_tezzies _ = Nothing
-
 
 main :: IO ()
 main = do
@@ -99,12 +96,12 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       dlevel :: Dynamic t (Maybe Word64)
       dlevel = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
 
-      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
+      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo))
       clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \k (First r,_) ->
           case r of
             Nothing -> Nothing
             (Just (name, Nothing)) -> Just (name, Left "No response yet.")
-            (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
+            (Just (name, Just ci)) -> Just (name, Right ci)
 
       rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
       rewards = ffor theView $ \v -> Map.mapWithKey (\k (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
@@ -126,9 +123,9 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
   divClass "ui cards" $ do
     divClass "card" $ divClass "content" $ do
-      let aggCounts :: Either a Report -> (Count, Sum Int)
+      let aggCounts :: Either a ClientInfo -> (Count, Sum Int)
           aggCounts (Left _) = (mempty, Sum 1)
-          aggCounts (Right r) = (mkCount r, Sum 0)
+          aggCounts (Right r) = (mkCount $ unJson $ _clientInfo_report r, Sum 0)
       divClass "header" $ text "Summary"
       text "These are the totals of various events across all monitored bakers."
       dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
@@ -158,10 +155,17 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         requestingIdentity $ (public (PublicRequest_RemoveClient name) <$ eRemove)
         case mReport of
           Left e -> text e
-          Right report -> do
+          Right clientInfo -> do
+            let report = unJson $ _clientInfo_report clientInfo
             let counts = mkCount report
                 baked = _report_baked report
-            forM_ (report_tezzies report) $ \tz -> do
+            elAttr "div" ("class" =: "delegates") $ do
+              text $ "ID: "
+              text $ (T.intercalate " " $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+            elAttr "div" ("class" =: "client-node") $ do
+              text $ "Node: "
+              text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
+            forM_ (_clientInfo_balance clientInfo) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)

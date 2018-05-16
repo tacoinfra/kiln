@@ -35,6 +35,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Base16 as BS
 import Data.Monoid
 
+import Language.Haskell.TH.Syntax
 
 -- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
 data Ident = Ident
@@ -190,6 +191,8 @@ instance ToJSON PendingReward
 data ClientInfo = ClientInfo
   { _clientInfo_client :: Id Client
   , _clientInfo_report :: Json Report
+  , _clientInfo_config :: Json ClientConfig
+  , _clientInfo_balance :: Maybe Tezzies
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -306,13 +309,14 @@ mkErr err = Error
 
 data Report = Report
   { _report_baked :: [Event BakedEvent]
-  -- , _report_endorsed :: []
+  -- , _report_endorsed :: [Event EndorseEvent]
   , _report_errors :: [Event ErrorEvent]
   , _report_seen :: [Event SeenEvent]
   , _report_startTime :: UTCTime
   }
   deriving (Show, Eq, Typeable, Generic)
 
+-- TODO: split this into ShellHeader/AlphaProtoHeader/etc
 data BlockHeader = BlockHeader
   { _blockHeader_level :: Int32
   , _blockHeader_proto :: Word8
@@ -326,17 +330,42 @@ data BlockHeader = BlockHeader
   , _blockHeader_proofOfWorkNonce :: Word64
   , _blockHeader_seedNonceHash :: Maybe BS.ByteString
   }
+  deriving (Show, Eq, Typeable, Generic)
+
+data ClientDaemonWorker
+  = ClientDaemonWorker_Baking
+  | ClientDaemonWorker_Denunciation
+  | ClientDaemonWorker_Endorsement
+  deriving (Enum, Show, Eq, Typeable, Generic)
 
 
-$(deriveJSON defaultOptions{fieldLabelModifier = drop (length "_blockInfo_")} ''BlockInfo)
+data ClientConfig = ClientConfig
+  { _clientConfig_startTime :: UTCTime
+  , _clientConfig_delegates :: [Text] -- Ident
+  , _clientConfig_workers :: [ClientDaemonWorker]
+  , _clientConfig_nodeUri :: ClientAddress
+  }
+  deriving (Show, Eq, Typeable, Generic)
 
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_protoInfo_")} ''ProtoInfo)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_level_")} ''Level)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_report_")} ''Report)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_event_")} ''Event)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_bakedEvent_")} ''BakedEvent)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_seenEvent_")} ''SeenEvent)
-$(deriveJSON defaultOptions{fieldLabelModifier = T.unpack . Cases.snakify . T.pack . drop (length "_errorEvent_")} ''ErrorEvent)
+
+
+-- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
+$(concat <$> traverse (deriveJSON defaultOptions
+      { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
+      , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
+      })
+  [ ''BakedEvent
+  , ''BlockInfo
+  , ''ClientConfig
+  , ''ClientDaemonWorker
+  , ''ErrorEvent
+  , ''Event
+  , ''Level
+  , ''ProtoInfo
+  , ''Report
+  , ''SeenEvent
+  ])
+
 
 makeLenses 'BlockInfo
 

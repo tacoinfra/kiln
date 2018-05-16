@@ -22,6 +22,7 @@ import qualified Data.AppendMap as Map
 
 import Common.App
 import Common.Schema
+import Backend.Schema ()
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -33,10 +34,10 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do
-      rs <- [queryQ| SELECT c.id, c.address, i.report FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client |]
+      rs <- [queryQ| SELECT c.id, c.address, i.report, i.config, i.balance FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client |]
       return (mempty :: BakeView a)
         { _bakeView_clients = Map.fromList $ do
-            (cid, address, report) <- rs
-            return (cid, (First (Just (address, ClientInfo cid <$> report)), a))
+            (cid, address, report, config, balance) <- rs
+            return (cid, (First (Just (address, ClientInfo cid <$> report <*> config <*> balance)), a))
         }
 

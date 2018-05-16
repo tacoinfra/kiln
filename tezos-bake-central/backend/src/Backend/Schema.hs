@@ -5,6 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
@@ -68,6 +69,14 @@ instance PersistField PeriodSequence where
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
+
+instance NeverNull Tezzies
+
+instance FromField Micro where
+  fromField f b = (MkFixed . toInteger @ Int64) <$> fromField f b
+
+instance FromField Tezzies where
+  fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
 
 mkFocusPersist (Just "migrateSchema") [groundhog|
   - entity: Client
