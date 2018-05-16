@@ -15,6 +15,8 @@ in focus.mkDerivation {
     # tezos-bake-monitor-lib
     cases
     scientific
+    base16-bytestring
+    attoparsec
   ];
   frontendDepends = p: with p; [
     data-default

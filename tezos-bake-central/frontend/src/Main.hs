@@ -39,6 +39,7 @@ import Reflex.Dom
 import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 -- import Tezos.BakeMonitor.Types
+import Common.BlockHeader
 
 report_tezzies :: Report -> Maybe Tezzies
 report_tezzies _ = Nothing
@@ -198,7 +199,6 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
             el "description" . forM_ baked $ \b -> do
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
               el "div" $ do
-                -- text $ ("Level: "<>) . T.pack . show . _baked_level $ b
-                text $ ("Level: TODO")
+                text $ ("Level: "<>) . T.pack . show . blockLevel $ b
                 text $ (" Hash: " <>) . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
   return ()

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -12,28 +13,27 @@ module Common.Schema where
 import Control.Applicative
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
--- import Data.Aeson (ToJSON(..), FromJSON(..), fieldLabelModifier)
 import Data.Aeson.TH
 import Data.Fixed
 import Data.Function
-import Data.Int(Int64)
+import Data.Int
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Proxy
 import Data.Scientific
 import Data.Text (Text)
 import Data.Time
--- import Data.Time.Clock
 import Data.Typeable
 import Data.Word
 import Focus.Schema
 import GHC.Generics
--- import Network.HTTP.Client hiding (Proxy)
--- import Network.HTTP.Types.Status(Status(..))
 import qualified Cases
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
--- import qualified Data.Text.Lazy as LT
--- import Tezos.BakeMonitor.Types
+import Data.Sequence(Seq())
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as T
+
+import qualified Data.ByteString.Base16 as BS
+import Data.Monoid
 
 
 -- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
@@ -45,19 +45,6 @@ data Ident = Ident
 
 instance FromJSON Ident
 instance ToJSON Ident
-
--- data Report = Report
---   { _report_counts :: Count
---   , _report_lastBaked :: [Baked]
---   , _report_errors :: [Error]
---   , _report_failedBaker :: [LT.Text]
---   , _report_lastSeen :: Maybe UTCTime
---   , _report_tezzies :: Maybe Tezzies
---   }
---   deriving (Eq, Show, Generic, Typeable)
--- 
--- instance FromJSON Report
--- instance ToJSON Report
 
 newtype PublicKeyHash = PublicKeyHash Text
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON)
@@ -79,7 +66,9 @@ microTezzies
 
 -- | the instance for Data.Fixed.Micro defined in Data.Aeson is perfectly
 -- cromulent, its just not what we need.  tezos encodes these values as
--- integers.
+-- integers.  Like the FromJSON instance below, it "may" be neccesary to encode
+-- values larger than `2^31/resolution` as strings, but that's not handled
+-- currently
 instance ToJSON Tezzies where
   toJSON = toJSON . getMicroTezzies
   toEncoding = toEncoding . getMicroTezzies
@@ -135,7 +124,7 @@ data Count = Count
 
 -- I dont really think this is correct
 mkCount :: Report -> Count
-mkCount rpt = Count
+mkCount _ = Count
   { _count_selected = 0
   , _count_injected = 0
   , _count_errors = 0
@@ -153,16 +142,6 @@ newtype BlockHash = BlockHash {unBlockHash :: Text}
 
 
 type Baked = Event BakedEvent
--- data Baked = Baked
---   { _baked_seq :: !Integer
---   , _baked_hash :: BlockHash
---   , _baked_time :: UTCTime
---   , _baked_level :: Word64
---   }
---   deriving (Eq, Show, Generic, Typeable)
-
--- instance FromJSON Baked
--- instance ToJSON Baked
 
 data Error = Error
   { _error_time :: UTCTime
@@ -253,13 +232,46 @@ data Level = Level
 data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   -- , operations :: ...
-  -- , signedHeader :: ...
+  , _bakedEvent_signedHeader :: Base16ByteString BS.ByteString
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
 type ChainId = Text
 type Protocol = Text
-type Fitness = [Text]
+
+
+data FitnessF a = Fitness { unFitness :: Seq a }
+  deriving (Eq, Show, Generic, Typeable, Functor, Foldable, Traversable)
+
+-- | Not sure why GND doesn't work for this...
+instance ToJSON a => ToJSON (FitnessF a) where
+  toJSON = toJSON . unFitness
+  toEncoding = toEncoding . unFitness
+
+instance FromJSON a => FromJSON (FitnessF a) where
+  parseJSON = fmap Fitness . parseJSON
+
+type Fitness = FitnessF (Base16ByteString BS.ByteString)
+
+instance Ord a => Ord (FitnessF a) where
+  compare = (compare `on` length) <> (compare `on` unFitness)
+
+newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }
+  deriving (Eq, Ord, Show, Generic, Typeable, Functor, Foldable, Traversable)
+
+instance ToJSON (Base16ByteString BS.ByteString) where
+  toJSON (Base16ByteString x) = toJSON $ T.decodeUtf8 $ BS.encode x
+  toEncoding (Base16ByteString x) = toEncoding $ T.decodeUtf8 $ BS.encode x
+
+instance FromJSON (Base16ByteString BS.ByteString) where
+  parseJSON x = do
+    hexesText <- parseJSON x
+    let (bytes, rest) = BS.decode $ T.encodeUtf8 hexesText
+    if (BS.length rest > 0)
+    then fail $ "unmatched characters" <> show rest
+    else return $ Base16ByteString bytes
+
+
 
 data SeenEvent = SeenEvent
   { _seenEvent_chainId :: ChainId
@@ -282,7 +294,7 @@ data Event e = Event
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
-  , _errorEvent_trace :: [Value]
+  , _errorEvent_trace :: Json [Value]
   }
   deriving (Show, Eq, Typeable, Generic)
 
@@ -292,7 +304,6 @@ mkErr err = Error
   , _error_text = T.pack $ show $ _event_detail err
   }
 
-
 data Report = Report
   { _report_baked :: [Event BakedEvent]
   -- , _report_endorsed :: []
@@ -301,6 +312,21 @@ data Report = Report
   , _report_startTime :: UTCTime
   }
   deriving (Show, Eq, Typeable, Generic)
+
+data BlockHeader = BlockHeader
+  { _blockHeader_level :: Int32
+  , _blockHeader_proto :: Word8
+  , _blockHeader_predecessor :: BS.ByteString
+  , _blockHeader_timestamp :: UTCTime
+  , _blockHeader_validationPass :: Word8
+  , _blockHeader_operationsHash :: BS.ByteString
+  , _blockHeader_fitness :: Fitness
+  , _blockHeader_context :: BS.ByteString
+  , _blockHeader_priority :: Word16
+  , _blockHeader_proofOfWorkNonce :: Word64
+  , _blockHeader_seedNonceHash :: Maybe BS.ByteString
+  }
+
 
 $(deriveJSON defaultOptions{fieldLabelModifier = drop (length "_blockInfo_")} ''BlockInfo)
 
