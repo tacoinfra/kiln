@@ -14,11 +14,15 @@ import Data.Semigroup
 import Database.Groundhog.Postgresql
 import Focus.Backend.App
 import Focus.Backend.DB
+import Focus.Schema
 import qualified Web.ClientSession as CS
 import Control.Monad.Logger (runNoLoggingT)
 import Focus.Backend.DB.PsqlSimple
+import Focus.Backend.Schema.TH
 import qualified Data.AppendMap as Map
 
+import Backend.BalanceTracking
+import Backend.Schema
 import Common.App
 import Common.Schema
 
@@ -28,7 +32,7 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
-  case _bakeViewSelector_clients vs of
+  clients <- case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do
       rs <- [queryQ| SELECT c.id, c.address, i.report FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client |]
@@ -37,4 +41,25 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
             (cid, address, report) <- rs
             return (cid, (First (Just (address, ClientInfo cid <$> report)), a))
         }
-
+  parameters <- case _bakeViewSelector_parameters vs of
+    Nothing -> return mempty
+    Just a -> do
+      rs <- selectAll
+      return (mempty :: BakeView a)
+        { _bakeView_parameters = Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
+        }
+  level <- case _bakeViewSelector_level vs of
+    Nothing -> return mempty
+    Just a -> do
+      rs <- selectAll
+      return (mempty :: BakeView a)
+        { _bakeView_level = Map.fromList [(toId nid, (First (_node_headLevel n), a)) | (nid, n) <- rs]
+        }
+  rewards <- case _bakeViewSelector_clients vs of
+    Nothing -> return mempty
+    Just a -> do
+      rewardMap <- getAllRewards a
+      return (mempty :: BakeView a)
+        { _bakeView_rewards = rewardMap
+        }
+  return $ clients <> parameters <> level <> rewards

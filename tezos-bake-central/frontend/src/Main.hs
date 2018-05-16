@@ -69,7 +69,7 @@ app
 app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
 tezzies :: Tezzies -> Text
-tezzies (Tezzies n) = T.pack (show n) <> "ꜩ"
+tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo label t =
@@ -105,8 +105,8 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
       rewards = ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
-      cumulate :: (Ord a, Integral a, Num b) => a -> AppendMap a b -> [(a,b)]
-      cumulate l m = (-l,0) : foldr (\(x,y) xs _ s -> let y' = s + y in (x - l, y') : xs x y') (\m s -> []) (Map.toList m) 0 0
+      totalRewards :: Dynamic t (AppendMap Integer Micro)
+      totalRewards = foldl' (Map.unionWith (+)) Map.empty <$> rewards
 
       cumulate :: (Ord a, Integral a, Num b) => a -> b -> AppendMap a b -> [(a,b)]
       cumulate l p m = foldr (\(x,y) xs s -> let y' = s + y in (x - l, s) : (x - l, y') : xs y') (\_ -> []) (Map.toList m) p
@@ -144,12 +144,15 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       (graphEl, _) <- el' "div" blank
       graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
         Nothing -> Nothing
-        Just cr -> case drop 2 cr of
+        Just (_, cr) -> case drop 2 cr of
           [] -> Nothing
           _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
       performEvent_ . ffor graphText $ \theSVG -> do
         setInnerHTML (_element_raw graphEl) theSVG
-
+      dyn . ffor cumulativeRewards $ \case
+        Nothing -> blank
+        Just (total, _) -> text $ "Total rewards earned: " <> tezzies (Tezzies total)
+      el "hr" blank
       divClass "header" $ text "Bakers"
       text "This is the list of all currently monitored bakers."
       divClass "bakerlist" $ el "ul" $ dyn . ffor clients $ \byCid -> forM_ byCid $ \x -> do
@@ -205,4 +208,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
               el "div" $ do
                 text $ ("Level: "<>) . T.pack . show . _baked_level $ b
                 text $ (" Hash: " <>) . T.take 14 . unBlockHash . _baked_hash $ b
+                dyn . ffor dparameters $ \case
+                  Nothing -> blank
+                  Just protoInfo -> text $ (" Reward: " <>) . tezzies . _protoInfo_blockReward $ protoInfo
   return ()

@@ -163,9 +163,12 @@ clientWorker nodes toAddr delay db = do
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
-              rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
+              rewardDelay l =
+                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
+                    rc = c + _protoInfo_preservedCycles protoInfo
+                in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_baked_hash b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_lastBaked report]
+                [(cid, unBlockHash (_baked_hash b), rewardDelay (_baked_level b), blockReward) | b <- _report_lastBaked report]
           when (not . null $ _report_lastBaked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
