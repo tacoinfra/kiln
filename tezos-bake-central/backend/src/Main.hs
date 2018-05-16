@@ -64,6 +64,7 @@ import Backend.NotifyHandler
 import Backend.ViewSelectorHandler
 import Backend.Schema
 import Backend.ChainHealth
+import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
 
@@ -159,7 +160,9 @@ clientWorker nodes toAddr delay db = do
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
       params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
-      let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
+      let blockHeightTimeout :: NominalDiffTime = fromIntegral
+            $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
+            $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
@@ -168,28 +171,22 @@ clientWorker nodes toAddr delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
-        liftIO $ putStrLn "aaaaa"
         request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
         -- liftIO $ print response
         let report = getResponseBody response :: Report
             reportJson = Json $ sneakyFix report
-        liftIO $ putStrLn "BBBBBB"
 
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
-          -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromInteger 30) ( b) < now) $
+          Just b -> when (addUTCTime blockHeightTimeout b < now) $
             void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
         forM_ mLevelAndProto $ \(headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
               rewardDelay = _protoInfo_preservedCycles protoInfo * _protoInfo_blocksPerCycle protoInfo
-              -- XXX: Parse level from blockheader
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), (4 :: Int) + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
-              -- insertValues = Values ["int8", "varchar", "int8", "int8"]
-              --   [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), _baked_level b + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
+                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), blockLevel b + fromIntegral rewardDelay, blockReward) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
@@ -197,7 +194,6 @@ clientWorker nodes toAddr delay db = do
             return ()
           return ()
 
-        liftIO $ putStrLn "CCCCCC"
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
                         VALUES (?cid, ?reportJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
@@ -205,7 +201,6 @@ clientWorker nodes toAddr delay db = do
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
-        liftIO $ putStrLn "DDDDDDD"
         case sortBy (compare `on` _event_time) (_report_errors report) of
           [] -> return ()
           es -> do
