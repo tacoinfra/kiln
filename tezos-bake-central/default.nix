@@ -6,13 +6,17 @@ in focus.mkDerivation {
   name = "tezos-bake-central";
   version = "0.0.1";
   haskellPackagesOverrides = self: super: {
-    tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+    # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
   };
   commonDepends = p: with p; [
     either
     data-default
     file-embed
-    tezos-bake-monitor-lib
+    # tezos-bake-monitor-lib
+    cases
+    scientific
+    base16-bytestring
+    attoparsec
   ];
   frontendDepends = p: with p; [
     data-default
@@ -53,5 +57,6 @@ in focus.mkDerivation {
     diagrams-core
     diagrams-lib
     svg-builder
+    lens-aeson
   ];
 }

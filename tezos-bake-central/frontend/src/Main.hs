@@ -8,8 +8,8 @@
 
 import Common.Api
 import Common.App
-import Common.Schema
-import Control.Lens (firstOf)
+import Common.Schema hiding (Event)
+import Control.Lens (firstOf, view)
 import Control.Monad
 import Control.Monad.Trans
 import qualified Data.AppendMap as Map
@@ -39,7 +39,9 @@ import Reflex.Dom
 import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Element (setInnerHTML) -- for now
 
-import Tezos.BakeMonitor.Types
+-- import Tezos.BakeMonitor.Types
+import Common.BlockHeader
+
 
 main :: IO ()
 main = do
@@ -95,12 +97,12 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       dlevel :: Dynamic t (Maybe Word64)
       dlevel = fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
 
-      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
+      clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo))
       clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
           case r of
             Nothing -> Nothing
             (Just (name, Nothing)) -> Just (name, Left "No response yet.")
-            (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
+            (Just (name, Just ci)) -> Just (name, Right ci)
 
       rewards :: Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro))
       rewards = ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
@@ -130,9 +132,9 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
   divClass "ui cards" $ do
     divClass "card" $ divClass "content" $ do
-      let aggCounts :: Either a Report -> (Count, Sum Int)
+      let aggCounts :: Either a ClientInfo -> (Count, Sum Int)
           aggCounts (Left _) = (mempty, Sum 1)
-          aggCounts (Right r) = (_report_counts r, Sum 0)
+          aggCounts (Right r) = (mkCount $ unJson $ _clientInfo_report r, Sum 0)
       divClass "header" $ text "Summary"
       text "These are the totals of various events across all monitored bakers."
       dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
@@ -165,10 +167,17 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         requestingIdentity $ (public (PublicRequest_RemoveClient name) <$ eRemove)
         case mReport of
           Left e -> text e
-          Right report -> do
-            let counts = _report_counts report
-                baked = _report_lastBaked report
-            forM_ (_report_tezzies report) $ \tz -> do
+          Right clientInfo -> do
+            let report = unJson $ _clientInfo_report clientInfo
+            let counts = mkCount report
+                baked = _report_baked report
+            elAttr "div" ("class" =: "delegates") $ do
+              text $ "ID: "
+              text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+            elAttr "div" ("class" =: "client-node") $ do
+              text $ "Node: "
+              text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
+            forM_ (_clientInfo_balance clientInfo) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)
@@ -200,14 +209,14 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
                 divClass "header" $ text "Errors"
                 el "ul" . forM_ es $ \e -> do
                   el "li" $ do
-                    divClass "timestamp" . text . T.pack . show . _error_time $ e
-                    divClass "errortext" . el "strong" . text . T.pack . show . _error_text $ e
+                    divClass "timestamp" . text . T.pack . show . view error_time . mkErr $ e
+                    divClass "errortext" . el "strong" . text . T.pack . show . view error_text . mkErr $ e
             divClass "header" $ text "Baked Blocks"
             el "description" . forM_ baked $ \b -> do
-              el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
+              el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
               el "div" $ do
-                text $ ("Level: "<>) . T.pack . show . _baked_level $ b
-                text $ (" Hash: " <>) . T.take 14 . unBlockHash . _baked_hash $ b
+                text $ ("Level: "<>) . T.pack . show . blockLevel $ b
+                text $ (" Hash: " <>) . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
                 dyn . ffor dparameters $ \case
                   Nothing -> blank
                   Just protoInfo -> text $ (" Reward: " <>) . tezzies . _protoInfo_blockReward $ protoInfo

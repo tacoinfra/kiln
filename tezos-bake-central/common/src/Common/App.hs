@@ -23,7 +23,7 @@ import Focus.App
 import Focus.Schema
 
 import Common.Schema
-import Tezos.BakeMonitor.Types
+-- import Tezos.BakeMonitor.Types
 
 data Bake = Bake
 
