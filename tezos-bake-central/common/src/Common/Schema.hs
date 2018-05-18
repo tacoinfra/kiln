@@ -1,4 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -30,6 +33,7 @@ import qualified Cases
 import qualified Data.Text as T
 import Data.Sequence(Seq())
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text.Encoding as T
 
 import qualified Data.ByteString.Base16 as BS
@@ -145,14 +149,14 @@ newtype BlockHash = BlockHash {unBlockHash :: Text}
 
 type Baked = Event BakedEvent
 
-data Error = Error
-  { _error_time :: UTCTime
-  , _error_text :: Text
+data BakerValidationError = BakerValidationError
+  { _bakerValidationError_time :: UTCTime
+  , _bakerValidationError_text :: Text
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance FromJSON Error
-instance ToJSON Error
+instance FromJSON BakerValidationError
+instance ToJSON BakerValidationError
 
 -- there are tons of fields i am not trying to parse here
 data BlockInfo = BlockInfo
@@ -312,10 +316,10 @@ data ErrorEvent = ErrorEvent
   }
   deriving (Show, Eq, Typeable, Generic)
 
-mkErr :: Event ErrorEvent -> Error
-mkErr err = Error
-  { _error_time = _event_time err
-  , _error_text = T.pack $ show $ _event_detail err
+mkErr :: Event ErrorEvent -> BakerValidationError
+mkErr err = BakerValidationError
+  { _bakerValidationError_time = _event_time err
+  , _bakerValidationError_text = T.pack $ show $ _event_detail err
   }
 
 data Report = Report
@@ -366,6 +370,30 @@ data Account = Account
   , _account_counter :: Int64 -- 1540
   }
 
+newtype BlockPrefix = BlockPrefix Text
+  deriving (Eq, Show, Generic, Typeable)
+
+
+data NodeRPCRequest a where
+  Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
+  Block :: BlockHash -> NodeRPCRequest BlockInfo
+  ProtoConstants :: NodeRPCRequest ProtoInfo
+  Contract :: BlockHash -> PublicKeyHash -> NodeRPCRequest Account
+
+
+data RpcError =
+    RpcError_HttpException Text
+  | RpcError_UnexpectedStatus Int BS.ByteString
+  | RpcError_NonJSON String LBS.ByteString
+
+
+type RpcResponse = Either RpcError
+
+class MonadTezosNode m where
+  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
+  nodeAddress :: m Text
+
+
 
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
@@ -395,7 +423,7 @@ makeLenses 'Event
 makeLenses 'BakedEvent
 makeLenses 'SeenEvent
 makeLenses 'ErrorEvent
-makeLenses 'Error
+makeLenses 'BakerValidationError
 
 
 

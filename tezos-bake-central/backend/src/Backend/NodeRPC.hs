@@ -1,4 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -15,8 +17,9 @@ import Data.Aeson
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
-import Data.ByteString.Lazy as LBS
-import GHC.Generics
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+-- import GHC.Generics
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status(Status(..))
@@ -25,29 +28,26 @@ import qualified Data.Text as T
 import Common.Schema
 import Focus.Backend.DB.PsqlSimple(PostgresRaw)
 
-data RpcResponse a =
-    RpcResponse_HttpException HttpException
-  | RpcResponse_UnexpectedStatus Status
-  | RpcResponse_NonJSON String LBS.ByteString
-  | RpcResponse_Success a
-  deriving (Functor, Foldable, Traversable)
+-- data RpcResponse a =
+--     RpcResponse_HttpException HttpException
+--   | RpcResponse_UnexpectedStatus Status
+--   | RpcResponse_NonJSON String LBS.ByteString
+--   | RpcResponse_Success a
+--   deriving (Functor, Foldable, Traversable)
 
 
 data NodeRPCContext = NodeRPCContext
   { _nodeRPCContext_httpManager :: Manager
   , _nodeRPCContext_node :: Text
   }
+  deriving (Typeable)
 
-newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
-  deriving (Functor, Applicative, Monad, MonadIO, PostgresRaw)
+newtype NodeRPCT m a = NodeRPCT { unNodeRPCT :: ReaderT NodeRPCContext m a }
+  deriving (Functor, Applicative, Monad, MonadIO, PostgresRaw, Typeable)
 
 
 runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
-runNodeRPCT c (NodeRPCT x) = runReaderT x c
-
-class MonadTezosNode m where
-  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
-  nodeAddress :: m Text
+runNodeRPCT c (NodeRPCT x) = flip runReaderT c x
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
@@ -57,14 +57,14 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     Contract (BlockHash block) (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> block <> "/proto/context/contracts/" <> publicKey)
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
-newtype BlockPrefix = BlockPrefix Text
-  deriving (Eq, Show, Generic, Typeable)
+rpcError_HttpException :: HttpException -> RpcResponse a
+rpcError_HttpException err = Left $ RpcError_HttpException $ T.pack $ show err
 
-data NodeRPCRequest a where
-  Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
-  Block :: BlockHash -> NodeRPCRequest BlockInfo
-  ProtoConstants :: NodeRPCRequest ProtoInfo
-  Contract :: BlockHash -> PublicKeyHash -> NodeRPCRequest Account
+rpcResponse_NonJSON :: String -> LBS.ByteString -> RpcResponse a
+rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err body
+
+rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> RpcResponse a
+rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code phrase
 
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode
@@ -88,11 +88,11 @@ nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ rpcUrl
   result' <- liftIO $ try $ httpLbs request mgr
   case result' of
-    Left err -> return (RpcResponse_HttpException err)
+    Left (err :: HttpException) -> return (rpcError_HttpException err)
     Right result -> case responseStatus result of
       Status 200 _ -> do
         let body = responseBody result
         return $ case decoder body of
-          Left err -> RpcResponse_NonJSON err body
-          Right v -> RpcResponse_Success v
-      Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
+          Left err -> rpcResponse_NonJSON err body
+          Right v -> return v
+      Status code phrase -> return $ rpcResponse_UnexpectedStatus code phrase

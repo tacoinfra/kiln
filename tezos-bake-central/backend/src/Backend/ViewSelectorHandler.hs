@@ -15,7 +15,6 @@ import Data.Semigroup
 import Database.Groundhog.Postgresql
 import Focus.Backend.App
 import Focus.Backend.DB
-import Focus.Schema
 import qualified Web.ClientSession as CS
 import Control.Monad.Logger (runNoLoggingT)
 import Focus.Backend.DB.PsqlSimple
@@ -23,10 +22,9 @@ import Focus.Backend.Schema.TH
 import qualified Data.AppendMap as Map
 
 import Backend.BalanceTracking
-import Backend.Schema
+import Backend.Schema ()
 import Common.App
 import Common.Schema
--- import Backend.Schema ()
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)

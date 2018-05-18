@@ -41,6 +41,7 @@ import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 -- import Tezos.BakeMonitor.Types
 import Common.BlockHeader
+import Common.Verification
 
 
 main :: IO ()
@@ -209,8 +210,8 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
                 divClass "header" $ text "Errors"
                 el "ul" . forM_ es $ \e -> do
                   el "li" $ do
-                    divClass "timestamp" . text . T.pack . show . view error_time . mkErr $ e
-                    divClass "errortext" . el "strong" . text . T.pack . show . view error_text . mkErr $ e
+                    divClass "timestamp" . text . T.pack . show . view bakerValidationError_time . mkErr $ e
+                    divClass "errortext" . el "strong" . text . T.pack . show . view bakerValidationError_text . mkErr $ e
             divClass "header" $ text "Baked Blocks"
             el "description" . forM_ baked $ \b -> do
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b

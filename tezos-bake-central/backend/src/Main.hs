@@ -70,11 +70,11 @@ import Common.Api ()
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
-mailFor :: Text -> [Error] -> Mail
+mailFor :: Text -> [BakerValidationError] -> Mail
 mailFor toAddr errs =
   let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
       toA = Address Nothing toAddr
-      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
+      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | BakerValidationError t e <- errs]
   in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
 addSomeNodes
@@ -187,7 +187,7 @@ clientWorker nodes toAddr delay db = do
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
+            void $ queueEmail (mailFor toAddr $ [BakerValidationError now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
@@ -216,11 +216,11 @@ clientWorker nodes toAddr delay db = do
           [] -> return ()
           es -> do
             lastError <- liftIO $ readIORef lastErrorRef
-            let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
+            let (new,_) = span ((>= lastError) . Just . _bakerValidationError_time) (mkErr <$> es)
             case new of
               [] -> return ()
               (x:_) -> do
-                liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
+                liftIO $ writeIORef lastErrorRef (Just $ _bakerValidationError_time x)
                 _ <- queueEmail (mailFor toAddr new) Nothing
                 return ()
         -- TODO.  debounce below as above
