@@ -18,8 +18,10 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default
 import Data.Foldable
+import Data.Function hiding ((.))
 import Data.IORef
 import Data.List hiding (head)
+import Data.Maybe
 import Data.Monoid
 import Data.Pool
 import Data.Text (Text)
@@ -50,16 +52,18 @@ import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding (head, id, (.))
 import qualified Web.ClientSession as CS
+import Safe
 import Snap
 
-import Tezos.BakeMonitor.Types
-import Tezos.NodeRPC
+-- import Tezos.BakeMonitor.Types
+import Backend.NodeRPC
 
 import Backend.RequestHandler
 import Backend.NotifyHandler
 import Backend.ViewSelectorHandler
 import Backend.Schema
 import Backend.ChainHealth
+import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
 
@@ -91,10 +95,12 @@ nodeWorker
 nodeWorker delay db = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   worker (seconds delay) $ do
-    putStrLn "Update cycle."
+    putStrLn "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
-      forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+
+      clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
+      heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
         forM_ params $ \protoInfo -> do
@@ -106,6 +112,23 @@ nodeWorker delay db = do
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
+        return (nodeAddr, headBlockRsp)
+      let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
+          head = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
+      case head of
+        Nothing -> liftIO $ putStrLn "no visible nodes"
+        Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
+          let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
+          let headHash = _blockInfo_hash blockInfo
+          runNodeRPCT ctx $ forM_ (_clientConfig_delegates $ ci) $ \delegate -> do
+            accountResp <- nodeRPC (Contract headHash delegate)
+            forM_ accountResp $ \account -> do
+              let balance = _account_balance account
+              void $ [executeQ| UPDATE "ClientInfo"
+                                SET balance = ?balance
+                                WHERE id = ?clientInfoId
+                              |]
+      return ()
 
 -- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
 -- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
@@ -133,14 +156,15 @@ clientWorker :: (MonadIO m)
 clientWorker nodes toAddr delay db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
-    putStrLn "Update cycle."
+    putStrLn "Update client cycle."
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
-      -- TODO: params and blockHeightTimeout were unused! Is this code simply deletable, or did we mean to do something with these values?
-      -- params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
-      -- let blockHeightTimeout :: Int = maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo ) $ listToMaybe params
+      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      let blockHeightTimeout :: NominalDiffTime = fromIntegral
+            $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
+            $ listToMaybe params
       toUpdate <- [queryQ| SELECT id, address
                            FROM "Client"
                            WHERE updated < ?maxTime OR updated IS NULL
@@ -149,16 +173,20 @@ clientWorker nodes toAddr delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
-        request <- parseRequest ("http://" <> T.unpack address <> "/")
+        -- | TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+        configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
+        configResponse <- httpJSON configRequest
+        let clientConfig = getResponseBody configResponse :: ClientConfig
+            clientConfigJson = Json clientConfig
+
+        request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
-        -- liftIO $ print response
         let report = getResponseBody response :: Report
             reportJson = Json report
 
-        case _report_lastSeen report of
+        case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
-          -- TODO: configurable timeout
-          Just b -> when (addUTCTime (fromInteger 30) b < now) $
+          Just b -> when (addUTCTime blockHeightTimeout b < now) $
             void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
@@ -168,26 +196,27 @@ clientWorker nodes toAddr delay db = do
                     rc = c + _protoInfo_preservedCycles protoInfo
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_baked_hash b), rewardDelay (_baked_level b), blockReward) | b <- _report_lastBaked report]
-          when (not . null $ _report_lastBaked report) $ do
+                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
+          when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
                             ON CONFLICT DO NOTHING |]
             return ()
           return ()
 
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report)
-                        VALUES (?cid, ?reportJson)
-                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson |]
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
+                        VALUES (?cid, ?reportJson, ?clientConfigJson)
+                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson
+                                                         , config = ?clientConfigJson |]
         forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
         liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
-        case sort (_report_errors report) of
+        case sortBy (compare `on` _event_time) (_report_errors report) of
           [] -> return ()
           es -> do
             lastError <- liftIO $ readIORef lastErrorRef
-            let (new,_) = span ((>= lastError) . Just . _error_time) es
+            let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
             case new of
               [] -> return ()
               (x:_) -> do

@@ -3,14 +3,14 @@
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks) where
 
 import Common.Schema
-import Tezos.BakeMonitor.Types
+-- import Tezos.BakeMonitor.Types
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void
 import Data.Either.Validation
 import Control.Monad.Trans
 import Data.Time
-import Tezos.NodeRPC
+import Backend.NodeRPC
 import Network.HTTP.Types.Status(Status(..))
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
@@ -55,11 +55,11 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   _ -> Success ()
 
 showBadFork :: ForkInfo -> [Error]
-showBadFork (ForkInfo node status baked) = pure $ Error (_baked_time baked) $ T.concat
+showBadFork (ForkInfo node status baked) = pure $ Error (_event_time baked) $ T.concat
           [ "node: ", _node_address node
           , " BAKER STATE:" , showForkStatus status
-          , " for block:", unBlockHash $ _baked_hash baked
-          , " @ ",  T.pack $ show $ _baked_time baked
+          , " for block:", unBlockHash $ _bakedEvent_hash $ _event_detail baked
+          , " @ ",  T.pack $ show $ _event_time baked
           , "\n"
           ]
 
@@ -78,8 +78,8 @@ scanForkInfo :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
 scanForkInfo now rpt node = do
   httpMgr <- liftIO $ newManager tlsManagerSettings
   let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
-  -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_lastBaked rpt, _report_last_seen rpt]
-  runNodeRPCT ctx . mapM (checkChainHealth now 30) $ _report_lastBaked rpt
+  -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_baked rpt, _report_last_seen rpt]
+  runNodeRPCT ctx . mapM (checkChainHealth now 30) $ _report_baked rpt
 
 checkChainHealth
   :: MonadIO m
@@ -93,10 +93,10 @@ checkChainHealth now delay seenBaked = do
       Left bad -> (liftIO $ putStrLn "no head") >> (return (Nothing, ForkStatus_BadNode bad))
       Right headInfo -> do
         -- liftIO $ putStrLn ("head:" <> show head)
-        status <- (factorResponse <$> (nodeRPC $ Block $ _baked_hash seenBaked)) >>= \case
+        status <- (factorResponse <$> (nodeRPC $ Block $ _bakedEvent_hash $ _event_detail seenBaked)) >>= \case
           Left (RpcResponse_UnexpectedStatus (Status 404 _)) -> do
             let maxTime = addUTCTime (- fromIntegral delay) now
-            return $ if (_baked_time seenBaked >= maxTime)
+            return $ if (_event_time seenBaked >= maxTime)
               then ForkStatus_TooNew
               else ForkStatus_TooOld
           Left bad -> do

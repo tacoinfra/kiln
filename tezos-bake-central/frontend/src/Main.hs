@@ -10,14 +10,12 @@
 
 import Common.Api
 import Common.App
-import Common.Schema
+import Common.Schema hiding (Event)
 import Control.Lens (firstOf)
 import Control.Monad
 import Control.Monad.Trans
 import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap)
-import qualified Data.Map as Map'
-import Data.Map (Map)
 import Data.Either.Combinators
 import Data.Fixed
 import Data.Foldable (foldl')
@@ -43,7 +41,7 @@ import Reflex.Dom
 import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Element (setInnerHTML) -- for now
 
-import Tezos.BakeMonitor.Types
+import Common.BlockHeader
 
 main :: IO ()
 main = do
@@ -94,25 +92,7 @@ data UITab = UITab_Summary
 
 appMain :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  theView <- watchViewSelector . pure $ BakeViewSelector
-    { _bakeViewSelector_clients = Just 1
-    , _bakeViewSelector_parameters = Just 1
-    , _bakeViewSelector_level = Just 1
-    }
-  let clients :: Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report))
-      clients = ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
-          case r of
-            Nothing -> Nothing
-            (Just (name, Nothing)) -> Just (name, Left "No response yet.")
-            (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
-
-      uiTabs :: Dynamic t (Map UITab (Text, m ()))
-      uiTabs = ffor clients $ \cs ->
-        Map'.fromList $
-          (UITab_Summary, ("Summary", summaryTab)) :
-          (UITab_Options, ("Options", optionsTab)) :
-          [(UITab_Client cid, (cname, clientTab cid (Map.lookup cid <$> clients))) | (cid, (cname, _)) <- Map.toList cs]
-
+  clients <- watchClients
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
@@ -149,9 +129,9 @@ summaryTab = divClass "card" . divClass "content" $ do
               total = principal + sum past + fromMaybe 0 x'
           in (total, cumulate level principal after)
 
-  let aggCounts :: Either a Report -> (Count, Sum Int)
+  let aggCounts :: Either a ClientInfo -> (Count, Sum Int)
       aggCounts (Left _) = (mempty, Sum 1)
-      aggCounts (Right r) = (_report_counts r, Sum 0)
+      aggCounts (Right ci) = (mkCount (unJson (_clientInfo_report ci)), Sum 0)
 
   divClass "header" $ text "Summary"
   text "These are the totals of various events across all monitored bakers."
@@ -180,7 +160,7 @@ optionsTab = do
   clients <- watchClients
   divClass "header" $ text "Monitored Clients"
   elAttr "table" ("class" =: "ui celled striped table") $ do
-    listWithKey (Map._unAppendMap <$> clients) $ \cid dNameInfo -> el "tr" $ do
+    listWithKey (Map._unAppendMap <$> clients) $ \_ dNameInfo -> el "tr" $ do
       let dName = fst <$> dNameInfo
       el "td" $ dynText dName
       el "td" $ do
@@ -194,19 +174,26 @@ optionsTab = do
       requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
   return ()
 
-clientTab :: (MonadFocusFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text Report)) -> m ()
-clientTab cid mReportD =
+clientTab :: (MonadFocusFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
+clientTab _ mReportD =
   void . dyn . ffor mReportD $ \case
     Nothing -> text "Waiting for response..."
     Just (_, mReport) -> do
       divClass "ui grid" $ case mReport of
         Left e -> text e
-        Right report -> do
+        Right clientInfo -> do
           dparameters <- watchProtoInfo
-          let counts = _report_counts report
-              baked = _report_lastBaked report
+          let report = unJson (_clientInfo_report clientInfo)
+              counts = mkCount report
+              baked = _report_baked report
           divClass "six wide column" $ do
-            forM_ (_report_tezzies report) $ \tz -> do
+            elAttr "div" ("class" =: "delegates") $ do
+              text $ "ID: "
+              text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+            elAttr "div" ("class" =: "client-node") $ do
+              text $ "Node: "
+              text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
+            forM_ (_clientInfo_balance clientInfo) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)
@@ -237,8 +224,8 @@ clientTab cid mReportD =
                 divClass "header" $ text "Errors"
                 el "ul" . forM_ es $ \e -> do
                   el "li" $ do
-                    divClass "timestamp" . text . T.pack . show . _error_time $ e
-                    divClass "errortext" . el "strong" . text . T.pack . show . _error_text $ e
+                    divClass "timestamp" . text . T.pack . show . _error_time . mkErr $ e
+                    divClass "errortext" . el "strong" . text . T.pack . show . _error_text . mkErr $ e
           divClass "ten wide column" $ do
             divClass "header" $ text "Activity"
             elAttr "table" ("class" =: "ui celled striped table") $ do
@@ -248,9 +235,9 @@ clientTab cid mReportD =
                 el "th" $ text "Level"
                 el "th" $ text "Reward"
               forM_ baked $ \b -> el "tr" $ do
-                el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _baked_time $ b
-                el "td" . text . T.pack . show . _baked_level $ b
-                el "td" . text . T.take 14 . unBlockHash . _baked_hash $ b
+                el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
+                el "td" . text . T.pack . show . blockLevel $ b
+                el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
                 el "td" . dyn . ffor dparameters $ \case
                   Nothing -> blank
                   Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
@@ -275,7 +262,7 @@ watchTezosLevel = do
     }
   return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
 
-watchClients :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text Report)))
+watchClients :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
 watchClients = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
@@ -284,7 +271,7 @@ watchClients = do
     case r of
       Nothing -> Nothing
       (Just (name, Nothing)) -> Just (name, Left "No response yet.")
-      (Just (name, Just ci)) -> Just (name, Right . unJson $ _clientInfo_report ci)
+      (Just (name, Just ci)) -> Just (name, Right ci)
 
 watchRewards :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
 watchRewards = do
