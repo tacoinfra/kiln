@@ -7,6 +7,7 @@ import Common.Schema
 import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Either.Validation
+import Common.TaggedHash (toBase58Text)
 
 data ForkInfoF e = ForkInfo
   { _forkInfo_node :: Node
@@ -39,7 +40,7 @@ showBadFork :: ForkInfoF e -> [BakerValidationError]
 showBadFork (ForkInfo node status baked) = pure $ BakerValidationError (_event_time baked) $ T.concat
           [ "node: ", _node_address node
           , " BAKER STATE:" , showForkStatus status
-          , " for block:", unBlockHash $ _bakedEvent_hash $ _event_detail baked
+          , " for block:", toBase58Text $ _bakedEvent_hash $ _event_detail baked
           , " @ ",  T.pack $ show $ _event_time baked
           , "\n"
           ]

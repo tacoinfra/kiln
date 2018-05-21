@@ -1,18 +1,20 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Common.Schema where
 
 
 
+import Control.Monad
 import Control.Applicative
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
@@ -38,6 +40,8 @@ import qualified Data.Text.Encoding as T
 
 import qualified Data.ByteString.Base16 as BS
 import Data.Monoid
+
+import Common.TaggedHash
 
 -- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
 data Ident = Ident
@@ -142,10 +146,6 @@ instance Monoid Count where
 
 instance FromJSON Count
 instance ToJSON Count
-
-newtype BlockHash = BlockHash {unBlockHash :: Text}
-  deriving (Eq, Ord, Show, ToJSON, FromJSON, Generic, Typeable)
-
 
 type Baked = Event BakedEvent
 
@@ -254,7 +254,6 @@ data BakedEvent = BakedEvent
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
-type ChainId = Text
 type Protocol = Text
 
 
@@ -288,6 +287,19 @@ instance FromJSON (Base16ByteString BS.ByteString) where
     if (BS.length rest > 0)
     then fail $ "unmatched characters" <> show rest
     else return $ Base16ByteString bytes
+
+instance ToJSON (Base16ByteString (HashedValue t BS.ByteString)) where
+  toJSON = toJSON . Base16ByteString . unHashedValue . unbase16ByteString
+  toEncoding = toEncoding . Base16ByteString . unHashedValue . unbase16ByteString
+
+instance IsBase58Hash t => FromJSON (Base16ByteString (HashedValue t BS.ByteString)) where
+  parseJSON x = do
+    (Base16ByteString x') <- parseJSON x
+    let expectedLength = (hashSize (Proxy :: Proxy t))
+        actualLength = BS.length x'
+    when (expectedLength /= actualLength)
+      (fail $ "bad payload size, expected(" <> show expectedLength <> ") /= actual (" <> show actualLength <> ")")
+    return $ Base16ByteString $ HashedValue x'
 
 
 
@@ -373,12 +385,47 @@ data Account = Account
 newtype BlockPrefix = BlockPrefix Text
   deriving (Eq, Show, Generic, Typeable)
 
+data BlockId = BlockId
+  { _blockId_blockHash :: BlockIdHash
+  , _blockId_predecessor :: Maybe Word64
+  }
+
+data BlockIdHash
+   = BlockIdHash_BlockHash BlockHash
+   | BlockIdHash_Genesis
+   | BlockIdHash_Head
+   | BlockIdHash_TestHead
+
+
+-- Smart constructors for "dynamic" url patterns in NodeRPC
+blockHashId :: BlockHash -> BlockId
+blockHashId x = BlockId (BlockIdHash_BlockHash x) Nothing
+
+genesisId :: BlockId
+genesisId = BlockId BlockIdHash_Genesis Nothing
+
+headId :: BlockId
+headId = BlockId BlockIdHash_Head Nothing
+
+testHeadId :: BlockId
+testHeadId = BlockId BlockIdHash_TestHead Nothing
+
+showBlockId :: BlockId -> Text
+showBlockId (BlockId blockId offset) = blockId' <> offset'
+  where
+    blockId' = case blockId of
+      BlockIdHash_BlockHash x -> toBase58Text x
+      BlockIdHash_Genesis -> "genesis"
+      BlockIdHash_Head -> "head"
+      BlockIdHash_TestHead -> "test_head"
+    offset' = maybe "" (("~" <>) . T.pack . show) offset
+
 
 data NodeRPCRequest a where
   Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
-  Block :: BlockHash -> NodeRPCRequest BlockInfo
+  Block :: BlockId -> NodeRPCRequest BlockInfo
   ProtoConstants :: NodeRPCRequest ProtoInfo
-  Contract :: BlockHash -> PublicKeyHash -> NodeRPCRequest Account
+  Contract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
 
 
 data RpcError =

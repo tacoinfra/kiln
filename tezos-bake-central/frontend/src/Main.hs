@@ -42,6 +42,7 @@ import GHCJS.DOM.Element (setInnerHTML) -- for now
 -- import Tezos.BakeMonitor.Types
 import Common.BlockHeader
 import Common.Verification
+import Common.TaggedHash
 
 
 main :: IO ()
@@ -217,7 +218,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
               el "div" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
               el "div" $ do
                 text $ ("Level: "<>) . T.pack . show . blockLevel $ b
-                text $ (" Hash: " <>) . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+                text $ (" Hash: " <>) . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
                 dyn . ffor dparameters $ \case
                   Nothing -> blank
                   Just protoInfo -> text $ (" Reward: " <>) . tezzies . _protoInfo_blockReward $ protoInfo

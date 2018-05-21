@@ -102,4 +102,4 @@ parseBlock = BlockHeader
 
 -- TODO: handle parsing errors
 blockLevel :: Event BakedEvent -> Int
-blockLevel evt = fromIntegral $ _blockHeader_level $ either error id $ eitherResult $ parse (parseBlock) $ unbase16ByteString $ _bakedEvent_signedHeader $ _event_detail evt
+blockLevel evt = fromIntegral ( _blockHeader_level ( either error id ( eitherResult ( parse (parseBlock) ( unbase16ByteString ( _bakedEvent_signedHeader ( _event_detail evt)))))))

@@ -14,6 +14,7 @@ import Network.HTTP.Client.TLS
 import Data.Monoid
 
 import Common.Verification
+import Common.BlockHeader
 
 -- type ForkStatus = ForkStatusF (RpcResponse Void)
 type ForkInfo = ForkInfoF RpcError
@@ -44,20 +45,18 @@ scanForkInfo now rpt node = do
   runNodeRPCT ctx . mapM (checkChainHealth now 30) $ _report_baked rpt
 
 checkChainHealth
-  ::
-   ( Monad m
-   , MonadTezosNode m
-   )
+  :: ( Monad m , MonadTezosNode m )
   => UTCTime
   -> Int -- ^ max unseen age, in seconds
   -> Baked
   -> m ForkInfo
 checkChainHealth now delay seenBaked = do
+    let seenBlockLevel = blockLevel seenBaked
     addr <- nodeAddress
-    (level, status) <- (nodeRPC $ Block $ BlockHash "head") >>= \case
+    (level, status) <- (nodeRPC $ Block headId) >>= \case
       Left bad -> return (Nothing, ForkStatus_BadNode bad)
       Right headInfo -> do
-        status <- ((nodeRPC $ Block $ _bakedEvent_hash $ _event_detail seenBaked)) >>= \case
+        status <- ((nodeRPC $ Block $ blockHashId $ _bakedEvent_hash $ _event_detail seenBaked)) >>= \case
           Left (RpcError_UnexpectedStatus 404 _) -> do
             let maxTime = addUTCTime (- fromIntegral delay) now
             return $ if (_event_time seenBaked >= maxTime)
@@ -66,7 +65,7 @@ checkChainHealth now delay seenBaked = do
           Left bad -> do
             return $ ForkStatus_BadNode bad
           Right seen -> do
-            let ancestorBlockHash = BlockHash $ (unBlockHash $ _blockInfo_hash headInfo) <> "~" <> T.pack (show (_blockInfo_level headInfo - _blockInfo_level seen))
+            let ancestorBlockHash = BlockId (BlockIdHash_BlockHash $ _blockInfo_hash headInfo) (Just $ _blockInfo_level headInfo - _blockInfo_level seen)
             ((nodeRPC $ Block $ ancestorBlockHash)) >>= \case
               Left bad -> return $ ForkStatus_BadNode bad
               Right ancestor -> do

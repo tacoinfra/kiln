@@ -16,7 +16,9 @@ in focus.mkDerivation {
     cases
     scientific
     base16-bytestring
+    base58-bytestring
     attoparsec
+    cryptohash
   ];
   frontendDepends = p: with p; [
     data-default

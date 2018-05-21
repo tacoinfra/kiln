@@ -49,12 +49,13 @@ newtype NodeRPCT m a = NodeRPCT { unNodeRPCT :: ReaderT NodeRPCContext m a }
 runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
 runNodeRPCT c (NodeRPCT x) = flip runReaderT c x
 
+
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
     Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
-    Block (BlockHash hash) -> nodeRPCImpl ("/blocks/" <> hash)
+    Block hash -> nodeRPCImpl ("/blocks/" <> showBlockId hash)
     ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
-    Contract (BlockHash block) (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> block <> "/proto/context/contracts/" <> publicKey)
+    Contract block (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> publicKey)
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 rpcError_HttpException :: HttpException -> RpcResponse a

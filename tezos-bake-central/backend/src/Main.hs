@@ -44,9 +44,9 @@ import Focus.Backend.Snap
 import Focus.Concurrent (worker)
 import Focus.Request (decodeValue')
 import Focus.Schema
-import Network.HTTP.Client
+import Network.HTTP.Client hiding (Proxy)
 import Network.HTTP.Client.TLS
-import Network.HTTP.Simple
+import Network.HTTP.Simple hiding (Proxy)
 import Network.Mail.Mime
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
@@ -66,6 +66,7 @@ import Backend.ChainHealth
 import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
+import Common.TaggedHash
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -109,7 +110,7 @@ nodeWorker delay db = do
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block headId
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
@@ -121,7 +122,7 @@ nodeWorker delay db = do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
           runNodeRPCT ctx $ forM_ (_clientConfig_delegates $ ci) $ \delegate -> do
-            accountResp <- nodeRPC (Contract headHash delegate)
+            accountResp <- nodeRPC (Contract (blockHashId headHash) delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
@@ -196,7 +197,7 @@ clientWorker nodes toAddr delay db = do
                     rc = c + _protoInfo_preservedCycles protoInfo
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
+                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
