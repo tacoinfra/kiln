@@ -8,8 +8,6 @@
 
 module Common.Schema where
 
-
-
 import Control.Applicative
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
@@ -118,30 +116,27 @@ data ProtoInfo = ProtoInfo
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 data Count = Count
-  { _count_selected :: !Integer
-  , _count_injected :: !Integer
-  , _count_errors :: !Integer
+  { _count_injected :: !Int
+  , _count_errors :: !Int
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- I dont really think this is correct
 mkCount :: Report -> Count
-mkCount _ = Count
-  { _count_selected = 0
-  , _count_injected = 0
-  , _count_errors = 0
+mkCount r = Count
+  { _count_injected = length (_report_baked r)
+  , _count_errors = length (_report_errors r)
   }
 
 instance Monoid Count where
-  mempty = Count 0 0 0
-  Count s i e `mappend` Count s' i' e' = Count (s + s') (i + i') (e + e')
+  mempty = Count 0 0
+  Count i e `mappend` Count i' e' = Count (i + i') (e + e')
 
 instance FromJSON Count
 instance ToJSON Count
 
 newtype BlockHash = BlockHash {unBlockHash :: Text}
   deriving (Eq, Ord, Show, ToJSON, FromJSON, Generic, Typeable)
-
 
 type Baked = Event BakedEvent
 
@@ -172,8 +167,6 @@ data BlockInfo = BlockInfo
   , _blockInfo_validationPass :: Int
   }
   deriving (Eq, Show, Generic, Typeable)
-
-
 
 type ClientAddress = Text
 
@@ -242,7 +235,6 @@ data Level = Level
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
-
 data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   -- , operations :: ...
@@ -285,8 +277,6 @@ instance FromJSON (Base16ByteString BS.ByteString) where
     then fail $ "unmatched characters" <> show rest
     else return $ Base16ByteString bytes
 
-
-
 data SeenEvent = SeenEvent
   { _seenEvent_chainId :: ChainId
   , _seenEvent_fitness :: Fitness
@@ -315,7 +305,7 @@ data ErrorEvent = ErrorEvent
 mkErr :: Event ErrorEvent -> Error
 mkErr err = Error
   { _error_time = _event_time err
-  , _error_text = T.pack $ show $ _event_detail err
+  , _error_text = _errorEvent_message $ _event_detail err
   }
 
 data Report = Report
@@ -349,7 +339,6 @@ data ClientDaemonWorker
   | ClientDaemonWorker_Endorsement
   deriving (Enum, Show, Eq, Typeable, Generic)
 
-
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
   , _clientConfig_delegates :: [PublicKeyHash] -- Ident
@@ -366,7 +355,14 @@ data Account = Account
   , _account_counter :: Int64 -- 1540
   }
 
+data Notificatee = Notificatee
+  { _notificatee_email :: Email
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
+instance HasId Notificatee
+instance FromJSON Notificatee
+instance ToJSON Notificatee
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
 $(concat <$> traverse (deriveJSON defaultOptions
@@ -386,9 +382,7 @@ $(concat <$> traverse (deriveJSON defaultOptions
   , ''SeenEvent
   ])
 
-
 makeLenses 'BlockInfo
-
 makeLenses 'Report
 makeLenses 'Count
 makeLenses 'Event
@@ -396,6 +390,3 @@ makeLenses 'BakedEvent
 makeLenses 'SeenEvent
 makeLenses 'ErrorEvent
 makeLenses 'Error
-
-
-

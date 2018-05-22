@@ -147,13 +147,18 @@ getLatestProtoInfo = do
         _ -> Nothing
     [] -> return Nothing
 
+queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => [Error] -> m ()
+queueAllEmails message = do
+  ns <- selectAll
+  forM_ ns $ \(_, n) ->
+    queueEmail (mailFor (_notificatee_email n) message) Nothing
+
 clientWorker :: (MonadIO m)
              => [Node] -- [(Id Node, Text)]
-             -> Email -- email address of user to notify about errors
              -> Int -- delay between checking for updates, in seconds
              -> Pool Postgresql
              -> m (IO ())
-clientWorker nodes toAddr delay db = do
+clientWorker nodes delay db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     putStrLn "Update client cycle."
@@ -187,7 +192,7 @@ clientWorker nodes toAddr delay db = do
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            void $ queueEmail (mailFor toAddr $ [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
+            void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let blockReward = _protoInfo_blockReward protoInfo
@@ -221,15 +226,14 @@ clientWorker nodes toAddr delay db = do
               [] -> return ()
               (x:_) -> do
                 liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-                _ <- queueEmail (mailFor toAddr new) Nothing
+                _ <- queueAllEmails new
                 return ()
         -- TODO.  debounce below as above
         flip validateForkyBlocks (concat $ forkInfo) $ \errors -> do
-          void $ queueEmail (mailFor toAddr errors) Nothing
+          void $ queueAllEmails errors
 
 main :: IO ()
 main = withFocus $ do
-  userEmailAddress <- T.readFile "config/userEmailAddress"
   Just email <- decodeValue' <$> LBS.readFile "config/email"
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
@@ -261,7 +265,7 @@ main = withFocus $ do
     addFinalizer wsFinalizer
 
     addFinalizer =<< nodeWorker 30 db
-    addFinalizer =<< clientWorker nodes userEmailAddress 10 db
+    addFinalizer =<< clientWorker nodes 10 db
 
     liftIO (quickHttpServe $ route
       [ ("", rootHandler cfg)

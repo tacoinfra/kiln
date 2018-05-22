@@ -15,7 +15,6 @@ import Data.Semigroup
 import Database.Groundhog.Postgresql
 import Focus.Backend.App
 import Focus.Backend.DB
-import Focus.Schema
 import qualified Web.ClientSession as CS
 import Control.Monad.Logger (runNoLoggingT)
 import Focus.Backend.DB.PsqlSimple
@@ -23,10 +22,13 @@ import Focus.Backend.Schema.TH
 import qualified Data.AppendMap as Map
 
 import Backend.BalanceTracking
-import Backend.Schema
 import Common.App
 import Common.Schema
 -- import Backend.Schema ()
+
+whenJust :: (Monad m, Monoid a) => Maybe t -> (t -> m a) -> m a
+whenJust Nothing f = return mempty
+whenJust (Just x) f = f x
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -44,25 +46,25 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
             (cid, address, report, config, balance) <- rs
             return (cid, (First (Just (address, ClientInfo cid <$> report <*> config <*> balance)), a))
         }
-  parameters <- case _bakeViewSelector_parameters vs of
-    Nothing -> return mempty
-    Just a -> do
-      rs <- selectAll
-      return (mempty :: BakeView a)
-        { _bakeView_parameters = Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
-        }
-  level <- case _bakeViewSelector_level vs of
-    Nothing -> return mempty
-    Just a -> do
-      rs <- selectAll
-      return (mempty :: BakeView a)
-        { _bakeView_level = Map.fromList [(toId nid, (First (_node_headLevel n), a)) | (nid, n) <- rs]
-        }
-  rewards <- case _bakeViewSelector_clients vs of
-    Nothing -> return mempty
-    Just a -> do
-      rewardMap <- getAllRewards a
-      return (mempty :: BakeView a)
-        { _bakeView_rewards = rewardMap
-        }
-  return $ clients <> parameters <> level <> rewards
+  parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_parameters = Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
+      }
+  level <- whenJust (_bakeViewSelector_level vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_level = Map.fromList [(toId nid, (First (_node_headLevel n), a)) | (nid, n) <- rs]
+      }
+  rewards <- whenJust (_bakeViewSelector_clients vs) $ \a -> do
+    rewardMap <- getAllRewards a
+    return (mempty :: BakeView a)
+      { _bakeView_rewards = rewardMap
+      }
+  notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_notificatees = Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
+      }
+
+  return $ clients <> parameters <> level <> rewards <> notificatees

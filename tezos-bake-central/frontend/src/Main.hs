@@ -13,14 +13,19 @@ import Common.App
 import Common.Schema hiding (Event)
 import Control.Lens (firstOf)
 import Control.Monad
+import Control.Monad.Fix
 import Control.Monad.Trans
+import Data.AppendMap (_unAppendMap)
 import qualified Data.AppendMap as Map
+import qualified Data.Map as BaseMap
 import Data.AppendMap (AppendMap)
 import Data.Either.Combinators
 import Data.Fixed
 import Data.Foldable (foldl')
+import Data.List
 import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
+import Data.Ord
 import Data.Semigroup
 import Data.Text (Text)
 import Data.Time.Format
@@ -28,6 +33,7 @@ import Data.Word
 import Focus.Api
 import Focus.JS.App
 import Focus.JS.Run
+-- import Focus.JS.FontAwesome -- where did this go?
 import Focus.Request
 import Focus.Route
 import Focus.Schema
@@ -109,10 +115,11 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   return ()
 
 summaryTab :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
-summaryTab = divClass "card" . divClass "content" $ do
+summaryTab = divClass "ui grid" $ do
   dlevel <- watchTezosLevel
   clients <- watchClients
   rewards <- watchRewards
+  dparameters <- watchProtoInfo
   let totalRewards :: Dynamic t (AppendMap Integer Micro)
       totalRewards = foldl' (Map.unionWith (+)) Map.empty <$> rewards
       cumulate :: (Ord a, Integral a, Num b) => a -> b -> AppendMap a b -> [(a,b)]
@@ -132,61 +139,88 @@ summaryTab = divClass "card" . divClass "content" $ do
   let aggCounts :: Either a ClientInfo -> (Count, Sum Int)
       aggCounts (Left _) = (mempty, Sum 1)
       aggCounts (Right ci) = (mkCount (unJson (_clientInfo_report ci)), Sum 0)
-
-  divClass "header" $ text "Summary"
-  text "These are the totals of various events across all monitored bakers."
-  dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
-    divClass "counts" $ el "ul" $ do
-      tooltipPos "right center" "This occurs whenever one of the bakers selects a candidate block" . text $ ("Selected:" <>) . T.pack . show $ _count_selected counts
-      tooltipPos "right center" "This occurs whenever a baker finishes baking a block" . text $ ("Injected:" <>) . T.pack . show $ _count_injected counts
-      tooltipPos "right center" "This occurs whenever an error is reported in any monitored baker." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
-      tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
-  (graphEl, _) <- el' "div" blank
-  graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
-    Nothing -> Nothing
-    Just (_, cr) -> case drop 2 cr of
-      [] -> Nothing
-      _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
-  performEvent_ . ffor graphText $ \theSVG -> do
-    setInnerHTML (_element_raw graphEl) theSVG
-  dyn . ffor cumulativeRewards $ \case
-    Nothing -> blank
-    Just (total, _) -> text $ "Total rewards earned: " <> tezzies (Tezzies total)
+  divClass "six wide column" $ do
+    divClass "ui medium header" $ text "Summary"
+    text "These are the totals of various events across all monitored bakers."
+    dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
+      divClass "counts" $ el "ul" $ do
+        tooltipPos "right center" "The number of blocks that have been baked." . text $ ("Blocks baked:" <>) . T.pack . show $ _count_injected counts
+        tooltipPos "right center" "The number of errors that have occurred." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
+        tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
+    (graphEl, _) <- el' "div" blank
+    graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
+      Nothing -> Nothing
+      Just (_, cr) -> case drop 2 cr of
+        [] -> Nothing
+        _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
+    performEvent_ . ffor graphText $ \theSVG -> do
+      setInnerHTML (_element_raw graphEl) theSVG
+    dyn . ffor cumulativeRewards $ \case
+      Nothing -> blank
+      Just (total, _) -> text $ "Total rewards earned: " <> tezzies (Tezzies total)
+  dyn . ffor clients $ \cs -> do
+    let reports = fmapMaybe (\case (_, Right i) -> Just (unJson (_clientInfo_report i)); _ -> Nothing) cs
+        baked = sortBy (comparing _event_time) (concat (_report_baked <$> reports))
+    divClass "ten wide column" $ do
+      divClass "ui medium header" $ text "Activity"
+      elAttr "table" ("class" =: "ui celled striped table") $ do
+        el "thead" . el "tr" $ do
+          elClass "th" "four wide" $ text "Time"
+          el "th" $ text "Block Hash"
+          el "th" $ text "Level"
+          el "th" $ text "Reward"
+        forM_ baked $ \b -> el "tr" $ do
+          el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
+          el "td" . text . T.pack . show . blockLevel $ b
+          el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+          el "td" . dyn . ffor dparameters $ \case
+            Nothing -> blank
+            Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
   return ()
 
 optionsTab :: (MonadFocusFrontendWidget Bake t m) => m ()
-optionsTab = do
-
+optionsTab = divClass "ui grid" $ do
   clients <- watchClients
-  divClass "header" $ text "Monitored Clients"
-  elAttr "table" ("class" =: "ui celled striped table") $ do
-    listWithKey (Map._unAppendMap <$> clients) $ \_ dNameInfo -> el "tr" $ do
-      let dName = fst <$> dNameInfo
-      el "td" $ dynText dName
-      el "td" $ do
-        eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
-        requestingIdentity $ (public . PublicRequest_RemoveClient <$> tag (current dName) eRemove)
-    el "tr" $ do
-      addressInput <- el "td" $ textInput def
-      addButton <- el "td" $ buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
-      let address = value addressInput
-          addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
-      requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+  divClass "four wide column" $ do
+    divClass "ui medium header" $ text "Notification Recipients"
+    let isEmailAddress = const True
+    notificatees <- watchNotificatees
+    rec (addN, removeN) <- listInput "user@example.com" isEmailAddress notificatees (Right "" <$ addedN)
+        addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
+        requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+    return ()
+
+  divClass "four wide column" $ do
+    divClass "ui medium header" $ text "Monitored Clients"
+    elAttr "table" ("class" =: "ui celled striped compact table") $ do
+      listWithKey (Map._unAppendMap <$> clients) $ \_ dNameInfo -> el "tr" $ do
+        let dName = fst <$> dNameInfo
+        el "td" $ dynText dName
+        el "td" $ do
+          eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
+          requestingIdentity $ (public . PublicRequest_RemoveClient <$> tag (current dName) eRemove)
+      el "tr" $ do
+        addressInput <- el "td" $ textInput def
+        addButton <- el "td" $ buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
+        let address = value addressInput
+            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
+        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+
   return ()
 
 clientTab :: (MonadFocusFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
-clientTab _ mReportD =
-  void . dyn . ffor mReportD $ \case
+clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
     Nothing -> text "Waiting for response..."
-    Just (_, mReport) -> do
-      divClass "ui grid" $ case mReport of
+    Just (addr, mReport) -> do
+      case mReport of
         Left e -> text e
         Right clientInfo -> do
           dparameters <- watchProtoInfo
           let report = unJson (_clientInfo_report clientInfo)
               counts = mkCount report
               baked = _report_baked report
-          divClass "six wide column" $ do
+          divClass "eight wide column" $ do
+            divClass "ui medium header" . text $ addr
             elAttr "div" ("class" =: "delegates") $ do
               text $ "ID: "
               text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
@@ -212,27 +246,31 @@ clientTab _ mReportD =
                     text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
                   _ -> blank
             divClass "counts" $ do
-              tooltip "This counts the number of times that a candidate block was selected by this baker for baking since it began running." . text $
-                "Selected:" <> (T.pack . show $ _count_selected counts)
               tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
-                "Injected:" <> (T.pack . show $ _count_injected counts)
+                "Blocks baked:" <> (T.pack . show $ _count_injected counts)
               tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
                 "Errors:" <> (T.pack . show $ _count_errors counts)
             case _report_errors report of
               [] -> blank
               es -> divClass "errors" $ do
-                divClass "header" $ text "Errors"
-                el "ul" . forM_ es $ \e -> do
-                  el "li" $ do
-                    divClass "timestamp" . text . T.pack . show . _error_time . mkErr $ e
-                    divClass "errortext" . el "strong" . text . T.pack . show . _error_text . mkErr $ e
-          divClass "ten wide column" $ do
-            divClass "header" $ text "Activity"
+                divClass "ui medium header" $ text "Errors"
+                elClass "table" "ui celled striped table" $ do
+                  el "thead" . el "tr" $ do
+                    elClass "th" "four wide" $ text "Time"
+                    el "th" $ text "Message"
+                  forM_ es $ \e -> do
+                    el "tr" $ do
+                      el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time . mkErr $ e
+                      el "td" $ do
+                        forM_ (T.lines (_error_text . mkErr $ e)) $ \t ->
+                          divClass "errorLine" $ text t
+          divClass "eight wide column" $ do
+            divClass "ui medium header" $ text "Activity"
             elAttr "table" ("class" =: "ui celled striped table") $ do
               el "thead" . el "tr" $ do
-                el "th" $ text "Time"
-                el "th" $ text "Block Hash"
+                elClass "th" "four wide" $ text "Time"
                 el "th" $ text "Level"
+                el "th" $ text "Block Hash"
                 el "th" $ text "Reward"
               forM_ baked $ \b -> el "tr" $ do
                 el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
@@ -279,3 +317,48 @@ watchRewards = do
     { _bakeViewSelector_clients = Just 1
     }
   return . ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
+
+watchNotificatees :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
+watchNotificatees = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_notificatees = Just 1
+    }
+  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+
+-- | Control that allows the user to build a list of items.
+-- TODO: Move this to Focus.JS.Widget
+listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)
+          => Text -- ^ Placeholder for input
+          -> (Text -> Bool) -- ^ Input validation
+          -> Dynamic t (AppendMap k Text) -- ^ Items in list
+          -> Event t (Either [Text] Text) -- ^ Event of error messages or successful submission
+          -> m (Event t Text, Event t (k, Text)) -- ^ Add item event, remove item event
+listInput ph validate items rsp = divClass "list-input" $ do
+  rec (i, addClick) <- divClass "item-input" $ do
+        itemInput <- inputElement $ def
+          & initialAttributes .~ ("placeholder" =: ph)
+          & inputElementConfig_setValue .~ ("" <$ fmapMaybe rightToMaybe rsp)
+          & inputElementConfig_elementConfig . elementConfig_modifyAttributes .~ validationAttrs
+        addItemClick <- fmap (domEvent Click . fst) $ elClass' "span" "add-button" $ elClass "i" "fa fa-plus-circle fa-fw" blank
+        return (itemInput, addItemClick)
+      let v = value i
+          validationResults = leftmost
+            [ (\v' -> if T.null v' then Left () else Right (validate v')) <$> updated v
+            , Right . isJust . rightToMaybe <$> rsp
+            ]
+          validationAttrs = ffor validationResults $ \r -> mapKeysToAttributeName $ case r of
+            Left () -> "class" =: Nothing
+            Right True -> "class" =: Nothing
+            Right False -> "class" =: Just "invalid"
+          submit = tag (current v) $ leftmost
+            [ () <$ ffilter ((==Enter) . keyCodeLookup . fromIntegral) (domEvent Keypress i)
+            , addClick
+            ]
+      widgetHold_ (return ()) $ ffor rsp $ \case
+        Left errs -> forM_ errs $ elClass "div" "modal-content__text-input-error" . text
+        Right success -> elClass "div" "modal-content__text-input-success" $ text success
+      remove <-  fmap (fmap (leftmost . BaseMap.elems)) $ elClass "ul" "list-input-items" $
+        listWithKey (_unAppendMap <$> items) $ \k t -> el "li" $ do
+          el "span" $ dynText t
+          fmap ((,) k) . tag (current t) . domEvent Click . fst <$> el' "span" (elClass "i" "fa fa-fw fa-times-circle" blank)
+  return (ffilter validate submit, switch . current $ remove)
