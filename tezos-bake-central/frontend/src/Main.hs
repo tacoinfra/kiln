@@ -166,8 +166,8 @@ summaryTab = divClass "ui grid" $ do
       elAttr "table" ("class" =: "ui celled striped table") $ do
         el "thead" . el "tr" $ do
           elClass "th" "four wide" $ text "Time"
-          el "th" $ text "Block Hash"
           el "th" $ text "Level"
+          el "th" $ text "Block Hash"
           el "th" $ text "Reward"
         forM_ baked $ \b -> el "tr" $ do
           el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
