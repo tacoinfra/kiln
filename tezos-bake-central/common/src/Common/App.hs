@@ -31,6 +31,7 @@ data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_clients :: Maybe a -- not bothering with partial information listing yet.
   , _bakeViewSelector_parameters :: Maybe a
   , _bakeViewSelector_level :: Maybe a
+  , _bakeViewSelector_notificatees :: Maybe a
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -39,6 +40,7 @@ data BakeView a = BakeView
   , _bakeView_parameters :: AppendMap (Id Node) (First (Maybe ProtoInfo), a)
   , _bakeView_level :: AppendMap (Id Node) (First (Maybe Word64), a)
   , _bakeView_rewards :: AppendMap (Id Client) (First (AppendMap Word64 Micro), a) -- For each client, a mapping from (future) levels to expected rewards
+  , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
   }
   deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -56,19 +58,24 @@ cropBakeView vs v =
       rewards = case _bakeViewSelector_clients vs of
         Nothing -> mempty
         Just _ -> _bakeView_rewards v
+      notificatees = case _bakeViewSelector_notificatees vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_notificatees v
   in BakeView
       { _bakeView_clients = clients
       , _bakeView_parameters = parameters
       , _bakeView_level = level
       , _bakeView_rewards = rewards
+      , _bakeView_notificatees = notificatees
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil nil nil
+  nil = BakeViewSelector nil nil nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     , _bakeViewSelector_level = alignWith f (_bakeViewSelector_level u) (_bakeViewSelector_level v)
+    , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
     }
 
 instance FunctorMaybe BakeViewSelector where
@@ -76,6 +83,7 @@ instance FunctorMaybe BakeViewSelector where
     { _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
     , _bakeViewSelector_level = fmapMaybe f $ _bakeViewSelector_level a
+    , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
     }
 
 {-
@@ -93,6 +101,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_parameters = fmapMaybeSnd f $ _bakeView_parameters a
     , _bakeView_level = fmapMaybeSnd f $ _bakeView_level a
     , _bakeView_rewards = fmapMaybeSnd f $ _bakeView_rewards a
+    , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -115,17 +124,18 @@ instance Group (BakeViewSelector SelectedCount) where
 
 instance Additive (BakeViewSelector SelectedCount)
 
-instance (Semigroup a) => Monoid (BakeView a) where
-  mempty = BakeView mempty mempty mempty mempty
-  mappend u v = BakeView
+instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
+  mempty = BakeView mempty mempty mempty mempty mempty
+  mappend u v = u <> v
+
+instance Semigroup a => Semigroup (BakeView a) where
+  u <> v = BakeView
     { _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
     , _bakeView_level = _bakeView_level u <> _bakeView_level v
     , _bakeView_rewards = _bakeView_rewards u <> _bakeView_rewards v
+    , _bakeView_notificatees = _bakeView_notificatees u <> _bakeView_notificatees v
     }
-
-instance Semigroup a => Semigroup (BakeView a) where
-  (<>) = mappend
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where
   type QueryResult (BakeViewSelector a) = BakeView a

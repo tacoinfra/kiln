@@ -64,10 +64,20 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
               { _bakeView_level = Map.singleton nid (First (_node_headLevel =<< node), a)
               }
         Error e -> parseErr notifyMessage e
+      handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success nid -> do
+          (notificatee :: Maybe Notificatee) <- get $ fromId nid
+          return $ case _bakeViewSelector_notificatees aggVS of
+            Nothing -> mempty
+            Just a -> (mempty :: BakeView a)
+              { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
+              }
+        Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
     "Node" -> handleNode
+    "Notificatee" -> handleNotificatee
     _ -> do
       liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
       return mempty
