@@ -24,9 +24,12 @@ import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status(Status(..))
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 
 import Common.Schema
 import Focus.Backend.DB.PsqlSimple(PostgresRaw)
+import Common.PublicKeyHash
+import Common.Base16ByteString
 
 -- data RpcResponse a =
 --     RpcResponse_HttpException HttpException
@@ -55,17 +58,17 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
     Block hash -> nodeRPCImpl ("/blocks/" <> showBlockId hash)
     ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
-    Contract block (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> publicKey)
+    Contract block publicKey -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 rpcError_HttpException :: HttpException -> RpcResponse a
 rpcError_HttpException err = Left $ RpcError_HttpException $ T.pack $ show err
 
 rpcResponse_NonJSON :: String -> LBS.ByteString -> RpcResponse a
-rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err body
+rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err (Base16ByteString body)
 
 rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> RpcResponse a
-rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code phrase
+rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code (T.decodeUtf8With (\_ _ -> Just '?') phrase)
 
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode

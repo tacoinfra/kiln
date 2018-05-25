@@ -63,10 +63,11 @@ import Backend.NotifyHandler
 import Backend.ViewSelectorHandler
 import Backend.Schema
 import Backend.ChainHealth
-import Common.BlockHeader
+-- import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
 import Common.TaggedHash
+import Common.Operation
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -191,13 +192,14 @@ clientWorker nodes toAddr delay db = do
             void $ queueEmail (mailFor toAddr $ [BakerValidationError now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let blockReward = _protoInfo_blockReward protoInfo
+          let bakingReward blk = _protoInfo_blockReward protoInfo + (getSum $ (foldMap . foldMap . foldMap) (Sum . sumFees) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
+
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
+                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues

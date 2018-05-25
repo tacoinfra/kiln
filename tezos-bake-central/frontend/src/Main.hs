@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
@@ -16,7 +18,7 @@ import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap, _unAppendMap)
 import Data.Either.Combinators
 import Data.Fixed
-import Data.Foldable (foldl')
+import Data.Foldable (foldl', toList)
 import Data.Maybe
 import Data.Monoid hiding (First(..), (<>))
 import Data.Semigroup
@@ -35,6 +37,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+import Safe
+import Data.Function (on)
 
 import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Element (setInnerHTML) -- for now
@@ -43,7 +47,7 @@ import GHCJS.DOM.Element (setInnerHTML) -- for now
 import Common.BlockHeader
 import Common.Verification
 import Common.TaggedHash
-
+import Common.Tez
 
 main :: IO ()
 main = do
@@ -175,7 +179,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
                 baked = _report_baked report
             elAttr "div" ("class" =: "delegates") $ do
               text $ "ID: "
-              text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+              text $ (T.intercalate " " $ fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
             elAttr "div" ("class" =: "client-node") $ do
               text $ "Node: "
               text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo

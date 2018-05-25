@@ -24,6 +24,9 @@ import Data.Aeson
 import qualified "cryptohash" Crypto.Hash.SHA256 as SHA256
 
 
+import Common.TezosBinary
+
+-- see ~/tezos/src/lib_crypto/base58.ml
 type BlockHash = HashedValue 'HashType_BlockHash ByteString
 type OperationHash = HashedValue 'HashType_OperationHash ByteString
 type OperationListHash = HashedValue 'HashType_OperationListHash ByteString
@@ -42,6 +45,12 @@ type Ed25519Signature = HashedValue 'HashType_Ed25519Signature ByteString
 type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature ByteString
 type GenericSignature = HashedValue 'HashType_GenericSignature ByteString
 type ChainId = HashedValue 'HashType_ChainId ByteString
+
+-- see ~/tezos/src/proto_alpha/lib_protocol/src/contract_hash.ml
+type ContractHash = HashedValue 'HashType_ContractHash ByteString
+
+-- see ~/tezos/src/proto_alpha/lib_protocol/src/nonce_hash.ml
+type NonceHash = HashedValue 'HashType_NonceHash ByteString
 
 data HashType
   = HashType_BlockHash
@@ -62,6 +71,8 @@ data HashType
   | HashType_Secp256k1Signature
   | HashType_GenericSignature
   | HashType_ChainId
+  | HashType_ContractHash
+  | HashType_NonceHash
   deriving (Eq, Ord, Show, Typeable, Generic, Enum)
 
 newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
@@ -75,6 +86,11 @@ instance IsBase58Hash tag => FromJSON (HashedValue tag ByteString) where
   parseJSON x = do
     hexesText <- parseJSON x
     either (fail . show) pure $ fromBase58 $ T.encodeUtf8 hexesText
+
+instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
+  parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize $ (Proxy :: Proxy t)
+  encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x
+                               | otherwise = error "base58 tagged object wrong length"
 
 class IsBase58Hash (t :: HashType) where
   hashSize :: f t -> Int
@@ -100,6 +116,18 @@ data HashBase58Error
   | HashBase58Error_BadChecksum BS.ByteString BS.ByteString
   deriving (Eq, Ord, Show, Generic, Typeable)
 
+
+data TryDecodeBase58 a where
+  TryDecodeBase58 :: IsBase58Hash t => (HashedValue t ByteString -> a) -> TryDecodeBase58 a
+
+tryFromBase58 :: [TryDecodeBase58 a] -> ByteString -> Either HashBase58Error a
+tryFromBase58 x y = go x
+  where
+    go [] = Left HashBase58Error_DecodeError
+    go (TryDecodeBase58 f:fs) = case fromBase58 y of
+      Right good -> Right $ f good
+      Left (HashBase58Error_InvalidPrefix _ _) -> go fs
+      Left bad -> Left bad
 
 fromBase58 :: forall t. IsBase58Hash t => ByteString -> Either HashBase58Error (HashedValue t ByteString)
 fromBase58 = return . HashedValue <=< verifyLength <=< verifyPrefix <=< verifyChecksum <=< swizzle58
@@ -211,4 +239,11 @@ instance IsBase58Hash 'HashType_Secp256k1Signature where
   prefix _ =  "\013\115\101\019\063"
   hashSize _ = 64
 
+instance IsBase58Hash 'HashType_ContractHash where
+  prefix _ =  "\003\099\029"
+  hashSize _ = 20
+
+instance IsBase58Hash 'HashType_NonceHash where
+  prefix _ = "\069\220\169"
+  hashSize _ = 32
 
