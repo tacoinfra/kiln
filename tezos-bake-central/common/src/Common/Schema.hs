@@ -13,17 +13,13 @@
 
 module Common.Schema where
 
-
-
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
-import Data.Aeson.Types (Parser)
 import Data.Aeson.TH
 import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty(..))
-import Data.Proxy
 import Data.Text (Text)
 import Data.Time
 import Data.Typeable
@@ -45,7 +41,6 @@ import Common.Tez
 import Common.Fitness
 import Common.Base16ByteString
 import Common.BlockHeader
-import Common.TezosBinary
 
 -- import GADT.JSON (deriveGadtJson)
 
@@ -53,14 +48,6 @@ import Common.TezosBinary
 -- with a wonky 1.5-2 letter prefix.  maybe capture that and get read/show
 -- instances once and for all...
 
-
-
-data PublicKey
-  = PublicKey_Ed25519 Ed25519PublicKey
-  | PublicKey_Secp256k1 Secp256k1PublicKey
-
---newtype PublicKeyHash = PublicKeyHash { unPublicKeyHash :: Text }
---  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON)
 
 
 newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
@@ -102,37 +89,35 @@ data ProtoInfo = ProtoInfo
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 data Count = Count
-  { _count_selected :: !Integer
-  , _count_injected :: !Integer
-  , _count_errors :: !Integer
+  { _count_injected :: !Int
+  , _count_errors :: !Int
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- I dont really think this is correct
 mkCount :: Report -> Count
-mkCount _ = Count
-  { _count_selected = 0
-  , _count_injected = 0
-  , _count_errors = 0
+mkCount r = Count
+  { _count_injected = length (_report_baked r)
+  , _count_errors = length (_report_errors r)
   }
 
 instance Monoid Count where
-  mempty = Count 0 0 0
-  Count s i e `mappend` Count s' i' e' = Count (s + s') (i + i') (e + e')
+  mempty = Count 0 0
+  Count i e `mappend` Count i' e' = Count (i + i') (e + e')
 
 instance FromJSON Count
 instance ToJSON Count
 
 type Baked = Event BakedEvent
 
-data BakerValidationError = BakerValidationError
-  { _bakerValidationError_time :: UTCTime
-  , _bakerValidationError_text :: Text
+data Error = Error
+  { _error_time :: UTCTime
+  , _error_text :: Text
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance FromJSON BakerValidationError
-instance ToJSON BakerValidationError
+instance FromJSON Error
+instance ToJSON Error
 
 -- there are tons of fields i am not trying to parse here
 data BlockInfo = BlockInfo
@@ -144,7 +129,7 @@ data BlockInfo = BlockInfo
   , _blockInfo_chainId :: ChainId
   -- , _blockInfo_context :: ContextHash
   , _blockInfo_fitness :: Fitness
-  , _blockInfo_operations :: [[Base16ByteString ProtoOperation]]
+  -- , _blockInfo_operations :: [[Base16ByteString ProtoOperation]]
   , _blockInfo_operationsHash :: BlockHash
   , _blockInfo_protocol :: Protocol
   -- , _blockInfo_protocolData :: Base16ByteString BS.ByteString
@@ -152,8 +137,6 @@ data BlockInfo = BlockInfo
   , _blockInfo_validationPass :: Int
   }
   deriving (Eq, Show, Generic, Typeable)
-
-
 
 type ClientAddress = Text
 
@@ -222,11 +205,16 @@ data Level = Level
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
+data BakedEventOperation = BakedEventOperation
+  { _bakedEventOperation_branch :: BlockHash
+  , _bakedEventOperation_data :: Base16ByteString ProtoOperation
+  }
+  deriving (Show, Eq, Ord, Typeable, Generic)
 
 data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
-  , _bakedEvent_operations :: [[Base16ByteString ProtoOperation]]
-  , _bakedEvent_signedHeader :: Base16ByteString BS.ByteString
+  , _bakedEvent_operations :: [[BakedEventOperation]]
+  , _bakedEvent_signedHeader :: Base16ByteString BlockHeader
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
@@ -239,11 +227,11 @@ type Protocol = Text
 
 data SeenEvent = SeenEvent
   { _seenEvent_chainId :: ChainId
-  , _seenEvent_fitness :: Fitness
-  , _seenEvent_hash :: BlockHash
-  , _seenEvent_level :: Json Level
+  -- , _seenEvent_fitness :: Fitness
+  -- , _seenEvent_hash :: BlockHash
+  -- , _seenEvent_level :: Json Level
   , _seenEvent_predecessor :: BlockHash
-  , _seenEvent_protocol :: Protocol
+  -- , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
@@ -262,10 +250,20 @@ data ErrorEvent = ErrorEvent
   }
   deriving (Show, Eq, Typeable, Generic)
 
-mkErr :: Event ErrorEvent -> BakerValidationError
-mkErr err = BakerValidationError
-  { _bakerValidationError_time = _event_time err
-  , _bakerValidationError_text = T.pack $ show $ _event_detail err
+data EndorseEvent = EndorseEvent
+  { _endorseEvent_hash :: BlockHash
+  , _endorseEvent_level :: Int
+  , _endorseEvent_slot :: Int
+  , _endorseEvent_delegate :: PublicKeyHash
+  , _endorseEvent_name :: String
+  , _endorseEvent_oph :: OperationHash
+  }
+  deriving (Show, Eq, Typeable, Generic)
+
+mkErr :: Event ErrorEvent -> Error
+mkErr err = Error
+  { _error_time = _event_time err
+  , _error_text = _errorEvent_message $ _event_detail err
   }
 
 data Report = Report
@@ -279,14 +277,17 @@ data Report = Report
 
 -- TODO: handle parsing errors
 blockLevel :: Event BakedEvent -> Int
-blockLevel = fromIntegral . _blockHeader_level . either error id . eitherBinary . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
+blockLevel = fromIntegral . _blockHeader_level . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
+-- blockLevel = const 4
+-- _blockInfo_fitness = const 4
+-- _bakedEvent_operations :: a -> [[Base16ByteString ProtoOperation]]
+-- _bakedEvent_operations = const []
 
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
   | ClientDaemonWorker_Denunciation
   | ClientDaemonWorker_Endorsement
   deriving (Enum, Show, Eq, Typeable, Generic)
-
 
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
@@ -363,7 +364,14 @@ class MonadTezosNode m where
   nodeAddress :: m Text
 
 
+data Notificatee = Notificatee
+  { _notificatee_email :: Email
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
+instance HasId Notificatee
+instance FromJSON Notificatee
+instance ToJSON Notificatee
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
 $(concat <$> traverse (deriveJSON defaultOptions
@@ -372,29 +380,28 @@ $(concat <$> traverse (deriveJSON defaultOptions
       })
   [ ''Account
   , ''BakedEvent
+  , ''BakedEventOperation
+  , ''BlockId
+  , ''BlockIdHash
   , ''BlockInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
+  , ''EndorseEvent
   , ''ErrorEvent
   , ''Event
   , ''Level
   , ''ProtoInfo
   , ''Report
   , ''SeenEvent
-  , ''BlockId
-  , ''BlockIdHash
   ])
 
-
-makeLenses 'BlockInfo
-
-makeLenses 'Report
-makeLenses 'Count
-makeLenses 'Event
 makeLenses 'BakedEvent
-makeLenses 'SeenEvent
+makeLenses 'BakedEventOperation
+makeLenses 'BlockInfo
+makeLenses 'Count
+makeLenses 'EndorseEvent
+makeLenses 'Error
 makeLenses 'ErrorEvent
-makeLenses 'BakerValidationError
-
-
-
+makeLenses 'Event
+makeLenses 'Report
+makeLenses 'SeenEvent

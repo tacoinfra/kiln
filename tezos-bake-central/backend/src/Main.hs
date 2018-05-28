@@ -68,15 +68,16 @@ import Common.Schema
 import Common.Api ()
 import Common.TaggedHash
 import Common.Operation
+import Common.Base16ByteString
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
-mailFor :: Text -> [BakerValidationError] -> Mail
+mailFor :: Text -> [Error] -> Mail
 mailFor toAddr errs =
   let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
       toA = Address Nothing toAddr
-      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | BakerValidationError t e <- errs]
+      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
   in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
 addSomeNodes
@@ -149,13 +150,18 @@ getLatestProtoInfo = do
         _ -> Nothing
     [] -> return Nothing
 
+queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => [Error] -> m ()
+queueAllEmails message = do
+  ns <- selectAll
+  forM_ ns $ \(_, n) ->
+    queueEmail (mailFor (_notificatee_email n) message) Nothing
+
 clientWorker :: (MonadIO m)
              => [Node] -- [(Id Node, Text)]
-             -> Email -- email address of user to notify about errors
              -> Int -- delay between checking for updates, in seconds
              -> Pool Postgresql
              -> m (IO ())
-clientWorker nodes toAddr delay db = do
+clientWorker nodes delay db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     putStrLn "Update client cycle."
@@ -189,10 +195,10 @@ clientWorker nodes toAddr delay db = do
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            void $ queueEmail (mailFor toAddr $ [BakerValidationError now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]) Nothing
+            void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let bakingReward blk = _protoInfo_blockReward protoInfo + (getSum $ (foldMap . foldMap . foldMap) (Sum . sumFees) (_bakedEvent_operations $ _event_detail blk))
+          let bakingReward blk = _protoInfo_blockReward protoInfo + (getSum $ (foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
@@ -219,20 +225,19 @@ clientWorker nodes toAddr delay db = do
           [] -> return ()
           es -> do
             lastError <- liftIO $ readIORef lastErrorRef
-            let (new,_) = span ((>= lastError) . Just . _bakerValidationError_time) (mkErr <$> es)
+            let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
             case new of
               [] -> return ()
               (x:_) -> do
-                liftIO $ writeIORef lastErrorRef (Just $ _bakerValidationError_time x)
-                _ <- queueEmail (mailFor toAddr new) Nothing
+                liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
+                _ <- queueAllEmails new
                 return ()
         -- TODO.  debounce below as above
         flip validateForkyBlocks (concat $ forkInfo) $ \errors -> do
-          void $ queueEmail (mailFor toAddr errors) Nothing
+          void $ queueAllEmails errors
 
 main :: IO ()
 main = withFocus $ do
-  userEmailAddress <- T.readFile "config/userEmailAddress"
   Just email <- decodeValue' <$> LBS.readFile "config/email"
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
@@ -264,7 +269,7 @@ main = withFocus $ do
     addFinalizer wsFinalizer
 
     addFinalizer =<< nodeWorker 30 db
-    addFinalizer =<< clientWorker nodes userEmailAddress 10 db
+    addFinalizer =<< clientWorker nodes 10 db
 
     liftIO (quickHttpServe $ route
       [ ("", rootHandler cfg)

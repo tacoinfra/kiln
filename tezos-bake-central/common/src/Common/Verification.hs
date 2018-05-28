@@ -36,8 +36,8 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   ForkStatus_Forked -> Failure $ k fi
   _ -> Success ()
 
-showBadFork :: ForkInfoF e -> [BakerValidationError]
-showBadFork (ForkInfo node status baked) = pure $ BakerValidationError (_event_time baked) $ T.concat
+showBadFork :: ForkInfoF e -> [Error]
+showBadFork (ForkInfo node status baked) = pure $ Error (_event_time baked) $ T.concat
           [ "node: ", _node_address node
           , " BAKER STATE:" , showForkStatus status
           , " for block:", toBase58Text $ _bakedEvent_hash $ _event_detail baked
@@ -45,7 +45,7 @@ showBadFork (ForkInfo node status baked) = pure $ BakerValidationError (_event_t
           , "\n"
           ]
 
-validateForkyBlocks :: Applicative f => ([BakerValidationError] -> f ()) -> [ForkInfoF e] -> f ()
+validateForkyBlocks :: Applicative f => ([Error] -> f ()) -> [ForkInfoF e] -> f ()
 validateForkyBlocks f xs = case traverse (onBadForkState (showBadFork)) xs of
   Success _ -> pure ()
   Failure bad -> f bad

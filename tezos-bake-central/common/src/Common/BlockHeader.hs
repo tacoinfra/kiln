@@ -6,7 +6,6 @@
 
 module Common.BlockHeader where
 
-import qualified Data.ByteString as BS
 import Data.Int
 import GHC.Word
 
@@ -26,29 +25,23 @@ import Common.TaggedHash
 data BlockHeader = BlockHeader
   { _blockHeader_level :: Int32
   , _blockHeader_proto :: Word8
-  , _blockHeader_predecessor :: BlockHash -- BS.ByteString
+  , _blockHeader_predecessor :: BlockHash
   , _blockHeader_timestamp :: UTCTime
   , _blockHeader_validationPass :: Word8
-  , _blockHeader_operationsHash :: OperationListListHash -- BS.ByteString
+  , _blockHeader_operationsHash :: OperationListListHash
   , _blockHeader_fitness :: Fitness
   , _blockHeader_context :: ContextHash
   , _blockHeader_priority :: Word16
   , _blockHeader_proofOfWorkNonce :: Word64
-  , _blockHeader_seedNonceHash :: Maybe BS.ByteString
+  , _blockHeader_seedNonceHash :: Maybe NonceHash
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
-
-
-
--- parseHash :: Parser BS.ByteString
--- parseHash = parseFixedByteString 32
--- 
 
 -- TODO:  generate this automatically.;  see tezos/binary-description branch...
 -- TODO: split shell-header from protocol/ GADT per proto level
 instance TezosBinary BlockHeader where
   parseBinary :: Parser BlockHeader
-  parseBinary = BlockHeader
+  parseBinary = (<?> "BlockHeader") $ BlockHeader
     <$> (parseBinary <?> "level")
     <*> (parseBinary <?> "proto")
     <*> (parseBinary <?> "predecessor")

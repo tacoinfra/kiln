@@ -52,6 +52,9 @@ type ContractHash = HashedValue 'HashType_ContractHash ByteString
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/nonce_hash.ml
 type NonceHash = HashedValue 'HashType_NonceHash ByteString
 
+-- see ~/tezos/src/proto_alpha/lib_protocol/src/blinded_public_key_hash.ml
+type BlindedPublicKeyHash = HashedValue 'HashType_BlindedPublicKeyHash ByteString
+
 data HashType
   = HashType_BlockHash
   | HashType_OperationHash
@@ -73,6 +76,7 @@ data HashType
   | HashType_ChainId
   | HashType_ContractHash
   | HashType_NonceHash
+  | HashType_BlindedPublicKeyHash
   deriving (Eq, Ord, Show, Typeable, Generic, Enum)
 
 newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
@@ -246,4 +250,8 @@ instance IsBase58Hash 'HashType_ContractHash where
 instance IsBase58Hash 'HashType_NonceHash where
   prefix _ = "\069\220\169"
   hashSize _ = 32
+
+instance IsBase58Hash 'HashType_BlindedPublicKeyHash where
+  prefix _ = "\001\002\049\223"
+  hashSize _ = 20
 

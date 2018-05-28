@@ -2,21 +2,17 @@
 module Common.Signature where
 
 import Control.Monad
-import qualified Data.ByteString as BS
 import GHC.Generics
 import Data.Typeable
 import GHC.Word
 import Data.Semigroup
 
 import Common.TezosBinary
-
-
-type Ed25519 = BS.ByteString
-type Secp256k1 = BS.ByteString
+import Common.TaggedHash
 
 data Signature
-  = Signature_Ed25519 Ed25519 -- see lib_crypto/ed25519.ml
-  | Signature_Secp256k1 Secp256k1
+  = Signature_Ed25519 Ed25519Signature -- see lib_crypto/ed25519.ml
+  | Signature_Secp256k1 Secp256k1Signature
   -- Signature_Unknown
   deriving (Eq, Ord, Show, Generic, Typeable)
 

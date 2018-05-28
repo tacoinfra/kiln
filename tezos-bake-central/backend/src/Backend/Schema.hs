@@ -93,7 +93,7 @@ instance NeverNull (Json BakedEvent)
 instance NeverNull PublicKeyHash
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
-unsafeParseBinary = either error id . eitherBinary
+unsafeParseBinary = either error id . (eitherBinary "unsafeParseBinary")
 
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
@@ -150,7 +150,7 @@ mkFocusPersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: Parameters
         uniques:
-          - name: _parameters_uniqeness
+          - name: _parameters_uniqueness
             type: constraint
             fields: [_parameters_node]
         fields:
@@ -163,9 +163,16 @@ mkFocusPersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: PendingReward
         uniques:
-          - name: _pendingReward_uniqeness
+          - name: _pendingReward_uniqueness
             type: constraint
             fields: [_pendingReward_client, _pendingReward_hash]
+  - entity: Notificatee
+    constructors:
+      - name: Notificatee
+        uniques:
+          - name: _notificatee_uniqueness
+            type: constraint
+            fields: [_notificatee_email]
 |]
 
 fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
@@ -174,4 +181,5 @@ fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
+  , (''Notificatee, 'NotificateeKey)
   ]

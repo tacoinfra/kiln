@@ -19,6 +19,7 @@ in focus.mkDerivation {
     base58-bytestring
     attoparsec
     cryptohash
+    safe
   ];
   frontendDepends = p: with p; [
     data-default
@@ -46,7 +47,6 @@ in focus.mkDerivation {
     obelisk-executable-config-inject
     postgresql-simple
     resource-pool
-    safe
     snap
     snap-core
     snap-loader-static

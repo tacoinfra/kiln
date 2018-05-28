@@ -20,6 +20,15 @@ import Focus.Schema
 
 import Backend.Schema()
 -- import Common.App
+import qualified Data.AppendMap as Map
+import Data.AppendMap (AppendMap)
+import Data.Fixed
+import Data.Semigroup
+import Data.Word
+import Database.Groundhog.Postgresql
+import Focus.Schema
+
+import Backend.Schema ()
 import Common.Schema
 
 -- NB: This eventually needs to change, we can't really be getting an unbounded amount of information. Our viewselector needs to become more specific.

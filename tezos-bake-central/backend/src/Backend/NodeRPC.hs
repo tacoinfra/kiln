@@ -65,10 +65,10 @@ rpcError_HttpException :: HttpException -> RpcResponse a
 rpcError_HttpException err = Left $ RpcError_HttpException $ T.pack $ show err
 
 rpcResponse_NonJSON :: String -> LBS.ByteString -> RpcResponse a
-rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err (Base16ByteString body)
+rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err body
 
 rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> RpcResponse a
-rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code (T.decodeUtf8With (\_ _ -> Just '?') phrase)
+rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code phrase
 
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode

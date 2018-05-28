@@ -11,7 +11,6 @@ import Data.Semigroup
 import Data.Typeable
 import GHC.Generics
 import GHC.Word
-import qualified Data.ByteString as BS
 
 import Common.BlockHeader
 import Common.PublicKey
@@ -22,19 +21,18 @@ import Common.TaggedHash
 import Common.Tez
 import Common.TezosBinary
 import Common.Vote
+import Common.Seed
 
 newtype ShellHeader = ShellHeader { _shellHeader_branch :: BlockHash }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary ShellHeader where
-  parseBinary = ShellHeader <$> parseBinary <?> "branch"
+  parseBinary = ShellHeader <$> (parseBinary <?> "branch")
   encodeBinary (ShellHeader x) = encodeBinary x
 
 
 type Counter = Int32
 type RawLevel = Int32 -- ^ level: Raw_level_repr.t ;
-type Seed = BS.ByteString -- ^     nonce: Seed_repr.nonce ;
-type BlindedPublicKeyHash = BS.ByteString -- ^ Blinded_public_key_hash.secret
 
 
 data Operation = Operation
@@ -88,7 +86,7 @@ data AnonymousOperation
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary AnonymousOperation where
-  parseBinary = parseTagged2 0 "SeedNonceRevelation" SeedNonceRevelation
+  parseBinary = (<?> "AnonymousOperation") $ parseTagged2 0 "SeedNonceRevelation" SeedNonceRevelation
         `mplus` parseTagged2 1 "DoubleEndorsementEvidence" DoubleEndorsementEvidence
         `mplus` parseTagged2 2 "DoubleBakingEvidence" DoubleBakingEvidence
         `mplus` parseTagged2 3 "Activation" Activation
@@ -109,7 +107,7 @@ data Contract
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary Contract where
-  parseBinary = parseTagged 0 "Implicit" Implicit
+  parseBinary = (<?> "Contract") $ parseTagged 0 "Implicit" Implicit
         `mplus` parseTagged 1 "Originated" Originated
 
   encodeBinary (Implicit x) = encodeBinary
@@ -133,7 +131,7 @@ data SourcedOperations
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary SourcedOperations where
-  parseBinary = parseTagged  0 "ConsensusOperation" ConsensusOperation
+  parseBinary = (<?> "SourcedOperations") $ parseTagged  0 "ConsensusOperation" ConsensusOperation
         `mplus` parseTagged2 1 "AmendmentOperation" AmendmentOperation
         `mplus` parseTagged4 2 "ManagerOperations" ManagerOperations
         `mplus` parseTagged  3 "DictatorOperation" DictatorOperation
@@ -156,7 +154,7 @@ data ConsensusOperation
     }
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance TezosBinary ConsensusOperation where
-  parseBinary = Endorsements
+  parseBinary = (<?> "ConsensusOperation") $ Endorsements
     <$> (parseBinary <?> "block")
     <*> (parseBinary <?> "level")
     <*> (parseBinary <?> "slots")
@@ -178,7 +176,7 @@ data AmendmentOperation
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary AmendmentOperation where
-  parseBinary = parseTagged2 0 "Proposals" Proposals
+  parseBinary = (<?> "AmendmentOperation") $ parseTagged2 0 "Proposals" Proposals
         `mplus` parseTagged3 1 "Ballot" Ballot
   encodeBinary (Proposals period proposals) = encodeBinary 
     (0 :: Word8) <> encodeBinary period <> encodeBinary proposals
@@ -204,7 +202,7 @@ data ManagerOperation
   | Delegation (Maybe PublicKeyHash)
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance TezosBinary ManagerOperation where
-  parseBinary = parseTagged 0 "Reveal" Reveal
+  parseBinary = (<?> "ManagerOperation") $ parseTagged 0 "Reveal" Reveal
         `mplus` parseTagged3 1 "Transaction" Transaction
         `mplus` parseTagged6 2 "Origination" Origination
         `mplus` parseTagged 3 "Delegation" Delegation
@@ -235,7 +233,7 @@ data DictatorOperation
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance TezosBinary DictatorOperation where
-  parseBinary = parseTagged 0 "Activate" Activate
+  parseBinary = (<?> "DictatorOperation") $ parseTagged 0 "Activate" Activate
         `mplus` parseTagged 1 "ActivateTestChain" ActivateTestChain
 
   encodeBinary = \case

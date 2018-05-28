@@ -16,7 +16,7 @@ import Focus.App
 import Focus.Request
 import Common.App
 import Common.Schema (ClientAddress())
-import Focus.Schema ()
+import Focus.Schema (Email)
 
 import Data.Fixed
 import Data.Text (Text)
@@ -28,6 +28,12 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
     PublicRequest_RemoveClient
       :: ClientAddress -- address of client to unsubscribe from
+      -> PublicRequest Bake ()
+    PublicRequest_AddNotificatee
+      :: Email
+      -> PublicRequest Bake ()
+    PublicRequest_RemoveNotificatee
+      :: Email
       -> PublicRequest Bake ()
     PublicRequest_RenderGraph -- temporary while I write a Reflex backend for Chart
       :: Text

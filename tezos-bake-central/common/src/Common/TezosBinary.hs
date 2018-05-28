@@ -6,7 +6,10 @@
 {-# LANGUAGE InstanceSigs #-}
 module Common.TezosBinary where
 
+import Prelude hiding (take)
+
 import Control.Monad
+import Data.List (intercalate)
 import Data.Proxy
 import Data.Attoparsec.ByteString
 import Data.Bits
@@ -14,7 +17,6 @@ import Data.ByteString (ByteString)
 import Data.Foldable
 import Data.Int
 import Data.Semigroup
-import Data.List (foldl')
 import Data.Sequence (Seq)
 import Data.Time
 import Data.Time.Clock.POSIX
@@ -22,7 +24,6 @@ import GHC.Word
 import Data.Void
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Sequence as Seq
 
 import Focus.Schema (Json(..))
@@ -31,9 +32,15 @@ class TezosBinary a where
   parseBinary :: Parser a
   encodeBinary :: a -> ByteString -- lazy might be better?
 
-eitherBinary :: TezosBinary a => ByteString -> Either String a
-eitherBinary = eitherResult . parse parseBinary
-
+eitherBinary :: TezosBinary a => String -> ByteString -> Either String a
+eitherBinary hint x = let
+    bakedEnough (Done _ r)        = Right r
+    bakedEnough (Fail _ [] msg)   = Left msg
+    bakedEnough (Fail _ ctxs msg) = Left (intercalate " > " ctxs ++ ": " ++ msg)
+    bakedEnough _ = error "not supposed to be partial by this point"
+  in case parse (parseBinary <?> "eitherBinary:"<>hint) x of
+    Partial f -> bakedEnough (f mempty)
+    done -> bakedEnough done
 
 concatWithShift
   ::
@@ -54,7 +61,7 @@ unconcatWithShift
 unconcatWithShift s z = (fromIntegral (z `shift` negate s), fromIntegral z)
 
 parseFixedByteString :: Int -> Parser BS.ByteString
-parseFixedByteString len = BS.pack <$> count len anyWord8
+parseFixedByteString = take
 
 parseByteStringAll :: Parser BS.ByteString
 parseByteStringAll = BS.pack <$> many' anyWord8
@@ -74,13 +81,13 @@ parserRecursiveLengthPrefixed :: Parser a -> Parser [a]
 parserRecursiveLengthPrefixed p = do
   payload <- parseLengthPrefixedByteString
   let parseInnerResult loop = \case
-        Fail _ ctxs msg -> foldl' (<?>) (fail msg) ctxs
+        Fail _ ctxs msg -> error $ msg <> show ctxs
         Done _ r -> return r
         Partial f ->
           if loop
           then parseInnerResult False $ f (BS.pack [])
           else error "not supposed to get partial here"
-  parseInnerResult True (parse (many' p) payload)
+  parseInnerResult True (parse (many' (p <?> "parserRecursiveLengthPrefixed")) payload)
 
 parseEnum :: (Enum a, Bounded a) => Parser a
 parseEnum = parseEnumWith (parseBinary @ Word8)
@@ -131,7 +138,7 @@ parseTagged6 tag hint ctor = word8 tag
   >> (ctor <$> parseBinary <*> parseBinary <*> parseBinary <*> parseBinary <*> parseBinary <*> parseBinary) <?> hint
 
 instance (TezosBinary a, TezosBinary b) => TezosBinary (a, b) where
-  parseBinary = (,) <$> parseBinary <*> parseBinary
+  parseBinary = ((,) <$> parseBinary <*> parseBinary ) <?> "(,)"
   encodeBinary (x, y) = encodeBinary x <> encodeBinary y
 
 -- i'm a little uneasy with an instance for ByteString, since there are two "good" instances, 
@@ -144,9 +151,9 @@ instance TezosBinary ByteString where
   parseBinary = parseLengthPrefixedByteString
   encodeBinary = encodeLengthPrefixedByteString
 
-instance TezosBinary LBS.ByteString where
-  parseBinary = LBS.fromStrict <$> parseBinary
-  encodeBinary = encodeBinary . LBS.toStrict
+-- instance TezosBinary LBS.ByteString where
+--   parseBinary = LBS.fromStrict <$> parseBinary
+--   encodeBinary = encodeBinary . LBS.toStrict
 
 instance TezosBinary Word8 where
   parseBinary = anyWord8
@@ -208,7 +215,7 @@ instance TezosBinary Int64 where
 
 instance TezosBinary a => TezosBinary (Maybe a) where
   parseBinary :: Parser (Maybe a)
-  parseBinary = do
+  parseBinary = (<?> "Maybe") $ do
     present <- anyWord8
     case present of
       0 -> return Nothing
@@ -219,7 +226,7 @@ instance TezosBinary a => TezosBinary (Maybe a) where
   encodeBinary (Just x) = (encodeBinary @ Word8) 1 <> encodeBinary x
 
 instance TezosBinary a => TezosBinary [a] where
-  parseBinary = parserRecursiveLengthPrefixed parseBinary
+  parseBinary = parserRecursiveLengthPrefixed (parseBinary <?> "[]")
 
   encodeBinary xs = encodeLengthPrefixedByteString
                   $ BS.concat
@@ -227,12 +234,12 @@ instance TezosBinary a => TezosBinary [a] where
                   <$> xs
 
 instance TezosBinary a => TezosBinary (Seq a) where
-  parseBinary = Seq.fromList <$> parseBinary
+  parseBinary = Seq.fromList <$> (parseBinary <?> "Seq")
   encodeBinary = encodeBinary . toList
 
 instance TezosBinary UTCTime where
   parseBinary :: Parser UTCTime
-  parseBinary = mkTime <$> (parseBinary @ Word64)
+  parseBinary = mkTime <$> ((parseBinary @ Word64) <?> "UTCTime")
     where
       mkTime :: Word64 -> UTCTime
       mkTime = posixSecondsToUTCTime . fromIntegral
@@ -244,7 +251,7 @@ instance TezosBinary UTCTime where
 
 
 instance TezosBinary a => TezosBinary (Json a) where
-  parseBinary = Json <$> parseBinary
+  parseBinary = Json <$> (parseBinary <?> "Json")
   encodeBinary (Json a) = encodeBinary a
 
 instance TezosBinary Bool where
