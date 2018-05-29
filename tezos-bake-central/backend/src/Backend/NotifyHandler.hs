@@ -4,6 +4,7 @@
 
 module Backend.NotifyHandler where
 
+import Control.Monad
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -19,7 +20,8 @@ import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
 
-import Backend.BalanceTracking (getAllRewards)
+import Backend.BalanceTracking
+import Backend.Graphs
 import Backend.Schema
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
@@ -36,17 +38,34 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
         Success cid -> do
           (client :: Maybe Client) <- get $ fromId (cid :: Id Client)
           (infos :: [ClientInfo]) <- select (ClientInfo_clientField ==. cid)
-          case _bakeViewSelector_clients aggVS of
-            Nothing -> return (mempty :: BakeView a)
+          let emptyV :: BakeView a
+              emptyV = mempty -- avoid writing type signatures
+              clientsPatch = case Map.lookup cid (_bakeViewSelector_clients aggVS) of
+                Nothing -> emptyV
+                Just a -> emptyV
+                  { _bakeView_clients = Map.singleton cid (First (listToMaybe infos), a)
+                  }
+              clientAddressPatch = case _bakeViewSelector_clientAddresses aggVS of
+                Nothing -> emptyV
+                Just a -> emptyV
+                  { _bakeView_clientAddresses = Map.singleton cid (First (_client_address <$> client), a)
+                  }
+          summaryPatch <- case _bakeViewSelector_summary aggVS of
+            Nothing -> return emptyV
             Just a -> do
               rewardMap <- getAllRewards a
-              let clientWithInfo = First $ do
-                    addr <- _client_address <$> client
-                    return (addr, listToMaybe infos)
-              return $ (mempty :: BakeView a)
-                  { _bakeView_clients = Map.singleton cid (clientWithInfo, a)
-                  , _bakeView_rewards = rewardMap
+              maxLevel <- getMaxLevel
+              summaryReport <- getSummaryReport
+              summaryGraph <- case maxLevel of
+                Just l -> do
+                  mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
+                  return . First $ fmap (\x -> (x,a)) mGraph
+                _ -> return $ First Nothing
+              return $ emptyV
+                  { _bakeView_summaryGraph = summaryGraph
+                  , _bakeView_summary = First (fmap (\x -> (x,a)) summaryReport)
                   }
+          return $ clientsPatch <> clientAddressPatch <> summaryPatch
         Error e -> parseErr notifyMessage e
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
@@ -60,11 +79,10 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
           (node :: Maybe Node) <- get $ fromId nid
-          return $ case _bakeViewSelector_level aggVS of
+          return $ case _bakeViewSelector_nodes aggVS of
             Nothing -> mempty
             Just a -> (mempty :: BakeView a)
-              { _bakeView_level = Map.singleton nid (First (_node_headLevel =<< node), a)
-              , _bakeView_nodes = Map.singleton nid (First (_node_address <$> node), a)
+              { _bakeView_nodes = Map.singleton nid (First node, a)
               }
         Error e -> parseErr notifyMessage e
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of

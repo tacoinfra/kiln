@@ -21,7 +21,6 @@ import Rhyolite.Schema (Email)
 import Common.App (Bake, MailServerView)
 import Common.Schema (ClientAddress)
 
-
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
     PublicRequest_AddNode
@@ -46,10 +45,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveNotificatee
       :: Email
       -> PublicRequest Bake ()
-    PublicRequest_RenderGraph -- temporary while I write a Reflex backend for Chart
-      :: Text
-      -> [(Integer,Micro)]
-      -> PublicRequest Bake Text
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 

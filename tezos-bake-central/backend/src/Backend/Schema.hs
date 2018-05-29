@@ -93,6 +93,7 @@ instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BlockInfo)
 instance NeverNull (Json BakedEvent)
 instance NeverNull PublicKeyHash
+instance NeverNull NetworkStat
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -148,6 +149,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - embedded: NetworkStat
   - entity: Parameters
     constructors:
       - name: Parameters

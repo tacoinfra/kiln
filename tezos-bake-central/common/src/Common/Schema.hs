@@ -19,12 +19,16 @@ import Control.Lens.TH
 import Data.Aeson hiding (Error)
 import Data.Aeson.TH
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Monoid
+import Data.Monoid (mempty)
+import Data.Proxy
+import Data.Scientific
+import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time
@@ -86,26 +90,6 @@ data ProtoInfo = ProtoInfo
   -- , _protoInfo_proofOfWorkNonceSize :: 8
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
-
-data Count = Count
-  { _count_injected :: !Int
-  , _count_errors :: !Int
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
--- I dont really think this is correct
-mkCount :: Report -> Count
-mkCount r = Count
-  { _count_injected = length (_report_baked r)
-  , _count_errors = length (_report_errors r)
-  }
-
-instance Monoid Count where
-  mempty = Count 0 0
-  Count i e `mappend` Count i' e' = Count (i + i') (e + e')
-
-instance FromJSON Count
-instance ToJSON Count
 
 type Baked = Event BakedEvent
 
@@ -173,9 +157,22 @@ instance HasId ClientInfo
 instance FromJSON ClientInfo
 instance ToJSON ClientInfo
 
+data NetworkStat = NetworkStat
+  { _networkStat_totalSent :: Word64 -- bytes
+  , _networkStat_totalRecv :: Word64 -- bytes
+  , _networkStat_currentInflow :: Word64 -- bytes/s
+  , _networkStat_currentOutflow :: Word64 -- bytes/s
+  }
+  deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance FromJSON NetworkStat
+instance ToJSON NetworkStat
+
 data Node = Node
   { _node_address :: ClientAddress
   , _node_headLevel :: Maybe Word64
+  , _node_peerCount :: Maybe Word64
+  , _node_networkStat :: NetworkStat
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
@@ -288,6 +285,15 @@ blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
 endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tezzies
 endorsementReward b p = Tezzies $ getTezzies (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
 
+-- Used to produce info on the summary tab
+instance Semigroup Report where
+  u <> v = Report
+    { _report_baked = _report_baked u <> _report_baked v
+    , _report_errors = _report_errors u <> _report_errors v
+    , _report_seen = _report_seen u <> _report_seen v
+    , _report_startTime = min (_report_startTime u) (_report_startTime v)
+    }
+
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
   | ClientDaemonWorker_Denunciation
@@ -350,10 +356,12 @@ showBlockId (BlockId blockId offset) = blockId' <> offset'
 
 
 data NodeRPCRequest a where
-  Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
-  Block :: BlockId -> NodeRPCRequest BlockInfo
-  ProtoConstants :: NodeRPCRequest ProtoInfo
-  Contract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
+  RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
+  RBlock :: BlockId -> NodeRPCRequest BlockInfo
+  RProtoConstants :: NodeRPCRequest ProtoInfo
+  RContract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
+  RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
+  RNetworkStat :: NodeRPCRequest NetworkStat
 
 
 data RpcError =
@@ -426,7 +434,6 @@ concat <$> traverse makeLenses
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BlockInfo
-  , 'Count
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent

@@ -92,23 +92,28 @@ mailFor toAddr errs =
       body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
   in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
-addSomeNodes
-  :: (MonadBaseControl IO m, MonadIO m)
-  => [Node]
-  -> Pool Postgresql
+addNode
+  :: (PostgresRaw m, Monad m, PersistBackend m)
+  => Node
   -> m ()
-addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $
-  forM_ nodes $ \n@(Node addr level) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
-    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr, Node_headLevelField =. level]
-    _ -> insertAndNotify_ n
+addNode node = do
+  let addr = _node_address node
+  [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
+    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId
+      [ Node_addressField =. addr
+      , Node_headLevelField =. _node_headLevel node
+      , Node_peerCountField =. _node_peerCount node
+      , Node_networkStatField =. _node_networkStat node
+      ]
+    _ -> insertAndNotify_ node
 
 nodeWorker
   :: (MonadIO m)
   => Int -- delay between checking for updates, in seconds
+  -> Manager
   -> Pool Postgresql
   -> m (IO ())
-nodeWorker delay db = do
-  httpMgr <- liftIO $ newManager tlsManagerSettings
+nodeWorker delay httpMgr db = do
   worker (seconds delay) $ do
     putStrLn "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
@@ -117,14 +122,14 @@ nodeWorker delay db = do
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
       heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
+        params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
         forM_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block headId
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
@@ -136,7 +141,7 @@ nodeWorker delay db = do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
           runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
-            accountResp <- nodeRPC (Contract (blockHashId headHash) delegate)
+            accountResp <- nodeRPC (RContract (blockHashId headHash) delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
@@ -169,11 +174,11 @@ queueAllEmails message = do
     queueEmail (mailFor (_notificatee_email n) message) Nothing
 
 clientWorker :: (MonadIO m)
-             => [Node] -- [(Id Node, Text)]
-             -> Int -- delay between checking for updates, in seconds
+             => Int -- delay between checking for updates, in seconds
+             -> Manager
              -> Pool Postgresql
              -> m (IO ())
-clientWorker nodes delay db = do
+clientWorker delay httpMgr db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     putStrLn "Update client cycle."
@@ -198,6 +203,10 @@ clientWorker nodes delay db = do
         configResponse <- httpJSON configRequest
         let clientConfig = getResponseBody configResponse :: ClientConfig
             clientConfigJson = Json clientConfig
+            clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
+
+        (_, node) <- runNodeRPCT clientNodeRPCContext obtainNode
+        addNode node
 
         request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
@@ -229,7 +238,7 @@ clientWorker nodes delay db = do
                         VALUES (?cid, ?reportJson, ?clientConfigJson)
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson
                                                          , config = ?clientConfigJson |]
-        forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
+        forkInfo <- mapM (scanForkInfo now report) [node]
         liftIO $ validateForkyBlocks print $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
@@ -269,19 +278,17 @@ backend = do
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
-    -- TODO: in the real thing, users should manage their own list of nodes,
-    -- with some bootstrapping by using the well known address
-    addSomeNodes nodes db
+    httpMgr <- liftIO $ newManager tlsManagerSettings
 
     (handleListen, wsFinalizer) <- serveDbOverWebsockets db
-      (requestHandler csk db)
+      (requestHandler csk httpMgr db)
       (notifyHandler db)
       (viewSelectorHandler csk db)
       (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
-    addFinalizer =<< nodeWorker 30 db
-    addFinalizer =<< clientWorker nodes 10 db
+    addFinalizer =<< nodeWorker 30 httpMgr db
+    addFinalizer =<< clientWorker 10 httpMgr db
 
     frontendHead <- liftIO $ fmap snd $ renderStatic $ fst frontend
     liftIO (quickHttpServe $ route

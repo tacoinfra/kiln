@@ -10,7 +10,9 @@ module Backend.ViewSelectorHandler where
 import Control.Lens
 import Control.Monad.IO.Class
 import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control
+import qualified Data.AppendMap as Map
 import qualified Data.AppendMap as Map
 import Data.Pool (Pool)
 import Data.Semigroup
@@ -18,10 +20,14 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.App
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple
+import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Schema
+import Rhyolite.Backend.Schema.TH
+import Rhyolite.Schema
 import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
+import Backend.Graphs
 import Backend.Schema ()
 import Common.App
 import Common.Schema
@@ -36,44 +42,49 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
-  clients <- case _bakeViewSelector_clients vs of
-    Nothing -> return mempty
-    Just a -> do
-      rs <- [queryQ| SELECT c.id, c.address, i.report, i.config, i.balance FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client |]
-      return (mempty :: BakeView a)
-        { _bakeView_clients = Map.fromList $ do
-            (cid, address, report, config, balance) <- rs
-            return (cid, (First (Just (address, ClientInfo cid <$> report <*> config <*> balance)), a))
-        }
+  clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
+    rs <- [queryQ| SELECT c.id, c.address FROM "Client" c |]
+    return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
+  clients <- do
+    let selClients = In (Map.keys (_bakeViewSelector_clients vs))
+    rs <- [queryQ| SELECT c.id, i.report, i.config, i.balance
+                   FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
+                   WHERE c.id IN ?selClients |]
+    let clientInfo = Map.fromList $ do
+          (cid, report, config, balance) <- rs
+          return (cid, First (ClientInfo cid <$> report <*> config <*> balance))
+    return (Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs))
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
     rs <- selectAll
-    return (mempty :: BakeView a)
-      { _bakeView_parameters = Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
-      }
-  level <- whenJust (_bakeViewSelector_level vs) $ \a -> do
-    rs <- selectAll
-    return (mempty :: BakeView a)
-      { _bakeView_level = Map.fromList [(toId nid, (First (_node_headLevel n), a)) | (nid, n) <- rs]
-      }
-  rewards <- whenJust (_bakeViewSelector_clients vs) $ \a -> do
-    rewardMap <- getAllRewards a
-    return (mempty :: BakeView a)
-      { _bakeView_rewards = rewardMap
-      }
-  notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
-    rs <- selectAll
-    return (mempty :: BakeView a)
-      { _bakeView_notificatees = Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
-      }
+    return $ Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
   nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
     rs <- selectAll
-    return (mempty :: BakeView a)
-      { _bakeView_nodes = Map.fromList [(toId nid, (First (Just (_node_address n)), a)) | (nid, n) <- rs ]
-      }
+    return $ Map.fromList [(toId nid, (First (Just n), a)) | (nid, n) <- rs]
+  notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
+    rs <- selectAll
+    return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
   mailServers <- whenJust (_bakeViewSelector_mailServers vs) $ \a -> do
     rs <- selectAll
-    return (mempty :: BakeView a)
-      { _bakeView_mailServers = Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
-      }
-
-  return $ clients <> parameters <> level <> rewards <> notificatees <> nodes <> mailServers
+    return $ Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
+  maxLevel <- getMaxLevel
+  summaryGraph <- case (_bakeViewSelector_summary vs, maxLevel) of
+    (Just a, Just l) -> do
+      rewards <- getAllRewards a
+      mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewards)
+      return . First $ fmap (\x -> (x,a)) mGraph
+    _ -> return $ First Nothing
+  summary <- case _bakeViewSelector_summary vs of
+    Nothing -> return (First Nothing)
+    Just a -> do
+      report <- getSummaryReport
+      return . First $ fmap (\x -> (x,a)) report
+  return $ (mempty :: BakeView a)
+    { _bakeView_clients = clients
+    , _bakeView_clientAddresses = clientAddresses
+    , _bakeView_parameters = parameters
+    , _bakeView_nodes = nodes
+    , _bakeView_notificatees = notificatees
+    , _bakeView_mailServers = mailServers
+    , _bakeView_summaryGraph = summaryGraph
+    , _bakeView_summary = summary
+    }
