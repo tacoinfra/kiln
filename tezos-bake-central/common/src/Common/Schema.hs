@@ -130,7 +130,7 @@ data BlockInfo = BlockInfo
   -- , _blockInfo_context :: ContextHash
   , _blockInfo_fitness :: Fitness
   -- , _blockInfo_operations :: [[Base16ByteString ProtoOperation]]
-  , _blockInfo_operationsHash :: BlockHash
+  , _blockInfo_operationsHash :: OperationListListHash
   , _blockInfo_protocol :: Protocol
   -- , _blockInfo_protocolData :: Base16ByteString BS.ByteString
   , _blockInfo_timestamp :: UTCTime
@@ -228,10 +228,10 @@ type Protocol = Text
 data SeenEvent = SeenEvent
   { _seenEvent_chainId :: ChainId
   -- , _seenEvent_fitness :: Fitness
-  -- , _seenEvent_hash :: BlockHash
-  -- , _seenEvent_level :: Json Level
+  , _seenEvent_hash :: BlockHash
+  , _seenEvent_level :: Json Level
   , _seenEvent_predecessor :: BlockHash
-  -- , _seenEvent_protocol :: Protocol
+  , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
@@ -278,10 +278,13 @@ data Report = Report
 -- TODO: handle parsing errors
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
--- blockLevel = const 4
--- _blockInfo_fitness = const 4
--- _bakedEvent_operations :: a -> [[Base16ByteString ProtoOperation]]
--- _bakedEvent_operations = const []
+
+blockRewards :: Event BakedEvent -> ProtoInfo -> Tezzies
+blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
+  where
+    blockHeader = unbase16ByteString $ _bakedEvent_signedHeader $ _event_detail b
+    nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
+    fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
@@ -355,6 +358,7 @@ data RpcError =
     RpcError_HttpException Text
   | RpcError_UnexpectedStatus Int BS.ByteString
   | RpcError_NonJSON String LBS.ByteString
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
 
 type RpcResponse = Either RpcError
@@ -395,13 +399,15 @@ $(concat <$> traverse (deriveJSON defaultOptions
   , ''SeenEvent
   ])
 
-makeLenses 'BakedEvent
-makeLenses 'BakedEventOperation
-makeLenses 'BlockInfo
-makeLenses 'Count
-makeLenses 'EndorseEvent
-makeLenses 'Error
-makeLenses 'ErrorEvent
-makeLenses 'Event
-makeLenses 'Report
-makeLenses 'SeenEvent
+$(concat <$> traverse makeLenses 
+  [ 'BakedEvent
+  , 'BakedEventOperation
+  , 'BlockInfo
+  , 'Count
+  , 'EndorseEvent
+  , 'Error
+  , 'ErrorEvent
+  , 'Event
+  , 'Report
+  , 'SeenEvent
+  ])

@@ -73,7 +73,7 @@ rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode
 
-nodeRPCImpl' :: (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
+nodeRPCImpl' :: forall m a. (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
   mgr <- asks _nodeRPCContext_httpManager
   node <- asks _nodeRPCContext_node
@@ -91,7 +91,12 @@ nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
         }
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ rpcUrl
   result' <- liftIO $ try $ httpLbs request mgr
-  case result' of
+  let logFailure :: RpcResponse a -> ReaderT NodeRPCContext m (RpcResponse a)
+      logFailure (Left bad) = do
+        liftIO $ putStrLn $ "NODERPC ERROR:" <> show rpcUrl <> " >> " <> show bad
+        return $ Left bad
+      logFailure ok = return ok
+  logFailure =<< case result' of
     Left (err :: HttpException) -> return (rpcError_HttpException err)
     Right result -> case responseStatus result of
       Status 200 _ -> do

@@ -18,7 +18,6 @@ in focus.mkDerivation {
     base16-bytestring
     base58-bytestring
     attoparsec
-    cryptohash
     safe
   ];
   frontendDepends = p: with p; [
@@ -30,9 +29,12 @@ in focus.mkDerivation {
     reflex-dom
     these
     obelisk-executable-config
+    hashing
+    cryptohash
   ];
   backendDepends = p: with p; [
     clientsession
+    cryptohash
     data-default
     groundhog
     groundhog-postgresql

@@ -44,8 +44,8 @@ instance FromJSON PublicKeyHash where
 
 toPublicKeyHashText :: PublicKeyHash -> Text
 toPublicKeyHashText = \case
-    PublicKeyHash_Ed25519 x -> T.pack $ show x
-    PublicKeyHash_Secp256k1 x -> T.pack $ show x
+    PublicKeyHash_Ed25519 x -> toBase58Text x
+    PublicKeyHash_Secp256k1 x -> toBase58Text x
 
 instance Show PublicKeyHash where
   show = ("fromString "  <>) . show . toPublicKeyHashText

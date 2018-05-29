@@ -36,7 +36,6 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
-  liftIO $ print $ void vs
   clients <- case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do

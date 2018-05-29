@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE PackageImports #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,15 +15,21 @@ module Common.TaggedHash where
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.Text (Text)
+import Data.Text as T
 import Data.Text.Encoding as T
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as BS16
 import Data.ByteString.Base58
 import Data.Monoid
 import Data.String
 import Data.Typeable
 import GHC.Generics
 import Data.Aeson
+#if defined ghcjs_HOST_OS
+import qualified "hashing" Crypto.Hash as CryptoHash
+#else
 import qualified "cryptohash" Crypto.Hash.SHA256 as SHA256
+#endif
 
 
 import Common.TezosBinary
@@ -101,7 +109,14 @@ class IsBase58Hash (t :: HashType) where
   prefix :: f t -> ByteString
 
 checksum :: ByteString -> ByteString
-checksum = BS.take 4 . SHA256.hash . SHA256.hash
+checksum = BS.take 4 . sha256 . sha256
+
+sha256 :: ByteString -> ByteString
+#if defined ghcjs_HOST_OS
+sha256 = fst . BS16.decode . T.encodeUtf8 . T.pack . show . CryptoHash.hash @ CryptoHash.SHA256
+#else
+sha256 = SHA256.hash
+#endif
 
 
 toBase58 :: forall t. IsBase58Hash t => HashedValue t ByteString -> ByteString
@@ -117,7 +132,7 @@ data HashBase58Error
   = HashBase58Error_DecodeError
   | HashBase58Error_InvalidPrefix BS.ByteString BS.ByteString
   | HashBase58Error_WrongLength Int Int
-  | HashBase58Error_BadChecksum BS.ByteString BS.ByteString
+  | HashBase58Error_BadChecksum BS.ByteString BS.ByteString BS.ByteString
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 
@@ -134,7 +149,7 @@ tryFromBase58 x y = go x
       Left bad -> Left bad
 
 fromBase58 :: forall t. IsBase58Hash t => ByteString -> Either HashBase58Error (HashedValue t ByteString)
-fromBase58 = return . HashedValue <=< verifyLength <=< verifyPrefix <=< verifyChecksum <=< swizzle58
+fromBase58 b58chk = return . HashedValue <=< verifyLength <=< verifyPrefix <=< verifyChecksum <=< swizzle58 $ b58chk
   where
     expectedPfx = prefix (Proxy :: (Proxy t))
     expectedSize = hashSize (Proxy :: (Proxy t))
@@ -158,7 +173,7 @@ fromBase58 = return . HashedValue <=< verifyLength <=< verifyPrefix <=< verifyCh
         actualSize = BS.length x
 
     verifyChecksum x | actualSum == expectedSum = Right payload
-                     | otherwise = Left $ HashBase58Error_BadChecksum expectedSum actualSum
+                     | otherwise = Left $ HashBase58Error_BadChecksum b58chk expectedSum actualSum
       where
         checksummedSize = BS.length x - 4
         actualSum = BS.drop checksummedSize x

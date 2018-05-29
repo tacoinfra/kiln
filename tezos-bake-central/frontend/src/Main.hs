@@ -183,7 +183,7 @@ summaryTab = divClass "ui grid" $ do
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> blank
-            Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+            Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
 optionsTab :: (MonadFocusFrontendWidget Bake t m) => m ()
@@ -286,7 +286,7 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
                 el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
                 el "td" . dyn . ffor dparameters $ \case
                   Nothing -> blank
-                  Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+                  Just protoInfo -> text . tezzies $ blockRewards b protoInfo
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =

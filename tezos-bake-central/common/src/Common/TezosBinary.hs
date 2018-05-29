@@ -141,15 +141,14 @@ instance (TezosBinary a, TezosBinary b) => TezosBinary (a, b) where
   parseBinary = ((,) <$> parseBinary <*> parseBinary ) <?> "(,)"
   encodeBinary (x, y) = encodeBinary x <> encodeBinary y
 
--- i'm a little uneasy with an instance for ByteString, since there are two "good" instances, 
--- this one, which gets used regularly, and the "slurp the rest of the buffer" one.
+-- An instance for ByteString cannot be canonical, since there are two "good" instances,
+-- a lenght prefixed one, which would get used regularly, and the "slurp the
+-- rest of the buffer" one, useful for FromJSON instances. if you think you
+-- need it, use one of the monomorphic parsers lying around in this module
 
--- newtype LengthPrefixedByteString a = LengthPrefixedByteString a
---   deriving (Eq, Ord, Show, Generic, Typeable, Foldable, Functor, Traversable)
--- instance TezosBinary (LengthPrefixedByteString ByteString) where
-instance TezosBinary ByteString where
-  parseBinary = parseLengthPrefixedByteString
-  encodeBinary = encodeLengthPrefixedByteString
+-- instance TezosBinary ByteString where
+--   parseBinary = parseLengthPrefixedByteString
+--   encodeBinary = encodeLengthPrefixedByteString
 
 -- instance TezosBinary LBS.ByteString where
 --   parseBinary = LBS.fromStrict <$> parseBinary
