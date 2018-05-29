@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,7 +21,9 @@ import Data.Semigroup
 import Data.Sequence (Seq)
 import Data.Time
 import Data.Time.Clock.POSIX
+import Data.Typeable
 import GHC.Word
+import GHC.Generics
 import Data.Void
 
 import qualified Data.ByteString as BS
@@ -145,10 +148,15 @@ instance (TezosBinary a, TezosBinary b) => TezosBinary (a, b) where
 -- a lenght prefixed one, which would get used regularly, and the "slurp the
 -- rest of the buffer" one, useful for FromJSON instances. if you think you
 -- need it, use one of the monomorphic parsers lying around in this module
-
 -- instance TezosBinary ByteString where
---   parseBinary = parseLengthPrefixedByteString
---   encodeBinary = encodeLengthPrefixedByteString
+
+newtype LengthPrefixed a = LengthPrefixed {unlengthPrefixed :: a}
+  deriving (Eq, Ord, Show, Generic, Typeable, Functor, Foldable, Traversable)
+
+
+instance TezosBinary (LengthPrefixed ByteString) where
+  parseBinary = LengthPrefixed <$> parseLengthPrefixedByteString
+  encodeBinary = encodeLengthPrefixedByteString . unlengthPrefixed
 
 -- instance TezosBinary LBS.ByteString where
 --   parseBinary = LBS.fromStrict <$> parseBinary
