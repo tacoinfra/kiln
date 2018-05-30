@@ -17,6 +17,7 @@ import Control.Exception
 import Control.Lens
 import Control.Monad
 import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
 import Data.Aeson (FromJSON, eitherDecode)
@@ -95,17 +96,19 @@ mailFor toAddr errs =
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
   => Node
-  -> m ()
+  -> m (Id Node)
 addNode node = do
   let addr = _node_address node
   [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
-    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId
-      [ Node_addressField =. addr
-      , Node_headLevelField =. _node_headLevel node
-      , Node_peerCountField =. _node_peerCount node
-      , Node_networkStatField =. _node_networkStat node
-      ]
-    _ -> insertAndNotify_ node
+    (Only (nodeId :: Id Node):_) -> do
+      updateAndNotify nodeId
+        [ Node_addressField =. addr
+        , Node_headLevelField =. _node_headLevel node
+        , Node_peerCountField =. _node_peerCount node
+        , Node_networkStatField =. _node_networkStat node
+        ]
+      return nodeId
+    _ -> insertAndNotify node
 
 nodeWorker
   :: (MonadIO m)
@@ -206,7 +209,7 @@ clientWorker delay httpMgr db = do
             clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
 
         (_, node) <- runNodeRPCT clientNodeRPCContext obtainNode
-        addNode node
+        nodeId <- addNode node
 
         request <- parseRequest ("http://" <> T.unpack address <> "/events")
         response <- httpJSON request
@@ -234,10 +237,12 @@ clientWorker delay httpMgr db = do
             return ()
           return ()
 
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                        VALUES (?cid, ?reportJson, ?clientConfigJson)
-                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson
-                                                         , config = ?clientConfigJson |]
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config, node)
+                        VALUES (?cid, ?reportJson, ?clientConfigJson, ?nodeId)
+                        ON CONFLICT (client) DO UPDATE SET
+                          report = ?reportJson
+                        , config = ?clientConfigJson
+                        , node = ?nodeId |]
         forkInfo <- mapM (scanForkInfo now report) [node]
         liftIO $ validateForkyBlocks print $ concat forkInfo
 

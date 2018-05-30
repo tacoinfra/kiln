@@ -5,6 +5,8 @@ import Control.Monad
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
 import Data.Fixed
+import Data.List
+import Data.Ord
 import Data.Semigroup
 import Data.Word
 import Database.Groundhog.Postgresql
@@ -37,7 +39,9 @@ getSummaryReport = do
   let waiting = case ns of
         (Only n:_) -> Just n
         _ -> Nothing
-      aggReport = case map (\(_, ci) -> unJson (_clientInfo_report ci)) cis of
+      aggReport = case map (\(_, ci) -> cropBaked . dropSeen $ unJson (_clientInfo_report ci)) cis of
         [] -> Nothing
         (x:xs) -> Just $ foldr (<>) x xs
-  return (liftM2 (,) aggReport waiting)
+      cropBaked r = r { _report_baked = take 20 (sortBy (flip (comparing _event_time)) (_report_baked r)) }
+      dropSeen r = r { _report_seen = [] }
+  return (liftM2 (,) (fmap (cropBaked . dropSeen) aggReport) waiting)

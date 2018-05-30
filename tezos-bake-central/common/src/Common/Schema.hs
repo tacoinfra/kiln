@@ -150,6 +150,7 @@ data ClientInfo = ClientInfo
   , _clientInfo_report :: Json Report
   , _clientInfo_config :: Json ClientConfig
   , _clientInfo_balance :: Maybe Tezzies
+  , _clientInfo_node :: Id Node
   }
   deriving (Eq, Show, Generic, Typeable)
 
