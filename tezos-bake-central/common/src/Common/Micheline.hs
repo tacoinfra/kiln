@@ -23,13 +23,20 @@ data Node p
    | Node_Seq (Seq (Node p)) -- lib_micheline/micheline.ml always throws away annot on seq (Maybe (LengthPrefixed ByteString))
   deriving (Eq, Ord, Show, Typeable, Generic, Functor, Foldable, Traversable)
 
+p0_ :: p -> Node p
 p0_ v             = Node_Prim v [          ] Nothing
+p0a :: p -> LengthPrefixed ByteString -> Node p
 p0a v           a = Node_Prim v [          ] (Just a)
+p1_ :: p -> Node p -> Node p
 p1_ v arg1        = Node_Prim v [arg1      ] Nothing
+p1a :: p -> Node p -> LengthPrefixed ByteString -> Node p
 p1a v arg1      a = Node_Prim v [arg1      ] (Just a)
+p2_ :: p -> Node p -> Node p -> Node p
 p2_ v arg1 arg2   = Node_Prim v [arg1, arg2] Nothing
+p2a :: p -> Node p -> Node p -> LengthPrefixed ByteString -> Node p
 p2a v arg1 arg2 a = Node_Prim v [arg1, arg2] (Just a)
 
+app :: p -> [Node p] -> Maybe (LengthPrefixed ByteString) -> Node p
 app prim args a = Node_Prim prim args a
 
 instance TezosBinary p => TezosBinary (Node p) where

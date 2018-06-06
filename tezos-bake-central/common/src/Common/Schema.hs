@@ -286,6 +286,9 @@ blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
     nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
     fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
+endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tezzies
+endorsementReward b p = Tezzies $ (getTezzies $ _protoInfo_endorsementReward p ) / (fromIntegral (1 + (_endorseEvent_slot $ _event_detail b)))
+
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
   | ClientDaemonWorker_Denunciation
