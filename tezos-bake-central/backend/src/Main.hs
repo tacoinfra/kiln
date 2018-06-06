@@ -29,7 +29,7 @@ import Data.Default
 import Data.Foldable
 import Data.Function hiding ((.))
 import Data.IORef
-import Data.List hiding (head)
+import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Pool
@@ -95,7 +95,7 @@ addSomeNodes
   => [Node]
   -> Pool Postgresql
   -> m ()
-addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $ do
+addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $
   forM_ nodes $ \n@(Node addr level) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
     (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr, Node_headLevelField =. level]
     _ -> insertAndNotify_ n

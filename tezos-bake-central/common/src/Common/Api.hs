@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -43,9 +42,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-#ifdef USE_TEMPLATE_HASKELL
+
 makeRequestForDataInstance ''PublicRequest ''Bake
 makeRequestForDataInstance ''PrivateRequest ''Bake
-#else
-#include "Api.splices.hs"
-#endif

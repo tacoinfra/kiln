@@ -1,0 +1,26 @@
+name: frontend
+version: 0.1
+license: BSD3
+copyright: Copyright (C) Obsidian Systems LLC 2018
+author: Obsidian Systems LLC
+maintainer: maintainer@obsidian.systems
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.2
+
+executable frontend
+  hs-source-dirs: src
+  main-is: Main.hs
+
+  build-depends:
+      base
+    , data-default
+    , file-embed
+    , ghcjs-dom
+    , obelisk-executable-config
+    , reflex
+    , reflex-dom
+    , rhyolite-frontend
+    , these
+
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

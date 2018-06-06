@@ -1,0 +1,70 @@
+name: backend
+version: 0.1
+license: BSD3
+copyright: Copyright (C) Obsidian Systems LLC 2018
+author: Obsidian Systems LLC
+maintainer: maintainer@obsidian.systems
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.2
+
+executable backend
+  hs-source-dirs: src
+  main-is: Main.hs
+
+  build-depends:
+      aeson
+    , base
+    , bytestring
+    , Chart
+    , Chart-diagrams
+    , clientsession
+    , colour
+    , common
+    , data-default
+    , diagrams-core
+    , diagrams-lib
+    , diagrams-svg
+    , either
+    , groundhog
+    , groundhog-postgresql
+    , groundhog-th
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , lens
+    , lens-aeson
+    , mime-mail
+    , monad-control
+    , monad-logger
+    , mtl
+    , network
+    , obelisk-asset-serve-snap
+    , obelisk-executable-config-inject
+    , postgresql-simple
+    , reflex
+    , resource-pool
+    , rhyolite-backend
+    , rhyolite-backend-snap
+    , rhyolite-common
+    , safe
+    , snap
+    , snap-core
+    , snap-loader-static
+    , snap-server
+    , stm
+    , svg-builder
+    , text
+    , time
+
+  exposed-modules:
+    Backend.BalanceTracking
+    Backend.ChainHealth
+    Backend.NodeRPC
+    Backend.NotifyHandler
+    Backend.RequestHandler
+    Backend.Schema
+    Backend.ViewSelectorHandler
+
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
