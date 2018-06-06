@@ -13,18 +13,17 @@ import Control.Monad.Trans.Control
 import Data.Pool (Pool)
 import Data.Semigroup
 import Database.Groundhog.Postgresql
-import Focus.Backend.App
-import Focus.Backend.DB
+import Rhyolite.Backend.App
+import Rhyolite.Backend.DB
 import qualified Web.ClientSession as CS
 import Control.Monad.Logger (runNoLoggingT)
-import Focus.Backend.DB.PsqlSimple
-import Focus.Backend.Schema.TH
+import Rhyolite.Backend.DB.PsqlSimple
+import Rhyolite.Backend.Schema
 import qualified Data.AppendMap as Map
 
 import Backend.BalanceTracking
 import Common.App
 import Common.Schema
--- import Backend.Schema ()
 
 whenJust :: (Monad m, Monoid a) => Maybe t -> (t -> m a) -> m a
 whenJust Nothing f = return mempty

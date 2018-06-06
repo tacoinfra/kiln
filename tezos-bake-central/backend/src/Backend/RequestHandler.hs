@@ -1,13 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wno-unused-matches #-}
 
@@ -20,12 +18,12 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Web.ClientSession as CS
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
-import Focus.Api
-import Focus.Backend.App
-import Focus.Backend.DB (runDb)
-import Focus.Backend.DB.PsqlSimple
-import Focus.Backend.Listen
-import Focus.Schema
+import Rhyolite.Api
+import Rhyolite.Backend.App
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple
+import Rhyolite.Backend.Listen
+import Rhyolite.Schema
 import Control.Monad.Logger (runNoLoggingT)
 
 import Common.App
@@ -83,7 +81,7 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
 renderGraph :: (Integral a, Real b) => Text -> [(a,b)] -> IO Text
 renderGraph t xs = do
   let chart = toRenderable layout
-      plot1 = plot_lines_style . line_color .~ (opaque $ sRGB 0.1 0.5 0.1)
+      plot1 = plot_lines_style . line_color .~ opaque (sRGB 0.1 0.5 0.1)
             $ plot_lines_values .~ [[(fromIntegral l :: Integer,realToFrac x :: Double) | (l,x) <- xs]]
             $ def
       layout = layout_title .~ T.unpack t

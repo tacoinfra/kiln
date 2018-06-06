@@ -16,22 +16,22 @@ import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Monoid
 import Data.Proxy
 import Data.Scientific
 import Data.Text (Text)
 import Data.Time
 import Data.Typeable
 import Data.Word
-import Focus.Schema
 import GHC.Generics
 import qualified Cases
 import qualified Data.Text as T
 import Data.Sequence(Seq())
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
 
-import qualified Data.ByteString.Base16 as BS
-import Data.Monoid
+import Rhyolite.Schema
 
 -- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
 data Ident = Ident

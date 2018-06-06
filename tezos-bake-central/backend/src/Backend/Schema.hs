@@ -9,16 +9,18 @@
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
+
 module Backend.Schema where
 
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Data.Fixed
-import Data.Int(Int64)
+import Data.Int (Int64)
 import Data.Word
-import Focus.Backend.Account ()
-import Focus.Backend.DB.Groundhog (groundhog, mkFocusPersist)
-import Focus.Backend.Schema.TH
+import Rhyolite.Backend.Account ()
+import Database.Groundhog.TH
+import Rhyolite.Backend.Schema ()
+import Rhyolite.Backend.Schema.TH
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
 
@@ -27,7 +29,7 @@ import Common.Schema
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
-import Focus.Schema (Json(..))
+import Rhyolite.Schema (Json(..))
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -72,12 +74,12 @@ instance PrimitivePersistField PeriodSequence where
 instance NeverNull Tezzies
 
 instance FromField Micro where
-  fromField f b = (MkFixed . toInteger @ Int64) <$> fromField f b
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance FromField Tezzies where
   fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
 
-mkFocusPersist (Just "migrateSchema") [groundhog|
+mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
     constructors:
       - name: Client

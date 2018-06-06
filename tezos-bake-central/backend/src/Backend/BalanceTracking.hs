@@ -6,7 +6,7 @@ import Data.Fixed
 import Data.Semigroup
 import Data.Word
 import Database.Groundhog.Postgresql
-import Focus.Schema
+import Rhyolite.Schema
 
 import Backend.Schema ()
 import Common.Schema

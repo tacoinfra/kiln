@@ -1,12 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
-
 module Backend.NodeRPC where
 
 import Control.Exception
@@ -16,14 +14,14 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
 import Data.ByteString.Lazy as LBS
-import GHC.Generics
+import GHC.Generics (Generic)
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status(Status(..))
 import qualified Data.Text as T
 
 import Common.Schema
-import Focus.Backend.DB.PsqlSimple(PostgresRaw)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 
 data RpcResponse a =
     RpcResponse_HttpException HttpException
@@ -53,7 +51,7 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
     Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
     Block (BlockHash hash) -> nodeRPCImpl ("/blocks/" <> hash)
-    ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
+    ProtoConstants -> nodeRPCImpl "/blocks/head/proto/constants"
     Contract (BlockHash block) (PublicKeyHash publicKey) -> nodeRPCImpl ("/blocks/" <> block <> "/proto/context/contracts/" <> publicKey)
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 

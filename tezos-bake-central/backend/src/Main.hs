@@ -5,6 +5,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Main where
 
 import Control.Category ((.))
 import Control.Concurrent.STM
@@ -14,6 +20,9 @@ import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
 import Control.Monad.Logger (runNoLoggingT)
+import Data.Aeson (FromJSON, eitherDecode)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.TH (deriveJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default
@@ -32,28 +41,30 @@ import Data.Time.Clock
 import Data.Word
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import Focus.Config
-import Focus.Backend
-import Focus.Backend.Account
-import Focus.Backend.App
-import Focus.Backend.DB
-import Focus.Backend.DB.PsqlSimple
-import Focus.Backend.EmailWorker
-import Focus.Backend.Listen
-import Focus.Backend.Snap
-import Focus.Concurrent (worker)
-import Focus.Request (decodeValue')
-import Focus.Schema
+import Rhyolite.Backend
+import Rhyolite.Backend.Account (migrateAccount)
+import Rhyolite.Backend.App
+import Rhyolite.Backend.DB
+import Rhyolite.Backend.DB.PsqlSimple
+import Rhyolite.Backend.DB.LargeObjects
+import Rhyolite.Backend.EmailWorker
+import Rhyolite.Backend.Listen
+import Rhyolite.Backend.Snap
+import Rhyolite.Concurrent (worker)
+import Rhyolite.Request.Common (decodeValue')
+import Rhyolite.Schema
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import Network.HTTP.Simple
 import Network.Mail.Mime
+import qualified Network.Socket
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
-import Prelude hiding (head, id, (.))
+import Prelude hiding ((.))
 import qualified Web.ClientSession as CS
 import Safe
 import Snap
+import System.IO (hSetBuffering, BufferMode (LineBuffering), stdout)
 
 -- import Tezos.BakeMonitor.Types
 import Backend.NodeRPC
@@ -66,6 +77,8 @@ import Backend.ChainHealth
 import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
+
+deriveJSON Aeson.defaultOptions ''Network.Socket.PortNumber
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -114,13 +127,13 @@ nodeWorker delay db = do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
-          head = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
-      case head of
+          headMaybe = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
+      case headMaybe of
         Nothing -> liftIO $ putStrLn "no visible nodes"
         Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
-          runNodeRPCT ctx $ forM_ (_clientConfig_delegates $ ci) $ \delegate -> do
+          runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
             accountResp <- nodeRPC (Contract headHash delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
@@ -233,7 +246,8 @@ clientWorker nodes delay db = do
           void $ queueAllEmails errors
 
 main :: IO ()
-main = withFocus $ do
+main = do
+  hSetBuffering stdout LineBuffering
   Just email <- decodeValue' <$> LBS.readFile "config/email"
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
@@ -251,7 +265,7 @@ main = withFocus $ do
         migrateSchema tableInfo
 
     -- Start a thread to send queued emails
-    addFinalizer =<< (runNoLoggingT $ emailWorker (seconds 10) (Identity db) email)
+    addFinalizer =<< runNoLoggingT (emailWorker (seconds 10) (Identity db) email)
 
     -- TODO: in the real thing, users should manage their own list of nodes,
     -- with some bootstrapping by using the well known address
@@ -278,3 +292,6 @@ rootHandler cfg = do
   serveApp "" $ def
     & appConfig_initialHead .~ Just cfg
 
+
+getConfig :: (FromJSON a, MonadIO m) => FilePath -> m a
+getConfig f = either error pure =<< eitherDecode <$> liftIO (LBS.readFile f)
