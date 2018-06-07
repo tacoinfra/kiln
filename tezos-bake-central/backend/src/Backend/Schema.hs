@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -12,6 +13,7 @@
 
 module Backend.Schema where
 
+import Control.Arrow
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Data.Fixed
@@ -23,13 +25,21 @@ import Rhyolite.Backend.Schema ()
 import Rhyolite.Backend.Schema.TH
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
+import Data.ByteString (ByteString)
+import Data.Text.Encoding as T
 
 import Common.Schema
 -- import Tezos.BakeMonitor.Types
+import Common.Tez
+import Common.TezosBinary
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Rhyolite.Schema (Json(..))
+
+import Common.TaggedHash
+import Common.PublicKeyHash
+import Common.Base16ByteString
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -78,6 +88,38 @@ instance FromField Micro where
 
 instance FromField Tezzies where
   fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
+
+instance NeverNull (HashedValue a ByteString)
+instance NeverNull (Json BlockInfo)
+instance NeverNull (Json BakedEvent)
+instance NeverNull PublicKeyHash
+
+unsafeParseBinary :: TezosBinary a => ByteString -> a
+unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+
+instance TezosBinary a => PersistField (Base16ByteString a) where
+  persistName _ = "Base16ByteString"
+  toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
+  fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
+  dbType p x = dbType p (encodeBinary x)
+
+instance PrimitivePersistField a => PersistField (HashedValue t a) where
+  persistName _ = "HashedValue"
+  toPersistValues = primToPersistValue . unHashedValue
+  fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
+  dbType p (HashedValue x) = dbType p x
+
+instance PersistField PublicKeyHash where
+  persistName _ = "PublicKeyHash"
+  toPersistValues (PublicKeyHash_Ed25519 x) = primToPersistValue $ toBase58Text x
+  toPersistValues (PublicKeyHash_Secp256k1 x) = primToPersistValue $ toBase58Text x
+  fromPersistValues = (fmap.first) toPublicKeyHash . primFromPersistValue
+    where
+      toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
+  dbType p (PublicKeyHash_Ed25519 x) = dbType p $ toBase58Text x
+  dbType p (PublicKeyHash_Secp256k1 x) = dbType p $ toBase58Text x
+
+-- instance PersistField Operation
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client

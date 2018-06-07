@@ -22,6 +22,7 @@ import Rhyolite.Backend.Schema
 import qualified Data.AppendMap as Map
 
 import Backend.BalanceTracking
+import Backend.Schema ()
 import Common.App
 import Common.Schema
 
@@ -35,7 +36,6 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
-  liftIO $ print $ void vs
   clients <- case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do

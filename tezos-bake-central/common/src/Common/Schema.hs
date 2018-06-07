@@ -2,17 +2,23 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Common.Schema where
 
-import Control.Applicative
+import qualified Cases
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
 import Data.Aeson.TH
+import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Function
 import Data.Int
@@ -21,62 +27,31 @@ import Data.Monoid
 import Data.Proxy
 import Data.Scientific
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time
 import Data.Typeable
 import Data.Word
-import GHC.Generics
-import qualified Cases
-import qualified Data.Text as T
-import Data.Sequence(Seq())
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
-
+import GHC.Generics
 import Rhyolite.Schema
 
--- moved from tezos-bake-monitor-lig:Tezos.BakeMonitor.Types since we shouldn't need it anymore.
-data Ident = Ident
-  { _ident_hash :: Text
-  , _ident_nickname :: Maybe Text
-  }
-  deriving (Eq, Show, Generic, Typeable)
+import Common.Base16ByteString
+import Common.BlockHeader
+import Common.Fitness
+import Common.Operation
+import Common.PublicKeyHash
+import Common.TaggedHash
+import Common.Tez
 
-instance FromJSON Ident
-instance ToJSON Ident
+-- import GADT.JSON (deriveGadtJson)
 
 -- TODO:  all of the hashey things in Tezos are some mystery hash in base58
 -- with a wonky 1.5-2 letter prefix.  maybe capture that and get read/show
 -- instances once and for all...
-newtype PublicKeyHash = PublicKeyHash { unPublicKeyHash :: Text }
-  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON)
 
-newtype Tezzies = Tezzies { getTezzies :: Micro }
-  deriving (Eq, Ord, Show, Generic, Typeable, Enum, Fractional, Num, Real, RealFrac)
 
-getMicroTezzies :: Tezzies -> Int64
-getMicroTezzies
-  = (floor :: Fixed E6 -> Int64)
-  . ((fromInteger $ resolution (Proxy :: Proxy E6)) * )
-  . getTezzies
-
-microTezzies :: forall a. Integral a => a -> Tezzies
-microTezzies
-  = Tezzies
-  . (/ (fromInteger $ resolution (Proxy :: Proxy E6)))
-  . (fromIntegral :: a -> Fixed E6)
-
--- | the instance for Data.Fixed.Micro defined in Data.Aeson is perfectly
--- cromulent, its just not what we need.  tezos encodes these values as
--- integers.  Like the FromJSON instance below, it "may" be neccesary to encode
--- values larger than `2^31/resolution` as strings, but that's not handled
--- currently
-instance ToJSON Tezzies where
-  toJSON = toJSON . getMicroTezzies
-  toEncoding = toEncoding . getMicroTezzies
-
-instance FromJSON Tezzies where
-  parseJSON x = (microTezzies . (floor :: Scientific -> Int64)) <$> parseJSON x
-            <|> (microTezzies . (read :: String -> Int64)) <$> parseJSON x
 
 newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor)
@@ -136,9 +111,6 @@ instance Monoid Count where
 instance FromJSON Count
 instance ToJSON Count
 
-newtype BlockHash = BlockHash {unBlockHash :: Text}
-  deriving (Eq, Ord, Show, ToJSON, FromJSON, Generic, Typeable)
-
 type Baked = Event BakedEvent
 
 data Error = Error
@@ -160,8 +132,8 @@ data BlockInfo = BlockInfo
   , _blockInfo_chainId :: ChainId
   -- , _blockInfo_context :: ContextHash
   , _blockInfo_fitness :: Fitness
-  -- , _blockInfo_operations :: [[Operation]]
-  , _blockInfo_operationsHash :: BlockHash
+  -- , _blockInfo_operations :: [[Base16ByteString ProtoOperation]]
+  , _blockInfo_operationsHash :: OperationListListHash
   , _blockInfo_protocol :: Protocol
   -- , _blockInfo_protocolData :: Base16ByteString BS.ByteString
   , _blockInfo_timestamp :: UTCTime
@@ -236,53 +208,31 @@ data Level = Level
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
-data BakedEvent = BakedEvent
-  { _bakedEvent_hash :: BlockHash
-  -- , operations :: ...
-  , _bakedEvent_signedHeader :: Base16ByteString BS.ByteString
+data BakedEventOperation = BakedEventOperation
+  { _bakedEventOperation_branch :: BlockHash
+  , _bakedEventOperation_data :: Base16ByteString ProtoOperation
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
 
-type ChainId = Text
+data BakedEvent = BakedEvent
+  { _bakedEvent_hash :: BlockHash
+  , _bakedEvent_operations :: [[BakedEventOperation]]
+  , _bakedEvent_signedHeader :: Base16ByteString BlockHeader
+  }
+  deriving (Show, Eq, Ord, Typeable, Generic)
+
+
+-- TODO: this is honestly a Base58Check object, prefix: "Proto", it even makes
+-- "sense" to make each protocol hash its own tag separately as the protocol
+-- evolves, so as to index datastructures that depend on the protocol
 type Protocol = Text
 
 
-data FitnessF a = Fitness { unFitness :: Seq a }
-  deriving (Eq, Show, Generic, Typeable, Functor, Foldable, Traversable)
-
--- | Not sure why GND doesn't work for this...
-instance ToJSON a => ToJSON (FitnessF a) where
-  toJSON = toJSON . unFitness
-  toEncoding = toEncoding . unFitness
-
-instance FromJSON a => FromJSON (FitnessF a) where
-  parseJSON = fmap Fitness . parseJSON
-
-type Fitness = FitnessF (Base16ByteString BS.ByteString)
-
-instance Ord a => Ord (FitnessF a) where
-  compare = (compare `on` length) <> (compare `on` unFitness)
-
-newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }
-  deriving (Eq, Ord, Show, Generic, Typeable, Functor, Foldable, Traversable)
-
-instance ToJSON (Base16ByteString BS.ByteString) where
-  toJSON (Base16ByteString x) = toJSON $ T.decodeUtf8 $ BS.encode x
-  toEncoding (Base16ByteString x) = toEncoding $ T.decodeUtf8 $ BS.encode x
-
-instance FromJSON (Base16ByteString BS.ByteString) where
-  parseJSON x = do
-    hexesText <- parseJSON x
-    let (bytes, rest) = BS.decode $ T.encodeUtf8 hexesText
-    if (BS.length rest > 0)
-    then fail $ "unmatched characters" <> show rest
-    else return $ Base16ByteString bytes
-
 data SeenEvent = SeenEvent
   { _seenEvent_chainId :: ChainId
-  , _seenEvent_fitness :: Fitness
+  -- , _seenEvent_fitness :: Fitness
   , _seenEvent_hash :: BlockHash
-  , _seenEvent_level :: Level
+  , _seenEvent_level :: Json Level
   , _seenEvent_predecessor :: BlockHash
   , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
@@ -303,6 +253,16 @@ data ErrorEvent = ErrorEvent
   }
   deriving (Show, Eq, Typeable, Generic)
 
+data EndorseEvent = EndorseEvent
+  { _endorseEvent_hash :: BlockHash
+  , _endorseEvent_level :: Int
+  , _endorseEvent_slot :: Int
+  , _endorseEvent_delegate :: PublicKeyHash
+  , _endorseEvent_name :: String
+  , _endorseEvent_oph :: OperationHash
+  }
+  deriving (Show, Eq, Typeable, Generic)
+
 mkErr :: Event ErrorEvent -> Error
 mkErr err = Error
   { _error_time = _event_time err
@@ -318,21 +278,16 @@ data Report = Report
   }
   deriving (Show, Eq, Typeable, Generic)
 
--- TODO: split this into ShellHeader/AlphaProtoHeader/etc
-data BlockHeader = BlockHeader
-  { _blockHeader_level :: Int32
-  , _blockHeader_proto :: Word8
-  , _blockHeader_predecessor :: BS.ByteString
-  , _blockHeader_timestamp :: UTCTime
-  , _blockHeader_validationPass :: Word8
-  , _blockHeader_operationsHash :: BS.ByteString
-  , _blockHeader_fitness :: Fitness
-  , _blockHeader_context :: BS.ByteString
-  , _blockHeader_priority :: Word16
-  , _blockHeader_proofOfWorkNonce :: Word64
-  , _blockHeader_seedNonceHash :: Maybe BS.ByteString
-  }
-  deriving (Show, Eq, Typeable, Generic)
+-- TODO: handle parsing errors
+blockLevel :: Event BakedEvent -> Int
+blockLevel = fromIntegral . _blockHeader_level . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
+
+blockRewards :: Event BakedEvent -> ProtoInfo -> Tezzies
+blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
+  where
+    blockHeader = unbase16ByteString $ _bakedEvent_signedHeader $ _event_detail b
+    nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
+    fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
@@ -356,6 +311,66 @@ data Account = Account
   , _account_counter :: Int64 -- 1540
   }
 
+newtype BlockPrefix = BlockPrefix Text
+  deriving (Eq, Show, Generic, Typeable, ToJSON, FromJSON)
+
+data BlockId = BlockId
+  { _blockId_blockHash :: BlockIdHash
+  , _blockId_predecessor :: Maybe Word64
+  }
+
+data BlockIdHash
+   = BlockIdHash_BlockHash BlockHash
+   | BlockIdHash_Genesis
+   | BlockIdHash_Head
+   | BlockIdHash_TestHead
+
+
+-- Smart constructors for "dynamic" url patterns in NodeRPC
+blockHashId :: BlockHash -> BlockId
+blockHashId x = BlockId (BlockIdHash_BlockHash x) Nothing
+
+genesisId :: BlockId
+genesisId = BlockId BlockIdHash_Genesis Nothing
+
+headId :: BlockId
+headId = BlockId BlockIdHash_Head Nothing
+
+testHeadId :: BlockId
+testHeadId = BlockId BlockIdHash_TestHead Nothing
+
+showBlockId :: BlockId -> Text
+showBlockId (BlockId blockId offset) = blockId' <> offset'
+  where
+    blockId' = case blockId of
+      BlockIdHash_BlockHash x -> toBase58Text x
+      BlockIdHash_Genesis -> "genesis"
+      BlockIdHash_Head -> "head"
+      BlockIdHash_TestHead -> "test_head"
+    offset' = maybe "" (("~" <>) . T.pack . show) offset
+
+
+data NodeRPCRequest a where
+  Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
+  Block :: BlockId -> NodeRPCRequest BlockInfo
+  ProtoConstants :: NodeRPCRequest ProtoInfo
+  Contract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
+
+
+data RpcError =
+    RpcError_HttpException Text
+  | RpcError_UnexpectedStatus Int BS.ByteString
+  | RpcError_NonJSON String LBS.ByteString
+  deriving (Eq, Ord, Show, Generic, Typeable)
+
+
+type RpcResponse = Either RpcError
+
+class MonadTezosNode m where
+  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
+  nodeAddress :: m Text
+
+
 data Notificatee = Notificatee
   { _notificatee_email :: Email
   }
@@ -366,28 +381,36 @@ instance FromJSON Notificatee
 instance ToJSON Notificatee
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
-$(concat <$> traverse (deriveJSON defaultOptions
+concat <$> traverse (deriveJSON defaultOptions
       { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
       , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
   [ ''Account
   , ''BakedEvent
+  , ''BakedEventOperation
+  , ''BlockId
+  , ''BlockIdHash
   , ''BlockInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
+  , ''EndorseEvent
   , ''ErrorEvent
   , ''Event
   , ''Level
   , ''ProtoInfo
   , ''Report
   , ''SeenEvent
-  ])
+  ]
 
-makeLenses 'BlockInfo
-makeLenses 'Report
-makeLenses 'Count
-makeLenses 'Event
-makeLenses 'BakedEvent
-makeLenses 'SeenEvent
-makeLenses 'ErrorEvent
-makeLenses 'Error
+concat <$> traverse makeLenses
+  [ 'BakedEvent
+  , 'BakedEventOperation
+  , 'BlockInfo
+  , 'Count
+  , 'EndorseEvent
+  , 'Error
+  , 'ErrorEvent
+  , 'Event
+  , 'Report
+  , 'SeenEvent
+  ]

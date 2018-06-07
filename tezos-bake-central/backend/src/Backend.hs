@@ -41,44 +41,44 @@ import Data.Time.Clock
 import Data.Word
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
+import Network.HTTP.Client
+import Network.HTTP.Client.TLS
+import Network.HTTP.Simple hiding (Proxy)
+import Network.Mail.Mime
+import qualified Network.Socket
 import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.App
 import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.DB.LargeObjects
+import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.EmailWorker
 import Rhyolite.Backend.Listen
 import Rhyolite.Backend.Snap
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Schema
-import Network.HTTP.Client
-import Network.HTTP.Client.TLS
-import Network.HTTP.Simple
-import Network.Mail.Mime
-import qualified Network.Socket
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding ((.))
 import qualified Web.ClientSession as CS
 import Safe
-import Snap.Util.FileServe (serveDirectory)
 import Snap
+import Snap.Util.FileServe (serveDirectory)
 import System.IO (hSetBuffering, BufferMode (LineBuffering), stdout)
 
--- import Tezos.BakeMonitor.Types
-import Backend.NodeRPC
-
-import Backend.RequestHandler
-import Backend.NotifyHandler
-import Backend.ViewSelectorHandler
-import Backend.Schema
 import Backend.ChainHealth
-import Common.BlockHeader
-import Common.Schema
+import Backend.NodeRPC
+import Backend.NotifyHandler
+import Backend.RequestHandler
+import Backend.Schema
+import Backend.ViewSelectorHandler
 import Common.Api ()
+import Common.Base16ByteString
+import Common.Operation
+import Common.Schema
+import Common.TaggedHash
 
 import Frontend (frontend)
 
@@ -126,7 +126,7 @@ nodeWorker delay db = do
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block headId
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
@@ -138,7 +138,7 @@ nodeWorker delay db = do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
           runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
-            accountResp <- nodeRPC (Contract headHash delegate)
+            accountResp <- nodeRPC (Contract (blockHashId headHash) delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
@@ -212,13 +212,14 @@ clientWorker nodes delay db = do
             void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let blockReward = _protoInfo_blockReward protoInfo
+          let bakingReward blk = _protoInfo_blockReward protoInfo + (getSum $ (foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
+
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
+                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues

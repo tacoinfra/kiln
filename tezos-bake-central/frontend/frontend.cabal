@@ -30,6 +30,7 @@ library
     , reflex-dom
     , rhyolite-common
     , rhyolite-frontend
+    , safe
     , text
     , these
     , time

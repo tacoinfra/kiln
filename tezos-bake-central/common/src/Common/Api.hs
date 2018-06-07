@@ -8,6 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Common.Api where
 
 import Data.Fixed (Micro)

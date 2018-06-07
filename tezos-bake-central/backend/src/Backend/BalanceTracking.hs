@@ -1,7 +1,7 @@
 module Backend.BalanceTracking where
 
-import qualified Data.AppendMap as Map
 import Data.AppendMap (AppendMap)
+import qualified Data.AppendMap as Map
 import Data.Fixed
 import Data.Semigroup
 import Data.Word

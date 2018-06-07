@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -41,11 +43,16 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+import Safe
+import Data.Function (on)
 
 import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 import Common.BlockHeader
+import Common.TaggedHash
+import Common.Tez
+import Common.PublicKeyHash
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -171,10 +178,10 @@ summaryTab = divClass "ui grid" $ do
         forM_ baked $ \b -> el "tr" $ do
           el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
           el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+          el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> blank
-            Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+            Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m) => m ()
@@ -222,7 +229,7 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
             divClass "ui medium header" . text $ addr
             elAttr "div" ("class" =: "delegates") $ do
               text $ "ID: "
-              text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+              text $ (T.intercalate " " $ fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
             elAttr "div" ("class" =: "client-node") $ do
               text $ "Node: "
               text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
@@ -274,10 +281,10 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
               forM_ baked $ \b -> el "tr" $ do
                 el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
                 el "td" . text . T.pack . show . blockLevel $ b
-                el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+                el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
                 el "td" . dyn . ffor dparameters $ \case
                   Nothing -> blank
-                  Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+                  Just protoInfo -> text . tezzies $ blockRewards b protoInfo
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =

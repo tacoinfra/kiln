@@ -16,9 +16,11 @@ library
     , attoparsec
     , base
     , base16-bytestring
+    , base58-bytestring
     , bytestring
     , cases
     , containers
+    , cryptohash
     , data-default
     , either
     , file-embed
@@ -30,12 +32,25 @@ library
     , text
     , these
     , time
-    -- , tezos-bake-monitor-lib
 
   exposed-modules:
     Common.Api
     Common.App
+    Common.Base16ByteString
     Common.BlockHeader
+    Common.Fitness
+    Common.Micheline
+    Common.Operation
+    Common.PublicKeyHash
+    Common.PublicKey
     Common.Schema
+    Common.Script
+    Common.Seed
+    Common.Signature
+    Common.TaggedHash
+    Common.Tez
+    Common.TezosBinary
+    Common.Verification
+    Common.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

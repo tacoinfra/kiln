@@ -23,7 +23,7 @@ import Rhyolite.App
 import Rhyolite.Schema
 
 import Common.Schema
--- import Tezos.BakeMonitor.Types
+
 
 data Bake = Bake
 
