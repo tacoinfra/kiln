@@ -9,6 +9,7 @@ module Common.App where
 
 import GHC.Generics
 import Data.Aeson
+import Data.AppendMap (AppendMap)
 import Data.Fixed
 import Data.Typeable
 import Data.Align
@@ -17,13 +18,12 @@ import Data.These
 import Data.Word
 import Reflex (FunctorMaybe(..), Group(..), Additive)
 import Reflex.Query.Class
-
-import Data.AppendMap (AppendMap)
-import Focus.App
-import Focus.Schema
+import Reflex.Aeson.Orphans ()
+import Rhyolite.App
+import Rhyolite.Schema
 
 import Common.Schema
--- import Tezos.BakeMonitor.Types
+
 
 data Bake = Bake
 
@@ -107,7 +107,7 @@ instance FunctorMaybe BakeView where
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
 fmapMaybeSnd f = fmapMaybe $ \(e, a) -> case f a of
   Nothing -> Nothing
-  Just b  -> Just (e, b)
+  Just b -> Just (e, b)
 
 alignTheseWith :: Align f => (These a b -> c) -> These (f a) (f b) -> f c
 alignTheseWith f = these (fmap (f . This)) (fmap (f . That)) (alignWith f)

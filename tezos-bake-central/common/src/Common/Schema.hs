@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -13,34 +14,36 @@
 
 module Common.Schema where
 
+import qualified Cases
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
 import Data.Aeson.TH
+import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Monoid
+import Data.Proxy
+import Data.Scientific
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time
 import Data.Typeable
 import Data.Word
-import Focus.Schema
-import GHC.Generics
-import qualified Cases
-import qualified Data.Text as T
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Base16 as BS
+import qualified Data.Text.Encoding as T
+import GHC.Generics
+import Rhyolite.Schema
 
-import Data.Monoid
-
-import Common.TaggedHash
-
-import Common.Operation
-import Common.PublicKeyHash
-import Common.Tez
-import Common.Fitness
 import Common.Base16ByteString
 import Common.BlockHeader
+import Common.Fitness
+import Common.Operation
+import Common.PublicKeyHash
+import Common.TaggedHash
+import Common.Tez
 
 -- import GADT.JSON (deriveGadtJson)
 
@@ -381,7 +384,7 @@ instance FromJSON Notificatee
 instance ToJSON Notificatee
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
-$(concat <$> traverse (deriveJSON defaultOptions
+concat <$> traverse (deriveJSON defaultOptions
       { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
       , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
@@ -400,9 +403,9 @@ $(concat <$> traverse (deriveJSON defaultOptions
   , ''ProtoInfo
   , ''Report
   , ''SeenEvent
-  ])
+  ]
 
-$(concat <$> traverse makeLenses 
+concat <$> traverse makeLenses
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BlockInfo
@@ -413,4 +416,4 @@ $(concat <$> traverse makeLenses
   , 'Event
   , 'Report
   , 'SeenEvent
-  ])
+  ]

@@ -3,10 +3,11 @@
 
 module Common.Verification where
 
-import Common.Schema
-import qualified Data.Text as T
-import Data.Text (Text)
 import Data.Either.Validation
+import Data.Text (Text)
+import qualified Data.Text as T
+
+import Common.Schema
 import Common.TaggedHash (toBase58Text)
 
 data ForkInfoF e = ForkInfo

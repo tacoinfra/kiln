@@ -5,12 +5,12 @@
 module Common.Micheline where
 
 import Control.Monad
-import Data.Semigroup
-import GHC.Word
 import Data.ByteString (ByteString)
+import Data.Semigroup
 import Data.Sequence (Seq)
 import Data.Typeable
 import GHC.Generics
+import GHC.Word
 
 import Common.TezosBinary
 

@@ -1,0 +1,59 @@
+name: common
+version: 0.1
+license: BSD3
+copyright: Copyright (C) Obsidian Systems LLC 2018
+author: Obsidian Systems LLC
+maintainer: maintainer@obsidian.systems
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.8
+
+library
+  hs-source-dirs: src
+
+  build-depends:
+      aeson
+    , attoparsec
+    , base
+    , base16-bytestring
+    , base58-bytestring
+    , bytestring
+    , cases
+    , containers
+    , cryptohash
+    , cryptonite
+    , data-default
+    , either
+    , file-embed
+    , hashing
+    , lens
+    , memory
+    , reflex
+    , reflex-aeson-orphans
+    , rhyolite-common
+    , scientific
+    , text
+    , these
+    , time
+
+  exposed-modules:
+    Common.Api
+    Common.App
+    Common.Base16ByteString
+    Common.BlockHeader
+    Common.Fitness
+    Common.Micheline
+    Common.Operation
+    Common.PublicKeyHash
+    Common.PublicKey
+    Common.Schema
+    Common.Script
+    Common.Seed
+    Common.Signature
+    Common.TaggedHash
+    Common.Tez
+    Common.TezosBinary
+    Common.Verification
+    Common.Vote
+
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

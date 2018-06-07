@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -12,14 +11,16 @@
 
 module Common.Api where
 
-import Focus.App
-import Focus.Request
-import Common.App
-import Common.Schema (ClientAddress())
-import Focus.Schema (Email)
-
-import Data.Fixed
+import Data.Fixed (Micro)
 import Data.Text (Text)
+import Rhyolite.App (HasRequest, PublicRequest, PrivateRequest)
+import Rhyolite.Request.Class (Request)
+import Rhyolite.Request.TH (makeRequestForDataInstance)
+import Rhyolite.Schema (Email)
+
+import Common.App (Bake)
+import Common.Schema (ClientAddress)
+
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -42,9 +43,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-#ifdef USE_TEMPLATE_HASKELL
+
 makeRequestForDataInstance ''PublicRequest ''Bake
 makeRequestForDataInstance ''PrivateRequest ''Bake
-#else
-#include "Api.splices.hs"
-#endif

@@ -14,8 +14,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.Sequence as Seq
 import Data.Attoparsec.ByteString ((<?>))
+import Rhyolite.Schema (Json (..))
 
-import Focus.Schema (Json(..))
 import Common.Base16ByteString
 import Common.TezosBinary
 
@@ -31,7 +31,7 @@ data FitnessF a = FitnessF { unFitnessF :: Seq a }
 -- instance ToJSON a => ToJSON (FitnessF a) where
 --   toJSON = toJSON . unFitnessF
 --   toEncoding = toEncoding . unFitnessF
--- 
+--
 -- instance FromJSON a => FromJSON (FitnessF a) where
 --   parseJSON = fmap FitnessF . parseJSON
 instance FromJSON (FitnessF (Base16ByteString BS.ByteString)) where

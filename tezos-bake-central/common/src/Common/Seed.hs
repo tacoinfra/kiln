@@ -2,9 +2,10 @@
 
 module Common.Seed where
 
+import qualified Data.ByteString as BS
 import Data.Typeable
 import GHC.Generics
-import qualified Data.ByteString as BS
+
 import Common.TezosBinary
 
 newtype Seed = Seed BS.ByteString

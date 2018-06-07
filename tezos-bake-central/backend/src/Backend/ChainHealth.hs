@@ -1,20 +1,18 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks) where
 
-import Common.Schema
--- import Tezos.BakeMonitor.Types
--- import Data.Text (Text)
 import qualified Data.Text as T
 import Control.Monad.Trans
+import Data.Monoid
 import Data.Time
-import Backend.NodeRPC
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
-import Data.Monoid
 
-import Common.Verification
+import Backend.NodeRPC
+
 import Common.BlockHeader
+import Common.Schema
+import Common.Verification
 
 -- type ForkStatus = ForkStatusF (RpcResponse Void)
 type ForkInfo = ForkInfoF RpcError
@@ -24,7 +22,7 @@ type ForkInfo = ForkInfoF RpcError
 -- problem:: any parent of seen blocks do not appear on chain
 -- problem:: blocks are not seen frequently
 
--- rough sketch, 
+-- rough sketch,
 -- %seen <- consider some block (say, the most recent, seen block or the most recent baked block)
 -- %lvl, %parent <-  ask the node for %seen level, and the ID of its parent. (level - 1)
 -- %1 ask the same node for the head and its level (level')

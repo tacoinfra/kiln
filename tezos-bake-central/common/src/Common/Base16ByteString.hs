@@ -1,20 +1,21 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Common.Base16ByteString where
 
-import Data.Proxy
 import Data.Aeson
-import GHC.Generics
-import Data.Typeable
-import Data.Semigroup
+import Data.Aeson.Types
 import Data.Attoparsec.ByteString
-
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
+import Data.Proxy
+import Data.Semigroup
 import qualified Data.Text.Encoding as T
-import Data.Aeson.Types
+import Data.Typeable
+import GHC.Generics
 
 import Common.TezosBinary
 

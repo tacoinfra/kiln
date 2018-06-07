@@ -2,10 +2,12 @@
 
 module Common.Vote where
 
-import Common.TezosBinary
 import Data.Int
 import Data.Typeable
 import GHC.Generics
+
+import Common.TezosBinary
+
 type VotingPeriod = Int32 -- ^ period: Voting_period_repr.t ;
 
 data Ballot

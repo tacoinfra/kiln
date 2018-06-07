@@ -10,17 +10,19 @@
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
+
 module Backend.Schema where
 
 import Control.Arrow
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Data.Fixed
-import Data.Int(Int64)
+import Data.Int (Int64)
 import Data.Word
-import Focus.Backend.Account ()
-import Focus.Backend.DB.Groundhog (groundhog, mkFocusPersist)
-import Focus.Backend.Schema.TH
+import Rhyolite.Backend.Account ()
+import Database.Groundhog.TH
+import Rhyolite.Backend.Schema ()
+import Rhyolite.Backend.Schema.TH
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
 import Data.ByteString (ByteString)
@@ -33,7 +35,7 @@ import Common.TezosBinary
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
-import Focus.Schema (Json(..))
+import Rhyolite.Schema (Json(..))
 
 import Common.TaggedHash
 import Common.PublicKeyHash
@@ -42,7 +44,7 @@ import Common.Base16ByteString
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
--- TODO: Move all of this into focus
+-- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
@@ -82,7 +84,7 @@ instance PrimitivePersistField PeriodSequence where
 instance NeverNull Tezzies
 
 instance FromField Micro where
-  fromField f b = (MkFixed . toInteger @ Int64) <$> fromField f b
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance FromField Tezzies where
   fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
@@ -93,7 +95,7 @@ instance NeverNull (Json BakedEvent)
 instance NeverNull PublicKeyHash
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
-unsafeParseBinary = either error id . (eitherBinary "unsafeParseBinary")
+unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
@@ -119,7 +121,7 @@ instance PersistField PublicKeyHash where
 
 -- instance PersistField Operation
 
-mkFocusPersist (Just "migrateSchema") [groundhog|
+mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
     constructors:
       - name: Client

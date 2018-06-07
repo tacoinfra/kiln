@@ -1,27 +1,26 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
 module Backend.NotifyHandler where
 
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Trans.Control
-import Data.Aeson
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Aeson (Result (Error, Success), fromJSON)
 import qualified Data.AppendMap as Map
-import Data.Functor.Identity
-import Data.Maybe
+import Data.Functor.Identity (Identity (..))
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup
-import Database.Groundhog.Postgresql
-import Focus.Backend.DB (runDb)
-import Focus.Backend.Listen
-import Focus.Backend.Schema.TH
-import Focus.Schema
+import Data.Semigroup (Semigroup, First (..), (<>))
+import Database.Groundhog.Postgresql (Postgresql, get, select, (==.),)
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.Listen (NotifyMessage (..))
+import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Schema (Id)
 
-import Backend.BalanceTracking
+import Backend.BalanceTracking (getAllRewards)
 import Backend.Schema
-import Common.App
-import Common.Schema hiding (Error)
+import Common.App (BakeViewSelector (..), BakeView (..))
+import Common.Schema (Client (..), ClientInfo, Parameters (..), Node (..), Notificatee (..))
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)

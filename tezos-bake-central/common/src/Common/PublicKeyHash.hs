@@ -20,13 +20,6 @@ import Common.Blake2b
 import Common.PublicKey
 
 
-hashPublicKey :: PublicKey -> PublicKeyHash
-hashPublicKey = \case
-  PublicKey_Ed25519   (HashedValue pk) -> PublicKeyHash_Ed25519   $ HashedValue $ blake2b pk
-  PublicKey_Secp256k1 (HashedValue pk) -> PublicKeyHash_Secp256k1 $ HashedValue $ blake2b pk
-
--- TODO: it'd be nice to unify all this into a tagged scheme.
-
 data PublicKeyHash
   = PublicKeyHash_Ed25519 Ed25519PublicKeyHash
   | PublicKeyHash_Secp256k1 Secp256k1PublicKeyHash

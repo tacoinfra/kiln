@@ -5,31 +5,31 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE InstanceSigs #-}
+
 module Common.TezosBinary where
 
 import Prelude hiding (take)
 
 import Control.Monad
-import Data.List (intercalate)
-import Data.Proxy
 import Data.Attoparsec.ByteString
 import Data.Bits
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Foldable
 import Data.Int
+import Data.List (intercalate)
+import Data.Proxy
 import Data.Semigroup
 import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Typeable
-import GHC.Word
-import GHC.Generics
 import Data.Void
+import GHC.Generics
+import GHC.Word
 
-import qualified Data.ByteString as BS
-import qualified Data.Sequence as Seq
-
-import Focus.Schema (Json(..))
+import Rhyolite.Schema (Json (..))
 
 class TezosBinary a where
   parseBinary :: Parser a
@@ -112,12 +112,12 @@ encodeEnumWith e = e . fromIntegral . fromEnum
 
 parseTagged :: TezosBinary a => Word8 -> String
   -> (a -> b) -> Parser b
-parseTagged tag hint ctor = word8 tag 
+parseTagged tag hint ctor = word8 tag
   >> (ctor <$> parseBinary) <?> hint
 
 parseTagged2 :: (TezosBinary a, TezosBinary b) => Word8 -> String
   -> (a -> b -> c) -> Parser c
-parseTagged2 tag hint ctor = word8 tag 
+parseTagged2 tag hint ctor = word8 tag
   >> (ctor <$> parseBinary <*> parseBinary) <?> hint
 
 parseTagged3 :: (TezosBinary a, TezosBinary b, TezosBinary c) => Word8 -> String

@@ -1,25 +1,22 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE LambdaCase #-}
+
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 
 module Common.BlockHeader where
 
-import Data.Int
-import GHC.Word
-
 import Data.Attoparsec.ByteString
-
+import Data.Int
 import Data.Semigroup
-
 import Data.Time
-
-import Common.Fitness
 import Data.Typeable
 import GHC.Generics
-import Common.TezosBinary
+import GHC.Word
+
+import Common.Fitness
 import Common.TaggedHash
+import Common.TezosBinary
 
 -- TODO: split this into ShellHeader/AlphaProtoHeader/etc
 data BlockHeader = BlockHeader

@@ -3,12 +3,14 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE RankNTypes #-}
 
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+module Frontend where
 
 import Common.Api
 import Common.App
@@ -17,13 +19,11 @@ import Control.Lens (firstOf)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Monad.Trans
-import Data.AppendMap (_unAppendMap)
 import qualified Data.AppendMap as Map
 import qualified Data.Map as BaseMap
-import Data.AppendMap (AppendMap)
+import Data.AppendMap (AppendMap, _unAppendMap)
 import Data.Either.Combinators
 import Data.Fixed
-import Data.Foldable (foldl', toList)
 import Data.Foldable (foldl')
 import Data.List
 import Data.Maybe
@@ -33,14 +33,11 @@ import Data.Semigroup
 import Data.Text (Text)
 import Data.Time.Format
 import Data.Word
-import Focus.Api
-import Focus.JS.App
-import Focus.JS.Run
--- import Focus.JS.FontAwesome -- where did this go?
-import Focus.Request
-import Focus.Route
-import Focus.Schema
-import Focus.WebSocket
+import Rhyolite.Api
+import Rhyolite.Frontend.App
+import Rhyolite.Route
+import Rhyolite.Schema
+import Rhyolite.WebSocket
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -57,17 +54,17 @@ import Common.TaggedHash
 import Common.Tez
 import Common.PublicKeyHash
 
-main :: IO ()
-main = do
-  Just routeStr <- Obelisk.ExecutableConfig.get "route"
-  let route :: RouteEnv
-      Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
-  liftIO $ print route
-  let frontendConfig = FrontendConfig
-        { _frontendConfig_warpPort = 3911
-        , _frontendConfig_registerDeviceForNotifications = Nothing
-        }
-  runFrontend frontendConfig $ app (Left route)
+
+frontend :: (StaticWidget x (), Widget x ())
+frontend =
+  ( headTag
+  , void $ do
+      Just routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
+      let route :: RouteEnv
+          Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
+      liftIO $ print route
+      runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
+  )
 
 headTag :: DomBuilder t m => m ()
 headTag = do
@@ -82,7 +79,8 @@ headTag = do
 app
   :: Either RouteEnv Text
   -> (() -> Widget () (), () -> Widget () ())
-app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
+app r = (\_ -> headTag, \_ -> void $ runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
+
 
 tezzies :: Tezzies -> Text
 tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
@@ -104,7 +102,7 @@ data UITab = UITab_Summary
            | UITab_Options
   deriving (Eq, Ord, Show)
 
-appMain :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   clients <- watchClients
   el "h1" $ text "Baker Central"
@@ -122,7 +120,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
     UITab_Client cid -> clientTab cid (Map.lookup cid <$> clients)
   return ()
 
-summaryTab :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
 summaryTab = divClass "ui grid" $ do
   dlevel <- watchTezosLevel
   clients <- watchClients
@@ -186,7 +184,7 @@ summaryTab = divClass "ui grid" $ do
             Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
-optionsTab :: (MonadFocusFrontendWidget Bake t m) => m ()
+optionsTab :: (MonadRhyoliteFrontendWidget Bake t m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClients
   divClass "four wide column" $ do
@@ -216,7 +214,7 @@ optionsTab = divClass "ui grid" $ do
 
   return ()
 
-clientTab :: (MonadFocusFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
+clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
 clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
     Nothing -> text "Waiting for response..."
     Just (addr, mReport) -> do
@@ -294,21 +292,21 @@ semuiTab label k currentTab =
     elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
       text label
 
-watchProtoInfo :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
+watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
   return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters theView)
 
-watchTezosLevel :: (MonadFocusFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
+watchTezosLevel :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
 watchTezosLevel = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_level = Just 1
     }
   return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
 
-watchClients :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
+watchClients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
 watchClients = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
@@ -319,14 +317,14 @@ watchClients = do
       (Just (name, Nothing)) -> Just (name, Left "No response yet.")
       (Just (name, Just ci)) -> Just (name, Right ci)
 
-watchRewards :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
+watchRewards :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
 watchRewards = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     }
   return . ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
-watchNotificatees :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
+watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = Just 1

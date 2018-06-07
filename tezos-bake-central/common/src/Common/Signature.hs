@@ -2,10 +2,10 @@
 module Common.Signature where
 
 import Control.Monad
-import GHC.Generics
-import Data.Typeable
-import GHC.Word
 import Data.Semigroup
+import Data.Typeable
+import GHC.Generics
+import GHC.Word
 
 import Common.TezosBinary
 import Common.TaggedHash
