@@ -1,4 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Common.PublicKeyHash where
 
 import Data.Aeson
@@ -9,9 +11,19 @@ import GHC.Word
 import Control.Monad
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as BS16
 
 import Common.TaggedHash
 import Common.TezosBinary
+import Common.Blake2b
+import Common.PublicKey
+
+
+hashPublicKey :: PublicKey -> PublicKeyHash
+hashPublicKey = \case
+  PublicKey_Ed25519   (HashedValue pk) -> PublicKeyHash_Ed25519   $ HashedValue $ blake2b pk
+  PublicKey_Secp256k1 (HashedValue pk) -> PublicKeyHash_Secp256k1 $ HashedValue $ blake2b pk
 
 -- TODO: it'd be nice to unify all this into a tagged scheme.
 
@@ -59,3 +71,26 @@ instance TezosBinary PublicKeyHash where
 
   encodeBinary (PublicKeyHash_Ed25519 x) = encodeBinary (0 :: Word8) <> encodeBinary x
   encodeBinary (PublicKeyHash_Secp256k1 x) = encodeBinary (1 :: Word8) <> encodeBinary x
+
+
+rawContextLink :: PublicKeyHash -> Text
+rawContextLink pkh = T.intercalate "/"
+    [ "raw_context/contracts/index" , rawContextKeyPath pkh ]
+  where
+    b16 :: BS.ByteString -> Text
+    b16 x = T.decodeUtf8 $ BS16.encode x
+
+    rawContextKeyPath :: PublicKeyHash -> Text
+    rawContextKeyPath (PublicKeyHash_Ed25519 (HashedValue x)) = "ed25519/" <> hashedValueKeyPath (b16 x)
+    rawContextKeyPath (PublicKeyHash_Secp256k1 (HashedValue x)) = "secp256k1/" <> hashedValueKeyPath (b16 x)
+
+    hashedValueKeyPath :: Text -> Text
+    hashedValueKeyPath x = T.toLower $ T.intercalate "/"
+        [ T.drop 0 $ T.take 2 $ x
+        , T.drop 2 $ T.take 4 $ x
+        , T.drop 4 $ T.take 6 $ x
+        , T.drop 6 $ T.take 8 $ x
+        , T.drop 8 $ T.take 10 $ x
+        , T.drop 10 $ x
+        ]
+

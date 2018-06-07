@@ -18,6 +18,7 @@ import Data.Text (Text)
 import Data.Text as T
 import Data.Text.Encoding as T
 import qualified Data.ByteString as BS
+import qualified Data.ByteArray as BA
 import qualified Data.ByteString.Base16 as BS16
 import Data.ByteString.Base58
 import Data.Monoid
@@ -28,7 +29,7 @@ import Data.Aeson
 #if defined ghcjs_HOST_OS
 import qualified "hashing" Crypto.Hash as CryptoHash
 #else
-import qualified "cryptohash" Crypto.Hash.SHA256 as SHA256
+import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
 #endif
 
 
@@ -115,7 +116,7 @@ sha256 :: ByteString -> ByteString
 #if defined ghcjs_HOST_OS
 sha256 = fst . BS16.decode . T.encodeUtf8 . T.pack . show . CryptoHash.hash @ CryptoHash.SHA256
 #else
-sha256 = SHA256.hash
+sha256 = BS.pack . BA.unpack . (hash :: BS.ByteString -> Digest SHA256)
 #endif
 
 

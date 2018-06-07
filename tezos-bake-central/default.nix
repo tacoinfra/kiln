@@ -9,6 +9,7 @@ in focus.mkDerivation {
     # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
   };
   commonDepends = p: with p; [
+    cryptonite
     either
     data-default
     file-embed
@@ -30,11 +31,11 @@ in focus.mkDerivation {
     these
     obelisk-executable-config
     hashing
-    cryptohash
+    cryptonite
   ];
   backendDepends = p: with p; [
     clientsession
-    cryptohash
+    cryptonite
     data-default
     groundhog
     groundhog-postgresql
