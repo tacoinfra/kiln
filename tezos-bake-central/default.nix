@@ -9,7 +9,6 @@ obelisk.project ./. ({ pkgs, ... }: let
       repo = "rhyolite";
       rev = "487900195115f399ec8f1825510ea22c08bc8f3b";
       sha256 = "1fr2xgw512xkr4h4fazqh7hldgjw3hq6y8x5qadzijryk449bky8";
-      private = true;
     };
 
     gargoyle-src = pkgs.fetchFromGitHub {
