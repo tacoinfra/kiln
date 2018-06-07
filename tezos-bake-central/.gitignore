@@ -1,4 +1,5 @@
 dist/
 dist-*/
 result
+ghcid-output.txt
 

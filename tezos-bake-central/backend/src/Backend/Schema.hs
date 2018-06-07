@@ -34,7 +34,7 @@ import Rhyolite.Schema (Json(..))
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
--- TODO: Move all of this into focus
+-- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 

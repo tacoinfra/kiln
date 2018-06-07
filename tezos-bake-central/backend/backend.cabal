@@ -6,11 +6,10 @@ author: Obsidian Systems LLC
 maintainer: maintainer@obsidian.systems
 stability: Experimental
 build-type: Simple
-cabal-version: >=1.2
+cabal-version: >=1.8
 
-executable backend
+library
   hs-source-dirs: src
-  main-is: Main.hs
 
   build-depends:
       aeson
@@ -26,6 +25,7 @@ executable backend
     , diagrams-lib
     , diagrams-svg
     , either
+    , frontend
     , groundhog
     , groundhog-postgresql
     , groundhog-th
@@ -44,6 +44,7 @@ executable backend
     , obelisk-executable-config-inject
     , postgresql-simple
     , reflex
+    , reflex-dom-core
     , resource-pool
     , rhyolite-backend
     , rhyolite-backend-snap
@@ -59,6 +60,7 @@ executable backend
     , time
 
   exposed-modules:
+    Backend
     Backend.BalanceTracking
     Backend.ChainHealth
     Backend.NodeRPC
@@ -68,3 +70,14 @@ executable backend
     Backend.ViewSelectorHandler
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+
+executable backend
+  hs-source-dirs: src-bin
+  main-is: main.hs
+
+  build-depends:
+      base
+    , backend
+
+  ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+

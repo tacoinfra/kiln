@@ -6,21 +6,46 @@ author: Obsidian Systems LLC
 maintainer: maintainer@obsidian.systems
 stability: Experimental
 build-type: Simple
-cabal-version: >=1.2
+cabal-version: >=1.8
 
-executable frontend
+library
   hs-source-dirs: src
-  main-is: Main.hs
+
+  exposed-modules:
+    Frontend
 
   build-depends:
       base
+    , bytestring
+    , either
+    , common
+    , containers
     , data-default
     , file-embed
     , ghcjs-dom
+    , lens
+    , mtl
     , obelisk-executable-config
     , reflex
     , reflex-dom
+    , rhyolite-common
     , rhyolite-frontend
+    , text
     , these
+    , time
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+
+
+executable frontend
+  main-is: main.hs
+  hs-source-dirs: src-bin
+  build-depends: base
+               , common
+               , reflex-dom
+               , static
+               , text
+               , frontend
+  ghc-options: -threaded
+  if os(darwin)
+     ghc-options: -dynamic

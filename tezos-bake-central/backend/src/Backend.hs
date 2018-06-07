@@ -10,7 +10,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Main where
+module Backend where
 
 import Control.Category ((.))
 import Control.Concurrent.STM
@@ -41,6 +41,7 @@ import Data.Time.Clock
 import Data.Word
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
+import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.App
@@ -63,6 +64,7 @@ import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding ((.))
 import qualified Web.ClientSession as CS
 import Safe
+import Snap.Util.FileServe (serveDirectory)
 import Snap
 import System.IO (hSetBuffering, BufferMode (LineBuffering), stdout)
 
@@ -77,6 +79,8 @@ import Backend.ChainHealth
 import Common.BlockHeader
 import Common.Schema
 import Common.Api ()
+
+import Frontend (frontend)
 
 deriveJSON Aeson.defaultOptions ''Network.Socket.PortNumber
 
@@ -179,7 +183,7 @@ clientWorker nodes delay db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
-      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
       let blockHeightTimeout :: NominalDiffTime = fromIntegral
             $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
             $ listToMaybe params
@@ -191,7 +195,7 @@ clientWorker nodes delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
-        -- | TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+        -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
         configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
         configResponse <- httpJSON configRequest
         let clientConfig = getResponseBody configResponse :: ClientConfig
@@ -227,7 +231,7 @@ clientWorker nodes delay db = do
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson
                                                          , config = ?clientConfigJson |]
         forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
-        liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
+        liftIO $ validateForkyBlocks print $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
         case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -242,16 +246,16 @@ clientWorker nodes delay db = do
                 _ <- queueAllEmails new
                 return ()
         -- TODO.  debounce below as above
-        flip validateForkyBlocks (concat $ forkInfo) $ \errors -> do
+        flip validateForkyBlocks (concat forkInfo) $ \errors ->
           void $ queueAllEmails errors
 
-main :: IO ()
-main = do
+backend :: IO ()
+backend = do
   hSetBuffering stdout LineBuffering
   Just email <- decodeValue' <$> LBS.readFile "config/email"
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
-  cfg <- liftIO $ inject "route"
+  routeHead <- liftIO $ inject "route"
 
   finalizers <- newTVarIO (return ())
   let addFinalizer f = atomically $ modifyTVar finalizers (f >>)
@@ -281,16 +285,18 @@ main = do
     addFinalizer =<< nodeWorker 30 db
     addFinalizer =<< clientWorker nodes 10 db
 
+    frontendHead <- liftIO $ fmap snd $ renderStatic $ fst frontend
     liftIO (quickHttpServe $ route
-      [ ("", rootHandler cfg)
+      [ ("", rootHandler $ routeHead <> frontendHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
+      , ("", serveDirectory "frontend.jsexe")
       ]) `finally` join (readTVarIO finalizers)
 
 rootHandler :: MonadSnap m => ByteString -> m ()
-rootHandler cfg = do
+rootHandler pageHead =
   serveApp "" $ def
-    & appConfig_initialHead .~ Just cfg
+    & appConfig_initialHead .~ Just pageHead
 
 
 getConfig :: (FromJSON a, MonadIO m) => FilePath -> m a

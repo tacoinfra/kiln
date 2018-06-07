@@ -2,11 +2,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE RankNTypes #-}
 
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+module Frontend where
 
 import Common.Api
 import Common.App
@@ -31,9 +33,6 @@ import Data.Time.Format
 import Data.Word
 import Rhyolite.Api
 import Rhyolite.Frontend.App
-import Rhyolite.Frontend.Run
--- import Focus.JS.FontAwesome -- where did this go?
-import Rhyolite.Request.TH
 import Rhyolite.Route
 import Rhyolite.Schema
 import Rhyolite.WebSocket
@@ -48,17 +47,17 @@ import GHCJS.DOM.Element (setInnerHTML) -- for now
 
 import Common.BlockHeader
 
-main :: IO ()
-main = do
-  Just routeStr <- Obelisk.ExecutableConfig.get "route"
-  let route :: RouteEnv
-      Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
-  liftIO $ print route
-  let frontendConfig = FrontendConfig
-        { _frontendConfig_warpPort = 3911
-        , _frontendConfig_registerDeviceForNotifications = Nothing
-        }
-  runFrontend frontendConfig $ app (Left route)
+
+frontend :: (StaticWidget x (), Widget x ())
+frontend =
+  ( headTag
+  , void $ do
+      Just routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
+      let route :: RouteEnv
+          Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
+      liftIO $ print route
+      runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
+  )
 
 headTag :: DomBuilder t m => m ()
 headTag = do
@@ -74,6 +73,7 @@ app
   :: Either RouteEnv Text
   -> (() -> Widget () (), () -> Widget () ())
 app r = (\_ -> headTag, \_ -> void $ runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
+
 
 tezzies :: Tezzies -> Text
 tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
