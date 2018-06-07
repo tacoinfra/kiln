@@ -21,9 +21,11 @@ library
     , cases
     , containers
     , cryptohash
+    , cryptonite
     , data-default
     , either
     , file-embed
+    , hashing
     , lens
     , reflex
     , reflex-aeson-orphans
