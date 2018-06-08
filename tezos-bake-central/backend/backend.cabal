@@ -20,6 +20,7 @@ library
     , clientsession
     , colour
     , common
+    , containers
     , data-default
     , diagrams-core
     , diagrams-lib

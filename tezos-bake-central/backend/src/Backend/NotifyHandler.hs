@@ -21,7 +21,7 @@ import Rhyolite.Schema (Id)
 
 import Backend.BalanceTracking (getAllRewards)
 import Backend.Schema
-import Common.App (BakeView (..), BakeViewSelector (..), MailServerView (..), mailServerConfigToView)
+import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
 
