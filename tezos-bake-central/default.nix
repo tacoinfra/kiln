@@ -11,6 +11,7 @@ obelisk.project ./. ({ pkgs, ... }: let
       sha256 = "1fr2xgw512xkr4h4fazqh7hldgjw3hq6y8x5qadzijryk449bky8";
     };
 
+    # gargoyle-src = ../../../gargoyle;
     gargoyle-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "gargoyle";
@@ -44,6 +45,8 @@ obelisk.project ./. ({ pkgs, ... }: let
     overrides = self: super: {
       # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
 
+      gargoyle = (self.callCabal2nix "gargoyle" (gargoyle-src + /gargoyle) {});
+      gargoyle-postgresql = (self.callCabal2nix "gargoyle-postgresql" (gargoyle-src + /gargoyle-postgresql) {});
       gargoyle-postgresql-nix = pkgs.haskell.lib.addBuildTools
         (self.callCabal2nix "gargoyle-postgresql-nix" (gargoyle-src + /gargoyle-postgresql-nix) {})
         [ pkgs.postgresql ]; # TH use of `staticWhich` for `psql` requires this on the PATH during build time.
