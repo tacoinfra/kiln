@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -7,19 +8,18 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Lens
-import Control.Monad
 import Control.Monad.IO.Class
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control
+import qualified Data.AppendMap as Map
 import Data.Pool (Pool)
 import Data.Semigroup
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.App
 import Rhyolite.Backend.DB
-import qualified Web.ClientSession as CS
-import Control.Monad.Logger (runNoLoggingT)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Schema
-import qualified Data.AppendMap as Map
+import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
 import Backend.Schema ()

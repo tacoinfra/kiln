@@ -1,16 +1,13 @@
 {-# LANGUAGE LambdaCase #-}
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks) where
 
-import qualified Data.Text as T
 import Control.Monad.Trans
-import Data.Monoid
 import Data.Time
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 
 import Backend.NodeRPC
 
-import Common.BlockHeader
 import Common.Schema
 import Common.Verification
 
@@ -49,22 +46,22 @@ checkChainHealth
   -> Baked
   -> m ForkInfo
 checkChainHealth now delay seenBaked = do
-    let seenBlockLevel = blockLevel seenBaked
+    let _seenBlockLevel = blockLevel seenBaked
     addr <- nodeAddress
-    (level, status) <- (nodeRPC $ Block headId) >>= \case
+    (level, status) <- nodeRPC (Block headId) >>= \case
       Left bad -> return (Nothing, ForkStatus_BadNode bad)
       Right headInfo -> do
-        status <- ((nodeRPC $ Block $ blockHashId $ _bakedEvent_hash $ _event_detail seenBaked)) >>= \case
+        status <- nodeRPC (Block $ blockHashId $ _bakedEvent_hash $ _event_detail seenBaked) >>= \case
           Left (RpcError_UnexpectedStatus 404 _) -> do
             let maxTime = addUTCTime (- fromIntegral delay) now
-            return $ if (_event_time seenBaked >= maxTime)
+            return $ if _event_time seenBaked >= maxTime
               then ForkStatus_TooNew
               else ForkStatus_TooOld
           Left bad -> do
             return $ ForkStatus_BadNode bad
           Right seen -> do
             let ancestorBlockHash = BlockId (BlockIdHash_BlockHash $ _blockInfo_hash headInfo) (Just $ _blockInfo_level headInfo - _blockInfo_level seen)
-            ((nodeRPC $ Block $ ancestorBlockHash)) >>= \case
+            nodeRPC (Block ancestorBlockHash) >>= \case
               Left bad -> return $ ForkStatus_BadNode bad
               Right ancestor -> do
                 return $ if _blockInfo_predecessor seen == _blockInfo_predecessor ancestor

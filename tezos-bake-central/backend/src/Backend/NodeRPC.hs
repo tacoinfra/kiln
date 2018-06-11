@@ -1,11 +1,10 @@
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module Backend.NodeRPC where
 
@@ -17,17 +16,14 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Typeable
-import GHC.Generics (Generic)
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
-import Network.HTTP.Types.Status(Status(..))
+import Network.HTTP.Types.Status (Status (..))
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 
-import Common.Schema
 import Common.PublicKeyHash
-import Common.Base16ByteString
+import Common.Schema
 
 -- data RpcResponse a =
 --     RpcResponse_HttpException HttpException
@@ -48,7 +44,7 @@ newtype NodeRPCT m a = NodeRPCT { unNodeRPCT :: ReaderT NodeRPCContext m a }
 
 
 runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
-runNodeRPCT c (NodeRPCT x) = flip runReaderT c x
+runNodeRPCT c (NodeRPCT x) = runReaderT x c
 
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
@@ -87,7 +83,7 @@ nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
           , (hAccept, "*/*")
           ]
         }
-  let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ rpcUrl
+  let request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
   result' <- liftIO $ try $ httpLbs request mgr
   let logFailure :: RpcResponse a -> ReaderT NodeRPCContext m (RpcResponse a)
       logFailure (Left bad) = do

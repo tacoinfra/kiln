@@ -1,31 +1,29 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE PackageImports #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Common.TaggedHash where
 
 import Control.Monad
-import Data.ByteString (ByteString)
-import Data.Text (Text)
-import Data.Text as T
-import Data.Text.Encoding as T
-import qualified Data.ByteString as BS
+import Data.Aeson
 import qualified Data.ByteArray as BA
-import qualified Data.ByteString.Base16 as BS16
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.ByteString.Base58
 import Data.Monoid
 import Data.String
+import Data.Text as T
+import Data.Text.Encoding as T
 import Data.Typeable
 import GHC.Generics
-import Data.Aeson
 #if defined ghcjs_HOST_OS
 import qualified "hashing" Crypto.Hash as CryptoHash
 #else

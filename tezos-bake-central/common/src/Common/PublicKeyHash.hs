@@ -3,20 +3,19 @@
 
 module Common.PublicKeyHash where
 
-import Data.Aeson
-import Data.String
-import Data.Text (Text)
-import Data.Semigroup
-import GHC.Word
 import Control.Monad
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
+import Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
+import Data.Semigroup
+import Data.String
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import GHC.Word
 
 import Common.TaggedHash
 import Common.TezosBinary
-import Common.PublicKey
 
 
 data PublicKeyHash
@@ -26,7 +25,7 @@ data PublicKeyHash
 
 -- TODO: This could be done for any such sum of hashes with TH?
 publicKeyHashConstructorDecoders :: [TryDecodeBase58 PublicKeyHash]
-publicKeyHashConstructorDecoders = 
+publicKeyHashConstructorDecoders =
   [ TryDecodeBase58 PublicKeyHash_Ed25519
   , TryDecodeBase58 PublicKeyHash_Secp256k1
   ]

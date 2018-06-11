@@ -1,15 +1,15 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE RecursiveDo #-}
-{-# LANGUAGE RankNTypes #-}
 
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+
 module Frontend where
 
 import Common.Api
@@ -19,40 +19,38 @@ import Control.Lens (firstOf)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Monad.Trans
-import qualified Data.AppendMap as Map
-import qualified Data.Map as BaseMap
 import Data.AppendMap (AppendMap, _unAppendMap)
+import qualified Data.AppendMap as Map
+import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators
 import Data.Fixed
 import Data.Foldable (foldl')
 import Data.List
+import qualified Data.Map as BaseMap
 import Data.Maybe
-import Data.Monoid hiding (First(..), (<>))
+import Data.Monoid hiding (First (..), (<>))
 import Data.Ord
 import Data.Semigroup
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Time.Format
 import Data.Word
+import qualified Obelisk.ExecutableConfig
+import Reflex.Dom
 import Rhyolite.Api
 import Rhyolite.Frontend.App
+import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route
 import Rhyolite.Schema
 import Rhyolite.WebSocket
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Obelisk.ExecutableConfig
-import Reflex.Dom
-import Safe
-import Data.Function (on)
 
+import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
-import GHCJS.DOM.Element (setInnerHTML) -- for now
 
-import Common.BlockHeader
+import Common.PublicKeyHash
 import Common.TaggedHash
 import Common.Tez
-import Common.PublicKeyHash
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -75,11 +73,6 @@ headTag = do
     ]
   elAttr "meta" ("name" =: "viewport" <> "content" =: "width=device-width, initial-scale=1.0, maximum-scale=1.0") blank
   elAttr "meta" ("charset" =: "utf-8") blank
-
-app
-  :: Either RouteEnv Text
-  -> (() -> Widget () (), () -> Widget () ())
-app r = (\_ -> headTag, \_ -> void $ runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
 
 tezzies :: Tezzies -> Text

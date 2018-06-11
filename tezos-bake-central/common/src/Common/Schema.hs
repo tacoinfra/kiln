@@ -18,22 +18,18 @@ import qualified Cases
 import Control.Lens.TH
 import Data.Aeson hiding (Error)
 import Data.Aeson.TH
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Function
 import Data.Int
-import Data.List.NonEmpty (NonEmpty(..))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Monoid
-import Data.Proxy
-import Data.Scientific
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time
 import Data.Typeable
 import Data.Word
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as BS
-import qualified Data.Text.Encoding as T
 import GHC.Generics
 import Rhyolite.Schema
 

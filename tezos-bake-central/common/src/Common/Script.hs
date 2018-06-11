@@ -2,13 +2,12 @@
 
 module Common.Script where
 
-import Data.Void
-import Data.Semigroup
 import Common.Micheline
-import GHC.Generics
-import Data.Typeable
 import Common.TezosBinary
 import Data.Attoparsec.ByteString ((<?>))
+import Data.Semigroup
+import Data.Typeable
+import GHC.Generics
 
 -- parameters: Script_repr.expr option ;
 data Script = Script
