@@ -61,6 +61,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
             Nothing -> mempty
             Just a -> (mempty :: BakeView a)
               { _bakeView_level = Map.singleton nid (First (_node_headLevel =<< node), a)
+              , _bakeView_nodes = Map.singleton nid (First (_node_address <$> node), a)
               }
         Error e -> parseErr notifyMessage e
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of

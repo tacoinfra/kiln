@@ -187,6 +187,7 @@ summaryTab = divClass "ui grid" $ do
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClients
+  nodes <- watchNodes
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
     let isEmailAddress = const True
@@ -211,6 +212,21 @@ optionsTab = divClass "ui grid" $ do
         let address = value addressInput
             addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
         requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+
+    divClass "ui medium header" $ text "Nodes"
+    elAttr "table" ("class" =: "ui celled striped compact table") $ do
+      listWithKey (Map._unAppendMap <$> nodes) $ \_ dNameInfo -> el "tr" $ do
+        let dName = dNameInfo
+        el "td" $ dynText dName
+        el "td" $ do
+          eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+          requestingIdentity $ (public . PublicRequest_RemoveNode <$> tag (current dName) eRemove)
+      el "tr" $ do
+        addressInput <- el "td" $ textInput def
+        addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
+        let address = value addressInput
+            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
+        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr)
 
   return ()
 
@@ -305,6 +321,14 @@ watchTezosLevel = do
     { _bakeViewSelector_level = Just 1
     }
   return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
+
+watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
+watchNodes = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodes = Just 1
+    }
+  return . ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
+
 
 watchClients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
 watchClients = do

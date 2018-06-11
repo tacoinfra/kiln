@@ -55,6 +55,17 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
   case req of
     ApiRequest_Public r ->
       case r of
+        PublicRequest_AddNode addr ->
+          void $ insertAndNotify $ Node { _node_address = addr, _node_headLevel = Nothing }
+        PublicRequest_RemoveNode addr -> do
+          nodeIds <- [queryQ| SELECT id FROM "Node" where address = ?addr |]
+          let inNodeIds = In (fromOnly <$> nodeIds)
+          -- delete parameters
+          void $ [executeQ| DELETE FROM "Parameters" where node in ?inNodeIds |]
+          -- delete node
+          void $ [executeQ| DELETE FROM "Node" where id in ?inNodeIds |]
+          -- notify
+          void $ forM_ nodeIds $ \(Only nodeId) -> notifyEntityId NotificationType_Delete (nodeId :: Id Node)
         PublicRequest_AddClient addr -> do
           _ <- insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
           return ()

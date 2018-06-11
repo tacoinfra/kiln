@@ -65,5 +65,10 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     return (mempty :: BakeView a)
       { _bakeView_notificatees = Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
       }
+  nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_nodes = Map.fromList [(toId nid, (First (Just (_node_address n)), a)) | (nid, n) <- rs ]
+      }
 
-  return $ clients <> parameters <> level <> rewards <> notificatees
+  return $ clients <> parameters <> level <> rewards <> notificatees <> nodes

@@ -24,6 +24,12 @@ import Common.Schema (ClientAddress)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
+    PublicRequest_AddNode
+      :: ClientAddress
+      -> PublicRequest Bake ()
+    PublicRequest_RemoveNode
+      :: ClientAddress
+      -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: ClientAddress -- address of client to subscribe to
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
