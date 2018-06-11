@@ -16,7 +16,6 @@ import qualified Data.ByteString.Base16 as BS16
 
 import Common.TaggedHash
 import Common.TezosBinary
-import Common.Blake2b
 import Common.PublicKey
 
 
