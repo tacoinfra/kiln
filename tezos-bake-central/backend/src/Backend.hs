@@ -1,8 +1,9 @@
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -14,12 +15,12 @@ module Backend where
 
 import Control.Category ((.))
 import Control.Concurrent.STM
-import Control.Lens
 import Control.Exception
+import Control.Lens
 import Control.Monad
+import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
-import Control.Monad.Logger (runNoLoggingT)
 import Data.Aeson (FromJSON, eitherDecode)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
@@ -46,6 +47,9 @@ import Network.HTTP.Client.TLS
 import Network.HTTP.Simple hiding (Proxy)
 import Network.Mail.Mime
 import qualified Network.Socket
+import Obelisk.Asset.Serve.Snap
+import Obelisk.ExecutableConfig.Inject (inject)
+import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend
 import Rhyolite.Backend.Account (migrateAccount)
@@ -53,20 +57,18 @@ import Rhyolite.Backend.App
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.LargeObjects
 import Rhyolite.Backend.DB.PsqlSimple
-import Rhyolite.Backend.EmailWorker
+import Rhyolite.Backend.Email (SMTPProtocol (..))
+import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
 import Rhyolite.Backend.Listen
 import Rhyolite.Backend.Snap
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Schema
-import Obelisk.Asset.Serve.Snap
-import Obelisk.ExecutableConfig.Inject (inject)
-import Prelude hiding ((.))
-import qualified Web.ClientSession as CS
 import Safe
 import Snap
 import Snap.Util.FileServe (serveDirectory)
-import System.IO (hSetBuffering, BufferMode (LineBuffering), stdout)
+import System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
+import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth
 import Backend.NodeRPC
@@ -81,8 +83,6 @@ import Common.Schema
 import Common.TaggedHash
 
 import Frontend (frontend)
-
-deriveJSON Aeson.defaultOptions ''Network.Socket.PortNumber
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -212,7 +212,7 @@ clientWorker nodes delay db = do
             void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let bakingReward blk = _protoInfo_blockReward protoInfo + (getSum $ (foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+          let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
@@ -253,7 +253,6 @@ clientWorker nodes delay db = do
 backend :: IO ()
 backend = do
   hSetBuffering stdout LineBuffering
-  Just email <- decodeValue' <$> LBS.readFile "config/email"
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
   routeHead <- liftIO $ inject "route"
@@ -270,7 +269,7 @@ backend = do
         migrateSchema tableInfo
 
     -- Start a thread to send queued emails
-    addFinalizer =<< runNoLoggingT (emailWorker (seconds 10) (Identity db) email)
+    addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
     -- TODO: in the real thing, users should manage their own list of nodes,
     -- with some bootstrapping by using the well known address
@@ -302,3 +301,31 @@ rootHandler pageHead =
 
 getConfig :: (FromJSON a, MonadIO m) => FilePath -> m a
 getConfig f = either error pure =<< eitherDecode <$> liftIO (LBS.readFile f)
+
+
+clearMailQueueWithDynamicEmailEnv
+  :: forall m f.
+  ( RunDb f
+  , MonadIO m
+  , MonadBaseControl IO m
+  , MonadLogger m
+  )
+  => f (Pool Postgresql)
+  -> m ()
+clearMailQueueWithDynamicEmailEnv db = do
+  emailEnv <- runDb db $ do
+    mailServers <- select $ CondEmpty `orderBy` [Desc MailServerConfig_madeDefaultAtField] `limitTo` 1
+    pure $ case mailServers of
+        [c] -> ( T.unpack $ _mailServerConfig_hostName c
+               , case _mailServerConfig_smtpProtocol c of
+                  SmtpProtocolEnum_Plain -> SMTPProtocol_Plain
+                  SmtpProtocolEnum_Ssl -> SMTPProtocol_SSL
+                  SmtpProtocolEnum_StartTls -> SMTPProtocol_STARTTLS
+               , fromIntegral (_mailServerConfig_portNumber c)
+               , T.unpack $ _mailServerConfig_userName c
+               , T.unpack $ _mailServerConfig_password c
+               )
+        [] -> error "No mail server configuration found"
+        _ -> error "Impossible"
+
+  clearMailQueue db emailEnv

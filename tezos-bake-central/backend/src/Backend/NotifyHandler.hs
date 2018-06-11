@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 module Backend.NotifyHandler where
 
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -10,8 +12,8 @@ import qualified Data.AppendMap as Map
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (Semigroup, First (..), (<>))
-import Database.Groundhog.Postgresql (Postgresql, get, select, (==.),)
+import Data.Semigroup (First (..), Semigroup, (<>))
+import Database.Groundhog.Postgresql (Postgresql, get, select, (==.))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
@@ -19,8 +21,9 @@ import Rhyolite.Schema (Id)
 
 import Backend.BalanceTracking (getAllRewards)
 import Backend.Schema
-import Common.App (BakeViewSelector (..), BakeView (..))
-import Common.Schema (Client (..), ClientInfo, Parameters (..), Node (..), Notificatee (..))
+import Common.App (BakeView (..), BakeViewSelector (..))
+import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
+                      Parameters (..))
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -73,11 +76,21 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
               { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
               }
         Error e -> parseErr notifyMessage e
+      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success nid -> do
+          (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
+          return $ case _bakeViewSelector_mailServers aggVS of
+            Nothing -> mempty
+            Just a -> (mempty :: BakeView a)
+              { _bakeView_mailServers = Map.singleton nid (First mailServer, a)
+              }
+        Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
     "Node" -> handleNode
     "Notificatee" -> handleNotificatee
+    "MailServerConfig" -> handleMailServer
     _ -> do
       liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
       return mempty

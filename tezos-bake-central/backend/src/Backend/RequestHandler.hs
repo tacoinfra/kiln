@@ -11,40 +11,40 @@
 
 module Backend.RequestHandler where
 
-import Data.Functor.Identity
 import Control.Monad
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control (MonadBaseControl)
-import qualified Web.ClientSession as CS
+import Data.Functor.Identity
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
 import Rhyolite.Api
 import Rhyolite.Backend.App
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Listen
 import Rhyolite.Schema
-import Control.Monad.Logger (runNoLoggingT)
+import qualified Web.ClientSession as CS
 
-import Common.App
-import Common.Api
-import Common.Schema
 import Backend.Schema ()
+import Common.Api
+import Common.App
+import Common.Schema
 
 -- Temporary graph rendering
 import Control.Lens
 import Data.Colour
 import Data.Colour.SRGB
 import Data.Default
-import Graphics.Rendering.Chart
-import Graphics.Rendering.Chart.Backend.Diagrams hiding (SVG)
-import Diagrams.Core (renderDia)
-import Diagrams.Backend.SVG (SVG(..), Options(..))
-import Diagrams.TwoD.Size (mkWidth)
-import qualified Graphics.Svg.Core as SVG (renderText)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+import Diagrams.Backend.SVG (Options (..), SVG (..))
+import Diagrams.Core (renderDia)
+import Diagrams.TwoD.Size (mkWidth)
+import Graphics.Rendering.Chart
+import Graphics.Rendering.Chart.Backend.Diagrams hiding (SVG)
+import qualified Graphics.Svg.Core as SVG (renderText)
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
@@ -84,6 +84,11 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
           forM_ nids $ \(Only nid) -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
           return ()
+        PublicRequest_SetMailServerConfig mailServer -> do
+          [executeQ| DELETE FROM "MailServerConfig" |]
+          now <- getTime
+          insertAndNotify $ mailServer { _mailServerConfig_madeDefaultAt = now }
+          pure ()
         PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
     ApiRequest_Private key r ->
       case r of

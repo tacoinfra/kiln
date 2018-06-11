@@ -1,26 +1,26 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Common.App where
 
-import GHC.Generics
 import Data.Aeson
+import Data.Align
 import Data.AppendMap (AppendMap)
 import Data.Fixed
-import Data.Typeable
-import Data.Align
-import Data.Semigroup (Semigroup, (<>), First(..))
+import Data.Semigroup (First (..), Semigroup, (<>))
 import Data.These
+import Data.Typeable
 import Data.Word
-import Reflex (FunctorMaybe(..), Group(..), Additive)
-import Reflex.Query.Class
+import GHC.Generics
+import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
-import Rhyolite.App
-import Rhyolite.Schema
+import Reflex.Query.Class
+import Rhyolite.App (HasView, View, ViewSelector)
+import Rhyolite.Schema (Email, Id)
 
 import Common.Schema
 
@@ -33,6 +33,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_level :: Maybe a
   , _bakeViewSelector_notificatees :: Maybe a
   , _bakeViewSelector_nodes :: Maybe a -- not bothering with partial information listing yet.
+  , _bakeViewSelector_mailServers :: Maybe a
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -43,6 +44,7 @@ data BakeView a = BakeView
   , _bakeView_rewards :: AppendMap (Id Client) (First (AppendMap Word64 Micro), a) -- For each client, a mapping from (future) levels to expected rewards
   , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
   , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe ClientAddress), a)
+  , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerConfig), a)
   }
   deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -66,6 +68,9 @@ cropBakeView vs v =
       nodes = case _bakeViewSelector_nodes vs of
         Nothing -> mempty
         Just _ -> _bakeView_nodes v
+      mailServers = case _bakeViewSelector_mailServers vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_mailServers v
   in BakeView
       { _bakeView_clients = clients
       , _bakeView_parameters = parameters
@@ -73,16 +78,18 @@ cropBakeView vs v =
       , _bakeView_rewards = rewards
       , _bakeView_notificatees = notificatees
       , _bakeView_nodes = nodes
+      , _bakeView_mailServers = mailServers
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil nil nil nil nil
+  nil = BakeViewSelector nil nil nil nil nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     , _bakeViewSelector_level = alignWith f (_bakeViewSelector_level u) (_bakeViewSelector_level v)
     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
+    , _bakeViewSelector_mailServers = alignWith f (_bakeViewSelector_mailServers u) (_bakeViewSelector_mailServers v)
     }
 
 instance FunctorMaybe BakeViewSelector where
@@ -92,6 +99,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_level = fmapMaybe f $ _bakeViewSelector_level a
     , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
+    , _bakeViewSelector_mailServers = fmapMaybe f $ _bakeViewSelector_mailServers a
     }
 
 {-
@@ -111,6 +119,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_rewards = fmapMaybeSnd f $ _bakeView_rewards a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
+    , _bakeView_mailServers = fmapMaybeSnd f $ _bakeView_mailServers a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -134,7 +143,7 @@ instance Group (BakeViewSelector SelectedCount) where
 instance Additive (BakeViewSelector SelectedCount)
 
 instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
-  mempty = BakeView mempty mempty mempty mempty mempty mempty
+  mempty = BakeView mempty mempty mempty mempty mempty mempty mempty
   mappend u v = u <> v
 
 instance Semigroup a => Semigroup (BakeView a) where
@@ -145,6 +154,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_rewards = _bakeView_rewards u <> _bakeView_rewards v
     , _bakeView_notificatees = _bakeView_notificatees u <> _bakeView_notificatees v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
+    , _bakeView_mailServers = _bakeView_mailServers u <> _bakeView_mailServers v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

@@ -13,13 +13,13 @@ module Common.Api where
 
 import Data.Fixed (Micro)
 import Data.Text (Text)
-import Rhyolite.App (HasRequest, PublicRequest, PrivateRequest)
+import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.Class (Request)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 
 import Common.App (Bake)
-import Common.Schema (ClientAddress)
+import Common.Schema (ClientAddress, MailServerConfig)
 
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
@@ -35,6 +35,9 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
     PublicRequest_RemoveClient
       :: ClientAddress -- address of client to unsubscribe from
+      -> PublicRequest Bake ()
+    PublicRequest_SetMailServerConfig
+      :: MailServerConfig
       -> PublicRequest Bake ()
     PublicRequest_AddNotificatee
       :: Email

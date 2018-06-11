@@ -286,7 +286,7 @@ blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
     fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tezzies
-endorsementReward b p = Tezzies $ (getTezzies $ _protoInfo_endorsementReward p ) / (fromIntegral (1 + (_endorseEvent_slot $ _event_detail b)))
+endorsementReward b p = Tezzies $ getTezzies (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
 
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
@@ -379,6 +379,29 @@ instance HasId Notificatee
 instance FromJSON Notificatee
 instance ToJSON Notificatee
 
+data SmtpProtocolEnum
+  = SmtpProtocolEnum_Plain
+  | SmtpProtocolEnum_Ssl
+  | SmtpProtocolEnum_StartTls
+  deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
+
+instance FromJSON SmtpProtocolEnum
+instance ToJSON SmtpProtocolEnum
+
+data MailServerConfig = MailServerConfig
+  { _mailServerConfig_hostName :: Text
+  , _mailServerConfig_portNumber :: Word16
+  , _mailServerConfig_smtpProtocol :: SmtpProtocolEnum
+  , _mailServerConfig_userName :: Text
+  , _mailServerConfig_password :: Text
+  , _mailServerConfig_madeDefaultAt :: UTCTime
+  } deriving (Eq, Generic, Ord, Show)
+
+instance HasId MailServerConfig
+instance FromJSON MailServerConfig
+instance ToJSON MailServerConfig
+
+
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
 concat <$> traverse (deriveJSON defaultOptions
       { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
@@ -410,6 +433,7 @@ concat <$> traverse makeLenses
   , 'Error
   , 'ErrorEvent
   , 'Event
+  , 'MailServerConfig
   , 'Report
   , 'SeenEvent
   ]

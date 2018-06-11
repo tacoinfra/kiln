@@ -1,12 +1,12 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
@@ -14,19 +14,19 @@
 module Backend.Schema where
 
 import Control.Arrow
-import Database.Groundhog.Instances ()
-import Database.Groundhog.Postgresql ()
+import Data.ByteString (ByteString)
 import Data.Fixed
 import Data.Int (Int64)
+import Data.Text.Encoding as T
 import Data.Word
-import Rhyolite.Backend.Account ()
+import Database.Groundhog.Instances ()
+import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
+import Database.PostgreSQL.Simple.FromField
+import Database.PostgreSQL.Simple.ToField
+import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema ()
 import Rhyolite.Backend.Schema.TH
-import Database.PostgreSQL.Simple.ToField
-import Database.PostgreSQL.Simple.FromField
-import Data.ByteString (ByteString)
-import Data.Text.Encoding as T
 
 import Common.Schema
 -- import Tezos.BakeMonitor.Types
@@ -35,11 +35,11 @@ import Common.TezosBinary
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
-import Rhyolite.Schema (Json(..))
+import Rhyolite.Schema (Json (..))
 
-import Common.TaggedHash
-import Common.PublicKeyHash
 import Common.Base16ByteString
+import Common.PublicKeyHash
+import Common.TaggedHash
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -175,6 +175,19 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _notificatee_uniqueness
             type: constraint
             fields: [_notificatee_email]
+  - primitive: SmtpProtocolEnum
+  - entity: MailServerConfig
+    constructors:
+      - name: MailServerConfig
+        uniques:
+          - name: _mailserverconfig_uniqueness
+            type: constraint
+            fields:
+              - _mailServerConfig_hostName
+              - _mailServerConfig_portNumber
+              - _mailServerConfig_smtpProtocol
+              - _mailServerConfig_userName
+              - _mailServerConfig_password
 |]
 
 fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
@@ -184,4 +197,5 @@ fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
   , (''Notificatee, 'NotificateeKey)
+  , (''MailServerConfig, 'MailServerConfigKey)
   ]
