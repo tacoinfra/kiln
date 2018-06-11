@@ -1,17 +1,18 @@
+{ system ? builtins.currentSystem }:
 let
-  obelisk = import .obelisk/impl { system = builtins.currentSystem; iosSdkVersion = "10.2"; };
+  obelisk = import .obelisk/impl { inherit system; };
 in
-obelisk.project ./. ({ pkgs, ... }: let
+obelisk.project ./. ({ pkgs, ... }:
+  let
     reflex-platform = obelisk.reflex-platform;
 
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "487900195115f399ec8f1825510ea22c08bc8f3b";
-      sha256 = "1fr2xgw512xkr4h4fazqh7hldgjw3hq6y8x5qadzijryk449bky8";
+      rev = "e6736118edc1786a805978c59907923cb4aa2219";
+      sha256 = "0c9f537mybl8i1nqydz66r3rac2d4g2fmzdz4731ci3v7v52yzmj";
     };
 
-    # gargoyle-src = ../../../gargoyle;
     gargoyle-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "gargoyle";
