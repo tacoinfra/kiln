@@ -14,7 +14,6 @@ module Common.TaggedHash where
 
 import Control.Monad
 import Data.Aeson
-import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
@@ -24,10 +23,12 @@ import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
 import GHC.Generics
-#if defined ghcjs_HOST_OS
+#if defined(ghcjs_HOST_OS)
 import qualified "hashing" Crypto.Hash as CryptoHash
+import qualified Data.ByteString.Base16 as BS16
 #else
 import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
+import qualified Data.ByteArray as BA
 #endif
 
 

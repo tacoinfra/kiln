@@ -382,7 +382,7 @@ instance ToJSON Notificatee
 data SmtpProtocolEnum
   = SmtpProtocolEnum_Plain
   | SmtpProtocolEnum_Ssl
-  | SmtpProtocolEnum_StartTls
+  | SmtpProtocolEnum_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
 
 instance FromJSON SmtpProtocolEnum

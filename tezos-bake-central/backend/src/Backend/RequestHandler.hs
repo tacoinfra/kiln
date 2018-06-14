@@ -16,17 +16,19 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Functor.Identity
+import qualified Data.Map as Map
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
 import Rhyolite.Api
 import Rhyolite.Backend.App
-import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Listen
 import Rhyolite.Schema
 import qualified Web.ClientSession as CS
 
-import Backend.Schema ()
+import Backend.Schema
 import Common.Api
 import Common.App
 import Common.Schema
@@ -85,10 +87,19 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           forM_ nids $ \(Only nid) -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
           return ()
         PublicRequest_SetMailServerConfig mailServer -> do
-          [executeQ| DELETE FROM "MailServerConfig" |]
           now <- getTime
-          insertAndNotify $ mailServer { _mailServerConfig_madeDefaultAt = now }
-          pure ()
+          let updatedMailServer = mailServer { _mailServerConfig_madeDefaultAt = now }
+          defaultMailServer <- getDefaultMailServer
+          case defaultMailServer of
+            Nothing -> void $ insertAndNotify updatedMailServer
+            Just (id_, _) -> updateAndNotify id_
+              [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
+              , MailServerConfig_portNumberField =. _mailServerConfig_portNumber updatedMailServer
+              , MailServerConfig_smtpProtocolField =. _mailServerConfig_smtpProtocol updatedMailServer
+              , MailServerConfig_userNameField =. _mailServerConfig_userName updatedMailServer
+              , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
+              , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
+              ]
         PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
     ApiRequest_Private key r ->
       case r of
@@ -113,3 +124,9 @@ renderGraph t xs = do
         , _generateDoctype = False
         }
   return (TL.toStrict (SVG.renderText (renderDia SVG svgOptions diagram)))
+
+
+getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
+getDefaultMailServer =
+  fmap (listToMaybe . Map.toList) $
+    selectMap MailServerConfigConstructor $ CondEmpty `orderBy` [Desc MailServerConfig_madeDefaultAtField] `limitTo` 1

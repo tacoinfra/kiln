@@ -38,10 +38,24 @@ obelisk.project ./. ({ pkgs, ... }:
         sha256 = "1gdpmw1323gwn4sfgd8ilbjj5pswnxq1h0h31babnnsif51d3yh2";
       };
 
+      reflex-dom-forms = pkgs.fetchFromGitHub {
+        owner = "3noch";
+        repo = "reflex-dom-forms";
+        rev = "2f7c4a8f80d464f4c0289dfb5aae0c204827592e";
+        sha256 = "0s32099nyk7pw44w9nsgi6q1w16f81sd57snc9gj131ymjp9nprv";
+      };
+
       # rhyolite-backend needs a custom dependency injection
       rhyolite-backend-snap = rhyolite-src + /backend-snap;
       rhyolite-common = rhyolite-src + /common;
       rhyolite-frontend = rhyolite-src + /frontend;
+
+      semantic-reflex = pkgs.fetchFromGitHub {
+        owner = "tomsmalley";
+        repo = "semantic-reflex";
+        rev = "38fce7e4d08d46b8664768f1b7fe38846dbac1e2";
+        sha256 = "1s2p12r682wd8j2z63pjvbi4s9v02crh6nz8kjilwdsfs02yp5p2";
+      } + /semantic-reflex;
     };
     overrides = self: super: {
       # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};

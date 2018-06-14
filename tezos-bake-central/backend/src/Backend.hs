@@ -6,8 +6,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -314,18 +312,18 @@ clearMailQueueWithDynamicEmailEnv
   -> m ()
 clearMailQueueWithDynamicEmailEnv db = do
   emailEnv <- runDb db $ do
-    mailServers <- select $ CondEmpty `orderBy` [Desc MailServerConfig_madeDefaultAtField] `limitTo` 1
-    pure $ case mailServers of
-        [c] -> ( T.unpack $ _mailServerConfig_hostName c
-               , case _mailServerConfig_smtpProtocol c of
-                  SmtpProtocolEnum_Plain -> SMTPProtocol_Plain
-                  SmtpProtocolEnum_Ssl -> SMTPProtocol_SSL
-                  SmtpProtocolEnum_StartTls -> SMTPProtocol_STARTTLS
-               , fromIntegral (_mailServerConfig_portNumber c)
-               , T.unpack $ _mailServerConfig_userName c
-               , T.unpack $ _mailServerConfig_password c
-               )
-        [] -> error "No mail server configuration found"
-        _ -> error "Impossible"
+    defaultMailServer <- getDefaultMailServer
+    pure $ case defaultMailServer of
+      Nothing -> error "No mail server configuration found"
+      Just (_, c) ->
+        ( T.unpack $ _mailServerConfig_hostName c
+        , case _mailServerConfig_smtpProtocol c of
+          SmtpProtocolEnum_Plain -> SMTPProtocol_Plain
+          SmtpProtocolEnum_Ssl -> SMTPProtocol_SSL
+          SmtpProtocolEnum_Starttls -> SMTPProtocol_STARTTLS
+        , fromIntegral (_mailServerConfig_portNumber c)
+        , T.unpack $ _mailServerConfig_userName c
+        , T.unpack $ _mailServerConfig_password c
+        )
 
   clearMailQueue db emailEnv

@@ -34,10 +34,16 @@ import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Time (getCurrentTime)
 import Data.Time.Format
 import Data.Word
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
+import qualified Reflex.Dom.Form.Validators as Validator
+import Reflex.Dom.Form.Widgets (formItem, validatedInput)
+import qualified Reflex.Dom.SemanticUI as SemUi
+import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api
 import Rhyolite.Frontend.App
 import Rhyolite.Request.Common (decodeValue')
@@ -95,7 +101,7 @@ data UITab = UITab_Summary
            | UITab_Options
   deriving (Eq, Ord, Show)
 
-appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   clients <- watchClients
   el "h1" $ text "Baker Central"
@@ -169,7 +175,7 @@ summaryTab = divClass "ui grid" $ do
           el "th" $ text "Block Hash"
           el "th" $ text "Reward"
         forM_ baked $ \b -> el "tr" $ do
-          el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
+          el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
@@ -177,7 +183,8 @@ summaryTab = divClass "ui grid" $ do
             Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
-optionsTab :: (MonadRhyoliteFrontendWidget Bake t m) => m ()
+
+optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClients
   nodes <- watchNodes
@@ -188,6 +195,15 @@ optionsTab = divClass "ui grid" $ do
     rec (addN, removeN) <- listInput "user@example.com" isEmailAddress notificatees (Right "" <$ addedN)
         addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
         requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+
+    divClass "ui medium header" $ text "SMTP Mail Server"
+    divClass "ui form" $ do
+      mailServer <- watchMailServer
+      dyn_ $ ffor mailServer $ \cfg -> do
+        form0 <- maybe (MailServerConfig "" 587 SmtpProtocolEnum_Ssl "" "" <$> liftIO getCurrentTime) pure cfg
+        updatedForm <- mailServerForm form0
+        requestingIdentity $ public . PublicRequest_SetMailServerConfig <$> updatedForm
+
     return ()
 
   divClass "four wide column" $ do
@@ -198,7 +214,7 @@ optionsTab = divClass "ui grid" $ do
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
-          requestingIdentity $ (public . PublicRequest_RemoveClient <$> tag (current dName) eRemove)
+          requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
       el "tr" $ do
         addressInput <- el "td" $ textInput def
         addButton <- el "td" $ buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
@@ -213,7 +229,7 @@ optionsTab = divClass "ui grid" $ do
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-          requestingIdentity $ (public . PublicRequest_RemoveNode <$> tag (current dName) eRemove)
+          requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
       el "tr" $ do
         addressInput <- el "td" $ textInput def
         addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
@@ -222,6 +238,56 @@ optionsTab = divClass "ui grid" $ do
         requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr)
 
   return ()
+
+mailServerForm
+  :: ( DomBuilder t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     , MonadHold t m
+     , MonadFix m
+     , PostBuild t m
+     , MonadJSM m
+     , MonadJSM (Performable m)
+     , PerformEvent t m
+     , TriggerEvent t m
+     )
+  => MailServerConfig -> m (Event t MailServerConfig)
+mailServerForm record0 = do
+  form <- fields
+  save <- fmap (domEvent Click . fst) $ elDynAttr' "div"
+    (ffor form $ \x -> "class"=:("ui tiny primary submit button" <> if isLeft x then " disabled" else ""))
+    $ text "Save"
+  pure $ filterRight $ tag (current form) save
+
+  where
+    fields = withFormFieldsErr record0 $ do
+      tellFieldErr mailServerConfig_hostName <=< formItem
+        $ validatedInput Validator.validateText
+        $ defTxt "Host" & Txt.setInitial (_mailServerConfig_hostName record0)
+
+      tellFieldErr mailServerConfig_portNumber <=< formItem
+        $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
+        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerConfig_portNumber record0)
+
+      tellFieldErr mailServerConfig_smtpProtocol <=< formItem
+        $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
+        $ do
+          labeled "Protocol"
+          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol") (Just $ _mailServerConfig_smtpProtocol record0) $ SemUi.TaggedStatic
+            $ SmtpProtocolEnum_Plain=:text "Plain"
+            <> SmtpProtocolEnum_Ssl=:text "SSL"
+            <> SmtpProtocolEnum_Starttls=:text "STARTTLS"
+
+      tellFieldErr mailServerConfig_userName <=< formItem
+        $ validatedInput Validator.validateText
+        $ defTxt "User name" & Txt.setInitial (_mailServerConfig_userName record0)
+
+      tellFieldErr mailServerConfig_password <=< formItem
+        $ validatedInput validatePassword
+        $ defTxt "Password" & Txt.setInitial (_mailServerConfig_password record0)
+
+    validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
+    defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
+    labeled = el "label" . text
 
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
 clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
@@ -238,27 +304,27 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
             divClass "ui medium header" . text $ addr
             elAttr "div" ("class" =: "delegates") $ do
               text $ "ID: "
-              text $ (T.intercalate " " $ fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+                <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
             elAttr "div" ("class" =: "client-node") $ do
               text $ "Node: "
-              text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
+                <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
             forM_ (_clientInfo_balance clientInfo) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)
-              dyn . ffor dparameters $ \parameters -> forM_ (parameters) $ \protoInfo -> do
+              dyn . ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
                 let bSD = _protoInfo_blockSecurityDeposit protoInfo
                     eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                     failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
                 case failures of
                   (t:_) -> do
                     text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                    text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
+                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                      <> "You'll need to transfer sufficient tezzies into the account before it can continue."
                   [] | tz < 4 * (bSD + eSD) -> do
                     text $ "The identity in use by this baker is running somewhat low on tezzies. "
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                    text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                      <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
                   _ -> blank
             divClass "counts" $ do
               tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
@@ -297,7 +363,7 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =
-  fmap ((k <$) . domEvent Click . fst) .
+  fmap ((k <$) . domEvent Click . fst) $
     elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
       text label
 
@@ -306,29 +372,21 @@ watchProtoInfo = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters theView)
+  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_parameters) theView
 
 watchTezosLevel :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
 watchTezosLevel = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_level = Just 1
     }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
-
-watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
-watchNodes = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodes = Just 1
-    }
-  return . ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
-
+  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_level) theView
 
 watchClients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
 watchClients = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     }
-  return . ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
+  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
     case r of
       Nothing -> Nothing
       (Just (name, Nothing)) -> Just (name, Left "No response yet.")
@@ -339,14 +397,28 @@ watchRewards = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     }
-  return . ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
+  return $ ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = Just 1
     }
-  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+
+watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
+watchNodes = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodes = Just 1
+    }
+  return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
+
+watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerConfig))
+watchMailServer =
+  (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_mailServers = Just 1 }
+
 
 -- | Control that allows the user to build a list of items.
 -- TODO: Move this to Focus.JS.Widget

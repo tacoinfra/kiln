@@ -28,8 +28,10 @@ library
     , obelisk-executable-config
     , reflex
     , reflex-dom
+    , reflex-dom-forms
     , rhyolite-common
     , rhyolite-frontend
+    , semantic-reflex
     , text
     , these
     , time
