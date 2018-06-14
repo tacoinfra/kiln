@@ -175,7 +175,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _notificatee_uniqueness
             type: constraint
             fields: [_notificatee_email]
-  - primitive: SmtpProtocolEnum
+  - primitive: SmtpProtocol
   - entity: MailServerConfig
     constructors:
       - name: MailServerConfig

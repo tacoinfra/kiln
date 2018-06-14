@@ -21,7 +21,7 @@ import Rhyolite.Schema (Id)
 
 import Backend.BalanceTracking (getAllRewards)
 import Backend.Schema
-import Common.App (BakeView (..), BakeViewSelector (..))
+import Common.App (BakeView (..), BakeViewSelector (..), MailServerView (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
 
@@ -82,7 +82,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
           return $ case _bakeViewSelector_mailServers aggVS of
             Nothing -> mempty
             Just a -> (mempty :: BakeView a)
-              { _bakeView_mailServers = Map.singleton nid (First mailServer, a)
+              { _bakeView_mailServers = Map.singleton nid (First $ mailServerConfigToView <$> mailServer, a)
               }
         Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of

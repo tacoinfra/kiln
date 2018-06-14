@@ -15,7 +15,7 @@ module Frontend where
 import Common.Api
 import Common.App
 import Common.Schema hiding (Event)
-import Control.Lens (firstOf)
+import Control.Lens (firstOf, _1, _2)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Monad.Trans
@@ -54,11 +54,12 @@ import Rhyolite.WebSocket
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
 
+import Common.App (MailServerView (..))
 import Common.PublicKeyHash
 import Common.TaggedHash
 import Common.Tez
 
-import Frontend.Common (formWithSubmit)
+import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos)
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -85,17 +86,6 @@ headTag = do
 
 tezzies :: Tezzies -> Text
 tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
-
-buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
-buttonWithInfo label t =
-  fmap (domEvent Click . fst) <$> elAttr' "button" ("class" =: "ui button" <> "data-tooltip" =: t) $ do
-    text label
-
-tooltip :: (DomBuilder t m) => Text -> m a -> m a
-tooltip t = elAttr "div" ("data-tooltip" =: t)
-
-tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
-tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
@@ -201,9 +191,9 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "SMTP Mail Server"
     mailServer <- watchMailServer
     dyn_ $ ffor mailServer $ \cfg -> do
-      form0 <- maybe (MailServerConfig "" 587 SmtpProtocolEnum_Ssl "" "" <$> liftIO getCurrentTime) pure cfg
+      let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
       updatedForm <- mailServerForm form0
-      requestingIdentity $ public . PublicRequest_SetMailServerConfig <$> updatedForm
+      requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
 
     return ()
 
@@ -251,50 +241,46 @@ mailServerForm
      , PerformEvent t m
      , TriggerEvent t m
      )
-  => MailServerConfig -> m (Event t MailServerConfig)
-mailServerForm frm0 = mdo
+  => MailServerView -> m (Event t (MailServerView, Text))
+mailServerForm frm0 = do
   (form, save) <- formWithSubmit $ do
-    form_ <- fields
+    form <- fields
     elDynAttr "button"
-      (ffor canSave $ \s -> "type"=:"submit"
+      (ffor (isRight <$> form) $ \s -> "type"=:"submit"
         <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
       ) $ text "Save"
-    return form_
+    return form
 
-  let canSave = form `ffor` \case
-        Left _ -> False
-        Right frm -> frm /= frm0
-
-  pure $ gate (current canSave) $ filterRight $ tag (current form) save
+  pure $ filterRight $ tag (current form) save
 
   where
-    fields = withFormFieldsErr frm0 $ do
-      tellFieldErr mailServerConfig_hostName <=< formItem
+    fields = withFormFieldsErr (frm0, "") $ do
+      tellFieldErr (_1 . mailServerView_hostName) <=< formItem
         $ validatedInput Validator.validateText
-        $ defTxt "Host" & Txt.setInitial (_mailServerConfig_hostName frm0)
+        $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
 
-      tellFieldErr mailServerConfig_portNumber <=< formItem
+      tellFieldErr (_1 . mailServerView_portNumber) <=< formItem
         $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerConfig_portNumber frm0)
+        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerView_portNumber frm0)
 
-      tellFieldErr mailServerConfig_smtpProtocol <=< formItem
+      tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem
         $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
         $ do
           labeled "Protocol"
           SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol")
-            (Just $ _mailServerConfig_smtpProtocol frm0)
+            (Just $ _mailServerView_smtpProtocol frm0)
             $ SemUi.TaggedStatic
-            $ SmtpProtocolEnum_Plain=:text "Plain"
-            <> SmtpProtocolEnum_Ssl=:text "SSL"
-            <> SmtpProtocolEnum_Starttls=:text "STARTTLS"
+            $ SmtpProtocol_Plain=:text "Plain"
+            <> SmtpProtocol_Ssl=:text "SSL"
+            <> SmtpProtocol_Starttls=:text "STARTTLS"
 
-      tellFieldErr mailServerConfig_userName <=< formItem
+      tellFieldErr (_1 . mailServerView_userName) <=< formItem
         $ validatedInput Validator.validateText
-        $ defTxt "User name" & Txt.setInitial (_mailServerConfig_userName frm0)
+        $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
 
-      tellFieldErr mailServerConfig_password <=< formItem
+      tellFieldErr _2 <=< formItem
         $ validatedInput validatePassword
-        $ defTxt "Password" & Txt.setInitial (_mailServerConfig_password frm0)
+        $ defTxt "Password"
 
     validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
@@ -424,7 +410,7 @@ watchNodes = do
     }
   return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
 
-watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerConfig))
+watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
   (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
     watchViewSelector $ pure $ mempty

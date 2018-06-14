@@ -73,7 +73,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   mailServers <- whenJust (_bakeViewSelector_mailServers vs) $ \a -> do
     rs <- selectAll
     return (mempty :: BakeView a)
-      { _bakeView_mailServers = Map.fromList [(toId nid, (First (Just n), a)) | (nid, n) <- rs ]
+      { _bakeView_mailServers = Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
       }
 
   return $ clients <> parameters <> level <> rewards <> notificatees <> nodes <> mailServers

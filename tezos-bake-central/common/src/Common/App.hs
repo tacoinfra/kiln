@@ -3,19 +3,22 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Common.App where
 
+import Control.Lens (makeLenses)
 import Data.Aeson
 import Data.Align
 import Data.AppendMap (AppendMap)
 import Data.Fixed
 import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Text (Text)
 import Data.These
 import Data.Typeable
-import Data.Word
-import GHC.Generics
+import Data.Word (Word16, Word64)
+import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class
@@ -44,9 +47,27 @@ data BakeView a = BakeView
   , _bakeView_rewards :: AppendMap (Id Client) (First (AppendMap Word64 Micro), a) -- For each client, a mapping from (future) levels to expected rewards
   , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
   , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe ClientAddress), a)
-  , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerConfig), a)
+  , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerView), a)
   }
   deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
+
+data MailServerView = MailServerView
+  { _mailServerView_hostName :: Text
+  , _mailServerView_portNumber :: Word16
+  , _mailServerView_smtpProtocol :: SmtpProtocol
+  , _mailServerView_userName :: Text
+  } deriving (Eq, Generic, Read, Show)
+
+instance FromJSON MailServerView
+instance ToJSON MailServerView
+
+mailServerConfigToView :: MailServerConfig -> MailServerView
+mailServerConfigToView x = MailServerView
+  { _mailServerView_hostName = _mailServerConfig_hostName x
+  , _mailServerView_portNumber = _mailServerConfig_portNumber x
+  , _mailServerView_smtpProtocol = _mailServerConfig_smtpProtocol x
+  , _mailServerView_userName = _mailServerConfig_userName x
+  }
 
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView a -> BakeView a
 cropBakeView vs v =
@@ -170,3 +191,7 @@ instance ToJSON a => ToJSON (BakeView a)
 instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
+
+concat <$> mapM makeLenses
+  [ 'MailServerView
+  ]

@@ -55,7 +55,7 @@ import Rhyolite.Backend.App
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.LargeObjects
 import Rhyolite.Backend.DB.PsqlSimple
-import Rhyolite.Backend.Email (SMTPProtocol (..))
+import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
 import Rhyolite.Backend.Listen
 import Rhyolite.Backend.Snap
@@ -318,9 +318,9 @@ clearMailQueueWithDynamicEmailEnv db = do
       Just (_, c) ->
         ( T.unpack $ _mailServerConfig_hostName c
         , case _mailServerConfig_smtpProtocol c of
-          SmtpProtocolEnum_Plain -> SMTPProtocol_Plain
-          SmtpProtocolEnum_Ssl -> SMTPProtocol_SSL
-          SmtpProtocolEnum_Starttls -> SMTPProtocol_STARTTLS
+          SmtpProtocol_Plain -> RhyoliteEmail.SMTPProtocol_Plain
+          SmtpProtocol_Ssl -> RhyoliteEmail.SMTPProtocol_SSL
+          SmtpProtocol_Starttls -> RhyoliteEmail.SMTPProtocol_STARTTLS
         , fromIntegral (_mailServerConfig_portNumber c)
         , T.unpack $ _mailServerConfig_userName c
         , T.unpack $ _mailServerConfig_password c

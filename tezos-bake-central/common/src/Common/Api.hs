@@ -18,7 +18,7 @@ import Rhyolite.Request.Class (Request)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 
-import Common.App (Bake)
+import Common.App (Bake, MailServerView)
 import Common.Schema (ClientAddress, MailServerConfig)
 
 
@@ -37,7 +37,8 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: ClientAddress -- address of client to unsubscribe from
       -> PublicRequest Bake ()
     PublicRequest_SetMailServerConfig
-      :: MailServerConfig
+      :: MailServerView
+      -> Text -- ^ Password
       -> PublicRequest Bake ()
     PublicRequest_AddNotificatee
       :: Email

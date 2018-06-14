@@ -86,9 +86,16 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
           forM_ nids $ \(Only nid) -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
           return ()
-        PublicRequest_SetMailServerConfig mailServer -> do
+        PublicRequest_SetMailServerConfig mailServerView password -> do
           now <- getTime
-          let updatedMailServer = mailServer { _mailServerConfig_madeDefaultAt = now }
+          let updatedMailServer = MailServerConfig
+                { _mailServerConfig_hostName = _mailServerView_hostName mailServerView
+                , _mailServerConfig_portNumber  = _mailServerView_portNumber  mailServerView
+                , _mailServerConfig_smtpProtocol = _mailServerView_smtpProtocol mailServerView
+                , _mailServerConfig_userName = _mailServerView_userName mailServerView
+                , _mailServerConfig_password = password
+                , _mailServerConfig_madeDefaultAt = now
+                }
           defaultMailServer <- getDefaultMailServer
           case defaultMailServer of
             Nothing -> void $ insertAndNotify updatedMailServer

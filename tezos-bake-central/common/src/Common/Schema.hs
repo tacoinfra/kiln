@@ -379,27 +379,25 @@ instance HasId Notificatee
 instance FromJSON Notificatee
 instance ToJSON Notificatee
 
-data SmtpProtocolEnum
-  = SmtpProtocolEnum_Plain
-  | SmtpProtocolEnum_Ssl
-  | SmtpProtocolEnum_Starttls
+data SmtpProtocol
+  = SmtpProtocol_Plain
+  | SmtpProtocol_Ssl
+  | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
 
-instance FromJSON SmtpProtocolEnum
-instance ToJSON SmtpProtocolEnum
+instance FromJSON SmtpProtocol
+instance ToJSON SmtpProtocol
 
 data MailServerConfig = MailServerConfig
   { _mailServerConfig_hostName :: Text
   , _mailServerConfig_portNumber :: Word16
-  , _mailServerConfig_smtpProtocol :: SmtpProtocolEnum
+  , _mailServerConfig_smtpProtocol :: SmtpProtocol
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
   , _mailServerConfig_madeDefaultAt :: UTCTime
   } deriving (Eq, Generic, Ord, Show)
 
 instance HasId MailServerConfig
-instance FromJSON MailServerConfig
-instance ToJSON MailServerConfig
 
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
