@@ -1,26 +1,34 @@
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Backend where
+
 import Control.Category ((.))
 import Control.Concurrent.STM
-import Control.Lens
 import Control.Exception
+import Control.Lens
 import Control.Monad
+import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
-import Control.Monad.Logger (runNoLoggingT)
+import Data.Aeson (FromJSON, eitherDecode)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.TH (deriveJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default
 import Data.Foldable
 import Data.Function hiding ((.))
 import Data.IORef
-import Data.List hiding (head)
+import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Pool
@@ -32,40 +40,47 @@ import Data.Time.Clock
 import Data.Word
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import Focus.Config
-import Focus.Backend
-import Focus.Backend.Account
-import Focus.Backend.App
-import Focus.Backend.DB
-import Focus.Backend.DB.PsqlSimple
-import Focus.Backend.EmailWorker
-import Focus.Backend.Listen
-import Focus.Backend.Snap
-import Focus.Concurrent (worker)
-import Focus.Request (decodeValue')
-import Focus.Schema
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
-import Network.HTTP.Simple
+import Network.HTTP.Simple hiding (Proxy)
 import Network.Mail.Mime
+import qualified Network.Socket
 import Obelisk.Asset.Serve.Snap
 import Obelisk.ExecutableConfig.Inject (inject)
-import Prelude hiding (head, id, (.))
-import qualified Web.ClientSession as CS
+import Prelude hiding ((.))
+import Reflex.Dom.Core (renderStatic)
+import Rhyolite.Backend
+import Rhyolite.Backend.Account (migrateAccount)
+import Rhyolite.Backend.App
+import Rhyolite.Backend.DB
+import Rhyolite.Backend.DB.LargeObjects
+import Rhyolite.Backend.DB.PsqlSimple
+import qualified Rhyolite.Backend.Email as RhyoliteEmail
+import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
+import Rhyolite.Backend.Listen
+import Rhyolite.Backend.Snap
+import Rhyolite.Concurrent (worker)
+import Rhyolite.Request.Common (decodeValue')
+import Rhyolite.Schema
 import Safe
 import Snap
+import Snap.Util.FileServe (serveDirectory)
+import System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
+import qualified Web.ClientSession as CS
 
--- import Tezos.BakeMonitor.Types
-import Backend.NodeRPC
-
-import Backend.RequestHandler
-import Backend.NotifyHandler
-import Backend.ViewSelectorHandler
-import Backend.Schema
 import Backend.ChainHealth
-import Common.BlockHeader
-import Common.Schema
+import Backend.NodeRPC
+import Backend.NotifyHandler
+import Backend.RequestHandler
+import Backend.Schema
+import Backend.ViewSelectorHandler
 import Common.Api ()
+import Common.Base16ByteString
+import Common.Operation
+import Common.Schema
+import Common.TaggedHash
+
+import Frontend (frontend)
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -82,7 +97,7 @@ addSomeNodes
   => [Node]
   -> Pool Postgresql
   -> m ()
-addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $ do
+addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $
   forM_ nodes $ \n@(Node addr level) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
     (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr, Node_headLevelField =. level]
     _ -> insertAndNotify_ n
@@ -109,19 +124,19 @@ nodeWorker delay db = do
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block (BlockHash "head")
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block headId
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
-          head = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
-      case head of
+          headMaybe = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
+      case headMaybe of
         Nothing -> liftIO $ putStrLn "no visible nodes"
         Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
-          runNodeRPCT ctx $ forM_ (_clientConfig_delegates $ ci) $ \delegate -> do
-            accountResp <- nodeRPC (Contract headHash delegate)
+          runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
+            accountResp <- nodeRPC (Contract (blockHashId headHash) delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
@@ -166,7 +181,7 @@ clientWorker nodes delay db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
-      params :: [Parameters] <- fmap snd <$> selectAll -- | TODO, take the newest
+      params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
       let blockHeightTimeout :: NominalDiffTime = fromIntegral
             $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
             $ listToMaybe params
@@ -178,7 +193,7 @@ clientWorker nodes delay db = do
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
-        -- | TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+        -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
         configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
         configResponse <- httpJSON configRequest
         let clientConfig = getResponseBody configResponse :: ClientConfig
@@ -195,13 +210,14 @@ clientWorker nodes delay db = do
             void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let blockReward = _protoInfo_blockReward protoInfo
+          let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
+
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, unBlockHash (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , blockReward) | b <- _report_baked report]
+                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
           when (not . null $ _report_baked report) $ do
             _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
@@ -214,7 +230,7 @@ clientWorker nodes delay db = do
                         ON CONFLICT (client) DO UPDATE SET report = ?reportJson
                                                          , config = ?clientConfigJson |]
         forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
-        liftIO $ validateForkyBlocks (putStrLn . show) $ concat $ forkInfo
+        liftIO $ validateForkyBlocks print $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
         case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -229,15 +245,15 @@ clientWorker nodes delay db = do
                 _ <- queueAllEmails new
                 return ()
         -- TODO.  debounce below as above
-        flip validateForkyBlocks (concat $ forkInfo) $ \errors -> do
+        flip validateForkyBlocks (concat forkInfo) $ \errors ->
           void $ queueAllEmails errors
 
-main :: IO ()
-main = withFocus $ do
-  Just email <- decodeValue' <$> LBS.readFile "config/email"
+backend :: IO ()
+backend = do
+  hSetBuffering stdout LineBuffering
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
-  cfg <- liftIO $ inject "route"
+  routeHead <- liftIO $ inject "route"
 
   finalizers <- newTVarIO (return ())
   let addFinalizer f = atomically $ modifyTVar finalizers (f >>)
@@ -251,7 +267,7 @@ main = withFocus $ do
         migrateSchema tableInfo
 
     -- Start a thread to send queued emails
-    addFinalizer =<< (runNoLoggingT $ emailWorker (seconds 10) (Identity db) email)
+    addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
     -- TODO: in the real thing, users should manage their own list of nodes,
     -- with some bootstrapping by using the well known address
@@ -267,14 +283,47 @@ main = withFocus $ do
     addFinalizer =<< nodeWorker 30 db
     addFinalizer =<< clientWorker nodes 10 db
 
+    frontendHead <- liftIO $ fmap snd $ renderStatic $ fst frontend
     liftIO (quickHttpServe $ route
-      [ ("", rootHandler cfg)
+      [ ("", rootHandler $ routeHead <> frontendHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
+      , ("", serveDirectory "frontend.jsexe")
       ]) `finally` join (readTVarIO finalizers)
 
 rootHandler :: MonadSnap m => ByteString -> m ()
-rootHandler cfg = do
+rootHandler pageHead =
   serveApp "" $ def
-    & appConfig_initialHead .~ Just cfg
+    & appConfig_initialHead .~ Just pageHead
 
+
+getConfig :: (FromJSON a, MonadIO m) => FilePath -> m a
+getConfig f = either error pure =<< eitherDecode <$> liftIO (LBS.readFile f)
+
+
+clearMailQueueWithDynamicEmailEnv
+  :: forall m f.
+  ( RunDb f
+  , MonadIO m
+  , MonadBaseControl IO m
+  , MonadLogger m
+  )
+  => f (Pool Postgresql)
+  -> m ()
+clearMailQueueWithDynamicEmailEnv db = do
+  emailEnv <- runDb db $ do
+    defaultMailServer <- getDefaultMailServer
+    pure $ case defaultMailServer of
+      Nothing -> error "No mail server configuration found"
+      Just (_, c) ->
+        ( T.unpack $ _mailServerConfig_hostName c
+        , case _mailServerConfig_smtpProtocol c of
+          SmtpProtocol_Plain -> RhyoliteEmail.SMTPProtocol_Plain
+          SmtpProtocol_Ssl -> RhyoliteEmail.SMTPProtocol_SSL
+          SmtpProtocol_Starttls -> RhyoliteEmail.SMTPProtocol_STARTTLS
+        , fromIntegral (_mailServerConfig_portNumber c)
+        , T.unpack $ _mailServerConfig_userName c
+        , T.unpack $ _mailServerConfig_password c
+        )
+
+  clearMailQueue db emailEnv

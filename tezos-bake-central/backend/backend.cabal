@@ -1,0 +1,83 @@
+name: backend
+version: 0.1
+license: BSD3
+copyright: Copyright (C) Obsidian Systems LLC 2018
+author: Obsidian Systems LLC
+maintainer: maintainer@obsidian.systems
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.8
+
+library
+  hs-source-dirs: src
+
+  build-depends:
+      aeson
+    , base
+    , bytestring
+    , Chart
+    , Chart-diagrams
+    , clientsession
+    , colour
+    , common
+    , data-default
+    , diagrams-core
+    , diagrams-lib
+    , diagrams-svg
+    , either
+    , frontend
+    , groundhog
+    , groundhog-postgresql
+    , groundhog-th
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , lens
+    , lens-aeson
+    , mime-mail
+    , monad-control
+    , monad-logger
+    , mtl
+    , network
+    , obelisk-asset-serve-snap
+    , obelisk-executable-config-inject
+    , postgresql-simple
+    , reflex
+    , reflex-dom-core
+    , resource-pool
+    , rhyolite-backend
+    , rhyolite-backend-snap
+    , rhyolite-common
+    , safe
+    , snap
+    , snap-core
+    , snap-loader-static
+    , snap-server
+    , stm
+    , svg-builder
+    , text
+    , time
+
+  exposed-modules:
+    Backend
+    Backend.BalanceTracking
+    Backend.ChainHealth
+    Backend.NodeRPC
+    Backend.NotifyHandler
+    Backend.RequestHandler
+    Backend.Schema
+    Backend.ViewSelectorHandler
+
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+
+executable backend
+  hs-source-dirs: src-bin
+  main-is: main.hs
+
+  build-depends:
+      base
+    , backend
+
+  ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+

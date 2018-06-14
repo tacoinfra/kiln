@@ -1,38 +1,50 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
+
 module Backend.Schema where
 
+import Control.Arrow
+import Data.ByteString (ByteString)
+import Data.Fixed
+import Data.Int (Int64)
+import Data.Text.Encoding as T
+import Data.Word
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
-import Data.Fixed
-import Data.Int(Int64)
-import Data.Word
-import Focus.Backend.Account ()
-import Focus.Backend.DB.Groundhog (groundhog, mkFocusPersist)
-import Focus.Backend.Schema.TH
-import Database.PostgreSQL.Simple.ToField
+import Database.Groundhog.TH
 import Database.PostgreSQL.Simple.FromField
+import Database.PostgreSQL.Simple.ToField
+import Rhyolite.Backend.Account ()
+import Rhyolite.Backend.Schema ()
+import Rhyolite.Backend.Schema.TH
 
 import Common.Schema
 -- import Tezos.BakeMonitor.Types
+import Common.Tez
+import Common.TezosBinary
 
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
-import Focus.Schema (Json(..))
+import Rhyolite.Schema (Json (..))
+
+import Common.Base16ByteString
+import Common.PublicKeyHash
+import Common.TaggedHash
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
--- TODO: Move all of this into focus
+-- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
@@ -72,12 +84,44 @@ instance PrimitivePersistField PeriodSequence where
 instance NeverNull Tezzies
 
 instance FromField Micro where
-  fromField f b = (MkFixed . toInteger @ Int64) <$> fromField f b
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance FromField Tezzies where
   fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
 
-mkFocusPersist (Just "migrateSchema") [groundhog|
+instance NeverNull (HashedValue a ByteString)
+instance NeverNull (Json BlockInfo)
+instance NeverNull (Json BakedEvent)
+instance NeverNull PublicKeyHash
+
+unsafeParseBinary :: TezosBinary a => ByteString -> a
+unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+
+instance TezosBinary a => PersistField (Base16ByteString a) where
+  persistName _ = "Base16ByteString"
+  toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
+  fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
+  dbType p x = dbType p (encodeBinary x)
+
+instance PrimitivePersistField a => PersistField (HashedValue t a) where
+  persistName _ = "HashedValue"
+  toPersistValues = primToPersistValue . unHashedValue
+  fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
+  dbType p (HashedValue x) = dbType p x
+
+instance PersistField PublicKeyHash where
+  persistName _ = "PublicKeyHash"
+  toPersistValues (PublicKeyHash_Ed25519 x) = primToPersistValue $ toBase58Text x
+  toPersistValues (PublicKeyHash_Secp256k1 x) = primToPersistValue $ toBase58Text x
+  fromPersistValues = (fmap.first) toPublicKeyHash . primFromPersistValue
+    where
+      toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
+  dbType p (PublicKeyHash_Ed25519 x) = dbType p $ toBase58Text x
+  dbType p (PublicKeyHash_Secp256k1 x) = dbType p $ toBase58Text x
+
+-- instance PersistField Operation
+
+mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
     constructors:
       - name: Client
@@ -131,6 +175,19 @@ mkFocusPersist (Just "migrateSchema") [groundhog|
           - name: _notificatee_uniqueness
             type: constraint
             fields: [_notificatee_email]
+  - primitive: SmtpProtocol
+  - entity: MailServerConfig
+    constructors:
+      - name: MailServerConfig
+        uniques:
+          - name: _mailserverconfig_uniqueness
+            type: constraint
+            fields:
+              - _mailServerConfig_hostName
+              - _mailServerConfig_portNumber
+              - _mailServerConfig_smtpProtocol
+              - _mailServerConfig_userName
+              - _mailServerConfig_password
 |]
 
 fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
@@ -140,4 +197,5 @@ fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
   , (''Notificatee, 'NotificateeKey)
+  , (''MailServerConfig, 'MailServerConfigKey)
   ]

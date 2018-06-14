@@ -1,65 +1,77 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE RecursiveDo #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+
+module Frontend where
 
 import Common.Api
 import Common.App
 import Common.Schema hiding (Event)
-import Control.Lens (firstOf)
+import Control.Lens (firstOf, _1, _2)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Monad.Trans
-import Data.AppendMap (_unAppendMap)
+import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
-import qualified Data.Map as BaseMap
-import Data.AppendMap (AppendMap)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators
 import Data.Fixed
 import Data.Foldable (foldl')
 import Data.List
+import qualified Data.Map as BaseMap
 import Data.Maybe
-import Data.Monoid hiding (First(..), (<>))
+import Data.Monoid hiding (First (..), (<>))
 import Data.Ord
 import Data.Semigroup
 import Data.Text (Text)
-import Data.Time.Format
-import Data.Word
-import Focus.Api
-import Focus.JS.App
-import Focus.JS.Run
--- import Focus.JS.FontAwesome -- where did this go?
-import Focus.Request
-import Focus.Route
-import Focus.Schema
-import Focus.WebSocket
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Time (getCurrentTime)
+import Data.Time.Format
+import Data.Word
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom
+import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
+import qualified Reflex.Dom.Form.Validators as Validator
+import Reflex.Dom.Form.Widgets (formItem, validatedInput)
+import qualified Reflex.Dom.SemanticUI as SemUi
+import qualified Reflex.Dom.TextField as Txt
+import Rhyolite.Api
+import Rhyolite.Frontend.App
+import Rhyolite.Request.Common (decodeValue')
+import Rhyolite.Route
+import Rhyolite.Schema
+import Rhyolite.WebSocket
 
+import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
-import GHCJS.DOM.Element (setInnerHTML) -- for now
 
-import Common.BlockHeader
+import Common.App (MailServerView (..))
+import Common.PublicKeyHash
+import Common.TaggedHash
+import Common.Tez
 
-main :: IO ()
-main = do
-  Just routeStr <- Obelisk.ExecutableConfig.get "route"
-  let route :: RouteEnv
-      Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
-  liftIO $ print route
-  let frontendConfig = FrontendConfig
-        { _frontendConfig_warpPort = 3911
-        , _frontendConfig_registerDeviceForNotifications = Nothing
-        }
-  runFrontend frontendConfig $ app (Left route)
+import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos)
+
+
+frontend :: (StaticWidget x (), Widget x ())
+frontend =
+  ( headTag
+  , void $ do
+      Just routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
+      let route :: RouteEnv
+          Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
+      liftIO $ print route
+      runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
+  )
 
 headTag :: DomBuilder t m => m ()
 headTag = do
@@ -71,24 +83,9 @@ headTag = do
   elAttr "meta" ("name" =: "viewport" <> "content" =: "width=device-width, initial-scale=1.0, maximum-scale=1.0") blank
   elAttr "meta" ("charset" =: "utf-8") blank
 
-app
-  :: Either RouteEnv Text
-  -> (() -> Widget () (), () -> Widget () ())
-app r = (\_ -> headTag, \_ -> void $ runFocusWidget (mapLeft websocketUrlFromRouteEnv r) appMain)
 
 tezzies :: Tezzies -> Text
 tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
-
-buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
-buttonWithInfo label t =
-  fmap (domEvent Click . fst) <$> elAttr' "button" ("class" =: "ui button" <> "data-tooltip" =: t) $ do
-    text label
-
-tooltip :: (DomBuilder t m) => Text -> m a -> m a
-tooltip t = elAttr "div" ("data-tooltip" =: t)
-
-tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
-tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
@@ -96,7 +93,7 @@ data UITab = UITab_Summary
            | UITab_Options
   deriving (Eq, Ord, Show)
 
-appMain :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   clients <- watchClients
   el "h1" $ text "Baker Central"
@@ -114,7 +111,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
     UITab_Client cid -> clientTab cid (Map.lookup cid <$> clients)
   return ()
 
-summaryTab :: forall t m. (MonadFocusFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
 summaryTab = divClass "ui grid" $ do
   dlevel <- watchTezosLevel
   clients <- watchClients
@@ -170,17 +167,19 @@ summaryTab = divClass "ui grid" $ do
           el "th" $ text "Block Hash"
           el "th" $ text "Reward"
         forM_ baked $ \b -> el "tr" $ do
-          el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
+          el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+          el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> blank
-            Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+            Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
-optionsTab :: (MonadFocusFrontendWidget Bake t m) => m ()
+
+optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClients
+  nodes <- watchNodes
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
     let isEmailAddress = const True
@@ -188,6 +187,14 @@ optionsTab = divClass "ui grid" $ do
     rec (addN, removeN) <- listInput "user@example.com" isEmailAddress notificatees (Right "" <$ addedN)
         addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
         requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+
+    divClass "ui medium header" $ text "SMTP Mail Server"
+    mailServer <- watchMailServer
+    dyn_ $ ffor mailServer $ \cfg -> do
+      let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
+      updatedForm <- mailServerForm form0
+      requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
+
     return ()
 
   divClass "four wide column" $ do
@@ -198,7 +205,7 @@ optionsTab = divClass "ui grid" $ do
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
-          requestingIdentity $ (public . PublicRequest_RemoveClient <$> tag (current dName) eRemove)
+          requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
       el "tr" $ do
         addressInput <- el "td" $ textInput def
         addButton <- el "td" $ buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
@@ -206,9 +213,80 @@ optionsTab = divClass "ui grid" $ do
             addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
         requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
 
+    divClass "ui medium header" $ text "Nodes"
+    elAttr "table" ("class" =: "ui celled striped compact table") $ do
+      listWithKey (Map._unAppendMap <$> nodes) $ \_ dNameInfo -> el "tr" $ do
+        let dName = dNameInfo
+        el "td" $ dynText dName
+        el "td" $ do
+          eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+          requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
+      el "tr" $ do
+        addressInput <- el "td" $ textInput def
+        addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
+        let address = value addressInput
+            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
+        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr)
+
   return ()
 
-clientTab :: (MonadFocusFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
+mailServerForm
+  :: ( DomBuilder t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     , MonadHold t m
+     , MonadFix m
+     , PostBuild t m
+     , MonadJSM m
+     , MonadJSM (Performable m)
+     , PerformEvent t m
+     , TriggerEvent t m
+     )
+  => MailServerView -> m (Event t (MailServerView, Text))
+mailServerForm frm0 = do
+  (form, save) <- formWithSubmit $ do
+    form <- fields
+    elDynAttr "button"
+      (ffor (isRight <$> form) $ \s -> "type"=:"submit"
+        <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
+      ) $ text "Save"
+    return form
+
+  pure $ filterRight $ tag (current form) save
+
+  where
+    fields = withFormFieldsErr (frm0, "") $ do
+      tellFieldErr (_1 . mailServerView_hostName) <=< formItem
+        $ validatedInput Validator.validateText
+        $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
+
+      tellFieldErr (_1 . mailServerView_portNumber) <=< formItem
+        $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
+        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerView_portNumber frm0)
+
+      tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem
+        $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
+        $ do
+          labeled "Protocol"
+          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol")
+            (Just $ _mailServerView_smtpProtocol frm0)
+            $ SemUi.TaggedStatic
+            $ SmtpProtocol_Plain=:text "Plain"
+            <> SmtpProtocol_Ssl=:text "SSL"
+            <> SmtpProtocol_Starttls=:text "STARTTLS"
+
+      tellFieldErr (_1 . mailServerView_userName) <=< formItem
+        $ validatedInput Validator.validateText
+        $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
+
+      tellFieldErr _2 <=< formItem
+        $ validatedInput validatePassword
+        $ defTxt "Password"
+
+    validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
+    defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
+    labeled = el "label" . text
+
+clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
 clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
     Nothing -> text "Waiting for response..."
     Just (addr, mReport) -> do
@@ -223,27 +301,27 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
             divClass "ui medium header" . text $ addr
             elAttr "div" ("class" =: "delegates") $ do
               text $ "ID: "
-              text $ (T.intercalate " " $ fmap unPublicKeyHash $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+                <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
             elAttr "div" ("class" =: "client-node") $ do
               text $ "Node: "
-              text $ _clientConfig_nodeUri $ unJson $ _clientInfo_config clientInfo
+                <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
             forM_ (_clientInfo_balance clientInfo) $ \tz -> do
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)
-              dyn . ffor dparameters $ \parameters -> forM_ (parameters) $ \protoInfo -> do
+              dyn_ $ ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
                 let bSD = _protoInfo_blockSecurityDeposit protoInfo
                     eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                     failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
                 case failures of
                   (t:_) -> do
                     text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                    text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
+                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                      <> "You'll need to transfer sufficient tezzies into the account before it can continue."
                   [] | tz < 4 * (bSD + eSD) -> do
                     text $ "The identity in use by this baker is running somewhat low on tezzies. "
-                    text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                    text $ "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                      <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
                   _ -> blank
             divClass "counts" $ do
               tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
@@ -275,55 +353,69 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
               forM_ baked $ \b -> el "tr" $ do
                 el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
                 el "td" . text . T.pack . show . blockLevel $ b
-                el "td" . text . T.take 14 . unBlockHash . _bakedEvent_hash . _event_detail $ b
+                el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
                 el "td" . dyn . ffor dparameters $ \case
                   Nothing -> blank
-                  Just protoInfo -> text . tezzies . _protoInfo_blockReward $ protoInfo
+                  Just protoInfo -> text . tezzies $ blockRewards b protoInfo
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =
-  fmap ((k <$) . domEvent Click . fst) .
+  fmap ((k <$) . domEvent Click . fst) $
     elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
       text label
 
-watchProtoInfo :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
+watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_parameters theView)
+  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_parameters) theView
 
-watchTezosLevel :: (MonadFocusFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
+watchTezosLevel :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
 watchTezosLevel = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_level = Just 1
     }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse) (fmap _bakeView_level theView)
+  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_level) theView
 
-watchClients :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
+watchClients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
 watchClients = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     }
-  return . ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
+  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
     case r of
       Nothing -> Nothing
       (Just (name, Nothing)) -> Just (name, Left "No response yet.")
       (Just (name, Just ci)) -> Just (name, Right ci)
 
-watchRewards :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
+watchRewards :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
 watchRewards = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clients = Just 1
     }
-  return . ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
+  return $ ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
 
-watchNotificatees :: MonadFocusFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
+watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = Just 1
     }
-  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+
+watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
+watchNodes = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodes = Just 1
+    }
+  return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
+
+watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
+watchMailServer =
+  (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_mailServers = Just 1 }
+
 
 -- | Control that allows the user to build a list of items.
 -- TODO: Move this to Focus.JS.Widget

@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -12,22 +11,34 @@
 
 module Common.Api where
 
-import Focus.App
-import Focus.Request
-import Common.App
-import Common.Schema (ClientAddress())
-import Focus.Schema (Email)
-
-import Data.Fixed
+import Data.Fixed (Micro)
 import Data.Text (Text)
+import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
+import Rhyolite.Request.Class (Request)
+import Rhyolite.Request.TH (makeRequestForDataInstance)
+import Rhyolite.Schema (Email)
+
+import Common.App (Bake, MailServerView)
+import Common.Schema (ClientAddress, MailServerConfig)
+
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
+    PublicRequest_AddNode
+      :: ClientAddress
+      -> PublicRequest Bake ()
+    PublicRequest_RemoveNode
+      :: ClientAddress
+      -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: ClientAddress -- address of client to subscribe to
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
     PublicRequest_RemoveClient
       :: ClientAddress -- address of client to unsubscribe from
+      -> PublicRequest Bake ()
+    PublicRequest_SetMailServerConfig
+      :: MailServerView
+      -> Text -- ^ Password
       -> PublicRequest Bake ()
     PublicRequest_AddNotificatee
       :: Email
@@ -42,9 +53,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-#ifdef USE_TEMPLATE_HASKELL
+
 makeRequestForDataInstance ''PublicRequest ''Bake
 makeRequestForDataInstance ''PrivateRequest ''Bake
-#else
-#include "Api.splices.hs"
-#endif

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -7,24 +8,23 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Lens
-import Control.Monad
 import Control.Monad.IO.Class
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control
+import qualified Data.AppendMap as Map
 import Data.Pool (Pool)
 import Data.Semigroup
 import Database.Groundhog.Postgresql
-import Focus.Backend.App
-import Focus.Backend.DB
+import Rhyolite.Backend.App
+import Rhyolite.Backend.DB
+import Rhyolite.Backend.DB.PsqlSimple
+import Rhyolite.Backend.Schema
 import qualified Web.ClientSession as CS
-import Control.Monad.Logger (runNoLoggingT)
-import Focus.Backend.DB.PsqlSimple
-import Focus.Backend.Schema.TH
-import qualified Data.AppendMap as Map
 
 import Backend.BalanceTracking
+import Backend.Schema ()
 import Common.App
 import Common.Schema
--- import Backend.Schema ()
 
 whenJust :: (Monad m, Monoid a) => Maybe t -> (t -> m a) -> m a
 whenJust Nothing f = return mempty
@@ -36,7 +36,6 @@ viewSelectorHandler
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
-  liftIO $ print $ void vs
   clients <- case _bakeViewSelector_clients vs of
     Nothing -> return mempty
     Just a -> do
@@ -66,5 +65,15 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     return (mempty :: BakeView a)
       { _bakeView_notificatees = Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
       }
+  nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_nodes = Map.fromList [(toId nid, (First (Just (_node_address n)), a)) | (nid, n) <- rs ]
+      }
+  mailServers <- whenJust (_bakeViewSelector_mailServers vs) $ \a -> do
+    rs <- selectAll
+    return (mempty :: BakeView a)
+      { _bakeView_mailServers = Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
+      }
 
-  return $ clients <> parameters <> level <> rewards <> notificatees
+  return $ clients <> parameters <> level <> rewards <> notificatees <> nodes <> mailServers
