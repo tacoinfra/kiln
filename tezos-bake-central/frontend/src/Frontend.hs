@@ -12,9 +12,6 @@
 
 module Frontend where
 
-import Common.Api
-import Common.App
-import Common.Schema hiding (Event)
 import Control.Lens (firstOf, _1, _2)
 import Control.Monad
 import Control.Monad.Fix
@@ -34,7 +31,6 @@ import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (getCurrentTime)
 import Data.Time.Format
 import Data.Word
 import qualified Obelisk.ExecutableConfig
@@ -54,8 +50,10 @@ import Rhyolite.WebSocket
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
 
-import Common.App (MailServerView (..))
+import Common.Api
+import Common.App
 import Common.PublicKeyHash
+import Common.Schema hiding (Event)
 import Common.TaggedHash
 import Common.Tez
 

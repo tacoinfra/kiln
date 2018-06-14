@@ -65,7 +65,7 @@ import Rhyolite.Schema
 import Safe
 import Snap
 import Snap.Util.FileServe (serveDirectory)
-import System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
+import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth
@@ -250,7 +250,7 @@ clientWorker nodes delay db = do
 
 backend :: IO ()
 backend = do
-  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
   nodes :: [Node] <- getConfig "config/nodes"
   routeHead <- liftIO $ inject "route"

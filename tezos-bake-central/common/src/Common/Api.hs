@@ -19,7 +19,7 @@ import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 
 import Common.App (Bake, MailServerView)
-import Common.Schema (ClientAddress, MailServerConfig)
+import Common.Schema (ClientAddress)
 
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
@@ -38,7 +38,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_SetMailServerConfig
       :: MailServerView
-      -> Text -- ^ Password
+      -> Text -- password
       -> PublicRequest Bake ()
     PublicRequest_AddNotificatee
       :: Email
