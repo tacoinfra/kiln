@@ -58,6 +58,8 @@ import Common.PublicKeyHash
 import Common.TaggedHash
 import Common.Tez
 
+import Frontend.Common (formWithSubmit)
+
 
 frontend :: (StaticWidget x (), Widget x ())
 frontend =
@@ -197,12 +199,11 @@ optionsTab = divClass "ui grid" $ do
         requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
     divClass "ui medium header" $ text "SMTP Mail Server"
-    divClass "ui form" $ do
-      mailServer <- watchMailServer
-      dyn_ $ ffor mailServer $ \cfg -> do
-        form0 <- maybe (MailServerConfig "" 587 SmtpProtocolEnum_Ssl "" "" <$> liftIO getCurrentTime) pure cfg
-        updatedForm <- mailServerForm form0
-        requestingIdentity $ public . PublicRequest_SetMailServerConfig <$> updatedForm
+    mailServer <- watchMailServer
+    dyn_ $ ffor mailServer $ \cfg -> do
+      form0 <- maybe (MailServerConfig "" 587 SmtpProtocolEnum_Ssl "" "" <$> liftIO getCurrentTime) pure cfg
+      updatedForm <- mailServerForm form0
+      requestingIdentity $ public . PublicRequest_SetMailServerConfig <$> updatedForm
 
     return ()
 
@@ -251,15 +252,19 @@ mailServerForm
      , TriggerEvent t m
      )
   => MailServerConfig -> m (Event t MailServerConfig)
-mailServerForm frm0 = do
-  form <- fields
+mailServerForm frm0 = mdo
+  (form, save) <- formWithSubmit $ do
+    form_ <- fields
+    elDynAttr "button"
+      (ffor canSave $ \s -> "type"=:"submit"
+        <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
+      ) $ text "Save"
+    return form_
+
   let canSave = form `ffor` \case
         Left _ -> False
         Right frm -> frm /= frm0
 
-  save <- fmap (domEvent Click . fst) $ elDynAttr' "div"
-    (ffor canSave $ \s -> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled"))
-    $ text "Save"
   pure $ gate (current canSave) $ filterRight $ tag (current form) save
 
   where
@@ -276,7 +281,9 @@ mailServerForm frm0 = do
         $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
         $ do
           labeled "Protocol"
-          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol") (Just $ _mailServerConfig_smtpProtocol frm0) $ SemUi.TaggedStatic
+          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol")
+            (Just $ _mailServerConfig_smtpProtocol frm0)
+            $ SemUi.TaggedStatic
             $ SmtpProtocolEnum_Plain=:text "Plain"
             <> SmtpProtocolEnum_Ssl=:text "SSL"
             <> SmtpProtocolEnum_Starttls=:text "STARTTLS"
@@ -316,7 +323,7 @@ clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
               elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
                 text "Current Balance: "
                 text (tezzies tz)
-              dyn . ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
+              dyn_ $ ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
                 let bSD = _protoInfo_blockSecurityDeposit protoInfo
                     eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                     failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
