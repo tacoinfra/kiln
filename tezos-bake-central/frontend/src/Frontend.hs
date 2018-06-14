@@ -251,39 +251,43 @@ mailServerForm
      , TriggerEvent t m
      )
   => MailServerConfig -> m (Event t MailServerConfig)
-mailServerForm record0 = do
+mailServerForm frm0 = do
   form <- fields
+  let canSave = form `ffor` \case
+        Left _ -> False
+        Right frm -> frm /= frm0
+
   save <- fmap (domEvent Click . fst) $ elDynAttr' "div"
-    (ffor form $ \x -> "class"=:("ui tiny primary submit button" <> if isLeft x then " disabled" else ""))
+    (ffor canSave $ \s -> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled"))
     $ text "Save"
-  pure $ filterRight $ tag (current form) save
+  pure $ gate (current canSave) $ filterRight $ tag (current form) save
 
   where
-    fields = withFormFieldsErr record0 $ do
+    fields = withFormFieldsErr frm0 $ do
       tellFieldErr mailServerConfig_hostName <=< formItem
         $ validatedInput Validator.validateText
-        $ defTxt "Host" & Txt.setInitial (_mailServerConfig_hostName record0)
+        $ defTxt "Host" & Txt.setInitial (_mailServerConfig_hostName frm0)
 
       tellFieldErr mailServerConfig_portNumber <=< formItem
         $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerConfig_portNumber record0)
+        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerConfig_portNumber frm0)
 
       tellFieldErr mailServerConfig_smtpProtocol <=< formItem
         $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
         $ do
           labeled "Protocol"
-          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol") (Just $ _mailServerConfig_smtpProtocol record0) $ SemUi.TaggedStatic
+          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol") (Just $ _mailServerConfig_smtpProtocol frm0) $ SemUi.TaggedStatic
             $ SmtpProtocolEnum_Plain=:text "Plain"
             <> SmtpProtocolEnum_Ssl=:text "SSL"
             <> SmtpProtocolEnum_Starttls=:text "STARTTLS"
 
       tellFieldErr mailServerConfig_userName <=< formItem
         $ validatedInput Validator.validateText
-        $ defTxt "User name" & Txt.setInitial (_mailServerConfig_userName record0)
+        $ defTxt "User name" & Txt.setInitial (_mailServerConfig_userName frm0)
 
       tellFieldErr mailServerConfig_password <=< formItem
         $ validatedInput validatePassword
-        $ defTxt "Password" & Txt.setInitial (_mailServerConfig_password record0)
+        $ defTxt "Password" & Txt.setInitial (_mailServerConfig_password frm0)
 
     validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
