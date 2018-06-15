@@ -12,74 +12,70 @@
 module Backend where
 
 import Control.Category ((.))
-import Control.Concurrent.STM
-import Control.Exception
-import Control.Lens
-import Control.Monad
-import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
-import Control.Monad.Trans
-import Control.Monad.Trans.Control
+import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
+import Control.Exception (finally)
+import Control.Lens ((.~))
+import Control.Monad (forM, forM_, join, void, when, (<=<))
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (MonadLogger, runNoLoggingT)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (FromJSON, eitherDecode)
-import qualified Data.Aeson as Aeson
-import Data.Aeson.TH (deriveJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Default
-import Data.Foldable
-import Data.Function hiding ((.))
-import Data.IORef
-import Data.List
-import Data.Maybe
-import Data.Monoid
-import Data.Pool
+import Data.Default (def)
+import Data.Foldable (toList)
+import Data.Function (on, (&))
+import Data.Functor.Identity (Identity (..))
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.List (sortBy)
+import Data.Maybe (listToMaybe)
+import Data.Pool (Pool)
+import Data.Semigroup (Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
-import Data.Time.Clock
-import Data.Word
+import Data.Time.Clock (NominalDiffTime, addUTCTime)
+import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import Network.HTTP.Client
-import Network.HTTP.Client.TLS
-import Network.HTTP.Simple hiding (Proxy)
-import Network.Mail.Mime
-import qualified Network.Socket
-import Obelisk.Asset.Serve.Snap
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Client.TLS as Https
+import qualified Network.HTTP.Simple as Http
+import Network.Mail.Mime (Address (..), Mail, simpleMail')
+import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
-import Rhyolite.Backend
+import Rhyolite.Backend (withDb)
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.App
-import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.LargeObjects
-import Rhyolite.Backend.DB.PsqlSimple
+import qualified Rhyolite.Backend.App as RhyoliteApp
+import Rhyolite.Backend.DB (RunDb, getTime, runDb)
+import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
-import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
-import Rhyolite.Backend.Listen
-import Rhyolite.Backend.Snap
+import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail, queueEmail)
+import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
+import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
-import Rhyolite.Request.Common (decodeValue')
-import Rhyolite.Schema
-import Safe
-import Snap
+import Rhyolite.Schema (Id, Json (..))
+import Safe (maximumByMay, maximumMay)
+import Snap (quickHttpServe, route)
+import Snap.Core (MonadSnap)
 import Snap.Util.FileServe (serveDirectory)
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import qualified Web.ClientSession as CS
 
-import Backend.ChainHealth
-import Backend.NodeRPC
-import Backend.NotifyHandler
+import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
+import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
+import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
-import Backend.ViewSelectorHandler
-import Common.Api ()
-import Common.Base16ByteString
-import Common.Operation
+import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Common.Base16ByteString (unbase16ByteString)
+import Common.Operation (sumFees)
 import Common.Schema
-import Common.TaggedHash
-
+import Common.TaggedHash (toBase58Text)
 import Frontend (frontend)
 
 seconds :: Int -> Int
@@ -92,23 +88,30 @@ mailFor toAddr errs =
       body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
   in simpleMail' toA fromA "Error from Tezos bake monitor" body
 
-addSomeNodes
-  :: (MonadBaseControl IO m, MonadIO m)
-  => [Node]
-  -> Pool Postgresql
-  -> m ()
-addSomeNodes nodes db = void . runNoLoggingT . runDb (Identity db) $
-  forM_ nodes $ \n@(Node addr level) -> [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
-    (Only (nodeId :: Id Node):_) -> updateAndNotify nodeId [Node_addressField =. addr, Node_headLevelField =. level]
-    _ -> insertAndNotify_ n
+addNode
+  :: (PostgresRaw m, Monad m, PersistBackend m)
+  => Node
+  -> m (Id Node)
+addNode node = do
+  let addr = _node_address node
+  [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
+    (Only (nodeId :: Id Node):_) -> do
+      updateAndNotify nodeId
+        [ Node_addressField =. addr
+        , Node_headLevelField =. _node_headLevel node
+        , Node_peerCountField =. _node_peerCount node
+        , Node_networkStatField =. _node_networkStat node
+        ]
+      return nodeId
+    _ -> insertAndNotify node
 
 nodeWorker
   :: (MonadIO m)
   => Int -- delay between checking for updates, in seconds
+  -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-nodeWorker delay db = do
-  httpMgr <- liftIO $ newManager tlsManagerSettings
+nodeWorker delay httpMgr db = do
   worker (seconds delay) $ do
     putStrLn "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
@@ -117,14 +120,14 @@ nodeWorker delay db = do
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
       heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        params <- runNodeRPCT ctx $ nodeRPC ProtoConstants
+        params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
         forM_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ Block headId
+        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         forM_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
         return (nodeAddr, headBlockRsp)
@@ -136,7 +139,7 @@ nodeWorker delay db = do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
           runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
-            accountResp <- nodeRPC (Contract (blockHashId headHash) delegate)
+            accountResp <- nodeRPC (RContract (blockHashId headHash) delegate)
             forM_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
@@ -169,18 +172,17 @@ queueAllEmails message = do
     queueEmail (mailFor (_notificatee_email n) message) Nothing
 
 clientWorker :: (MonadIO m)
-             => [Node] -- [(Id Node, Text)]
-             -> Int -- delay between checking for updates, in seconds
+             => Int -- delay between checking for updates, in seconds
+             -> Http.Manager
              -> Pool Postgresql
              -> m (IO ())
-clientWorker nodes delay db = do
+clientWorker delay httpMgr db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     putStrLn "Update client cycle."
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
       params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
       let blockHeightTimeout :: NominalDiffTime = fromIntegral
             $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
@@ -194,14 +196,18 @@ clientWorker nodes delay db = do
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
         -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-        configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
-        configResponse <- httpJSON configRequest
-        let clientConfig = getResponseBody configResponse :: ClientConfig
+        configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
+        configResponse <- Http.httpJSON configRequest
+        let clientConfig = Http.getResponseBody configResponse :: ClientConfig
             clientConfigJson = Json clientConfig
+            clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
 
-        request <- parseRequest ("http://" <> T.unpack address <> "/events")
-        response <- httpJSON request
-        let report = getResponseBody response :: Report
+        (_, node) <- runNodeRPCT clientNodeRPCContext obtainNode
+        nodeId <- addNode node
+
+        request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
+        response <- Http.httpJSON request
+        let report = Http.getResponseBody response :: Report
             reportJson = Json report
 
         case maximumMay $ fmap _event_time $ _report_seen report of
@@ -225,11 +231,13 @@ clientWorker nodes delay db = do
             return ()
           return ()
 
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                        VALUES (?cid, ?reportJson, ?clientConfigJson)
-                        ON CONFLICT (client) DO UPDATE SET report = ?reportJson
-                                                         , config = ?clientConfigJson |]
-        forkInfo <- mapM (scanForkInfo now report) nodes -- (Node . snd <$> nodes)
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config, node)
+                        VALUES (?cid, ?reportJson, ?clientConfigJson, ?nodeId)
+                        ON CONFLICT (client) DO UPDATE SET
+                          report = ?reportJson
+                        , config = ?clientConfigJson
+                        , node = ?nodeId |]
+        forkInfo <- mapM (scanForkInfo httpMgr now report) [node]
         liftIO $ validateForkyBlocks print $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
@@ -252,7 +260,6 @@ backend :: IO ()
 backend = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
-  nodes :: [Node] <- getConfig "config/nodes"
   routeHead <- liftIO $ inject "route"
 
   finalizers <- newTVarIO (return ())
@@ -269,19 +276,17 @@ backend = do
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
-    -- TODO: in the real thing, users should manage their own list of nodes,
-    -- with some bootstrapping by using the well known address
-    addSomeNodes nodes db
+    httpMgr <- liftIO $ Http.newManager Https.tlsManagerSettings
 
-    (handleListen, wsFinalizer) <- serveDbOverWebsockets db
-      (requestHandler csk db)
+    (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
+      (requestHandler csk httpMgr db)
       (notifyHandler db)
       (viewSelectorHandler csk db)
-      (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
+      (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
-    addFinalizer =<< nodeWorker 30 db
-    addFinalizer =<< clientWorker nodes 10 db
+    addFinalizer =<< nodeWorker 30 httpMgr db
+    addFinalizer =<< clientWorker 10 httpMgr db
 
     frontendHead <- liftIO $ fmap snd $ renderStatic $ fst frontend
     liftIO (quickHttpServe $ route

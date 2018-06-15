@@ -4,6 +4,10 @@ hr {
   background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.20), rgba(0, 0, 0, 0));
 }
 
+.errorLine {
+  color: #c00;
+}
+
 .ui.comments {
   text-align: left;
 }

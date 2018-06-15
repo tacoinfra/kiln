@@ -31,9 +31,9 @@ instance (Typeable a, TezosBinary a) => FromJSON (Base16ByteString a) where
     hexesText <- modifyFailure (show x <>) $ parseJSON x
     -- TODO: this should probably be lazy...
     let (bytes, rest) = BS.decode $ T.encodeUtf8 hexesText
-    if (BS.length rest > 0)
+    if BS.length rest > 0
     then fail $ "unmatched characters" <> show rest
-    else case eitherBinary (show $ typeRep $ (Proxy :: Proxy a)) bytes of
+    else case eitherBinary (show $ typeRep (Proxy :: Proxy a)) bytes of
       Left bad -> fail bad
       Right value -> return $ Base16ByteString value
 

@@ -2,7 +2,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,6 +19,7 @@ import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
+import qualified Network.HTTP.Client as Http
 import Rhyolite.Api
 import Rhyolite.Backend.App
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
@@ -28,37 +28,28 @@ import Rhyolite.Backend.Listen
 import Rhyolite.Schema
 import qualified Web.ClientSession as CS
 
+import Backend.ChainHealth (obtainNode)
+import Backend.NodeRPC
 import Backend.Schema
 import Common.Api
 import Common.App
 import Common.Schema
 
--- Temporary graph rendering
-import Control.Lens
-import Data.Colour
-import Data.Colour.SRGB
-import Data.Default
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
-import Diagrams.Backend.SVG (Options (..), SVG (..))
-import Diagrams.Core (renderDia)
-import Diagrams.TwoD.Size (mkWidth)
-import Graphics.Rendering.Chart
-import Graphics.Rendering.Chart.Backend.Diagrams hiding (SVG)
-import qualified Graphics.Svg.Core as SVG (renderText)
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
   => CS.Key
+  -> Http.Manager
   -> Pool Postgresql
   -> RequestHandler Bake m
-requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity db) $
+requestHandler csk httpMgr db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity db) $
   case req of
     ApiRequest_Public r ->
       case r of
-        PublicRequest_AddNode addr ->
-          void $ insertAndNotify $ Node { _node_address = addr, _node_headLevel = Nothing }
+        PublicRequest_AddNode addr -> do
+          let ctx = NodeRPCContext httpMgr addr
+          (_, node) <- runNodeRPCT ctx obtainNode
+          void $ insertAndNotify node
         PublicRequest_RemoveNode addr -> do
           nodeIds <- [queryQ| SELECT id FROM "Node" where address = ?addr |]
           let inNodeIds = In (fromOnly <$> nodeIds)
@@ -69,8 +60,7 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           -- notify
           void $ forM_ nodeIds $ \(Only nodeId) -> notifyEntityId NotificationType_Delete (nodeId :: Id Node)
         PublicRequest_AddClient addr -> do
-          _ <- insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
-          return ()
+          void $ insertAndNotify $ Client { _client_address = addr, _client_updated = Nothing }
         PublicRequest_RemoveClient addr -> do
           _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
           cids <- [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
@@ -79,8 +69,7 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
           forM_ cids $ \(Only cid) -> notifyEntityId NotificationType_Delete (cid :: Id Client)
           return ()
         PublicRequest_AddNotificatee email -> do
-          _ <- insertAndNotify $ Notificatee { _notificatee_email = email }
-          return ()
+          void $ insertAndNotify $ Notificatee { _notificatee_email = email }
         PublicRequest_RemoveNotificatee email -> do
           nids <- [queryQ| SELECT n.id FROM "Notificatee" n WHERE n.email = ?email |]
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
@@ -107,31 +96,10 @@ requestHandler csk db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity
               , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
               , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
               ]
-        PublicRequest_RenderGraph t xs -> liftIO $ renderGraph t xs
+
     ApiRequest_Private key r ->
       case r of
         PrivateRequest_NoOp -> return ()
-
-renderGraph :: (Integral a, Real b) => Text -> [(a,b)] -> IO Text
-renderGraph t xs = do
-  let chart = toRenderable layout
-      plot1 = plot_lines_style . line_color .~ opaque (sRGB 0.1 0.5 0.1)
-            $ plot_lines_values .~ [[(fromIntegral l :: Integer,realToFrac x :: Double) | (l,x) <- xs]]
-            $ def
-      layout = layout_title .~ T.unpack t
-             $ layout_plots .~ [toPlot plot1]
-             $ def
-  env <- defaultEnv vectorAlignmentFns 300 300
-  let (diagram, _) = runBackendR env chart
-      svgOptions = SVGOptions
-        { _size = mkWidth 250
-        , _svgDefinitions = Nothing
-        , _idPrefix = ""
-        , _svgAttributes = []
-        , _generateDoctype = False
-        }
-  return (TL.toStrict (SVG.renderText (renderDia SVG svgOptions diagram)))
-
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

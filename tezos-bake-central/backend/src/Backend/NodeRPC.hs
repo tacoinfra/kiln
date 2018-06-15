@@ -9,8 +9,10 @@
 module Backend.NodeRPC where
 
 import Control.Exception
+import Control.Lens (preview)
 import Control.Monad.Reader
 import Data.Aeson
+import Data.Aeson.Lens
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Semigroup ((<>))
@@ -25,13 +27,6 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Common.PublicKeyHash
 import Common.Schema
 
--- data RpcResponse a =
---     RpcResponse_HttpException HttpException
---   | RpcResponse_UnexpectedStatus Status
---   | RpcResponse_NonJSON String LBS.ByteString
---   | RpcResponse_Success a
---   deriving (Functor, Foldable, Traversable)
-
 
 data NodeRPCContext = NodeRPCContext
   { _nodeRPCContext_httpManager :: Manager
@@ -42,17 +37,31 @@ data NodeRPCContext = NodeRPCContext
 newtype NodeRPCT m a = NodeRPCT { unNodeRPCT :: ReaderT NodeRPCContext m a }
   deriving (Functor, Applicative, Monad, MonadIO, PostgresRaw, Typeable)
 
-
 runNodeRPCT :: NodeRPCContext -> NodeRPCT m a -> m a
 runNodeRPCT c (NodeRPCT x) = runReaderT x c
 
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
-    Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
-    Block hash -> nodeRPCImpl ("/blocks/" <> showBlockId hash)
-    ProtoConstants -> nodeRPCImpl "/blocks/head/proto/constants"
-    Contract block publicKey -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
+    RComplete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
+    RBlock hash -> nodeRPCImpl ("/blocks/" <> showBlockId hash)
+    RProtoConstants -> nodeRPCImpl "/blocks/head/proto/constants"
+    RContract block publicKey -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
+    RConnections -> do
+      (vs :: RpcResponse [Value]) <- nodeRPCImpl "/network/connections"
+      return $ fmap (fromIntegral . Prelude.length) vs
+    RNetworkStat -> do
+      mv <- nodeRPCImpl "/network/stat"
+      return $ case mv of
+        Right (v :: Value) -> do
+          let mns = NetworkStat <$> preview (key "total_sent" . _Integral) v
+                                <*> preview (key "total_recv" . _Integral) v
+                                <*> preview (key "current_inflow" . _Integral) v
+                                <*> preview (key "current_outflow" . _Integral) v
+          case mns of
+            Nothing -> Left $ RpcError_NonJSON "Didn't find expected fields in JSON response" (encode v)
+            Just ns -> Right ns
+        Left e -> Left e
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 rpcError_HttpException :: HttpException -> RpcResponse a

@@ -47,8 +47,6 @@ showBadFork (ForkInfo node status baked) = pure $ Error (_event_time baked) $ T.
           ]
 
 validateForkyBlocks :: Applicative f => ([Error] -> f ()) -> [ForkInfoF e] -> f ()
-validateForkyBlocks f xs = case traverse (onBadForkState (showBadFork)) xs of
+validateForkyBlocks f xs = case traverse (onBadForkState showBadFork) xs of
   Success _ -> pure ()
   Failure bad -> f bad
-
-

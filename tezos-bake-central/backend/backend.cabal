@@ -64,6 +64,7 @@ library
     Backend
     Backend.BalanceTracking
     Backend.ChainHealth
+    Backend.Graphs
     Backend.NodeRPC
     Backend.NotifyHandler
     Backend.RequestHandler

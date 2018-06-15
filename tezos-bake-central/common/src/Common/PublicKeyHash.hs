@@ -77,11 +77,11 @@ rawContextLink pkh = T.intercalate "/"
 
     hashedValueKeyPath :: Text -> Text
     hashedValueKeyPath x = T.toLower $ T.intercalate "/"
-        [ T.drop 0 $ T.take 2 $ x
-        , T.drop 2 $ T.take 4 $ x
-        , T.drop 4 $ T.take 6 $ x
-        , T.drop 6 $ T.take 8 $ x
-        , T.drop 8 $ T.take 10 $ x
-        , T.drop 10 $ x
+        [ T.drop 0 $ T.take 2 x
+        , T.drop 2 $ T.take 4 x
+        , T.drop 4 $ T.take 6 x
+        , T.drop 6 $ T.take 8 x
+        , T.drop 8 $ T.take 10 x
+        , T.drop 10 x
         ]
 

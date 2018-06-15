@@ -1,26 +1,27 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleInstances #-}
+
 module Common.Fitness where
 
-import Data.Function
-import Data.Semigroup
 import Data.Aeson
-import Data.Sequence (Seq)
-import Data.Typeable
-import GHC.Generics
-import qualified Data.Text.Encoding as T
+import Data.Attoparsec.ByteString ((<?>))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
+import Data.Function
+import Data.Semigroup
+import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
-import Data.Attoparsec.ByteString ((<?>))
+import qualified Data.Text.Encoding as T
+import Data.Typeable
+import GHC.Generics
 import Rhyolite.Schema (Json (..))
 
 import Common.Base16ByteString
 import Common.TezosBinary
 
 
-data FitnessF a = FitnessF { unFitnessF :: Seq a }
+newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
   deriving (Eq, Show, Generic, Typeable, Functor, Foldable, Traversable)
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
@@ -68,4 +69,3 @@ unFitness (Json (FitnessF xs)) = fmap unbase16ByteString xs
 
 instance Ord a => Ord (FitnessF a) where
   compare = (compare `on` length) <> (compare `on` unFitnessF)
-

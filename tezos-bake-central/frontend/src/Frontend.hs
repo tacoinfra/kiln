@@ -21,34 +21,32 @@ import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators
 import Data.Fixed
-import Data.Foldable (foldl')
 import Data.List
 import qualified Data.Map as BaseMap
 import Data.Maybe
-import Data.Monoid hiding (First (..), (<>))
+import Data.Monoid ()
 import Data.Ord
 import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Format
-import Data.Word
+import GHCJS.DOM.Element (setInnerHTML)
+import GHCJS.DOM.Types (MonadJSM)
 import qualified Obelisk.ExecutableConfig
-import Reflex.Dom
+import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (formItem, validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api
+import Rhyolite.App (getSingle)
 import Rhyolite.Frontend.App
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route
 import Rhyolite.Schema
 import Rhyolite.WebSocket
-
-import GHCJS.DOM.Element (setInnerHTML)
-import GHCJS.DOM.Types (MonadJSM)
 
 import Common.Api
 import Common.App
@@ -56,7 +54,6 @@ import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
 import Common.Tez
-
 import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos)
 
 
@@ -70,6 +67,63 @@ frontend =
       liftIO $ print route
       runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
   )
+
+watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
+watchProtoInfo = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_parameters = Just 1
+    }
+  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_parameters) theView
+
+watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) Node))
+watchNodes = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodes = Just 1
+    }
+  return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
+
+
+watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (AppendMap (Id Client) ClientInfo))
+watchClient cidDyn = do
+  theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
+    { _bakeViewSelector_clients = Map.singleton cid 1
+    }
+  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
+
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
+watchClientAddresses = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_clientAddresses = Just 1
+    }
+  return . ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
+
+watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
+watchNotificatees = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_notificatees = Just 1
+    }
+  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+
+watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
+watchSummary = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_summary = Just 1
+    }
+  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summary v
+
+watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
+watchSummaryGraph = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_summary = Just 1
+    }
+  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
+
+
+watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
+watchMailServer =
+  (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_mailServers = Just 1 }
 
 headTag :: DomBuilder t m => m ()
 headTag = do
@@ -87,75 +141,66 @@ tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (s
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
-           | UITab_Client (Id Client)
+           | UITab_Client (Id Client) Text
            | UITab_Options
   deriving (Eq, Ord, Show)
 
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  clients <- watchClients
+  clientAddresses <- watchClientAddresses
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
-        clientT <- fmap switch . hold never <=< dyn . ffor clients $ \cs ->
-          fmap leftmost . forM (Map.toList cs) $ \(cid, (name, _)) ->
-            semuiTab name (UITab_Client cid) currentTab
+        clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
+          fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
+            semuiTab name (UITab_Client cid name) currentTab
         optionsT <- semuiTab "Options" UITab_Options currentTab
         return (leftmost [summaryT, clientT, optionsT])
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
     UITab_Summary -> summaryTab
     UITab_Options -> optionsTab
-    UITab_Client cid -> clientTab cid (Map.lookup cid <$> clients)
+    UITab_Client cid addr -> clientTab cid addr
   return ()
 
-summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)) => m ()
+
+whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
+whenJustDyn d f = dyn_ . ffor d $ \case
+  Nothing -> blank
+  Just x -> f x
+
+summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 summaryTab = divClass "ui grid" $ do
-  dlevel <- watchTezosLevel
-  clients <- watchClients
-  rewards <- watchRewards
   dparameters <- watchProtoInfo
-  let totalRewards :: Dynamic t (AppendMap Integer Micro)
-      totalRewards = foldl' (Map.unionWith (+)) Map.empty <$> rewards
-      cumulate :: (Ord a, Integral a, Num b) => a -> b -> AppendMap a b -> [(a,b)]
-      cumulate l p m = foldr (\(x,y) xs s -> let y' = s + y in (x - l, s) : (x - l, y') : xs y') (\_ -> []) (Map.toList m) p
+  summaryReport <- watchSummary
 
-      cumulativeRewards :: Dynamic t (Maybe (Micro, [(Integer, Micro)]))
-      cumulativeRewards = do
-        (mLevel :: Maybe Integer) <- fmap fromIntegral <$> dlevel
-        totalRs <- totalRewards
-        return . ffor mLevel $ \level ->
-          let (before, x, after) = Map.splitLookup (level - 200) totalRs -- NB: we need to push this splitting into the backend
-              principal = sum before + fromMaybe 0 x -- just in the sense of where the graph starts
-              (past, x', _future) = Map.splitLookup level after
-              total = principal + sum past + fromMaybe 0 x'
-          in (total, cumulate level principal after)
-
-  let aggCounts :: Either a ClientInfo -> (Count, Sum Int)
-      aggCounts (Left _) = (mempty, Sum 1)
-      aggCounts (Right ci) = (mkCount (unJson (_clientInfo_report ci)), Sum 0)
   divClass "six wide column" $ do
     divClass "ui medium header" $ text "Summary"
     text "These are the totals of various events across all monitored bakers."
-    dyn . ffor (foldMap (aggCounts . snd) <$> clients) $ \(counts, e) -> do
-      divClass "counts" $ el "ul" $ do
-        tooltipPos "right center" "The number of blocks that have been baked." . text $ ("Blocks baked:" <>) . T.pack . show $ _count_injected counts
-        tooltipPos "right center" "The number of errors that have occurred." . text $ ("Errors:" <>) . T.pack . show $ _count_errors counts
-        tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." . text $ ("Waiting:" <>) . T.pack . show $ getSum e
+    let -- bakedCount = fmap (length . _report_baked . fst) <$> summaryReport
+        errorCount = fmap (length . _report_errors . fst) <$> summaryReport
+        waitingCount = fmap snd <$> summaryReport
+    divClass "counts" $ el "ul" $ do
+      {-
+      whenJustDyn bakedCount $ \n -> do
+        tooltipPos "right center" "The number of blocks that have been baked." $ do
+          text $ "Blocks baked: " <> T.pack (show n)
+      -}
+      whenJustDyn errorCount $ \n -> do
+        tooltipPos "right center" "The number of errors that have occurred." $ do
+          text $ "Errors: " <> T.pack (show n)
+      whenJustDyn waitingCount $ \n ->
+        tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
+          text $ "Waiting: " <> T.pack (show n)
+    mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
-    graphText <- requestingIdentity . fforMaybe (updated cumulativeRewards) $ \case
-      Nothing -> Nothing
-      Just (_, cr) -> case drop 2 cr of
-        [] -> Nothing
-        _ -> Just $ public (PublicRequest_RenderGraph "Cumulative Rewards" cr)
-    performEvent_ . ffor graphText $ \theSVG -> do
-      setInnerHTML (_element_raw graphEl) theSVG
-    dyn . ffor cumulativeRewards $ \case
+    dyn . ffor mGraph $ \case
       Nothing -> blank
-      Just (total, _) -> text $ "Total rewards earned: " <> tezzies (Tezzies total)
-  dyn . ffor clients $ \cs -> do
-    let reports = fmapMaybe (\case (_, Right i) -> Just (unJson (_clientInfo_report i)); _ -> Nothing) cs
-        baked = sortBy (comparing _event_time) (concat (_report_baked <$> reports))
+      Just (total, graphText) -> do
+        setInnerHTML (_element_raw graphEl) graphText
+        text $ "Total rewards earned: " <> tezzies (Tezzies total)
+  whenJustDyn (fmap fst <$> summaryReport) $ \report -> do
+    let baked = sortBy (flip (comparing _event_time)) (_report_baked report)
     divClass "ten wide column" $ do
       divClass "ui medium header" $ text "Activity"
       elAttr "table" ("class" =: "ui celled striped table") $ do
@@ -169,14 +214,14 @@ summaryTab = divClass "ui grid" $ do
           el "td" . text . T.pack . show . blockLevel $ b
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
-            Nothing -> blank
+            Nothing -> text "N/A"
             Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 optionsTab = divClass "ui grid" $ do
-  clients <- watchClients
+  clients <- watchClientAddresses
   nodes <- watchNodes
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
@@ -198,8 +243,7 @@ optionsTab = divClass "ui grid" $ do
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Monitored Clients"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> clients) $ \_ dNameInfo -> el "tr" $ do
-        let dName = fst <$> dNameInfo
+      listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
@@ -213,8 +257,8 @@ optionsTab = divClass "ui grid" $ do
 
     divClass "ui medium header" $ text "Nodes"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> nodes) $ \_ dNameInfo -> el "tr" $ do
-        let dName = dNameInfo
+      listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
+        let dName = _node_address <$> node
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
@@ -284,136 +328,101 @@ mailServerForm frm0 = do
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
     labeled = el "label" . text
 
-clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Dynamic t (Maybe (ClientAddress, Either Text ClientInfo)) -> m ()
-clientTab _ mReportD = divClass "ui grid" . void . dyn . ffor mReportD $ \case
+
+clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Text -> m ()
+clientTab cid addr = do
+  clients <- watchClient (pure cid)
+  nodes <- watchNodes -- TODO: limit by client
+  divClass "ui grid" . void . dyn . ffor (Map.lookup cid <$> clients) $ \case
     Nothing -> text "Waiting for response..."
-    Just (addr, mReport) -> do
-      case mReport of
-        Left e -> text e
-        Right clientInfo -> do
-          dparameters <- watchProtoInfo
-          let report = unJson (_clientInfo_report clientInfo)
-              counts = mkCount report
-              baked = _report_baked report
-          divClass "eight wide column" $ do
-            divClass "ui medium header" . text $ addr
-            elAttr "div" ("class" =: "delegates") $ do
-              text $ "ID: "
-                <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
-            elAttr "div" ("class" =: "client-node") $ do
-              text $ "Node: "
-                <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
-            forM_ (_clientInfo_balance clientInfo) $ \tz -> do
-              elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
-                text "Current Balance: "
-                text (tezzies tz)
-              dyn_ $ ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
-                let bSD = _protoInfo_blockSecurityDeposit protoInfo
-                    eSD = _protoInfo_endorsementSecurityDeposit protoInfo
-                    failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
-                case failures of
-                  (t:_) -> do
-                    text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
-                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                      <> "You'll need to transfer sufficient tezzies into the account before it can continue."
-                  [] | tz < 4 * (bSD + eSD) -> do
-                    text $ "The identity in use by this baker is running somewhat low on tezzies. "
-                      <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                      <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
-                  _ -> blank
-            divClass "counts" $ do
-              tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
-                "Blocks baked:" <> (T.pack . show $ _count_injected counts)
-              tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
-                "Errors:" <> (T.pack . show $ _count_errors counts)
-            case _report_errors report of
-              [] -> blank
-              es -> divClass "errors" $ do
-                divClass "ui medium header" $ text "Errors"
-                elClass "table" "ui celled striped table" $ do
-                  el "thead" . el "tr" $ do
-                    elClass "th" "four wide" $ text "Time"
-                    el "th" $ text "Message"
-                  forM_ es $ \e -> do
-                    el "tr" $ do
-                      el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time . mkErr $ e
-                      el "td" $ do
-                        forM_ (T.lines (_error_text . mkErr $ e)) $ \t ->
-                          divClass "errorLine" $ text t
-          divClass "eight wide column" $ do
-            divClass "ui medium header" $ text "Activity"
-            elAttr "table" ("class" =: "ui celled striped table") $ do
+    Just clientInfo -> do
+      dparameters <- watchProtoInfo
+      let report = unJson (_clientInfo_report clientInfo)
+          baked = sortBy (flip (comparing _event_time)) (_report_baked report)
+          errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
+      divClass "eight wide column" $ do
+        divClass "ui medium header" . text $ addr
+        elAttr "div" ("class" =: "delegates") $ do
+          text $ "ID: "
+            <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+        divClass "ui small header" . text $ "Node Statistics"
+        elAttr "div" ("class" =: "client-node") $ do
+          text $ "Node: "
+            <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
+        dyn . ffor nodes $ \ns -> case Map.lookup (_clientInfo_node clientInfo) ns of
+            Nothing -> text "Waiting..."
+            Just n -> do
+              el "div" . text $ "Head block level " <> case _node_headLevel n of
+                Nothing -> "unknown"
+                Just k -> T.pack (show k)
+              el "div" . text $ "Peer count: " <> case _node_peerCount n of
+                Nothing -> "unknown"
+                Just k -> T.pack (show k)
+              let stat = _node_networkStat n
+              el "div" . text $ "Sent: " <> T.pack (show (_networkStat_totalSent stat)) <> " bytes"
+              el "div" . text $ "Recv: " <> T.pack (show (_networkStat_totalRecv stat)) <> " bytes"
+              el "div" . text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
+              el "div" . text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
+        forM_ (_clientInfo_balance clientInfo) $ \tz -> do
+          elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
+            text "Current Balance: "
+            text (tezzies tz)
+          dyn . ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
+            let bSD = _protoInfo_blockSecurityDeposit protoInfo
+                eSD = _protoInfo_endorsementSecurityDeposit protoInfo
+                failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
+            case failures of
+              (t:_) -> do
+                text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
+                text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
+              [] | tz < 4 * (bSD + eSD) -> do
+                text $ "The identity in use by this baker is running somewhat low on tezzies. "
+                  <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
+                  <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+              _ -> blank
+        divClass "counts" $ do
+          {-
+          tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
+            "Blocks baked:" <> (T.pack . show $ length baked) -- incorrect
+          -}
+          tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
+            "Errors:" <> (T.pack . show $ length errors)
+        case errors of
+          [] -> blank
+          _ -> divClass "errors" $ do
+            divClass "ui medium header" $ text "Errors"
+            elClass "table" "ui celled striped table" $ do
               el "thead" . el "tr" $ do
                 elClass "th" "four wide" $ text "Time"
-                el "th" $ text "Level"
-                el "th" $ text "Block Hash"
-                el "th" $ text "Reward"
-              forM_ baked $ \b -> el "tr" $ do
-                el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
-                el "td" . text . T.pack . show . blockLevel $ b
-                el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
-                el "td" . dyn . ffor dparameters $ \case
-                  Nothing -> blank
-                  Just protoInfo -> text . tezzies $ blockRewards b protoInfo
+                el "th" $ text "Message"
+              forM_ errors $ \e -> do
+                el "tr" $ do
+                  el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
+                  el "td" $ do
+                    forM_ (T.lines (_error_text e)) $ \t ->
+                      divClass "errorLine" $ text t
+      divClass "eight wide column" $ do
+        divClass "ui medium header" $ text "Activity"
+        elAttr "table" ("class" =: "ui celled striped table") $ do
+          el "thead" . el "tr" $ do
+            elClass "th" "four wide" $ text "Time"
+            el "th" $ text "Level"
+            el "th" $ text "Block Hash"
+            el "th" $ text "Reward"
+          forM_ baked $ \b -> el "tr" $ do
+            el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
+            el "td" . text . T.pack . show . blockLevel $ b
+            el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
+            el "td" . dyn . ffor dparameters $ \case
+              Nothing -> blank
+              Just protoInfo -> text . tezzies $ blockRewards b protoInfo
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =
   fmap ((k <$) . domEvent Click . fst) $
     elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
       text label
-
-watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
-watchProtoInfo = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_parameters = Just 1
-    }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_parameters) theView
-
-watchTezosLevel :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Maybe Word64))
-watchTezosLevel = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_level = Just 1
-    }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_level) theView
-
-watchClients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (ClientAddress, Either Text ClientInfo)))
-watchClients = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_clients = Just 1
-    }
-  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clients v') $ \_ (First r,_) ->
-    case r of
-      Nothing -> Nothing
-      (Just (name, Nothing)) -> Just (name, Left "No response yet.")
-      (Just (name, Just ci)) -> Just (name, Right ci)
-
-watchRewards :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) (AppendMap Integer Micro)))
-watchRewards = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_clients = Just 1
-    }
-  return $ ffor theView $ \v -> Map.mapWithKey (\_ (First r,_) -> Map.mapKeys fromIntegral r) (_bakeView_rewards v)
-
-watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
-watchNotificatees = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_notificatees = Just 1
-    }
-  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
-
-watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
-watchNodes = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodes = Just 1
-    }
-  return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
-
-watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
-watchMailServer =
-  (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_mailServers = Just 1 }
-
 
 -- | Control that allows the user to build a list of items.
 -- TODO: Move this to Focus.JS.Widget

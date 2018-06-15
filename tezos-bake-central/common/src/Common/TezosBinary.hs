@@ -1,14 +1,12 @@
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Common.TezosBinary where
-
-import Prelude hiding (take)
 
 import Control.Monad
 import Data.Attoparsec.ByteString
@@ -28,7 +26,7 @@ import Data.Typeable
 import Data.Void
 import GHC.Generics
 import GHC.Word
-
+import Prelude hiding (take)
 import Rhyolite.Schema (Json (..))
 
 class TezosBinary a where
@@ -101,7 +99,7 @@ parseEnumWith p = do
   let tag = fromIntegral tag'
   when (tag < fromEnum (minBound :: a) || tag > fromEnum (maxBound :: a)) $ do
     fail "out of range"
-  return $ toEnum $ tag
+  return $ toEnum tag
 
 encodeEnum :: Enum a => a -> ByteString
 encodeEnum = encodeEnumWith (encodeBinary @ Word8)
@@ -229,8 +227,8 @@ instance TezosBinary a => TezosBinary (Maybe a) where
       1 -> Just <$> parseBinary
       bad -> fail $ "bad tag in opt:" <> show bad
 
-  encodeBinary Nothing = (encodeBinary @ Word8) 0
-  encodeBinary (Just x) = (encodeBinary @ Word8) 1 <> encodeBinary x
+  encodeBinary Nothing = encodeBinary @Word8 0
+  encodeBinary (Just x) = encodeBinary @Word8 1 <> encodeBinary x
 
 instance TezosBinary a => TezosBinary [a] where
   parseBinary = parserRecursiveLengthPrefixed (parseBinary <?> "[]")
@@ -246,7 +244,7 @@ instance TezosBinary a => TezosBinary (Seq a) where
 
 instance TezosBinary UTCTime where
   parseBinary :: Parser UTCTime
-  parseBinary = mkTime <$> ((parseBinary @ Word64) <?> "UTCTime")
+  parseBinary = mkTime <$> (parseBinary @Word64 <?> "UTCTime")
     where
       mkTime :: Word64 -> UTCTime
       mkTime = posixSecondsToUTCTime . fromIntegral

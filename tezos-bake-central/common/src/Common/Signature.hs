@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+
 module Common.Signature where
 
 import Control.Monad
@@ -7,8 +8,8 @@ import Data.Typeable
 import GHC.Generics
 import GHC.Word
 
-import Common.TezosBinary
 import Common.TaggedHash
+import Common.TezosBinary
 
 data Signature
   = Signature_Ed25519 Ed25519Signature -- see lib_crypto/ed25519.ml

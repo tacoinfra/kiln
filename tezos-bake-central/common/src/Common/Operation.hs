@@ -1,8 +1,7 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Common.Operation where
-
 
 import Control.Monad
 import Data.Attoparsec.ByteString
@@ -16,12 +15,12 @@ import Common.BlockHeader
 import Common.PublicKey
 import Common.PublicKeyHash
 import Common.Script
+import Common.Seed
 import Common.Signature
 import Common.TaggedHash
 import Common.Tez
 import Common.TezosBinary
 import Common.Vote
-import Common.Seed
 
 newtype ShellHeader = ShellHeader { _shellHeader_branch :: BlockHash }
   deriving (Eq, Ord, Show, Generic, Typeable)
@@ -67,7 +66,7 @@ instance TezosBinary ProtoOperation where
   encodeBinary (AnonymousOperations x) = encodeBinary (1 :: Word8) <> encodeBinary x
 
 data AnonymousOperation
-  = SeedNonceRevelation 
+  = SeedNonceRevelation
     { _seedNonceRevelation_level :: RawLevel
     , _seedNonceRevelation_nonce :: Seed -- ^     nonce: Seed_repr.nonce ;
     }
@@ -178,7 +177,7 @@ data AmendmentOperation
 instance TezosBinary AmendmentOperation where
   parseBinary = (<?> "AmendmentOperation") $ parseTagged2 0 "Proposals" Proposals
         `mplus` parseTagged3 1 "Ballot" Ballot
-  encodeBinary (Proposals period proposals) = encodeBinary 
+  encodeBinary (Proposals period proposals) = encodeBinary
     (0 :: Word8) <> encodeBinary period <> encodeBinary proposals
   encodeBinary (Ballot period proposal ballot ) = encodeBinary
     (1 :: Word8) <> encodeBinary period <> encodeBinary proposal <> encodeBinary ballot
@@ -186,7 +185,7 @@ instance TezosBinary AmendmentOperation where
 
 data ManagerOperation
   = Reveal PublicKey -- ^ Signature.Public_key.t
-  | Transaction 
+  | Transaction
     { _transaction_amount :: Tezzies
     , _transaction_parameters :: Maybe Script
     , _transaction_destination :: Contract
