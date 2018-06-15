@@ -19,6 +19,8 @@ import Data.Fixed
 import Data.Int (Int64)
 import Data.Text.Encoding as T
 import Data.Word
+import Database.Groundhog.Core
+import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
@@ -27,19 +29,14 @@ import Database.PostgreSQL.Simple.ToField
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema ()
 import Rhyolite.Backend.Schema.TH
-
-import Common.Schema
--- import Tezos.BakeMonitor.Types
-import Common.Tez
-import Common.TezosBinary
-
-import Database.Groundhog.Core
-import Database.Groundhog.Generic
 import Rhyolite.Schema (Json (..))
 
 import Common.Base16ByteString
 import Common.PublicKeyHash
+import Common.Schema
 import Common.TaggedHash
+import Common.Tez
+import Common.TezosBinary
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?

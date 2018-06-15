@@ -1,14 +1,15 @@
 {-# LANGUAGE LambdaCase #-}
+
 module Common.PublicKey where
 
 import Control.Monad
 import Data.Aeson
+import Data.Semigroup
 import Data.String
 import Data.Text (Text)
-import Data.Semigroup
-import GHC.Word
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import GHC.Word
 
 import Common.TaggedHash
 import Common.TezosBinary
@@ -22,7 +23,7 @@ data PublicKey
 
 -- TODO: This could be done for any such sum of hashes with TH?
 publicKeyConstructorDecoders :: [TryDecodeBase58 PublicKey]
-publicKeyConstructorDecoders = 
+publicKeyConstructorDecoders =
   [ TryDecodeBase58 PublicKey_Ed25519
   , TryDecodeBase58 PublicKey_Secp256k1
   ]

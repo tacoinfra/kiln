@@ -27,7 +27,7 @@ import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class
-import Rhyolite.App (HasView, View, ViewSelector)
+import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 
 import Common.Schema
@@ -210,36 +210,6 @@ instance ToJSON a => ToJSON (BakeView a)
 instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
-
--- | A view for a single piece of data, supporting update and delete.
-newtype Single t a = Single { unSingle :: Maybe (Semigroup.First (Maybe t), a) }
-  deriving (Eq, Ord, Show, Foldable, Traversable, Functor, Generic, Typeable)
-
-instance Semigroup a => Semigroup (Single t a) where
-  (<>) (Single Nothing) y = y
-  (<>) x (Single Nothing) = x
-  (<>) (Single (Just (t, a))) (Single (Just (t', a'))) = Single $ Just (t, a <> a')
-
-instance Semigroup a => Monoid (Single t a) where
-  mempty = Single Nothing
-  mappend = (Semigroup.<>)
-
-instance FunctorMaybe (Single t) where
-  fmapMaybe f (Single (Just (t, x))) | Just y <- f x = Single (Just (t, y))
-  fmapMaybe f _ = Single Nothing
-
-
-getSingle :: Single t a -> Maybe t
-getSingle (Single (Just (Semigroup.First (Just t), _))) = Just t
-getSingle _ = Nothing
-
-instance (FromJSON t, FromJSON a) => FromJSON (Single t a)
-instance (ToJSON t, ToJSON a) => ToJSON (Single t a)
-
-single :: Maybe t -> a -> Single t a
-single t a = Single $ Just (Semigroup.First t, a)
-
-
 
 concat <$> mapM makeLenses
   [ 'MailServerView

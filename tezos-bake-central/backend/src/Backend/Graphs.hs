@@ -2,29 +2,29 @@
 module Backend.Graphs where
 
 -- Temporary graph rendering
-import Control.Lens
-import Data.Colour
-import Data.Colour.SRGB
-import Data.Default
+import Control.Lens ((.~))
+import Control.Monad (forM, guard)
+import Data.AppendMap (AppendMap)
+import qualified Data.AppendMap as Map
+import Data.Colour (opaque)
+import Data.Colour.SRGB (sRGB)
+import Data.Default (def)
+import Data.Fixed (Micro)
+import Data.List (foldl')
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+import Data.Word (Word64)
 import Diagrams.Backend.SVG (Options (..), SVG (..))
 import Diagrams.Core (renderDia)
 import Diagrams.TwoD.Size (mkWidth)
 import Graphics.Rendering.Chart
-import Graphics.Rendering.Chart.Backend.Diagrams hiding (SVG)
+import Graphics.Rendering.Chart.Backend.Diagrams (defaultEnv, runBackendR)
 import qualified Graphics.Svg.Core as SVG (renderText)
+import Rhyolite.Schema (Id)
 
 import Common.Schema
-import Control.Monad
-import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as Map
-import Data.Fixed
-import Data.List
-import Data.Maybe
-import Data.Word
-import Rhyolite.Schema
 
 cumulativeRewardsGraph :: Word64 -> AppendMap (Id Client) (AppendMap Word64 Micro) -> IO (Maybe (Micro, Text))
 cumulativeRewardsGraph level rewards = cumulativeRewardsGraph' (fromIntegral level) (fmap (Map.mapKeys fromIntegral) rewards)
@@ -53,7 +53,7 @@ cumulativeRewardsGraph' level rewards = do
 renderGraph :: (Integral a, Real b) => Text -> [(a,b)] -> IO Text
 renderGraph t xs = do
   let chart = toRenderable layout
-      plot1 = plot_lines_style . line_color .~ (opaque $ sRGB 0.1 0.5 0.1)
+      plot1 = plot_lines_style . line_color .~ opaque (sRGB 0.1 0.5 0.1)
             $ plot_lines_values .~ [[(fromIntegral l :: Integer,realToFrac x :: Double) | (l,x) <- xs]]
             $ def
       layout = layout_title .~ T.unpack t

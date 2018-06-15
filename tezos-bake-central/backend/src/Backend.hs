@@ -242,7 +242,7 @@ clientWorker delay httpMgr db = do
                           report = ?reportJson
                         , config = ?clientConfigJson
                         , node = ?nodeId |]
-        forkInfo <- mapM (scanForkInfo now report) [node]
+        forkInfo <- mapM (scanForkInfo httpMgr now report) [node]
         liftIO $ validateForkyBlocks print $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]

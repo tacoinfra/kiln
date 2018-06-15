@@ -15,6 +15,7 @@ import Data.Functor.Identity (Identity (..))
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
+import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)

@@ -1,4 +1,5 @@
 {-# LANGUAGE QuasiQuotes #-}
+
 module Backend.BalanceTracking where
 
 import Control.Monad

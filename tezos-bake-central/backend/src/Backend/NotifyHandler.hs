@@ -4,7 +4,6 @@
 
 module Backend.NotifyHandler where
 
-import Control.Monad
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -15,6 +14,7 @@ import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
 import Database.Groundhog.Postgresql (Postgresql, get, select, (==.))
+import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
@@ -23,7 +23,7 @@ import Rhyolite.Schema (Id)
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
-import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView, single)
+import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
 

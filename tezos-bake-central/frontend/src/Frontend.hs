@@ -40,6 +40,7 @@ import Reflex.Dom.Form.Widgets (formItem, validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api
+import Rhyolite.App (getSingle)
 import Rhyolite.Frontend.App
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route

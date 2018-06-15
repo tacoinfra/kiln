@@ -3,19 +3,15 @@
 
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
-import Control.Monad.Trans
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Semigroup ((<>))
-import Data.Time
-import Data.Void (Void)
-import Network.HTTP.Client
-import Network.HTTP.Client.TLS
+import Data.Time (UTCTime, addUTCTime)
+import qualified Network.HTTP.Client as Http
 
 import Backend.NodeRPC
-
 import Common.Schema
 import Common.Verification
 
--- type ForkStatus = ForkStatusF (RpcResponse Void)
 type ForkInfo = ForkInfoF RpcError
 
 
@@ -30,9 +26,8 @@ type ForkInfo = ForkInfoF RpcError
 -- %2 ask the same node for head$(level' - level - 1)
 -- if %0 != %2; sulk
 
-scanForkInfo :: MonadIO m => UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo now rpt node = do
-  httpMgr <- liftIO $ newManager tlsManagerSettings
+scanForkInfo :: MonadIO m => Http.Manager -> UTCTime -> Report -> Node -> m [ForkInfo]
+scanForkInfo httpMgr now rpt node = do
   let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
   -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_baked rpt, _report_last_seen rpt]
   runNodeRPCT ctx . mapM (checkChainHealth now 30) $ _report_baked rpt
@@ -74,20 +69,20 @@ obtainNode :: (MonadIO m, MonadTezosNode m) => m (RpcResponse BlockInfo, Node)
 obtainNode = do
   addr <- nodeAddress
   (info, level) <- nodeRPC (RBlock headId) >>= \case
-    Left bad -> liftIO $ do
-      putStrLn "Couldn't get head block."
+    Left bad -> do
+      liftIO $ putStrLn "Couldn't get head block."
       return (Left bad, Nothing)
     Right headInfo -> do
       -- liftIO $ putStrLn ("head:" <> show head)
       return (Right headInfo, Just $ _blockInfo_level headInfo)
-  connections <- (nodeRPC RConnections) >>= \case
-    Left _bad -> liftIO $ do
-      putStrLn $ "Couldn't get connection information for node " <> show addr
+  connections <- nodeRPC RConnections >>= \case
+    Left _bad -> do
+      liftIO $ putStrLn $ "Couldn't get connection information for node " <> show addr
       return Nothing
     Right n -> return (Just n)
-  networkStat <- (nodeRPC RNetworkStat) >>= \case
-    Left _bad -> liftIO $ do
-      putStrLn $ "Couldn't get network status information for node " <> show addr
+  networkStat <- nodeRPC RNetworkStat >>= \case
+    Left _bad -> do
+      liftIO $ putStrLn $ "Couldn't get network status information for node " <> show addr
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
   return (info, Node { _node_address = addr, _node_headLevel = level, _node_peerCount = connections, _node_networkStat = networkStat})
