@@ -12,75 +12,74 @@
 module Backend where
 
 import Control.Category ((.))
-import Control.Concurrent.STM
-import Control.Exception
-import Control.Lens
-import Control.Monad
+import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
+import Control.Exception (finally)
+import Control.Lens ((.~))
+import Control.Monad (forM, forM_, join, void, when, (<=<))
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
-import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Trans
-import Control.Monad.Trans.Control
+import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (FromJSON, eitherDecode)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Default
-import Data.Foldable
-import Data.Function hiding ((.))
-import Data.IORef
-import Data.List
-import Data.Maybe
-import Data.Monoid
-import Data.Pool
+import Data.Default (def)
+import Data.Foldable (toList)
+import Data.Function (on, (&))
+import Data.Functor.Identity (Identity (..))
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.List (sortBy)
+import Data.Maybe (listToMaybe)
+import Data.Pool (Pool)
+import Data.Semigroup (Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
-import Data.Time.Clock
-import Data.Word
+import Data.Time.Clock (NominalDiffTime, addUTCTime)
+import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import Network.HTTP.Client
-import Network.HTTP.Client.TLS
-import Network.HTTP.Simple hiding (Proxy)
-import Network.Mail.Mime
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Client.TLS as Https
+import qualified Network.HTTP.Simple as Http
+import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import qualified Network.Socket
-import Obelisk.Asset.Serve.Snap
+import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
-import Rhyolite.Backend
+import Rhyolite.Backend (withDb)
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.App
-import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.LargeObjects
-import Rhyolite.Backend.DB.PsqlSimple
+import qualified Rhyolite.Backend.App as RhyoliteApp
+import Rhyolite.Backend.DB (RunDb, getTime, runDb)
+import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
-import Rhyolite.Backend.Listen
-import Rhyolite.Backend.Snap
+import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
+import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Request.Common (decodeValue')
-import Rhyolite.Schema
-import Safe
-import Snap
+import Rhyolite.Schema (Id, Json (..))
+import Safe (maximumByMay, maximumMay)
+import Snap (quickHttpServe, route)
+import Snap.Core (MonadSnap)
 import Snap.Util.FileServe (serveDirectory)
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import qualified Web.ClientSession as CS
 
-import Backend.ChainHealth
-import Backend.NodeRPC
-import Backend.NotifyHandler
+import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
+import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
+import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
-import Backend.ViewSelectorHandler
-import Common.Api ()
-import Common.Base16ByteString
-import Common.Operation
+import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Common.Base16ByteString (unbase16ByteString)
+import Common.Operation (sumFees)
 import Common.Schema
-import Common.TaggedHash
-
+import Common.TaggedHash (toBase58Text)
 import Frontend (frontend)
 
 seconds :: Int -> Int
@@ -113,7 +112,7 @@ addNode node = do
 nodeWorker
   :: (MonadIO m)
   => Int -- delay between checking for updates, in seconds
-  -> Manager
+  -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
 nodeWorker delay httpMgr db = do
@@ -178,7 +177,7 @@ queueAllEmails message = do
 
 clientWorker :: (MonadIO m)
              => Int -- delay between checking for updates, in seconds
-             -> Manager
+             -> Http.Manager
              -> Pool Postgresql
              -> m (IO ())
 clientWorker delay httpMgr db = do
@@ -202,18 +201,18 @@ clientWorker delay httpMgr db = do
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         liftIO $ T.putStrLn address
         -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-        configRequest <- parseRequest ("http://" <> T.unpack address <> "/config")
-        configResponse <- httpJSON configRequest
-        let clientConfig = getResponseBody configResponse :: ClientConfig
+        configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
+        configResponse <- Http.httpJSON configRequest
+        let clientConfig = Http.getResponseBody configResponse :: ClientConfig
             clientConfigJson = Json clientConfig
             clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
 
         (_, node) <- runNodeRPCT clientNodeRPCContext obtainNode
         nodeId <- addNode node
 
-        request <- parseRequest ("http://" <> T.unpack address <> "/events")
-        response <- httpJSON request
-        let report = getResponseBody response :: Report
+        request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
+        response <- Http.httpJSON request
+        let report = Http.getResponseBody response :: Report
             reportJson = Json report
 
         case maximumMay $ fmap _event_time $ _report_seen report of
@@ -283,13 +282,13 @@ backend = do
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
-    httpMgr <- liftIO $ newManager tlsManagerSettings
+    httpMgr <- liftIO $ Http.newManager Https.tlsManagerSettings
 
-    (handleListen, wsFinalizer) <- serveDbOverWebsockets db
+    (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
       (requestHandler csk httpMgr db)
       (notifyHandler db)
       (viewSelectorHandler csk db)
-      (queryMorphismPipeline $ transposeMonoidMap . monoidMapQueryMorphism)
+      (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
     addFinalizer =<< nodeWorker 30 httpMgr db
