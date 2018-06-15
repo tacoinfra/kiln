@@ -31,7 +31,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Format
-import Data.Word
+import GHCJS.DOM.Element (setInnerHTML)
+import GHCJS.DOM.Types (MonadJSM)
 import qualified Obelisk.ExecutableConfig
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
@@ -46,9 +47,6 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route
 import Rhyolite.Schema
 import Rhyolite.WebSocket
-
-import GHCJS.DOM.Element (setInnerHTML)
-import GHCJS.DOM.Types (MonadJSM)
 
 import Common.Api
 import Common.App

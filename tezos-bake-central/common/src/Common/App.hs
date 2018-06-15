@@ -16,13 +16,11 @@ import Data.Align
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
 import Data.Fixed
-import qualified Data.Monoid as Monoid
 import Data.Semigroup (First (..), Semigroup, (<>))
-import qualified Data.Semigroup as Semigroup
 import Data.Text (Text)
 import Data.These
 import Data.Typeable
-import Data.Word (Word16, Word64)
+import Data.Word (Word16)
 import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()

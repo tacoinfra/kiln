@@ -19,15 +19,11 @@ import Control.Lens.TH
 import Data.Aeson hiding (Error)
 import Data.Aeson.TH
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Monoid (mempty)
-import Data.Proxy
-import Data.Scientific
 import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T

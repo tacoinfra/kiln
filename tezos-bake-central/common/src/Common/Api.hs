@@ -11,7 +11,6 @@
 
 module Common.Api where
 
-import Data.Fixed (Micro)
 import Data.Text (Text)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.Class (Request)

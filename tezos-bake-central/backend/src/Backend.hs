@@ -17,11 +17,9 @@ import Control.Exception (finally)
 import Control.Lens ((.~))
 import Control.Monad (forM, forM_, join, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, askLoggerIO, runLoggingT, runNoLoggingT)
+import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (FromJSON, eitherDecode)
-import qualified Data.Aeson as Aeson
-import Data.Aeson.TH (deriveJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
@@ -45,7 +43,6 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
-import qualified Network.Socket
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (inject)
 import Prelude hiding ((.))
@@ -57,11 +54,10 @@ import Rhyolite.Backend.DB (RunDb, getTime, runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
-import Rhyolite.Backend.EmailWorker (clearMailQueue, emailWorker, migrateQueuedEmail, queueEmail)
+import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail, queueEmail)
 import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
-import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Schema (Id, Json (..))
 import Safe (maximumByMay, maximumMay)
 import Snap (quickHttpServe, route)
@@ -187,7 +183,6 @@ clientWorker delay httpMgr db = do
     runNoLoggingT . runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      -- nodes :: [(Id Node, Text)] <- [queryQ| SELECT id, address FROM "Node" |]
       params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
       let blockHeightTimeout :: NominalDiffTime = fromIntegral
             $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
@@ -265,7 +260,6 @@ backend :: IO ()
 backend = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
   csk <- liftIO $ CS.getKey "config/clientSessionKey"
-  nodes :: [Node] <- getConfig "config/nodes"
   routeHead <- liftIO $ inject "route"
 
   finalizers <- newTVarIO (return ())

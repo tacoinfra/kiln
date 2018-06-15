@@ -19,7 +19,6 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable
-import Data.Word
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status (Status (..))
@@ -27,7 +26,6 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 
 import Common.PublicKeyHash
 import Common.Schema
-import Common.TaggedHash (toBase58Text)
 
 
 data NodeRPCContext = NodeRPCContext
