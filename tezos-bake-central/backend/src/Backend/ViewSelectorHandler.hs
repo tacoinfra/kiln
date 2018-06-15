@@ -7,22 +7,18 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Lens
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Trans.Control
+import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.AppendMap as Map
-import qualified Data.AppendMap as Map
+import Data.Functor.Identity (Identity (..))
 import Data.Pool (Pool)
-import Data.Semigroup
+import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
-import Rhyolite.Backend.App
-import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.PsqlSimple
-import Rhyolite.Backend.Schema
-import Rhyolite.Backend.Schema.TH
-import Rhyolite.Schema
+import Rhyolite.Backend.App (QueryHandler (..))
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)
+import Rhyolite.Backend.Schema (toId)
 import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
@@ -36,7 +32,7 @@ whenJust Nothing f = return mempty
 whenJust (Just x) f = f x
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
+  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
   => CS.Key
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
@@ -70,20 +66,20 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     (Just a, Just l) -> do
       rewards <- getAllRewards a
       mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewards)
-      return . First $ fmap (\x -> (x,a)) mGraph
-    _ -> return $ First Nothing
+      return $ single mGraph a
+    _ -> return mempty
   summary <- case _bakeViewSelector_summary vs of
-    Nothing -> return (First Nothing)
+    Nothing -> return mempty
     Just a -> do
       report <- getSummaryReport
-      return . First $ fmap (\x -> (x,a)) report
+      return $ single report a
   return $ (mempty :: BakeView a)
-    { _bakeView_clients = clients
-    , _bakeView_clientAddresses = clientAddresses
-    , _bakeView_parameters = parameters
-    , _bakeView_nodes = nodes
-    , _bakeView_notificatees = notificatees
-    , _bakeView_mailServers = mailServers
-    , _bakeView_summaryGraph = summaryGraph
-    , _bakeView_summary = summary
-    }
+      { _bakeView_clients = clients
+      , _bakeView_clientAddresses = clientAddresses
+      , _bakeView_parameters = parameters
+      , _bakeView_nodes = nodes
+      , _bakeView_notificatees = notificatees
+      , _bakeView_mailServers = mailServers
+      , _bakeView_summaryGraph = summaryGraph
+      , _bakeView_summary = summary
+      }

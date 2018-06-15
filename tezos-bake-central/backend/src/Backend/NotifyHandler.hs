@@ -23,7 +23,7 @@ import Rhyolite.Schema (Id)
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
-import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
+import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView, single)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
 
@@ -59,11 +59,11 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
               summaryGraph <- case maxLevel of
                 Just l -> do
                   mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
-                  return . First $ fmap (\x -> (x,a)) mGraph
-                _ -> return $ First Nothing
+                  return $ single mGraph a
+                _ -> return mempty
               return $ emptyV
                   { _bakeView_summaryGraph = summaryGraph
-                  , _bakeView_summary = First (fmap (\x -> (x,a)) summaryReport)
+                  , _bakeView_summary = single summaryReport a
                   }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
         Error e -> parseErr notifyMessage e

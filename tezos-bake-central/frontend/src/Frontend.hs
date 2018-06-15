@@ -19,26 +19,21 @@ import Control.Monad.Trans
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators
 import Data.Fixed
 import Data.List
 import qualified Data.Map as BaseMap
 import Data.Maybe
-import Data.Monoid hiding (First (..), (<>))
-import Data.Ord
+import Data.Monoid ()
 import Data.Ord
 import Data.Semigroup
-import Data.Semigroup
-import Data.Text (Text)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Format
-import Data.Time.Format
 import Data.Word
 import qualified Obelisk.ExecutableConfig
-import Reflex.Dom
+import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (formItem, validatedInput)
@@ -60,12 +55,7 @@ import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
 import Common.Tez
-
 import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos)
-
-import GHCJS.DOM.Element (setInnerHTML)
-
-import Common.BlockHeader
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -78,7 +68,6 @@ frontend =
       liftIO $ print route
       runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
   )
-
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo = do
@@ -121,14 +110,14 @@ watchSummary = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  return <=< improvingMaybe . ffor theView $ \v -> fmap fst . getFirst $ _bakeView_summary v
+  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summary v
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
 watchSummaryGraph = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  return <=< improvingMaybe . ffor theView $ \v -> fmap fst . getFirst $ _bakeView_summaryGraph v
+  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
 
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
@@ -226,7 +215,7 @@ summaryTab = divClass "ui grid" $ do
           el "td" . text . T.pack . show . blockLevel $ b
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
-            Nothing -> blank
+            Nothing -> text "N/A"
             Just protoInfo -> text . tezzies $ blockRewards b protoInfo
   return ()
 

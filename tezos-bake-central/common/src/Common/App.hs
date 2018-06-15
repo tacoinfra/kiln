@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -12,22 +13,17 @@ module Common.App where
 import Control.Lens (makeLenses)
 import Data.Aeson
 import Data.Align
-import Data.Align
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
 import Data.Fixed
-import Data.Fixed
+import qualified Data.Monoid as Monoid
 import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Text (Text)
+import qualified Data.Semigroup as Semigroup
 import Data.Text (Text)
 import Data.These
-import Data.These
-import Data.Typeable
 import Data.Typeable
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
-import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class
@@ -75,8 +71,8 @@ data BakeView a = BakeView
   , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe Node), a)
   , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
   , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerView), a)
-  , _bakeView_summary :: First (Maybe ((Report, Int), a)) -- The Int is the number of bakers we've yet to get a report from.
-  , _bakeView_summaryGraph :: First (Maybe ((Micro, Text), a))
+  , _bakeView_summary :: Single (Report, Int) a -- The Int is the number of bakers we've yet to get a report from.
+  , _bakeView_summaryGraph :: Single (Micro, Text) a
   , _bakeView_graphs :: AppendMap (Id Client) (First (Maybe (Micro, Text)), a)
   }
   deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
@@ -100,12 +96,12 @@ cropBakeView vs v =
         Nothing -> mempty
         Just _ -> _bakeView_mailServers v
       graphs = Map.intersectionWith const (_bakeView_graphs v) (_bakeViewSelector_clients vs)
-      summaryGraph = case _bakeViewSelector_summary vs of
-        Nothing -> First Nothing
-        Just _ -> _bakeView_summaryGraph v
       summary = case _bakeViewSelector_summary vs of
-        Nothing -> First Nothing
+        Nothing -> mempty
         Just _ -> _bakeView_summary v
+      summaryGraph = case _bakeViewSelector_summary vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_summaryGraph v
   in BakeView
       { _bakeView_clientAddresses = clientAddresses
       , _bakeView_clients = clients
@@ -141,15 +137,6 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_mailServers = fmapMaybe f $ _bakeViewSelector_mailServers a
     }
 
-{-
-instance Align BakeView where
-  nil = BakeView nil
-  alignWith f u v = BakeView
-    { _bakeView_clients = alignTheseWith f (_bakeView_clients u) (_bakeView_clients v)
-    { _bakeView_parameters = alignTheseWith f (_bakeView_parameters u) (_bakeView_parameters v)
-    }
--}
-
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
@@ -159,16 +146,9 @@ instance FunctorMaybe BakeView where
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_mailServers = fmapMaybeSnd f $ _bakeView_mailServers a
     , _bakeView_graphs = fmapMaybeSnd f $ _bakeView_graphs a
-    , _bakeView_summaryGraph = fmapMaybeFirstMaybePair f (_bakeView_summaryGraph a)
-    , _bakeView_summary = fmapMaybeFirstMaybePair f (_bakeView_summary a)
+    , _bakeView_summaryGraph = fmapMaybe f (_bakeView_summaryGraph a)
+    , _bakeView_summary = fmapMaybe f (_bakeView_summary a)
     }
-
-fmapMaybeFirstMaybePair :: (a -> Maybe b) -> First (Maybe (x, a)) -> First (Maybe (x, b))
-fmapMaybeFirstMaybePair f p = case p of
-  First Nothing -> First Nothing
-  First (Just (x,u)) -> case f u of
-    Nothing -> First Nothing
-    Just v -> First (Just (x,v))
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
 fmapMaybeSnd f = fmapMaybe $ \(e, a) -> case f a of
@@ -199,8 +179,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_notificatees = mempty
     , _bakeView_mailServers = mempty
     , _bakeView_graphs = mempty
-    , _bakeView_summaryGraph = First Nothing
-    , _bakeView_summary = First Nothing
+    , _bakeView_summaryGraph = mempty
+    , _bakeView_summary = mempty
     }
   mappend u v = u <> v
 
@@ -230,6 +210,36 @@ instance ToJSON a => ToJSON (BakeView a)
 instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
+
+-- | A view for a single piece of data, supporting update and delete.
+newtype Single t a = Single { unSingle :: Maybe (Semigroup.First (Maybe t), a) }
+  deriving (Eq, Ord, Show, Foldable, Traversable, Functor, Generic, Typeable)
+
+instance Semigroup a => Semigroup (Single t a) where
+  (<>) (Single Nothing) y = y
+  (<>) x (Single Nothing) = x
+  (<>) (Single (Just (t, a))) (Single (Just (t', a'))) = Single $ Just (t, a <> a')
+
+instance Semigroup a => Monoid (Single t a) where
+  mempty = Single Nothing
+  mappend = (Semigroup.<>)
+
+instance FunctorMaybe (Single t) where
+  fmapMaybe f (Single (Just (t, x))) | Just y <- f x = Single (Just (t, y))
+  fmapMaybe f _ = Single Nothing
+
+
+getSingle :: Single t a -> Maybe t
+getSingle (Single (Just (Semigroup.First (Just t), _))) = Just t
+getSingle _ = Nothing
+
+instance (FromJSON t, FromJSON a) => FromJSON (Single t a)
+instance (ToJSON t, ToJSON a) => ToJSON (Single t a)
+
+single :: Maybe t -> a -> Single t a
+single t a = Single $ Just (Semigroup.First t, a)
+
+
 
 concat <$> mapM makeLenses
   [ 'MailServerView
