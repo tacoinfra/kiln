@@ -74,7 +74,7 @@ watchProtoInfo = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
-  return $ fmap (join . fmap (getFirst . fst) . firstOf traverse . _bakeView_parameters) theView
+  return $ fmap (getSingle . _bakeView_parameters) theView
 
 watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) Node))
 watchNodes = do

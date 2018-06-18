@@ -67,13 +67,13 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
         Error e -> parseErr notifyMessage e
-      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
+      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id Node) of
         Success nid -> do
           (params :: [Parameters]) <- select (Parameters_nodeField ==. nid)
           return $ case _bakeViewSelector_parameters aggVS of
             Nothing -> mempty :: BakeView a
             Just a -> (mempty :: BakeView a)
-              { _bakeView_parameters = Map.singleton nid (First $ _parameters_protoInfo <$> listToMaybe params, a)
+              { _bakeView_parameters = single (_parameters_protoInfo <$> listToMaybe params) a
               }
         Error e -> parseErr notifyMessage e
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of

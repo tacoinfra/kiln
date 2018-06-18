@@ -12,19 +12,21 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.AppendMap as Map
 import Data.Functor.Identity (Identity (..))
+import qualified Data.Map as BaseMap
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
 import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)
 import Rhyolite.Backend.Schema (toId)
 import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
 import Backend.Graphs
-import Backend.Schema ()
+import Backend.Schema (ParametersConstructor (..))
 import Common.App
 import Common.Schema
 
@@ -51,8 +53,8 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
           return (cid, First (ClientInfo cid <$> report <*> config <*> balance <*> node))
     return (Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs))
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
+    param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
+    return $ single (_parameters_protoInfo <$> param) a
   nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just n), a)) | (nid, n) <- rs]

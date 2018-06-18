@@ -65,7 +65,7 @@ mailServerConfigToView x = MailServerView
 data BakeView a = BakeView
   { _bakeView_clientAddresses :: AppendMap (Id Client) (First (Maybe ClientAddress), a)
   , _bakeView_clients :: AppendMap (Id Client) (First (Maybe ClientInfo), a)
-  , _bakeView_parameters :: AppendMap (Id Node) (First (Maybe ProtoInfo), a)
+  , _bakeView_parameters :: Single ProtoInfo a
   , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe Node), a)
   , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
   , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerView), a)
@@ -139,7 +139,7 @@ instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
     , _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
-    , _bakeView_parameters = fmapMaybeSnd f $ _bakeView_parameters a
+    , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_mailServers = fmapMaybeSnd f $ _bakeView_mailServers a
