@@ -61,9 +61,9 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
-  mailServers <- whenJust (_bakeViewSelector_mailServers vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
+  mailServer <- whenJust (_bakeViewSelector_mailServer vs) $ \a -> do
+    ms <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
+    return $ single (mailServerConfigToView <$> ms) a
   maxLevel <- getMaxLevel
   summaryGraph <- case (_bakeViewSelector_summary vs, maxLevel) of
     (Just a, Just l) -> do
@@ -82,7 +82,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_parameters = parameters
       , _bakeView_nodes = nodes
       , _bakeView_notificatees = notificatees
-      , _bakeView_mailServers = mailServers
+      , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
       }

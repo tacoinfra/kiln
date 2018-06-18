@@ -94,14 +94,14 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
               { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
               }
         Error e -> parseErr notifyMessage e
-      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success nid -> do
-          (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
-          return $ case _bakeViewSelector_mailServers aggVS of
-            Nothing -> mempty
-            Just a -> (mempty :: BakeView a)
-              { _bakeView_mailServers = Map.singleton nid (First $ mailServerConfigToView <$> mailServer, a)
-              }
+      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id MailServerConfig) of
+        Success nid -> case _bakeViewSelector_mailServer aggVS of
+            Nothing -> return mempty
+            Just a -> do
+              (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
+              return $ (mempty :: BakeView a)
+                { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
+                }
         Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient

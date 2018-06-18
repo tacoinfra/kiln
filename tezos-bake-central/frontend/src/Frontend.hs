@@ -122,9 +122,9 @@ watchSummaryGraph = do
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
-  (fmap . fmap) (join . fmap (getFirst . fst) . listToMaybe . Map.elems . _bakeView_mailServers) $
+  (fmap . fmap) (getSingle . _bakeView_mailServer) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_mailServers = Just 1 }
+      { _bakeViewSelector_mailServer = Just 1 }
 
 headTag :: DomBuilder t m => m ()
 headTag = do

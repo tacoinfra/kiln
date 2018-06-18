@@ -40,16 +40,29 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_parameters :: Maybe a
   , _bakeViewSelector_nodes :: Maybe a
   , _bakeViewSelector_notificatees :: Maybe a
-  , _bakeViewSelector_mailServers :: Maybe a
+  , _bakeViewSelector_mailServer :: Maybe a
   }
   deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
+
+data BakeView a = BakeView
+  { _bakeView_clientAddresses :: AppendMap (Id Client) (First (Maybe ClientAddress), a)
+  , _bakeView_clients :: AppendMap (Id Client) (First (Maybe ClientInfo), a)
+  , _bakeView_parameters :: Single ProtoInfo a
+  , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe Node), a)
+  , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
+  , _bakeView_mailServer :: Single MailServerView a
+  , _bakeView_summary :: Single (Report, Int) a -- The Int is the number of bakers we've yet to get a report from.
+  , _bakeView_summaryGraph :: Single (Micro, Text) a
+  , _bakeView_graphs :: AppendMap (Id Client) (First (Maybe (Micro, Text)), a)
+  }
+  deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
 data MailServerView = MailServerView
   { _mailServerView_hostName :: Text
   , _mailServerView_portNumber :: Word16
   , _mailServerView_smtpProtocol :: SmtpProtocol
   , _mailServerView_userName :: Text
-  } deriving (Eq, Generic, Read, Show)
+  } deriving (Eq, Generic, Typeable, Read, Show)
 
 instance FromJSON MailServerView
 instance ToJSON MailServerView
@@ -61,19 +74,6 @@ mailServerConfigToView x = MailServerView
   , _mailServerView_smtpProtocol = _mailServerConfig_smtpProtocol x
   , _mailServerView_userName = _mailServerConfig_userName x
   }
-
-data BakeView a = BakeView
-  { _bakeView_clientAddresses :: AppendMap (Id Client) (First (Maybe ClientAddress), a)
-  , _bakeView_clients :: AppendMap (Id Client) (First (Maybe ClientInfo), a)
-  , _bakeView_parameters :: Single ProtoInfo a
-  , _bakeView_nodes :: AppendMap (Id Node) (First (Maybe Node), a)
-  , _bakeView_notificatees :: AppendMap (Id Notificatee) (First (Maybe Email), a)
-  , _bakeView_mailServers :: AppendMap (Id MailServerConfig) (First (Maybe MailServerView), a)
-  , _bakeView_summary :: Single (Report, Int) a -- The Int is the number of bakers we've yet to get a report from.
-  , _bakeView_summaryGraph :: Single (Micro, Text) a
-  , _bakeView_graphs :: AppendMap (Id Client) (First (Maybe (Micro, Text)), a)
-  }
-  deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
 cropBakeView :: (Semigroup a, Monoid a) => BakeViewSelector a -> BakeView a -> BakeView a
 cropBakeView vs v =
@@ -90,9 +90,9 @@ cropBakeView vs v =
       notificatees = case _bakeViewSelector_notificatees vs of
         Nothing -> mempty
         Just _ -> _bakeView_notificatees v
-      mailServers = case _bakeViewSelector_mailServers vs of
+      mailServer = case _bakeViewSelector_mailServer vs of
         Nothing -> mempty
-        Just _ -> _bakeView_mailServers v
+        Just _ -> _bakeView_mailServer v
       graphs = Map.intersectionWith const (_bakeView_graphs v) (_bakeViewSelector_clients vs)
       summary = case _bakeViewSelector_summary vs of
         Nothing -> mempty
@@ -106,7 +106,7 @@ cropBakeView vs v =
       , _bakeView_parameters = parameters
       , _bakeView_nodes = nodes
       , _bakeView_notificatees = notificatees
-      , _bakeView_mailServers = mailServers
+      , _bakeView_mailServer = mailServer
       , _bakeView_graphs = graphs
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
@@ -121,7 +121,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
-    , _bakeViewSelector_mailServers = alignWith f (_bakeViewSelector_mailServers u) (_bakeViewSelector_mailServers v)
+    , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     }
 
 instance FunctorMaybe BakeViewSelector where
@@ -132,7 +132,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
     , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
-    , _bakeViewSelector_mailServers = fmapMaybe f $ _bakeViewSelector_mailServers a
+    , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     }
 
 instance FunctorMaybe BakeView where
@@ -142,7 +142,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
-    , _bakeView_mailServers = fmapMaybeSnd f $ _bakeView_mailServers a
+    , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_graphs = fmapMaybeSnd f $ _bakeView_graphs a
     , _bakeView_summaryGraph = fmapMaybe f (_bakeView_summaryGraph a)
     , _bakeView_summary = fmapMaybe f (_bakeView_summary a)
@@ -175,7 +175,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_parameters = mempty
     , _bakeView_nodes = mempty
     , _bakeView_notificatees = mempty
-    , _bakeView_mailServers = mempty
+    , _bakeView_mailServer = mempty
     , _bakeView_graphs = mempty
     , _bakeView_summaryGraph = mempty
     , _bakeView_summary = mempty
@@ -189,7 +189,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
     , _bakeView_notificatees = _bakeView_notificatees u <> _bakeView_notificatees v
-    , _bakeView_mailServers = _bakeView_mailServers u <> _bakeView_mailServers v
+    , _bakeView_mailServer = _bakeView_mailServer u <> _bakeView_mailServer v
     , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
     , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v
     , _bakeView_summary = _bakeView_summary u <> _bakeView_summary v
