@@ -50,6 +50,7 @@ import Rhyolite.WebSocket
 
 import Common.Api
 import Common.App
+import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
@@ -359,8 +360,8 @@ clientTab cid addr = do
                 Nothing -> "unknown"
                 Just k -> T.pack (show k)
               let stat = _node_networkStat n
-              el "div" . text $ "Sent: " <> T.pack (show (_networkStat_totalSent stat)) <> " bytes"
-              el "div" . text $ "Recv: " <> T.pack (show (_networkStat_totalRecv stat)) <> " bytes"
+              el "div" . text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
+              el "div" . text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
               el "div" . text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
               el "div" . text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
         forM_ (_clientInfo_balance clientInfo) $ \tz -> do
@@ -387,7 +388,7 @@ clientTab cid addr = do
             "Blocks baked:" <> (T.pack . show $ length baked) -- incorrect
           -}
           tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
-            "Errors:" <> (T.pack . show $ length errors)
+            "Errors: " <> (T.pack . show $ length errors)
         case errors of
           [] -> blank
           _ -> divClass "errors" $ do

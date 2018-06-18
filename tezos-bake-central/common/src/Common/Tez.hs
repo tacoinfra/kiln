@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Common.Tez where
 
@@ -17,7 +18,7 @@ import GHC.Generics
 import GHC.Word (Word64)
 import Text.Read (readMaybe)
 
-import Common.Json (parseAsString)
+import Common.Json (parseIntegralAsString)
 import Common.TezosBinary
 
 newtype Tezzies = Tezzies { getTezzies :: Micro }
@@ -45,7 +46,7 @@ instance ToJSON Tezzies where
   toEncoding = toEncoding . getMicroTezzies
 
 instance FromJSON Tezzies where
-  parseJSON x = microTezzies <$> (((floor :: Scientific -> Word64) <$> parseJSON x) <|> parseAsString x)
+  parseJSON x = microTezzies <$> parseIntegralAsString @Word64 x
 
 
 instance TezosBinary Tezzies where
