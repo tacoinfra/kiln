@@ -100,7 +100,7 @@ instance IsBase58Hash tag => FromJSON (HashedValue tag ByteString) where
     either (fail . show) pure $ fromBase58 $ T.encodeUtf8 hexesText
 
 instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
-  parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize $ (Proxy :: Proxy t)
+  parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize (Proxy :: Proxy t)
   encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x
                                | otherwise = error "base58 tagged object wrong length"
 
@@ -156,7 +156,7 @@ fromBase58 b58chk = return . HashedValue <=< verifyLength <=< verifyPrefix <=< v
 
     swizzle58 x = case decodeBase58 bitcoinAlphabet x of
       Just x' -> Right x'
-      Nothing -> Left $ HashBase58Error_DecodeError
+      Nothing -> Left HashBase58Error_DecodeError
 
     verifyPrefix x =
       let

@@ -42,6 +42,7 @@ library
     Common.Base16ByteString
     Common.BlockHeader
     Common.Fitness
+    Common.Json
     Common.Micheline
     Common.Operation
     Common.PublicKeyHash

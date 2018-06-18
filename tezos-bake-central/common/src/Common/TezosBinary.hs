@@ -24,10 +24,13 @@ import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Typeable
 import Data.Void
+import Data.Word
 import GHC.Generics
-import GHC.Word
 import Prelude hiding (take)
 import Rhyolite.Schema (Json (..))
+
+import Common.Json (TezosWord64 (..))
+
 
 class TezosBinary a where
   parseBinary :: Parser a
@@ -193,6 +196,10 @@ instance TezosBinary Word64 where
   parseBinary = concatWithShift 32 <$> parseBinary @ Word32 <*> parseBinary @ Word32
 
   encodeBinary = encodeBigEndian 32 (Proxy @ Word32) (Proxy @ Word32)
+
+instance TezosBinary TezosWord64 where
+  parseBinary = TezosWord64 <$> parseBinary
+  encodeBinary (TezosWord64 x) = encodeBinary x
 
 instance TezosBinary Int8 where
   parseBinary :: Parser Int8

@@ -21,6 +21,7 @@ import qualified Data.Text as T
 import Data.Typeable
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
+import Network.HTTP.Types.Method (Method, methodGet, methodPost)
 import Network.HTTP.Types.Status (Status (..))
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 
@@ -43,25 +44,14 @@ runNodeRPCT c (NodeRPCT x) = runReaderT x c
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
-    RComplete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
-    RBlock hash -> nodeRPCImpl ("/blocks/" <> showBlockId hash)
-    RProtoConstants -> nodeRPCImpl "/blocks/head/proto/constants"
-    RContract block publicKey -> nodeRPCImpl ("/blocks/" <> showBlockId block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
+    RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
+    RBlock hash -> nodeRPCImpl methodGet (blockIdToUrl hash)
+    RProtoConstants -> nodeRPCImpl methodGet (blockIdToUrl headId <> "/context/constants")
+    RContract block publicKey -> nodeRPCImpl methodPost (blockIdToUrl block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
     RConnections -> do
-      (vs :: RpcResponse [Value]) <- nodeRPCImpl "/network/connections"
+      (vs :: RpcResponse [Value]) <- nodeRPCImpl methodGet "/network/connections"
       return $ fmap (fromIntegral . Prelude.length) vs
-    RNetworkStat -> do
-      mv <- nodeRPCImpl "/network/stat"
-      return $ case mv of
-        Right (v :: Value) -> do
-          let mns = NetworkStat <$> preview (key "total_sent" . _Integral) v
-                                <*> preview (key "total_recv" . _Integral) v
-                                <*> preview (key "current_inflow" . _Integral) v
-                                <*> preview (key "current_outflow" . _Integral) v
-          case mns of
-            Nothing -> Left $ RpcError_NonJSON "Didn't find expected fields in JSON response" (encode v)
-            Just ns -> Right ns
-        Left e -> Left e
+    RNetworkStat -> nodeRPCImpl methodGet "/network/stat"
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 rpcError_HttpException :: HttpException -> RpcResponse a
@@ -73,19 +63,20 @@ rpcResponse_NonJSON err body = Left $ RpcError_NonJSON err body
 rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> RpcResponse a
 rpcResponse_UnexpectedStatus code phrase = Left $ RpcError_UnexpectedStatus code phrase
 
-nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
+
+nodeRPCImpl :: (MonadIO m, FromJSON a) => Method -> Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode
 
-nodeRPCImpl' :: forall m a. (MonadIO m) => (LBS.ByteString -> Either String a) -> Text -> NodeRPCT m (RpcResponse a)
-nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
+nodeRPCImpl' :: forall m a. (MonadIO m) => (LBS.ByteString -> Either String a) -> Method -> Text -> NodeRPCT m (RpcResponse a)
+nodeRPCImpl' decoder method_ rpcSelector = NodeRPCT $ do
   mgr <- asks _nodeRPCContext_httpManager
   node <- asks _nodeRPCContext_node
 
   let rpcUrl = node <> rpcSelector
 
   let rpcBoilerplate req = req
-        { method = "POST"
-        , requestBody = "{}"
+        { method = method_
+        , requestBody = if method_ == methodGet then "" else "{}"
         , requestHeaders =
           [ (hContentType, "application/json")
           , (hUserAgent, "tezos-bake-monitor")

@@ -11,9 +11,13 @@ import Data.Fixed
 import Data.Int
 import Data.Proxy
 import Data.Scientific
+import qualified Data.Text as T
 import Data.Typeable
 import GHC.Generics
+import GHC.Word (Word64)
+import Text.Read (readMaybe)
 
+import Common.Json (parseAsString)
 import Common.TezosBinary
 
 newtype Tezzies = Tezzies { getTezzies :: Micro }
@@ -41,8 +45,8 @@ instance ToJSON Tezzies where
   toEncoding = toEncoding . getMicroTezzies
 
 instance FromJSON Tezzies where
-  parseJSON x = microTezzies . (floor :: Scientific -> Int64) <$> parseJSON x
-            <|> microTezzies . (read :: String -> Int64) <$> parseJSON x
+  parseJSON x = microTezzies <$> (((floor :: Scientific -> Word64) <$> parseJSON x) <|> parseAsString x)
+
 
 instance TezosBinary Tezzies where
   parseBinary = microTezzies <$> (parseBinary :: Parser Int64)

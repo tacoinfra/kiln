@@ -3,12 +3,14 @@
 
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
+import Control.Lens ((^.))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Semigroup ((<>))
 import Data.Time (UTCTime, addUTCTime)
 import qualified Network.HTTP.Client as Http
 
 import Backend.NodeRPC
+import Common.Json (TezosWord64 (..))
 import Common.Schema
 import Common.Verification
 
@@ -52,14 +54,17 @@ checkChainHealth now delay seenBaked = do
           Left bad -> do
             return $ ForkStatus_BadNode bad
           Right seen -> do
-            let ancestorBlockHash = BlockId (BlockIdHash_BlockHash $ _blockInfo_hash headInfo)
-                                            (Just $ _blockInfo_level headInfo - _blockInfo_level seen)
+            let ancestorBlockHash = blockHashIdPred (_blockInfo_hash headInfo)
+                                                    (unTezosWord64 (headInfo ^. blockInfo_header . blockInfoHeader_level
+                                                     - seen ^. blockInfo_header . blockInfoHeader_level))
             nodeRPC (RBlock ancestorBlockHash) >>= \case
               Left bad -> do
                 liftIO $ putStrLn "no ancestor"
                 return $ ForkStatus_BadNode bad
               Right ancestor -> do
-                return $ if _blockInfo_predecessor seen == _blockInfo_predecessor ancestor
+                return $ if
+                    (seen ^. blockInfo_header . blockInfoHeader_predecessor) ==
+                    (ancestor ^. blockInfo_header . blockInfoHeader_predecessor)
                   then ForkStatus_Good
                   else ForkStatus_Forked
     return $ ForkInfo node status seenBaked
@@ -74,15 +79,15 @@ obtainNode = do
       return (Left bad, Nothing)
     Right headInfo -> do
       -- liftIO $ putStrLn ("head:" <> show head)
-      return (Right headInfo, Just $ _blockInfo_level headInfo)
+      return (Right headInfo, Just $ headInfo ^. blockInfo_header . blockInfoHeader_level)
   connections <- nodeRPC RConnections >>= \case
-    Left _bad -> do
-      liftIO $ putStrLn $ "Couldn't get connection information for node " <> show addr
+    Left bad -> do
+      liftIO $ putStrLn $ "Couldn't get connection information for node " <> show addr <> ": " <> show bad
       return Nothing
     Right n -> return (Just n)
   networkStat <- nodeRPC RNetworkStat >>= \case
-    Left _bad -> do
-      liftIO $ putStrLn $ "Couldn't get network status information for node " <> show addr
+    Left bad -> do
+      liftIO $ putStrLn $ "Couldn't get network status information for node " <> show addr <> ": " <> show bad
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
-  return (info, Node { _node_address = addr, _node_headLevel = level, _node_peerCount = connections, _node_networkStat = networkStat})
+  return (info, Node { _node_address = addr, _node_headLevel = unTezosWord64 <$> level, _node_peerCount = connections, _node_networkStat = networkStat})

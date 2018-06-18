@@ -14,7 +14,7 @@ module Backend where
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (finally)
-import Control.Lens ((.~))
+import Control.Lens ((.~), (^.))
 import Control.Monad (forM, forM_, join, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -73,6 +73,7 @@ import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Common.Base16ByteString (unbase16ByteString)
+import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
 import Common.Schema
 import Common.TaggedHash (toBase58Text)
@@ -129,10 +130,10 @@ nodeWorker delay httpMgr db = do
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         forM_ headBlockRsp $ \headBlockInfo -> do
-          updateAndNotify nodeId [Node_headLevelField =. Just (_blockInfo_level headBlockInfo) ]
+          updateAndNotify nodeId [Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level) ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
-          headMaybe = maximumByMay (on compare $ _blockInfo_fitness . snd) heads'
+          headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
       case headMaybe of
         Nothing -> liftIO $ putStrLn "no visible nodes"
         Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
