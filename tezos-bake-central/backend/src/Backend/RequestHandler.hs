@@ -14,7 +14,6 @@ import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Coerce (Coercible, coerce)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)

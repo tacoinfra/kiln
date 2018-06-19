@@ -5,18 +5,14 @@
 
 module Common.Tez where
 
-import Control.Applicative
 import Data.Aeson
 import Data.Attoparsec.ByteString
 import Data.Fixed
 import Data.Int
 import Data.Proxy
-import Data.Scientific
-import qualified Data.Text as T
 import Data.Typeable
-import GHC.Generics
+import GHC.Generics (Generic)
 import GHC.Word (Word64)
-import Text.Read (readMaybe)
 
 import Common.Json (parseIntegralAsString)
 import Common.TezosBinary

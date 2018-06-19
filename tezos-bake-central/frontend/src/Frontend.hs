@@ -12,7 +12,7 @@
 
 module Frontend where
 
-import Control.Lens (firstOf, _1, _2)
+import Control.Lens (_1, _2)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Monad.Trans

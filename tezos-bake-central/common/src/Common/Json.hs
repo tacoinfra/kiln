@@ -7,7 +7,6 @@ import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON)
 import qualified Data.Aeson.Types as Aeson
 import Data.Bits (Bits)
-import Data.Generics (Generic)
 import Data.Proxy (Proxy (..))
 import Data.Scientific (Scientific)
 import qualified Data.Text as T

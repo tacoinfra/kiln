@@ -12,21 +12,20 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.AppendMap as Map
 import Data.Functor.Identity (Identity (..))
-import qualified Data.Map as BaseMap
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
 import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
-import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)
 import Rhyolite.Backend.Schema (toId)
 import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
 import Backend.Graphs
-import Backend.Schema (ParametersConstructor (..))
+import Backend.Schema ()
 import Common.App
 import Common.Schema
 

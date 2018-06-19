@@ -9,10 +9,8 @@
 module Backend.NodeRPC where
 
 import Control.Exception
-import Control.Lens (preview)
 import Control.Monad.Reader
 import Data.Aeson
-import Data.Aeson.Lens
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Semigroup ((<>))
