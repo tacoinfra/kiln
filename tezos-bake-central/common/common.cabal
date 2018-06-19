@@ -37,6 +37,7 @@ library
     , time
 
   exposed-modules:
+    Common
     Common.Api
     Common.App
     Common.Base16ByteString

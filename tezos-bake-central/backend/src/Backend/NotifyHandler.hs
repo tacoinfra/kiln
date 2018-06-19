@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.NotifyHandler where
@@ -19,10 +20,12 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
+import Say (say)
 
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
+import Common (tshow)
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
@@ -110,10 +113,10 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
     _ -> do
-      liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
+      say $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty
 
 parseErr :: (MonadIO m, Show nm, Show err, Monoid r) => nm -> err -> m r
 parseErr nm err = do
-  liftIO . putStrLn $ "Unable to parse NotifyMessage: " <> show nm <> ": " <> show err
+  say $ "Unable to parse NotifyMessage: " <> tshow nm <> ": " <> tshow err
   return mempty

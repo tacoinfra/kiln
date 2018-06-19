@@ -4,12 +4,14 @@
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
 import Control.Lens ((^.))
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Semigroup ((<>))
 import Data.Time (UTCTime, addUTCTime)
 import qualified Network.HTTP.Client as Http
+import Say (say)
 
 import Backend.NodeRPC
+import Common (tshow)
 import Common.Json (TezosWord64 (..))
 import Common.Schema
 import Common.Verification
@@ -59,7 +61,7 @@ checkChainHealth now delay seenBaked = do
                                                      - seen ^. blockInfo_header . blockInfoHeader_level))
             nodeRPC (RBlock ancestorBlockHash) >>= \case
               Left bad -> do
-                liftIO $ putStrLn "no ancestor"
+                say "no ancestor"
                 return $ ForkStatus_BadNode bad
               Right ancestor -> do
                 return $ if
@@ -75,19 +77,18 @@ obtainNode = do
   addr <- nodeAddress
   (info, level) <- nodeRPC (RBlock headId) >>= \case
     Left bad -> do
-      liftIO $ putStrLn "Couldn't get head block."
+      say "Couldn't get head block."
       return (Left bad, Nothing)
     Right headInfo -> do
-      -- liftIO $ putStrLn ("head:" <> show head)
       return (Right headInfo, Just $ headInfo ^. blockInfo_header . blockInfoHeader_level)
   connections <- nodeRPC RConnections >>= \case
     Left bad -> do
-      liftIO $ putStrLn $ "Couldn't get connection information for node " <> show addr <> ": " <> show bad
+      say $ "Couldn't get connection information for node " <> tshow addr <> ": " <> tshow bad
       return Nothing
     Right n -> return (Just n)
   networkStat <- nodeRPC RNetworkStat >>= \case
     Left bad -> do
-      liftIO $ putStrLn $ "Couldn't get network status information for node " <> show addr <> ": " <> show bad
+      say $ "Couldn't get network status information for node " <> tshow addr <> ": " <> tshow bad
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
   return (info, Node { _node_address = addr, _node_headLevel = unTezosWord64 <$> level, _node_peerCount = connections, _node_networkStat = networkStat})

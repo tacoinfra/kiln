@@ -15,7 +15,7 @@ import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (finally)
 import Control.Lens ((.~), (^.))
-import Control.Monad (forM, forM_, join, void, when, (<=<))
+import Control.Monad (forM, forM_, join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -33,7 +33,6 @@ import Data.Pool (Pool)
 import Data.Semigroup (Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Word (Word64)
@@ -60,8 +59,9 @@ import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Schema (Id, Json (..))
 import Safe (maximumByMay, maximumMay)
-import Snap (quickHttpServe, route)
-import Snap.Core (MonadSnap)
+import Say (say, sayShow)
+import Snap.Core (MonadSnap, route)
+import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import qualified Web.ClientSession as CS
@@ -114,7 +114,7 @@ nodeWorker
   -> m (IO ())
 nodeWorker delay httpMgr db = do
   worker (seconds delay) $ do
-    putStrLn "Update node cycle."
+    say "Update node cycle."
     runNoLoggingT . runDb (Identity db) $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
 
@@ -135,7 +135,7 @@ nodeWorker delay httpMgr db = do
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
           headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
       case headMaybe of
-        Nothing -> liftIO $ putStrLn "no visible nodes"
+        Nothing -> say "no visible nodes"
         Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
@@ -180,8 +180,8 @@ clientWorker :: (MonadIO m)
 clientWorker delay httpMgr db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
-    putStrLn "Update client cycle."
-    runNoLoggingT . runDb (Identity db) $ do
+    say "Update client cycle."
+    runNoLoggingT $ runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
@@ -195,7 +195,7 @@ clientWorker delay httpMgr db = do
       mLevelAndProto <- getLatestProtoInfo
 
       forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
-        liftIO $ T.putStrLn address
+        say address
         -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
         configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
         configResponse <- Http.httpJSON configRequest
@@ -225,12 +225,10 @@ clientWorker delay httpMgr db = do
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["int8", "varchar", "int8", "int8"]
                 [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
-          when (not . null $ _report_baked report) $ do
-            _ <- [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
+          unless (null $ _report_baked report) $ do
+            void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
                             ?insertValues
                             ON CONFLICT DO NOTHING |]
-            return ()
-          return ()
 
         _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config, node)
                         VALUES (?cid, ?reportJson, ?clientConfigJson, ?nodeId)
@@ -239,7 +237,7 @@ clientWorker delay httpMgr db = do
                         , config = ?clientConfigJson
                         , node = ?nodeId |]
         forkInfo <- mapM (scanForkInfo httpMgr now report) [node]
-        liftIO $ validateForkyBlocks print $ concat forkInfo
+        liftIO $ validateForkyBlocks sayShow $ concat forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
         case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -260,14 +258,15 @@ clientWorker delay httpMgr db = do
 backend :: IO ()
 backend = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
-  csk <- liftIO $ CS.getKey "config/clientSessionKey"
-  routeHead <- liftIO $ inject "route"
+  csk <- CS.getKey "config/clientSessionKey"
+  routeHead <- inject "route"
+  frontendHead <- snd <$> renderStatic (fst frontend)
 
   finalizers <- newTVarIO (return ())
   let addFinalizer f = atomically $ modifyTVar finalizers (f >>)
 
-  liftIO $ withDb "db" $ \db -> do
-    runNoLoggingT . runDb (Identity db) $ do
+  withDb "db" $ \db -> do
+    runNoLoggingT $ runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
         migrateAccount tableInfo
@@ -277,7 +276,7 @@ backend = do
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
-    httpMgr <- liftIO $ Http.newManager Https.tlsManagerSettings
+    httpMgr <- Http.newManager Https.tlsManagerSettings
 
     (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
       (requestHandler csk httpMgr db)
@@ -289,8 +288,8 @@ backend = do
     addFinalizer =<< nodeWorker 30 httpMgr db
     addFinalizer =<< clientWorker 10 httpMgr db
 
-    frontendHead <- liftIO $ fmap snd $ renderStatic $ fst frontend
-    liftIO (quickHttpServe $ route
+    conf <- SnapServer.commandLineConfig SnapServer.defaultConfig
+    SnapServer.httpServe conf (route
       [ ("", rootHandler $ routeHead <> frontendHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")

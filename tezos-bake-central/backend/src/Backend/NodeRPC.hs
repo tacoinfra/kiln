@@ -22,7 +22,9 @@ import Network.HTTP.Types.Header
 import Network.HTTP.Types.Method (Method, methodGet, methodPost)
 import Network.HTTP.Types.Status (Status (..))
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
+import Say (say)
 
+import Common (tshow)
 import Common.PublicKeyHash
 import Common.Schema
 
@@ -85,7 +87,7 @@ nodeRPCImpl' decoder method_ rpcSelector = NodeRPCT $ do
   result' <- liftIO $ try $ httpLbs request mgr
   let logFailure :: RpcResponse a -> ReaderT NodeRPCContext m (RpcResponse a)
       logFailure (Left bad) = do
-        liftIO $ putStrLn $ "NODERPC ERROR:" <> show rpcUrl <> " >> " <> show bad
+        say $ "NODERPC ERROR:" <> tshow rpcUrl <> " >> " <> tshow bad
         return $ Left bad
       logFailure ok = return ok
   logFailure =<< case result' of
