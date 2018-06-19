@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -15,6 +16,7 @@ module Backend.Schema where
 
 import Control.Arrow
 import Data.ByteString (ByteString)
+import Data.Coerce (Coercible, coerce)
 import Data.Fixed
 import Data.Int (Int64)
 import Data.Text.Encoding as T
@@ -24,6 +26,7 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
+import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField
 import Rhyolite.Backend.Account ()
@@ -96,6 +99,9 @@ instance NeverNull TezosWord64
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+
+stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
+stripOnly = coerce
 
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
