@@ -72,15 +72,23 @@ checkChainHealth now delay seenBaked = do
     return $ ForkInfo node status seenBaked
 
 -- Obtains a Node datastructure for the node specified by the environment, and a head block, if successful
+-- TODO: This won't work in the typical case of node rpc on localhost with
+-- monitor on a different host.  We'll leave it for now since it's "useful",
+-- but this should probably be reported by the client rather than queried by
+-- the monitor
 obtainNode :: (MonadIO m, MonadTezosNode m) => m (RpcResponse BlockInfo, Node)
 obtainNode = do
   addr <- nodeAddress
-  (info, level) <- nodeRPC (RBlock headId) >>= \case
+  (info, level, fitness) <- nodeRPC (RBlock headId) >>= \case
     Left bad -> do
       say "Couldn't get head block."
-      return (Left bad, Nothing)
+      return (Left bad, Nothing, Nothing)
     Right headInfo -> do
-      return (Right headInfo, Just $ headInfo ^. blockInfo_header . blockInfoHeader_level)
+      return
+        ( Right headInfo
+        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_level
+        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_fitness
+        )
   connections <- nodeRPC RConnections >>= \case
     Left bad -> do
       say $ "Couldn't get connection information for node " <> tshow addr <> ": " <> tshow bad
@@ -91,4 +99,10 @@ obtainNode = do
       say $ "Couldn't get network status information for node " <> tshow addr <> ": " <> tshow bad
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
-  return (info, Node { _node_address = addr, _node_headLevel = unTezosWord64 <$> level, _node_peerCount = connections, _node_networkStat = networkStat})
+  return (info, Node
+    { _node_address = addr
+    , _node_headLevel = unTezosWord64 <$> level
+    , _node_peerCount = connections
+    , _node_networkStat = networkStat
+    , _node_fitness = fitness
+    })

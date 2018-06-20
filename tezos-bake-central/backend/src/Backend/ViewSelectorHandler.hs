@@ -41,12 +41,12 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
   clients <- do
     let selClients = In (Map.keys (_bakeViewSelector_clients vs))
-    rs <- [queryQ| SELECT c.id, i.report, i.config, i.balance, i.node
+    rs <- [queryQ| SELECT c.id, i.report, i.config, i.balance
                    FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
                    WHERE c.id IN ?selClients |]
     let clientInfo = Map.fromList $ do
-          (cid, report, config, balance, node) <- rs
-          return (cid, First (ClientInfo cid <$> report <*> config <*> balance <*> node))
+          (cid, report, config, balance) <- rs
+          return (cid, First (ClientInfo cid <$> report <*> config <*> balance ))
     return (Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs))
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
     param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1

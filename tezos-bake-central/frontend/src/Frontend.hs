@@ -366,7 +366,7 @@ clientTab cid addr = do
         elAttr "div" ("class" =: "client-node") $ do
           text $ "Node: "
             <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
-        dyn . ffor nodes $ \ns -> case Map.lookup (_clientInfo_node clientInfo) ns of
+        dyn . ffor nodes $ \ns -> case Nothing {- TODO: sort this out in a way that breaks for unreachable nodes Map.lookup (_clientInfo_node clientInfo) ns -} of
             Nothing -> text "Waiting..."
             Just n -> do
               el "div" . text $ "Head block level " <> case _node_headLevel n of

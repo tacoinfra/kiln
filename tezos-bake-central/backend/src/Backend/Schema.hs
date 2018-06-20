@@ -35,6 +35,7 @@ import Rhyolite.Backend.Schema.TH
 import Rhyolite.Schema (Json (..))
 
 import Common.Base16ByteString
+import Common.Fitness
 import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema
@@ -96,6 +97,7 @@ instance NeverNull (Json BakedEvent)
 instance NeverNull PublicKeyHash
 instance NeverNull NetworkStat
 instance NeverNull TezosWord64
+instance NeverNull Fitness
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"

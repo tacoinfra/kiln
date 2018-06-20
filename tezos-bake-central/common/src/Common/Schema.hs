@@ -12,6 +12,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
+
 module Common.Schema where
 
 import qualified Cases
@@ -161,7 +162,7 @@ data ClientInfo = ClientInfo
   , _clientInfo_report :: Json Report
   , _clientInfo_config :: Json ClientConfig
   , _clientInfo_balance :: Maybe Tezzies
-  , _clientInfo_node :: Id Node
+  -- , _clientInfo_node :: Id Node
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -176,10 +177,11 @@ data NetworkStat = NetworkStat
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 data Node = Node
-  { _node_address :: ClientAddress
-  , _node_headLevel :: Maybe Word64
-  , _node_peerCount :: Maybe Word64
-  , _node_networkStat :: NetworkStat
+  { _node_address :: !ClientAddress
+  , _node_headLevel :: !(Maybe Word64)
+  , _node_peerCount :: !(Maybe Word64)
+  , _node_networkStat :: !NetworkStat
+  , _node_fitness :: !(Maybe Fitness)
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
@@ -311,7 +313,7 @@ data Account = Account
   , _account_balance :: Tezzies -- "2052452947621"
   , _account_spendable :: Bool -- true
   -- , _account_delegate :: {"setable":false,"value":"tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"}
-  , _account_counter :: Int64 -- 1540
+  , _account_counter :: TezosWord64 -- 1540
   }
 
 newtype BlockPrefix = BlockPrefix Text

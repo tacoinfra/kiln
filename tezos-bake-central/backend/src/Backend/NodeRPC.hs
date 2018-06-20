@@ -47,7 +47,7 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
     RBlock hash -> nodeRPCImpl methodGet (blockIdToUrl hash)
     RProtoConstants -> nodeRPCImpl methodGet (blockIdToUrl headId <> "/context/constants")
-    RContract block publicKey -> nodeRPCImpl methodPost (blockIdToUrl block <> "/proto/context/contracts/" <> toPublicKeyHashText publicKey)
+    RContract block publicKey -> nodeRPCImpl methodGet (blockIdToUrl block <> "/context/contracts/" <> toPublicKeyHashText publicKey)
     RConnections -> do
       (vs :: RpcResponse [Value]) <- nodeRPCImpl methodGet "/network/connections"
       return $ fmap (fromIntegral . Prelude.length) vs
