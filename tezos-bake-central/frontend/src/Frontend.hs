@@ -19,7 +19,8 @@ import Control.Monad.Trans
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Lazy as LBS
-import Data.Either.Combinators
+import Data.Either (isRight)
+import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed
 import Data.List
 import qualified Data.Map as BaseMap
@@ -62,11 +63,18 @@ frontend :: (StaticWidget x (), Widget x ())
 frontend =
   ( headTag
   , void $ do
-      Just routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
-      let route :: RouteEnv
-          Just route = decodeValue' $ LBS.fromStrict $ T.encodeUtf8 routeStr
+      routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
+      route :: RouteEnv <- case routeStr of
+        Just r -> return $ fromMaybe
+          (error "Unable to parse injected route")
+          (decodeValue' $ LBS.fromStrict $ T.encodeUtf8 r)
+        Nothing -> do
+          protocol <- getLocationProtocol
+          hostWithPort <- getLocationHost
+          return $ let (host, port) = T.breakOn ":" hostWithPort
+                    in (T.unpack protocol, T.unpack host, T.unpack port)
       liftIO $ print route
-      runRhyoliteWidget (mapLeft websocketUrlFromRouteEnv (Left route)) appMain
+      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) appMain
   )
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))

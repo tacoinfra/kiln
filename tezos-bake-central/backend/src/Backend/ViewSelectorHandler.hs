@@ -26,12 +26,9 @@ import qualified Web.ClientSession as CS
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema ()
+import Common (whenJust)
 import Common.App
 import Common.Schema
-
-whenJust :: (Monad m, Monoid a) => Maybe t -> (t -> m a) -> m a
-whenJust Nothing f = return mempty
-whenJust (Just x) f = f x
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)

@@ -14,9 +14,9 @@ module Backend where
 import Control.Applicative ((<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception (finally)
+import Control.Exception (catch, finally, throwIO)
 import Control.Lens ((.~), (^.))
-import Control.Monad (forM, forM_, join, unless, void, when, (<=<))
+import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -25,7 +25,8 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (toList)
+import Data.Either.Combinators (rightToMaybe)
+import Data.Foldable (for_, toList)
 import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -38,6 +39,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
+import Data.Traversable (for)
 import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
@@ -71,6 +73,7 @@ import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
+import System.IO.Error (isDoesNotExistError)
 import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
@@ -79,6 +82,7 @@ import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Common (whenJust)
 import Common.Base16ByteString (unbase16ByteString)
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
@@ -126,29 +130,29 @@ nodeWorker delay httpMgr db = do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
-      heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+      heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
-        forM_ params $ \protoInfo -> do
+        for_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
-        forM_ headBlockRsp $ \headBlockInfo -> do
+        for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level) ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
           headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
       case headMaybe of
         Nothing -> say "no visible nodes"
-        Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
+        Just (nodeAddr, blockInfo) -> for_ clients $ \(clientInfoId, Json ci) -> do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
-          runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
+          runNodeRPCT ctx $ for_ (_clientConfig_delegates ci) $ \delegate -> do
             accountResp <- nodeRPC (RContract (blockHashId headHash) delegate)
-            forM_ accountResp $ \account -> do
+            for_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
                                 SET balance = ?balance
@@ -175,7 +179,7 @@ getLatestProtoInfo = do
 queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => [Error] -> m ()
 queueAllEmails message = do
   ns <- selectAll
-  forM_ ns $ \(_, n) ->
+  for_ ns $ \(_, n) ->
     queueEmail (mailFor (_notificatee_email n) message) Nothing
 
 clientWorker :: (MonadIO m)
@@ -200,7 +204,7 @@ clientWorker delay httpMgr db = do
                            ORDER BY updated NULLS FIRST |]
       mLevelAndProto <- getLatestProtoInfo
 
-      forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
+      for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         say address
         -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
         configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
@@ -222,7 +226,7 @@ clientWorker delay httpMgr db = do
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
             void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
-        forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
+        for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
@@ -269,8 +273,12 @@ backend = do
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
-  routeEnv <- maybe (getConfigFromFile "config/route") (pure . uriToRouteEnv) $ _opts_route =<< SnapServer.getOther cfg
-  routeHead <- snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode routeEnv)
+  routeEnv :: Maybe RouteEnv <- case _opts_route =<< SnapServer.getOther cfg of
+    Nothing -> getConfigFromFile "config/route"
+    Just env -> pure $ Just $ uriToRouteEnv env
+
+  routeHead <- whenJust routeEnv $ \env ->
+    snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode env)
   frontendHead <- snd <$> renderStatic (fst frontend)
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
@@ -341,8 +349,9 @@ clearMailQueueWithDynamicEmailEnv db = do
   clearMailQueue db emailEnv
 
 
-getConfigFromFile :: (FromJSON a, MonadIO m) => FilePath -> m a
-getConfigFromFile f = either error id . Aeson.eitherDecode <$> liftIO (LBS.readFile f)
+getConfigFromFile :: (FromJSON a) => FilePath -> IO (Maybe a)
+getConfigFromFile f = (rightToMaybe . Aeson.eitherDecode <$> LBS.readFile f)
+  `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
 
 withGargoyleOrConnStr :: Either FilePath Text -> (Pool Postgresql -> IO a) -> IO a
