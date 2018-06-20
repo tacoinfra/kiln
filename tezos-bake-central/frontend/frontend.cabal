@@ -30,7 +30,7 @@ library
     , mtl
     , obelisk-executable-config
     , reflex
-    , reflex-dom
+    , reflex-dom-core
     , reflex-dom-forms
     , rhyolite-common
     , rhyolite-frontend
@@ -46,10 +46,7 @@ executable frontend
   main-is: main.hs
   hs-source-dirs: src-bin
   build-depends: base
-               , common
                , reflex-dom
-               , static
-               , text
                , frontend
   ghc-options: -threaded
   if os(darwin)
