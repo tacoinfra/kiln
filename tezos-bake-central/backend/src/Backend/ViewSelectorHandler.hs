@@ -72,7 +72,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     Just a -> do
       report <- getSummaryReport
       return $ single report a
-  return $ (mempty :: BakeView a)
+  return $ BakeView
       { _bakeView_clients = clients
       , _bakeView_clientAddresses = clientAddresses
       , _bakeView_parameters = parameters
@@ -81,4 +81,5 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
+      , _bakeView_graphs = mempty
       }

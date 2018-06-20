@@ -82,7 +82,6 @@ import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Common (whenJust)
 import Common.Base16ByteString (unbase16ByteString)
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
@@ -277,7 +276,7 @@ backend = do
     Nothing -> getConfigFromFile "config/route"
     Just env -> pure $ Just $ uriToRouteEnv env
 
-  routeHead <- whenJust routeEnv $ \env ->
+  routeHead <- for routeEnv $ \env ->
     snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode env)
   frontendHead <- snd <$> renderStatic (fst frontend)
 
@@ -309,7 +308,7 @@ backend = do
     addFinalizer =<< clientWorker 10 httpMgr db
 
     SnapServer.httpServe cfg (route
-      [ ("", rootHandler $ routeHead <> frontendHead)
+      [ ("", rootHandler $ fromMaybe mempty routeHead <> frontendHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
       , ("", serveDirectory "frontend.jsexe")
