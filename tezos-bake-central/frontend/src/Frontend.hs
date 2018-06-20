@@ -56,7 +56,7 @@ import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
 import Common.Tez
-import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos)
+import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos, uiButton)
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -236,7 +236,15 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "Notification Recipients"
     let isEmailAddress = const True
     notificatees <- watchNotificatees
-    rec (addN, removeN) <- listInput "user@example.com" isEmailAddress notificatees (Right "" <$ addedN)
+
+    let
+      emailWidget email = do
+        dynText email
+        text " "
+        ev <- uiButton "mini compact orange" "Send test"
+        void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
+
+    rec (addN, removeN) <- listInput "user@example.com" isEmailAddress emailWidget notificatees (Right "" <$ addedN)
         addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
         requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
@@ -434,14 +442,14 @@ semuiTab label k currentTab =
       text label
 
 -- | Control that allows the user to build a list of items.
--- TODO: Move this to Focus.JS.Widget
 listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)
           => Text -- ^ Placeholder for input
           -> (Text -> Bool) -- ^ Input validation
+          -> (Dynamic t Text -> m ()) -- ^ Widget builder for each item in the list
           -> Dynamic t (AppendMap k Text) -- ^ Items in list
           -> Event t (Either [Text] Text) -- ^ Event of error messages or successful submission
           -> m (Event t Text, Event t (k, Text)) -- ^ Add item event, remove item event
-listInput ph validate items rsp = divClass "list-input" $ do
+listInput ph validate itemWidget items rsp = divClass "list-input" $ do
   rec (i, addClick) <- divClass "item-input" $ do
         itemInput <- inputElement $ def
           & initialAttributes .~ ("placeholder" =: ph)
@@ -462,11 +470,11 @@ listInput ph validate items rsp = divClass "list-input" $ do
             [ () <$ ffilter ((==Enter) . keyCodeLookup . fromIntegral) (domEvent Keypress i)
             , addClick
             ]
-      widgetHold_ (return ()) $ ffor rsp $ \case
+      widgetHold_ blank $ ffor rsp $ \case
         Left errs -> forM_ errs $ elClass "div" "modal-content__text-input-error" . text
         Right success -> elClass "div" "modal-content__text-input-success" $ text success
-      remove <-  fmap (fmap (leftmost . BaseMap.elems)) $ elClass "ul" "list-input-items" $
+      remove <- fmap (fmap (leftmost . BaseMap.elems)) $ elClass "ul" "list-input-items" $
         listWithKey (_unAppendMap <$> items) $ \k t -> el "li" $ do
-          el "span" $ dynText t
+          el "span" $ itemWidget t
           fmap ((,) k) . tag (current t) . domEvent Click . fst <$> el' "span" (elClass "i" "fa fa-fw fa-times-circle" blank)
   return (ffilter validate submit, switch . current $ remove)

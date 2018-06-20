@@ -15,7 +15,7 @@ import Control.Applicative ((<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
-import Control.Lens ((.~), (^.))
+import Control.Lens ((.~), (<&>), (^.))
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -92,12 +92,12 @@ import Frontend (frontend)
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
-mailFor :: Text -> [Error] -> Mail
-mailFor toAddr errs =
-  let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
-      toA = Address Nothing toAddr
-      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' toA fromA "Error from Tezos bake monitor" body
+mailFor :: Address -> Text -> [Error] -> Mail
+mailFor fromAddr toAddr errs =
+  let
+    toA = Address Nothing toAddr
+    body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
+  in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -175,18 +175,19 @@ getLatestProtoInfo = do
         _ -> Nothing
     [] -> return Nothing
 
-queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => [Error] -> m ()
-queueAllEmails message = do
-  ns <- selectAll
-  for_ ns $ \(_, n) ->
-    queueEmail (mailFor (_notificatee_email n) message) Nothing
+queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => Address -> [Error] -> m ()
+queueAllEmails fromAddr message = do
+  ns <- select CondEmpty
+  for_ ns $ \n ->
+    queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
 
 clientWorker :: (MonadIO m)
              => Int -- delay between checking for updates, in seconds
+             -> Address
              -> Http.Manager
              -> Pool Postgresql
              -> m (IO ())
-clientWorker delay httpMgr db = do
+clientWorker delay emailFromAddress httpMgr db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     say "Update client cycle."
@@ -223,7 +224,8 @@ clientWorker delay httpMgr db = do
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
+            queueAllEmails emailFromAddress
+              [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
         for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
@@ -258,11 +260,9 @@ clientWorker delay httpMgr db = do
               [] -> return ()
               (x:_) -> do
                 liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-                _ <- queueAllEmails new
-                return ()
+                queueAllEmails emailFromAddress new
         -- TODO.  debounce below as above
-        flip validateForkyBlocks (concat forkInfo) $ \errors ->
-          void $ queueAllEmails errors
+        flip validateForkyBlocks (concat forkInfo) $ queueAllEmails emailFromAddress
 
 backend :: IO ()
 backend = do
@@ -271,6 +271,9 @@ backend = do
 
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
+
+  let emailFromAddress = Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" $
+        _opts_emailFromAddress =<< SnapServer.getOther cfg
 
   routeEnv :: Maybe RouteEnv <- case _opts_route =<< SnapServer.getOther cfg of
     Nothing -> getConfigFromFile "config/route"
@@ -298,14 +301,14 @@ backend = do
     httpMgr <- Http.newManager Https.tlsManagerSettings
 
     (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-      (requestHandler csk httpMgr db)
+      (requestHandler csk emailFromAddress httpMgr db)
       (notifyHandler db)
       (viewSelectorHandler csk db)
       (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
     addFinalizer =<< nodeWorker 30 httpMgr db
-    addFinalizer =<< clientWorker 10 httpMgr db
+    addFinalizer =<< clientWorker 10 emailFromAddress httpMgr db
 
     SnapServer.httpServe cfg (route
       [ ("", rootHandler $ fromMaybe mempty routeHead <> frontendHead)
@@ -331,8 +334,7 @@ clearMailQueueWithDynamicEmailEnv
   -> m ()
 clearMailQueueWithDynamicEmailEnv db = do
   emailEnv <- runDb db $ do
-    defaultMailServer <- getDefaultMailServer
-    pure $ case defaultMailServer of
+    getDefaultMailServer <&> \case
       Nothing -> error "No mail server configuration found"
       Just (_, c) ->
         ( T.unpack $ _mailServerConfig_hostName c
@@ -374,16 +376,18 @@ uriToRouteEnv uri =
 data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
   , _opts_route :: Maybe URI
+  , _opts_emailFromAddress :: Maybe Text
   }
 
 instance Semigroup Opts where
   a <> b = Opts -- Right biased
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
     , _opts_route = _opts_route b <|> _opts_route a
+    , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -392,6 +396,8 @@ optsArgDescr =
       "Connection string or URI to PostgreSQL database. If blank, use connection string in 'db' file or create a database there if empty."
   , Option [] ["route"] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x })
       "Root URL for this service as seen by external users. If blank, use contents of 'config/route'."
+  , Option [] ["email-from"] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x })
+      "Email address to use for 'From' field in email notifications."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var

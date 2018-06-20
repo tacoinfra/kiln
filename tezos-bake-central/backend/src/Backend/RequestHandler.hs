@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -10,20 +11,23 @@
 
 module Backend.RequestHandler where
 
-import Control.Monad (forM_, void)
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Foldable (for_)
+import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
+import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), executeQ, queryQ)
+import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Schema (Id (..))
 import qualified Web.ClientSession as CS
@@ -39,10 +43,11 @@ import Common.Schema
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
   => CS.Key
+  -> Address
   -> Http.Manager
   -> Pool Postgresql
   -> RequestHandler Bake m
-requestHandler csk httpMgr db = RequestHandler $ \req -> runNoLoggingT . runDb (Identity db) $
+requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $
   case req of
     ApiRequest_Public r ->
       case r of
@@ -50,6 +55,7 @@ requestHandler csk httpMgr db = RequestHandler $ \req -> runNoLoggingT . runDb (
           let ctx = NodeRPCContext httpMgr addr
           (_, node) <- runNodeRPCT ctx obtainNode
           insertAndNotify_ node
+
         PublicRequest_RemoveNode addr -> do
           nodeIds <- stripOnly <$> [queryQ| SELECT id FROM "Node" where address = ?addr |]
           let inNodeIds = In nodeIds
@@ -58,22 +64,37 @@ requestHandler csk httpMgr db = RequestHandler $ \req -> runNoLoggingT . runDb (
           -- delete node
           _ <- [executeQ| DELETE FROM "Node" where id in ?inNodeIds |]
           -- notify
-          forM_ nodeIds $ \nodeId -> void $ notifyEntityId NotificationType_Delete (nodeId :: Id Node)
+          for_ nodeIds $ \nodeId -> void $ notifyEntityId NotificationType_Delete (nodeId :: Id Node)
+
         PublicRequest_AddClient addr -> do
           insertAndNotify_ $ Client { _client_address = addr, _client_updated = Nothing }
+
         PublicRequest_RemoveClient addr -> do
           _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
           cids <- stripOnly <$>
             [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
           let inCids = In cids
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
-          forM_ cids $ \cid -> notifyEntityId NotificationType_Delete (cid :: Id Client)
+          for_ cids $ \cid -> notifyEntityId NotificationType_Delete (cid :: Id Client)
+
         PublicRequest_AddNotificatee email -> do
           insertAndNotify_ $ Notificatee { _notificatee_email = email }
+
         PublicRequest_RemoveNotificatee email -> do
           nids <- stripOnly <$> [queryQ| SELECT n.id FROM "Notificatee" n WHERE n.email = ?email |]
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
-          forM_ nids $ \nid -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
+          for_ nids $ \nid -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
+
+        PublicRequest_SendTestEmail email -> void $ queueEmail
+          (simpleMail'
+            (Address Nothing email)
+            emailFromAddr
+            "Tezos Bake Monitor - Test"
+            "This is a test email!"
+          )
+          Nothing
+
+
         PublicRequest_SetMailServerConfig mailServerView password -> do
           now <- getTime
           let updatedMailServer = MailServerConfig
