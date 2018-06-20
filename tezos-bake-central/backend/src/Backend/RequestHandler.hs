@@ -51,7 +51,7 @@ requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLogg
   case req of
     ApiRequest_Public r ->
       case r of
-        PublicRequest_AddNode addr -> do
+        PublicRequest_AddNode addr nodeIdent -> do
           let ctx = NodeRPCContext httpMgr addr
           (_, node) <- runNodeRPCT ctx obtainNode
           insertAndNotify_ node

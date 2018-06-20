@@ -275,17 +275,22 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "Nodes"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
       listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
-        let dName = _node_address <$> node
+        let dName = maybe "???" id . _node_address <$> node
+        let dId = maybe "???" toBase58Text . _node_identity <$> node
+        el "td" $ dynText dId
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
       el "tr" $ do
         addressInput <- el "td" $ textInput def
+        idInput <- el "td" $ textInput def
         addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
         let address = value addressInput
-            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
-        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr)
+            -- TODO: display error when errors on nonempty
+            nodeIdent = either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
+            addE = tag ((,) <$> current address <*> current nodeIdent) $ leftmost [addButton, keypress Enter addressInput]
+        requestingIdentity . ffor addE $ \(addr , nodeIdent') -> public (PublicRequest_AddNode addr nodeIdent')
 
   return ()
 

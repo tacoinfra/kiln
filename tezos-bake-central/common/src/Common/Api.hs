@@ -19,11 +19,13 @@ import Rhyolite.Schema (Email)
 
 import Common.App (Bake, MailServerView)
 import Common.Schema (ClientAddress)
+import Common.TaggedHash
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
     PublicRequest_AddNode
       :: ClientAddress
+      -> Maybe CryptoboxPublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_RemoveNode
       :: ClientAddress
