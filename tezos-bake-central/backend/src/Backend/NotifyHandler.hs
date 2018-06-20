@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.NotifyHandler where
@@ -19,10 +20,12 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
+import Say (say)
 
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
+import Common (tshow)
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
 import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
                       Parameters (..))
@@ -67,13 +70,13 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
         Error e -> parseErr notifyMessage e
-      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
+      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id Node) of
         Success nid -> do
           (params :: [Parameters]) <- select (Parameters_nodeField ==. nid)
           return $ case _bakeViewSelector_parameters aggVS of
             Nothing -> mempty :: BakeView a
             Just a -> (mempty :: BakeView a)
-              { _bakeView_parameters = Map.singleton nid (First $ _parameters_protoInfo <$> listToMaybe params, a)
+              { _bakeView_parameters = single (_parameters_protoInfo <$> listToMaybe params) a
               }
         Error e -> parseErr notifyMessage e
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
@@ -94,14 +97,14 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
               { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
               }
         Error e -> parseErr notifyMessage e
-      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success nid -> do
-          (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
-          return $ case _bakeViewSelector_mailServers aggVS of
-            Nothing -> mempty
-            Just a -> (mempty :: BakeView a)
-              { _bakeView_mailServers = Map.singleton nid (First $ mailServerConfigToView <$> mailServer, a)
-              }
+      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id MailServerConfig) of
+        Success nid -> case _bakeViewSelector_mailServer aggVS of
+            Nothing -> return mempty
+            Just a -> do
+              (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
+              return $ (mempty :: BakeView a)
+                { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
+                }
         Error e -> parseErr notifyMessage e
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
@@ -110,10 +113,10 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
     _ -> do
-      liftIO . putStrLn $ "Unhandled NotifyMessage: " <> show notifyMessage
+      say $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty
 
 parseErr :: (MonadIO m, Show nm, Show err, Monoid r) => nm -> err -> m r
 parseErr nm err = do
-  liftIO . putStrLn $ "Unable to parse NotifyMessage: " <> show nm <> ": " <> show err
+  say $ "Unable to parse NotifyMessage: " <> tshow nm <> ": " <> tshow err
   return mempty

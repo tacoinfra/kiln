@@ -12,6 +12,7 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.AppendMap as Map
 import Data.Functor.Identity (Identity (..))
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
@@ -51,17 +52,17 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
           return (cid, First (ClientInfo cid <$> report <*> config <*> balance <*> node))
     return (Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs))
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(nid, (First (Just info), a)) | (_, Parameters nid info) <- rs]
+    param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
+    return $ single (_parameters_protoInfo <$> param) a
   nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just n), a)) | (nid, n) <- rs]
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
-  mailServers <- whenJust (_bakeViewSelector_mailServers vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(toId nid, (First (Just $ mailServerConfigToView n), a)) | (nid, n) <- rs ]
+  mailServer <- whenJust (_bakeViewSelector_mailServer vs) $ \a -> do
+    ms <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
+    return $ single (mailServerConfigToView <$> ms) a
   maxLevel <- getMaxLevel
   summaryGraph <- case (_bakeViewSelector_summary vs, maxLevel) of
     (Just a, Just l) -> do
@@ -80,7 +81,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_parameters = parameters
       , _bakeView_nodes = nodes
       , _bakeView_notificatees = notificatees
-      , _bakeView_mailServers = mailServers
+      , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
       }

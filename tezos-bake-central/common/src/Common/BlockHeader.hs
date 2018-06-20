@@ -1,6 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 
@@ -15,6 +15,7 @@ import GHC.Generics
 import GHC.Word
 
 import Common.Fitness
+import Common.Json (TezosWord64 (..))
 import Common.TaggedHash
 import Common.TezosBinary
 
@@ -29,7 +30,7 @@ data BlockHeader = BlockHeader
   , _blockHeader_fitness :: Fitness
   , _blockHeader_context :: ContextHash
   , _blockHeader_priority :: Word16
-  , _blockHeader_proofOfWorkNonce :: Word64
+  , _blockHeader_proofOfWorkNonce :: TezosWord64
   , _blockHeader_seedNonceHash :: Maybe NonceHash
   }
   deriving (Show, Eq, Ord, Typeable, Generic)

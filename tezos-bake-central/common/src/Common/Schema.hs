@@ -36,6 +36,7 @@ import Rhyolite.Schema
 import Common.Base16ByteString
 import Common.BlockHeader
 import Common.Fitness
+import Common.Json (TezosWord64)
 import Common.Operation
 import Common.PublicKeyHash
 import Common.TaggedHash
@@ -47,8 +48,6 @@ import Common.Tez
 -- with a wonky 1.5-2 letter prefix.  maybe capture that and get read/show
 -- instances once and for all...
 
-
-
 newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor)
 
@@ -57,7 +56,7 @@ instance Foldable PeriodSequenceF where
     go (x :| []) = fix (f x `mappend`)
     go (x :| (y:ys)) = f x `mappend` go (y :| ys)
 
-type PeriodSequence = PeriodSequenceF Int
+type PeriodSequence = PeriodSequenceF TezosWord64
 
 data ProtoInfo = ProtoInfo
   { _protoInfo_blockReward :: Tezzies
@@ -70,12 +69,12 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_endorsementReward :: Tezzies
   , _protoInfo_endorsementSecurityDeposit :: Tezzies
   , _protoInfo_endorsersPerBlock :: Int
-  , _protoInfo_firstFreeBakingSlot :: Int
+  --, _protoInfo_firstFreeBakingSlot :: Int
   , _protoInfo_maxOperationDataLength :: Int
   , _protoInfo_michelsonMaximumTypeSize :: Int
   , _protoInfo_originationBurn :: Tezzies
   , _protoInfo_preservedCycles :: Int
-  , _protoInfo_proofOfWorkThreshold :: Int
+  , _protoInfo_proofOfWorkThreshold :: TezosWord64
   , _protoInfo_seedNonceRevelationTip :: Tezzies
   , _protoInfo_timeBetweenBlocks :: PeriodSequence -- repeating sequence of seconds
   , _protoInfo_tokensPerRoll :: Tezzies
@@ -98,22 +97,40 @@ data Error = Error
 instance FromJSON Error
 instance ToJSON Error
 
--- there are tons of fields i am not trying to parse here
 data BlockInfo = BlockInfo
-  { _blockInfo_hash :: BlockHash
-  , _blockInfo_level :: Word64
-  , _blockInfo_proto :: Word64
-  , _blockInfo_predecessor :: BlockHash
-
+  { _blockInfo_protocol :: ProtocolHash
   , _blockInfo_chainId :: ChainId
-  -- , _blockInfo_context :: ContextHash
-  , _blockInfo_fitness :: Fitness
-  -- , _blockInfo_operations :: [[Base16ByteString ProtoOperation]]
-  , _blockInfo_operationsHash :: OperationListListHash
-  , _blockInfo_protocol :: Protocol
-  -- , _blockInfo_protocolData :: Base16ByteString BS.ByteString
-  , _blockInfo_timestamp :: UTCTime
-  , _blockInfo_validationPass :: Int
+  , _blockInfo_hash :: BlockHash
+  , _blockInfo_header :: BlockInfoHeader
+  , _blockInfo_metadata :: BlockInfoMetadata
+  --, _blockInfo_operations :: [[ProtoOperation]]
+  }
+
+data BlockInfoHeader = BlockInfoHeader
+  { _blockInfoHeader_level :: TezosWord64
+  , _blockInfoHeader_proto :: Word8
+  , _blockInfoHeader_predecessor :: BlockHash
+  , _blockInfoHeader_timestamp :: UTCTime
+  , _blockInfoHeader_validationPass :: Word8
+  , _blockInfoHeader_operationsHash :: OperationListListHash
+  , _blockInfoHeader_fitness :: Fitness
+  , _blockInfoHeader_context :: ContextHash
+  -- , _blockInfoHeader_priority
+  -- , _blockInfoHeader_proofOfWorkNonce
+  -- , _blockInfoHeader_signature
+  }
+
+data BlockInfoMetadata = BlockInfoMetadata
+  { _blockInfoMetadata_protocol :: ProtocolHash
+  , _blockInfoMetadata_nextProtocol :: ProtocolHash
+  -- , _blockInfoMetadata_testChainStatus
+  -- , _blockInfoMetadata_maxOperationsTtl
+  -- , _blockInfoMetadata_maxOperationDataLength
+  -- , _blockInfoMetadata_maxBlockHeaderLength
+  -- , _blockInfoMetadata_maxOperationListLength
+  , _blockInfoMetadata_baker :: PublicKeyHash
+  -- , _blockInfoMetadata_level
+  --, _blockInfoMetadata_votingPeriodKind
   }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -132,14 +149,12 @@ instance ToJSON Client
 data PendingReward = PendingReward
   { _pendingReward_client :: Id Client
   , _pendingReward_hash :: Text -- needed because we need to be able to tell that we're not adding the same reward twice
-  , _pendingReward_level :: Word64
+  , _pendingReward_level :: TezosWord64
   , _pendingReward_amount :: Micro
   }
   deriving (Eq, Show, Generic, Typeable)
 
 instance HasId PendingReward
-instance FromJSON PendingReward
-instance ToJSON PendingReward
 
 data ClientInfo = ClientInfo
   { _clientInfo_client :: Id Client
@@ -151,19 +166,14 @@ data ClientInfo = ClientInfo
   deriving (Eq, Show, Generic, Typeable)
 
 instance HasId ClientInfo
-instance FromJSON ClientInfo
-instance ToJSON ClientInfo
 
 data NetworkStat = NetworkStat
-  { _networkStat_totalSent :: Word64 -- bytes
-  , _networkStat_totalRecv :: Word64 -- bytes
-  , _networkStat_currentInflow :: Word64 -- bytes/s
-  , _networkStat_currentOutflow :: Word64 -- bytes/s
+  { _networkStat_totalSent :: TezosWord64 -- bytes
+  , _networkStat_totalRecv :: TezosWord64 -- bytes
+  , _networkStat_currentInflow :: Int32 -- bytes/s
+  , _networkStat_currentOutflow :: Int32 -- bytes/s
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
-
-instance FromJSON NetworkStat
-instance ToJSON NetworkStat
 
 data Node = Node
   { _node_address :: ClientAddress
@@ -174,8 +184,6 @@ data Node = Node
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId Node
-instance FromJSON Node
-instance ToJSON Node
 
 data Parameters = Parameters
   { _parameters_node :: Id Node
@@ -184,8 +192,6 @@ data Parameters = Parameters
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId Parameters
-instance FromJSON Parameters
-instance ToJSON Parameters
 
 data Level = Level
   { _level_cycle :: Int
@@ -212,19 +218,14 @@ data BakedEvent = BakedEvent
   deriving (Show, Eq, Ord, Typeable, Generic)
 
 
--- TODO: this is honestly a Base58Check object, prefix: "Proto", it even makes
--- "sense" to make each protocol hash its own tag separately as the protocol
--- evolves, so as to index datastructures that depend on the protocol
-type Protocol = Text
-
 
 data SeenEvent = SeenEvent
-  { _seenEvent_chainId :: ChainId
+  { _seenEvent_hash :: BlockHash
+  -- , _seenEvent_chainId :: ChainId
   -- , _seenEvent_fitness :: Fitness
-  , _seenEvent_hash :: BlockHash
-  , _seenEvent_level :: Json Level
+  , _seenEvent_level :: Word64
   , _seenEvent_predecessor :: BlockHash
-  , _seenEvent_protocol :: Protocol
+  -- , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
   }
   deriving (Show, Eq, Ord, Typeable, Generic)
@@ -317,40 +318,54 @@ newtype BlockPrefix = BlockPrefix Text
   deriving (Eq, Show, Generic, Typeable, ToJSON, FromJSON)
 
 data BlockId = BlockId
-  { _blockId_blockHash :: BlockIdHash
-  , _blockId_predecessor :: Maybe Word64
+  { _blockId_chainId :: DynamicParamChainId
+  , _blockId_blockHash :: DynamicParamBlockHash
+  , _blockId_predecessor :: Maybe Word64 -- ^ Number predecessors prior to block
   }
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
-data BlockIdHash
-   = BlockIdHash_BlockHash BlockHash
-   | BlockIdHash_Genesis
-   | BlockIdHash_Head
-   | BlockIdHash_TestHead
+data DynamicParamBlockHash
+  = DynamicParamBlockHash_BlockHash BlockHash
+  | DynamicParamBlockHash_Genesis
+  | DynamicParamBlockHash_Head
+  | DynamicParamBlockHash_TestHead
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
+data DynamicParamChainId
+  = DynamicParamChainId_ChainId ChainId
+  | DynamicParamChainId_Main
+  | DynamicParamChainId_Test
+  deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- Smart constructors for "dynamic" url patterns in NodeRPC
 blockHashId :: BlockHash -> BlockId
-blockHashId x = BlockId (BlockIdHash_BlockHash x) Nothing
+blockHashId x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) Nothing
+
+blockHashIdPred :: BlockHash -> Word64 -> BlockId
+blockHashIdPred x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) . Just
 
 genesisId :: BlockId
-genesisId = BlockId BlockIdHash_Genesis Nothing
+genesisId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Genesis Nothing
 
 headId :: BlockId
-headId = BlockId BlockIdHash_Head Nothing
+headId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Head Nothing
 
 testHeadId :: BlockId
-testHeadId = BlockId BlockIdHash_TestHead Nothing
+testHeadId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_TestHead Nothing
 
-showBlockId :: BlockId -> Text
-showBlockId (BlockId blockId offset) = blockId' <> offset'
+blockIdToUrl :: BlockId -> Text
+blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainId' <> "/blocks/" <> blockId' <> offset'
   where
+    chainId' = case chainId of
+      DynamicParamChainId_ChainId x -> toBase58Text x
+      DynamicParamChainId_Main -> "main"
+      DynamicParamChainId_Test -> "test"
     blockId' = case blockId of
-      BlockIdHash_BlockHash x -> toBase58Text x
-      BlockIdHash_Genesis -> "genesis"
-      BlockIdHash_Head -> "head"
-      BlockIdHash_TestHead -> "test_head"
+      DynamicParamBlockHash_BlockHash x -> toBase58Text x
+      DynamicParamBlockHash_Genesis -> "genesis"
+      DynamicParamBlockHash_Head -> "head"
+      DynamicParamBlockHash_TestHead -> "test_head"
     offset' = maybe "" (("~" <>) . T.pack . show) offset
-
 
 data NodeRPCRequest a where
   RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
@@ -381,17 +396,12 @@ data Notificatee = Notificatee
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId Notificatee
-instance FromJSON Notificatee
-instance ToJSON Notificatee
 
 data SmtpProtocol
   = SmtpProtocol_Plain
   | SmtpProtocol_Ssl
   | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
-
-instance FromJSON SmtpProtocol
-instance ToJSON SmtpProtocol
 
 data MailServerConfig = MailServerConfig
   { _mailServerConfig_hostName :: Text
@@ -414,23 +424,32 @@ concat <$> traverse (deriveJSON defaultOptions
   , ''BakedEvent
   , ''BakedEventOperation
   , ''BlockId
-  , ''BlockIdHash
   , ''BlockInfo
+  , ''BlockInfoHeader
+  , ''BlockInfoMetadata
   , ''ClientConfig
   , ''ClientDaemonWorker
+  , ''ClientInfo
+  , ''DynamicParamBlockHash
+  , ''DynamicParamChainId
   , ''EndorseEvent
   , ''ErrorEvent
   , ''Event
   , ''Level
+  , ''NetworkStat
+  , ''Node
   , ''ProtoInfo
   , ''Report
   , ''SeenEvent
+  , ''SmtpProtocol
   ]
 
 concat <$> traverse makeLenses
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BlockInfo
+  , 'BlockInfoHeader
+  , 'BlockInfoMetadata
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent

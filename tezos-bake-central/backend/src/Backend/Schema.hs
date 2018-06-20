@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -15,6 +16,7 @@ module Backend.Schema where
 
 import Control.Arrow
 import Data.ByteString (ByteString)
+import Data.Coerce (Coercible, coerce)
 import Data.Fixed
 import Data.Int (Int64)
 import Data.Text.Encoding as T
@@ -24,6 +26,7 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
+import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField
 import Rhyolite.Backend.Account ()
@@ -32,6 +35,7 @@ import Rhyolite.Backend.Schema.TH
 import Rhyolite.Schema (Json (..))
 
 import Common.Base16ByteString
+import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema
 import Common.TaggedHash
@@ -91,9 +95,13 @@ instance NeverNull (Json BlockInfo)
 instance NeverNull (Json BakedEvent)
 instance NeverNull PublicKeyHash
 instance NeverNull NetworkStat
+instance NeverNull TezosWord64
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+
+stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
+stripOnly = coerce
 
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
@@ -106,6 +114,20 @@ instance PrimitivePersistField a => PersistField (HashedValue t a) where
   toPersistValues = primToPersistValue . unHashedValue
   fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
   dbType p (HashedValue x) = dbType p x
+
+
+instance PrimitivePersistField TezosWord64 where
+  toPrimitivePersistValue x (TezosWord64 c) = toPrimitivePersistValue x c
+  fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
+
+
+instance PersistField TezosWord64 where
+  persistName _ = "TezosWord64"
+  toPersistValues = primToPersistValue . unTezosWord64
+  fromPersistValues = (fmap.first) TezosWord64 . primFromPersistValue
+  dbType p (TezosWord64 x) = dbType p x
+
+
 
 instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"

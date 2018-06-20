@@ -41,6 +41,7 @@ library
     , monad-logger
     , mtl
     , network
+    , network-uri
     , obelisk-asset-serve-snap
     , obelisk-executable-config-inject
     , postgresql-simple
@@ -51,7 +52,7 @@ library
     , rhyolite-backend-snap
     , rhyolite-common
     , safe
-    , snap
+    , say
     , snap-core
     , snap-loader-static
     , snap-server
