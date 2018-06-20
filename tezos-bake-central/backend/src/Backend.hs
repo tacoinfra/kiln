@@ -269,7 +269,7 @@ backend = do
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
-  routeEnv <- maybe (getConfigFromFile "config/route") (pure . uriToRouteEnv) $ _opts_rootUrl =<< SnapServer.getOther cfg
+  routeEnv <- maybe (getConfigFromFile "config/route") (pure . uriToRouteEnv) $ _opts_route =<< SnapServer.getOther cfg
   routeHead <- snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode routeEnv)
   frontendHead <- snd <$> renderStatic (fst frontend)
 
@@ -365,13 +365,13 @@ uriToRouteEnv uri =
 
 data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
-  , _opts_rootUrl :: Maybe URI
+  , _opts_route :: Maybe URI
   }
 
 instance Semigroup Opts where
   a <> b = Opts -- Right biased
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
-    , _opts_rootUrl = _opts_rootUrl b <|> _opts_rootUrl a
+    , _opts_route = _opts_route b <|> _opts_route a
     }
 
 instance Monoid Opts where
@@ -382,7 +382,7 @@ optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
 optsArgDescr =
   [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x })
       "Connection string or URI to PostgreSQL database. If blank, use connection string in 'db' file or create a database there if empty."
-  , Option [] ["root-url"] (mkReqArg "URL" $ \x -> mempty { _opts_rootUrl = Just $ parseUrlOpt x })
+  , Option [] ["route"] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x })
       "Root URL for this service as seen by external users. If blank, use contents of 'config/route'."
   ]
   where
