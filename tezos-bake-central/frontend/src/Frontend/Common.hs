@@ -16,6 +16,10 @@ import Data.Text (Text)
 import Reflex.Dom.Core
 
 
+uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
+uiButton classes label = fmap (domEvent Click . fst) $
+  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo label t =
   fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: "ui button" <> "data-tooltip" =: t) $ do

@@ -26,12 +26,9 @@ import qualified Web.ClientSession as CS
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema ()
+import Common (whenJust)
 import Common.App
 import Common.Schema
-
-whenJust :: (Monad m, Monoid a) => Maybe t -> (t -> m a) -> m a
-whenJust Nothing f = return mempty
-whenJust (Just x) f = f x
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
@@ -75,7 +72,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     Just a -> do
       report <- getSummaryReport
       return $ single report a
-  return $ (mempty :: BakeView a)
+  return $ BakeView
       { _bakeView_clients = clients
       , _bakeView_clientAddresses = clientAddresses
       , _bakeView_parameters = parameters
@@ -84,4 +81,5 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
+      , _bakeView_graphs = mempty
       }

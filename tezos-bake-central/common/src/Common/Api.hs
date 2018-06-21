@@ -44,6 +44,9 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveNotificatee
       :: Email
       -> PublicRequest Bake ()
+    PublicRequest_SendTestEmail
+      :: Email
+      -> PublicRequest Bake ()
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 

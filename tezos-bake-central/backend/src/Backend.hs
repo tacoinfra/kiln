@@ -14,9 +14,9 @@ module Backend where
 import Control.Applicative ((<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception (finally)
-import Control.Lens ((.~), (^.))
-import Control.Monad (forM, forM_, join, unless, void, when, (<=<))
+import Control.Exception (catch, finally, throwIO)
+import Control.Lens ((.~), (<&>), (^.))
+import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -25,7 +25,8 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (toList)
+import Data.Either.Combinators (rightToMaybe)
+import Data.Foldable (for_, toList)
 import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -38,6 +39,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
+import Data.Traversable (for)
 import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
@@ -71,6 +73,7 @@ import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
+import System.IO.Error (isDoesNotExistError)
 import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
@@ -89,12 +92,12 @@ import Frontend (frontend)
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
 
-mailFor :: Text -> [Error] -> Mail
-mailFor toAddr errs =
-  let fromA = Address (Just "Tezos Bake Monitor") "noreply@obsidian.systems"
-      toA = Address Nothing toAddr
-      body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' toA fromA "Error from Tezos bake monitor" body
+mailFor :: Address -> Text -> [Error] -> Mail
+mailFor fromAddr toAddr errs =
+  let
+    toA = Address Nothing toAddr
+    body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
+  in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -126,29 +129,29 @@ nodeWorker delay httpMgr db = do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
-      heads <- forM nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+      heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
-        forM_ params $ \protoInfo -> do
+        for_ params $ \protoInfo -> do
           [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
             (Only (pid :: Id Parameters): _) ->
               updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
             _ ->
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
-        forM_ headBlockRsp $ \headBlockInfo -> do
+        for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId [Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level) ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
           headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
       case headMaybe of
         Nothing -> say "no visible nodes"
-        Just (nodeAddr, blockInfo) -> forM_ clients $ \(clientInfoId, Json ci) -> do
+        Just (nodeAddr, blockInfo) -> for_ clients $ \(clientInfoId, Json ci) -> do
           let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
           let headHash = _blockInfo_hash blockInfo
-          runNodeRPCT ctx $ forM_ (_clientConfig_delegates ci) $ \delegate -> do
+          runNodeRPCT ctx $ for_ (_clientConfig_delegates ci) $ \delegate -> do
             accountResp <- nodeRPC (RContract (blockHashId headHash) delegate)
-            forM_ accountResp $ \account -> do
+            for_ accountResp $ \account -> do
               let balance = _account_balance account
               void $ [executeQ| UPDATE "ClientInfo"
                                 SET balance = ?balance
@@ -172,18 +175,19 @@ getLatestProtoInfo = do
         _ -> Nothing
     [] -> return Nothing
 
-queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => [Error] -> m ()
-queueAllEmails message = do
-  ns <- selectAll
-  forM_ ns $ \(_, n) ->
-    queueEmail (mailFor (_notificatee_email n) message) Nothing
+queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => Address -> [Error] -> m ()
+queueAllEmails fromAddr message = do
+  ns <- select CondEmpty
+  for_ ns $ \n ->
+    queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
 
 clientWorker :: (MonadIO m)
              => Int -- delay between checking for updates, in seconds
+             -> Address
              -> Http.Manager
              -> Pool Postgresql
              -> m (IO ())
-clientWorker delay httpMgr db = do
+clientWorker delay emailFromAddress httpMgr db = do
   lastErrorRef <- liftIO $ newIORef Nothing
   worker (seconds delay) $ do
     say "Update client cycle."
@@ -200,7 +204,7 @@ clientWorker delay httpMgr db = do
                            ORDER BY updated NULLS FIRST |]
       mLevelAndProto <- getLatestProtoInfo
 
-      forM_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
+      for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
         say address
         -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
         configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
@@ -220,9 +224,10 @@ clientWorker delay httpMgr db = do
         case maximumMay $ fmap _event_time $ _report_seen report of
           Nothing -> return ()
           Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            void $ queueAllEmails [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
+            queueAllEmails emailFromAddress
+              [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
-        forM_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
+        for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
           let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
@@ -255,11 +260,9 @@ clientWorker delay httpMgr db = do
               [] -> return ()
               (x:_) -> do
                 liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-                _ <- queueAllEmails new
-                return ()
+                queueAllEmails emailFromAddress new
         -- TODO.  debounce below as above
-        flip validateForkyBlocks (concat forkInfo) $ \errors ->
-          void $ queueAllEmails errors
+        flip validateForkyBlocks (concat forkInfo) $ queueAllEmails emailFromAddress
 
 backend :: IO ()
 backend = do
@@ -269,8 +272,15 @@ backend = do
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
-  routeEnv <- maybe (getConfigFromFile "config/route") (pure . uriToRouteEnv) $ _opts_route =<< SnapServer.getOther cfg
-  routeHead <- snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode routeEnv)
+  let emailFromAddress = Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" $
+        _opts_emailFromAddress =<< SnapServer.getOther cfg
+
+  routeEnv :: Maybe RouteEnv <- case _opts_route =<< SnapServer.getOther cfg of
+    Nothing -> getConfigFromFile "config/route"
+    Just env -> pure $ Just $ uriToRouteEnv env
+
+  routeHead <- for routeEnv $ \env ->
+    snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode env)
   frontendHead <- snd <$> renderStatic (fst frontend)
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
@@ -291,17 +301,17 @@ backend = do
     httpMgr <- Http.newManager Https.tlsManagerSettings
 
     (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-      (requestHandler csk httpMgr db)
+      (requestHandler csk emailFromAddress httpMgr db)
       (notifyHandler db)
       (viewSelectorHandler csk db)
       (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
     addFinalizer =<< nodeWorker 30 httpMgr db
-    addFinalizer =<< clientWorker 10 httpMgr db
+    addFinalizer =<< clientWorker 10 emailFromAddress httpMgr db
 
     SnapServer.httpServe cfg (route
-      [ ("", rootHandler $ routeHead <> frontendHead)
+      [ ("", rootHandler $ fromMaybe mempty routeHead <> frontendHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
       , ("", serveDirectory "frontend.jsexe")
@@ -324,8 +334,7 @@ clearMailQueueWithDynamicEmailEnv
   -> m ()
 clearMailQueueWithDynamicEmailEnv db = do
   emailEnv <- runDb db $ do
-    defaultMailServer <- getDefaultMailServer
-    pure $ case defaultMailServer of
+    getDefaultMailServer <&> \case
       Nothing -> error "No mail server configuration found"
       Just (_, c) ->
         ( T.unpack $ _mailServerConfig_hostName c
@@ -341,8 +350,9 @@ clearMailQueueWithDynamicEmailEnv db = do
   clearMailQueue db emailEnv
 
 
-getConfigFromFile :: (FromJSON a, MonadIO m) => FilePath -> m a
-getConfigFromFile f = either error id . Aeson.eitherDecode <$> liftIO (LBS.readFile f)
+getConfigFromFile :: (FromJSON a) => FilePath -> IO (Maybe a)
+getConfigFromFile f = (rightToMaybe . Aeson.eitherDecode <$> LBS.readFile f)
+  `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
 
 withGargoyleOrConnStr :: Either FilePath Text -> (Pool Postgresql -> IO a) -> IO a
@@ -366,16 +376,18 @@ uriToRouteEnv uri =
 data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
   , _opts_route :: Maybe URI
+  , _opts_emailFromAddress :: Maybe Text
   }
 
 instance Semigroup Opts where
   a <> b = Opts -- Right biased
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
     , _opts_route = _opts_route b <|> _opts_route a
+    , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -384,6 +396,8 @@ optsArgDescr =
       "Connection string or URI to PostgreSQL database. If blank, use connection string in 'db' file or create a database there if empty."
   , Option [] ["route"] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x })
       "Root URL for this service as seen by external users. If blank, use contents of 'config/route'."
+  , Option [] ["email-from"] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x })
+      "Email address to use for 'From' field in email notifications."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
