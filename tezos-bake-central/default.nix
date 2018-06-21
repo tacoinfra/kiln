@@ -49,13 +49,6 @@ obelisk.project ./. ({ pkgs, ... }:
       rhyolite-backend-snap = rhyolite-src + /backend-snap;
       rhyolite-common = rhyolite-src + /common;
       rhyolite-frontend = rhyolite-src + /frontend;
-
-      semantic-reflex = pkgs.fetchFromGitHub {
-        owner = "tomsmalley";
-        repo = "semantic-reflex";
-        rev = "38fce7e4d08d46b8664768f1b7fe38846dbac1e2";
-        sha256 = "1s2p12r682wd8j2z63pjvbi4s9v02crh6nz8kjilwdsfs02yp5p2";
-      } + /semantic-reflex;
     };
     overrides = self: super: {
       # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
@@ -67,6 +60,13 @@ obelisk.project ./. ({ pkgs, ... }:
         [ pkgs.postgresql ]; # TH use of `staticWhich` for `psql` requires this on the PATH during build time.
 
       rhyolite-backend = self.callCabal2nix "rhyolite-backend" (rhyolite-src + /backend) { websockets = self.websockets-obsidian; };
+
+      semantic-reflex = pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (pkgs.fetchFromGitHub {
+        owner = "tomsmalley";
+        repo = "semantic-reflex";
+        rev = "38fce7e4d08d46b8664768f1b7fe38846dbac1e2";
+        sha256 = "1s2p12r682wd8j2z63pjvbi4s9v02crh6nz8kjilwdsfs02yp5p2";
+      } + /semantic-reflex) {});
 
       websockets-obsidian = self.callCabal2nix "websockets-obsidian" (pkgs.fetchFromGitHub {
         owner = "obsidiansystems";
