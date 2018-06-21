@@ -162,7 +162,7 @@ tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (s
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
            | UITab_Client (Id Client) Text
-           | UITab_Node (Id Node) Text
+           | UITab_Node (Id Node)
            | UITab_Options
   deriving (Eq, Ord, Show)
 
@@ -176,7 +176,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
         nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
           fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
-            semuiTab ("N:" <> name) (UITab_Node cid name) currentTab
+            semuiTab ("N:" <> name) (UITab_Node cid) currentTab
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
             semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
@@ -186,7 +186,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
     UITab_Summary -> summaryTab
     UITab_Options -> optionsTab
-    UITab_Node nid addr -> nodeTab nid addr
+    UITab_Node nid -> nodeTab nid
     UITab_Client cid addr -> clientTab cid addr
   return ()
 
@@ -369,8 +369,8 @@ mailServerForm frm0 = do
     labeled = el "label" . text
 
 
-nodeTab :: MonadRhyoliteFrontendWidget Bake t m => Id Node -> Text -> m ()
-nodeTab nid addr = do
+nodeTab :: MonadRhyoliteFrontendWidget Bake t m => Id Node -> m ()
+nodeTab nid = do
   dNode <- watchNode $ pure nid
   void $ dyn . ffor dNode $ traverse $ \node -> do
     divClass "ui small header" . text $ "Node Statistics"

@@ -11,7 +11,7 @@
 
 module Backend.RequestHandler where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_)

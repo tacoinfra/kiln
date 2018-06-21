@@ -4,7 +4,6 @@
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
 import Control.Lens ((^.))
-import Data.Foldable (toList)
 import Data.Maybe
 import Data.Function (on)
 import Control.Monad.IO.Class (MonadIO)

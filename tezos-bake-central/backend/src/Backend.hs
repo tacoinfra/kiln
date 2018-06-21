@@ -76,7 +76,7 @@ import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
 import qualified Web.ClientSession as CS
 
-import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
+import Backend.ChainHealth (scanForkInfo, validateForkyBlocks)
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
@@ -216,7 +216,6 @@ clientWorker delay emailFromAddress httpMgr db = do
           configResponse <- Http.httpJSON configRequest
           let clientConfig = Http.getResponseBody configResponse :: ClientConfig
               clientConfigJson = Json clientConfig
-              clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
 
           request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
           response <- Http.httpJSON request
