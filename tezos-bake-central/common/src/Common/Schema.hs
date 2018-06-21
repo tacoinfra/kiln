@@ -177,7 +177,7 @@ data NetworkStat = NetworkStat
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 data Node = Node
-  { _node_address :: !(Maybe ClientAddress)
+  { _node_address :: !ClientAddress
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe Word64)
   , _node_peerCount :: !(Maybe Word64)

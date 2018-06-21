@@ -42,7 +42,7 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
 showBadFork :: ForkInfoF e -> [Error]
 showBadFork (ForkInfo node status bakedTime bakedHash) = pure $ Error bakedTime $ T.concat
           [ "node: ", maybe "" toBase58Text $ _node_identity node
-          , "@", maybe "<NO-ADDRESS>" id $ _node_address node
+          , "@", _node_address node
           , " BAKER STATE:" , showForkStatus status
           , " for block:", toBase58Text $ bakedHash
           , " @ ",  T.pack $ show $ bakedTime

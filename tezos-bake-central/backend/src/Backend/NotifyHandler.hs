@@ -82,11 +82,17 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
           (node :: Maybe Node) <- get $ fromId nid
-          return $ case _bakeViewSelector_nodes aggVS of
-            Nothing -> mempty
-            Just a -> (mempty :: BakeView a)
-              { _bakeView_nodes = Map.singleton nid (First node, a)
-              }
+          let nodes = case Map.lookup nid (_bakeViewSelector_nodes aggVS) of
+                Nothing -> mempty
+                Just a -> (mempty :: BakeView a)
+                  { _bakeView_nodes = Map.singleton nid (First node, a)
+                  }
+          let nodeAddresses = case _bakeViewSelector_nodeAddresses aggVS of
+                Nothing -> mempty
+                Just a -> (mempty :: BakeView a)
+                  { _bakeView_nodeAddresses = Map.singleton nid (First $ _node_address <$> node, a)
+                  }
+          return $ nodeAddresses <> nodes
         Error e -> parseErr notifyMessage e
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do

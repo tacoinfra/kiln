@@ -21,7 +21,9 @@ import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
+import qualified Data.ByteString.Base16 as BS16
 import Data.Fixed
+import Data.Foldable (toList)
 import Data.List
 import qualified Data.Map as BaseMap
 import Data.Maybe
@@ -52,6 +54,7 @@ import Rhyolite.WebSocket
 import Common.Api
 import Common.App
 import Common.Json (TezosWord64 (..))
+import Common.Fitness
 import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
@@ -84,12 +87,20 @@ watchProtoInfo = do
     }
   return $ fmap (getSingle . _bakeView_parameters) theView
 
-watchNodes :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) Node))
-watchNodes = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodes = Just 1
+
+watchNode :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Node) -> m (Dynamic t (AppendMap (Id Node) Node))
+watchNode cidDyn = do
+  theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
+    { _bakeViewSelector_nodes = Map.singleton cid 1
     }
-  return $ ffor theView $ \v' -> fmapMaybe (getFirst . fst) (_bakeView_nodes v')
+  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
+
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
+watchNodeAddresses = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeAddresses = Just 1
+    }
+  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_nodeAddresses v') $ \_ (First r, _) -> r
 
 
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (AppendMap (Id Client) ClientInfo))
@@ -151,24 +162,31 @@ tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (s
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
            | UITab_Client (Id Client) Text
+           | UITab_Node (Id Node) Text
            | UITab_Options
   deriving (Eq, Ord, Show)
 
+
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
+  nodeAddresses <- watchNodeAddresses
   clientAddresses <- watchClientAddresses
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
+        nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
+          fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
+            semuiTab ("N:" <> name) (UITab_Node cid name) currentTab
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
-            semuiTab name (UITab_Client cid name) currentTab
+            semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
         optionsT <- semuiTab "Options" UITab_Options currentTab
-        return (leftmost [summaryT, clientT, optionsT])
+        return (leftmost [summaryT, clientT, nodeT, optionsT])
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
     UITab_Summary -> summaryTab
     UITab_Options -> optionsTab
+    UITab_Node nid addr -> nodeTab nid addr
     UITab_Client cid addr -> clientTab cid addr
   return ()
 
@@ -231,7 +249,7 @@ summaryTab = divClass "ui grid" $ do
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClientAddresses
-  nodes <- watchNodes
+  nodes <- watchNodeAddresses
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
     let isEmailAddress = const True
@@ -275,22 +293,22 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "Nodes"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
       listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
-        let dName = maybe "???" id . _node_address <$> node
-        let dId = maybe "???" toBase58Text . _node_identity <$> node
-        el "td" $ dynText dId
+        let dName = node
+        -- let dId = maybe "???" toBase58Text . _node_identity <$> node
+        -- el "td" $ dynText dId -- TODO
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
       el "tr" $ do
         addressInput <- el "td" $ textInput def
-        idInput <- el "td" $ textInput def
+        -- idInput <- el "td" $ textInput def
         addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
         let address = value addressInput
             -- TODO: display error when errors on nonempty
-            nodeIdent = either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-            addE = tag ((,) <$> current address <*> current nodeIdent) $ leftmost [addButton, keypress Enter addressInput]
-        requestingIdentity . ffor addE $ \(addr , nodeIdent') -> public (PublicRequest_AddNode addr nodeIdent')
+            nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
+            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
+        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
 
   return ()
 
@@ -351,10 +369,31 @@ mailServerForm frm0 = do
     labeled = el "label" . text
 
 
+nodeTab :: MonadRhyoliteFrontendWidget Bake t m => Id Node -> Text -> m ()
+nodeTab nid addr = do
+  dNode <- watchNode $ pure nid
+  void $ dyn . ffor dNode $ traverse $ \node -> do
+    divClass "ui small header" . text $ "Node Statistics"
+    elAttr "div" ("class" =: "client-node") $ do
+      text $ "Node: " <> _node_address node
+    el "div" . text $ "Head block level " <> case _node_headLevel node of
+      Nothing -> "unknown"
+      Just k -> T.pack (show k)
+    el "div" . text $ "Head block fitness " <> case _node_fitness node of
+      Nothing -> "unknown"
+      Just k ->  T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+    el "div" . text $ "Peer count: " <> case _node_peerCount node of
+      Nothing -> "unknown"
+      Just k -> T.pack (show k)
+    let stat = _node_networkStat node
+    el "div" . text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
+    el "div" . text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
+    el "div" . text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
+    el "div" . text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
+
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Text -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
-  nodes <- watchNodes -- TODO: limit by client
   divClass "ui grid" . void . dyn . ffor (Map.lookup cid <$> clients) $ \case
     Nothing -> text "Waiting for response..."
     Just clientInfo -> do
@@ -367,24 +406,6 @@ clientTab cid addr = do
         elAttr "div" ("class" =: "delegates") $ do
           text $ "ID: "
             <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
-        divClass "ui small header" . text $ "Node Statistics"
-        elAttr "div" ("class" =: "client-node") $ do
-          text $ "Node: "
-            <> _clientConfig_nodeUri (unJson $ _clientInfo_config clientInfo)
-        dyn . ffor nodes $ \ns -> case Nothing {- TODO: sort this out in a way that breaks for unreachable nodes Map.lookup (_clientInfo_node clientInfo) ns -} of
-            Nothing -> text "Waiting..."
-            Just n -> do
-              el "div" . text $ "Head block level " <> case _node_headLevel n of
-                Nothing -> "unknown"
-                Just k -> T.pack (show k)
-              el "div" . text $ "Peer count: " <> case _node_peerCount n of
-                Nothing -> "unknown"
-                Just k -> T.pack (show k)
-              let stat = _node_networkStat n
-              el "div" . text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
-              el "div" . text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
-              el "div" . text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
-              el "div" . text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
         forM_ (_clientInfo_balance clientInfo) $ \tz -> do
           elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
             text "Current Balance: "

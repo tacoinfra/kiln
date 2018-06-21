@@ -36,7 +36,8 @@ type ForkInfo = ForkInfoF RpcError
 -- if %0 != %2; sulk
 
 scanForkInfo :: MonadIO m => Http.Manager -> UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo httpMgr now rpt node = fmap concat $ (flip traverse) (toList $ _node_address node) $ \addr -> do
+scanForkInfo httpMgr now rpt node = do
+  let addr = _node_address node
   let ctx = NodeRPCContext httpMgr addr
   runNodeRPCT ctx . mapM (checkChainHealth now 30) $ catMaybes
     [ fmap fromBaked $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
@@ -117,7 +118,7 @@ obtainNode = do
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
   return (info, Node
-    { _node_address = Just addr
+    { _node_address = addr
     , _node_identity = Nothing -- TODO
     , _node_headLevel = unTezosWord64 <$> level
     , _node_peerCount = connections

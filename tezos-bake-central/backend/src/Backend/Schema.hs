@@ -105,11 +105,15 @@ unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
 
+
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
   toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
   dbType p x = dbType p (encodeBinary x)
+
+instance FromField a => FromField (HashedValue t a) where
+  fromField f b = HashedValue <$> fromField f b
 
 instance PrimitivePersistField a => PersistField (HashedValue t a) where
   persistName _ = "HashedValue"
@@ -117,6 +121,9 @@ instance PrimitivePersistField a => PersistField (HashedValue t a) where
   fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
   dbType p (HashedValue x) = dbType p x
 
+
+instance FromField TezosWord64 where
+  fromField f b = TezosWord64 <$> fromField f b
 
 instance PrimitivePersistField TezosWord64 where
   toPrimitivePersistValue x (TezosWord64 c) = toPrimitivePersistValue x c

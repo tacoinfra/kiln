@@ -51,9 +51,22 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
     param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
     return $ single (_parameters_protoInfo <$> param) a
-  nodes <- whenJust (_bakeViewSelector_nodes vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(toId nid, (First (Just n), a)) | (nid, n) <- rs]
+  nodeAddresses <- whenJust (_bakeViewSelector_nodeAddresses vs) $ \a -> do
+    rs <- [queryQ| SELECT n.id, n.address from "Node" n |]
+    return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
+  nodes <- do
+    let selNodes = In (Map.keys (_bakeViewSelector_nodes vs))
+    rs <- [queryQ|
+      SELECT n.id
+        , n.address, n.identity, n."headLevel", n."peerCount"
+        , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
+        , n."fitness"
+      FROM "Node" n
+      WHERE n.id IN ?selNodes |]
+    let nodeInfo = Map.fromList $ do
+          (nid, addr, ident, headLevel, peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
+          return (nid, First $ Just (Node addr ident headLevel peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness))
+    return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
@@ -77,6 +90,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_clientAddresses = clientAddresses
       , _bakeView_parameters = parameters
       , _bakeView_nodes = nodes
+      , _bakeView_nodeAddresses = nodeAddresses
       , _bakeView_notificatees = notificatees
       , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
