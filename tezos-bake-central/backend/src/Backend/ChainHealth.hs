@@ -4,17 +4,21 @@
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
 import Control.Lens ((^.))
+import Data.Maybe
+import Data.Function (on)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Semigroup ((<>))
 import Data.Time (UTCTime, addUTCTime)
 import qualified Network.HTTP.Client as Http
 import Say (say)
+import Safe (maximumByMay)
 
 import Backend.NodeRPC
 import Common (tshow)
 import Common.Json (TezosWord64 (..))
 import Common.Schema
 import Common.Verification
+import Common.TaggedHash
 
 type ForkInfo = ForkInfoF RpcError
 
@@ -32,25 +36,38 @@ type ForkInfo = ForkInfoF RpcError
 
 scanForkInfo :: MonadIO m => Http.Manager -> UTCTime -> Report -> Node -> m [ForkInfo]
 scanForkInfo httpMgr now rpt node = do
-  let ctx = NodeRPCContext httpMgr $ _node_address node -- "http://127.0.0.1:18731"
-  -- traverse (flip runReaderT ctx . checkChainHealth now 30) $ concat [_report_baked rpt, _report_last_seen rpt]
-  runNodeRPCT ctx . mapM (checkChainHealth now 30) $ _report_baked rpt
+  let addr = _node_address node
+  let ctx = NodeRPCContext httpMgr addr
+  runNodeRPCT ctx . mapM (checkChainHealth now 30) $ catMaybes
+    [ fmap fromBaked $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
+    , fmap fromSeen $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
+    ]
 
+fromBaked :: Event BakedEvent -> ChainHealthBlock
+fromBaked e = ChainHealthBlock (_event_time e) (_bakedEvent_hash $ _event_detail e)
+
+fromSeen :: Event SeenEvent -> ChainHealthBlock
+fromSeen e = ChainHealthBlock (_event_time e) (_seenEvent_hash $ _event_detail e)
+
+data ChainHealthBlock = ChainHealthBlock
+  { _chainHealthBlock_time :: UTCTime
+  , _chainHealthBlock_blockHash :: BlockHash
+  }
 checkChainHealth
   :: ( Monad m , MonadTezosNode m, MonadIO m )
   => UTCTime
   -> Int -- ^ max unseen age, in seconds
-  -> Baked
+  -> ChainHealthBlock
   -> m ForkInfo
 checkChainHealth now delay seenBaked = do
     (mHeadBlockInfo, node) <- obtainNode
     status <- case mHeadBlockInfo of
       Left bad -> return $ ForkStatus_BadNode bad
       Right headInfo ->
-        nodeRPC (RBlock $ blockHashId $ _bakedEvent_hash $ _event_detail seenBaked) >>= \case
+        nodeRPC (RBlock $ blockHashId $ _chainHealthBlock_blockHash seenBaked) >>= \case
           Left (RpcError_UnexpectedStatus 404 _) -> do
             let maxTime = addUTCTime (- fromIntegral delay) now
-            return $ if _event_time seenBaked >= maxTime
+            return $ if _chainHealthBlock_time seenBaked >= maxTime
               then ForkStatus_TooNew
               else ForkStatus_TooOld
           Left bad -> do
@@ -69,18 +86,26 @@ checkChainHealth now delay seenBaked = do
                     (ancestor ^. blockInfo_header . blockInfoHeader_predecessor)
                   then ForkStatus_Good
                   else ForkStatus_Forked
-    return $ ForkInfo node status seenBaked
+    return $ ForkInfo node status (_chainHealthBlock_time seenBaked) (_chainHealthBlock_blockHash seenBaked)
 
 -- Obtains a Node datastructure for the node specified by the environment, and a head block, if successful
+-- TODO: This won't work in the typical case of node rpc on localhost with
+-- monitor on a different host.  We'll leave it for now since it's "useful",
+-- but this should probably be reported by the client rather than queried by
+-- the monitor
 obtainNode :: (MonadIO m, MonadTezosNode m) => m (RpcResponse BlockInfo, Node)
 obtainNode = do
   addr <- nodeAddress
-  (info, level) <- nodeRPC (RBlock headId) >>= \case
+  (info, level, fitness) <- nodeRPC (RBlock headId) >>= \case
     Left bad -> do
       say "Couldn't get head block."
-      return (Left bad, Nothing)
+      return (Left bad, Nothing, Nothing)
     Right headInfo -> do
-      return (Right headInfo, Just $ headInfo ^. blockInfo_header . blockInfoHeader_level)
+      return
+        ( Right headInfo
+        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_level
+        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_fitness
+        )
   connections <- nodeRPC RConnections >>= \case
     Left bad -> do
       say $ "Couldn't get connection information for node " <> tshow addr <> ": " <> tshow bad
@@ -91,4 +116,11 @@ obtainNode = do
       say $ "Couldn't get network status information for node " <> tshow addr <> ": " <> tshow bad
       return (NetworkStat 0 0 0 0)
     Right ns -> return ns
-  return (info, Node { _node_address = addr, _node_headLevel = unTezosWord64 <$> level, _node_peerCount = connections, _node_networkStat = networkStat})
+  return (info, Node
+    { _node_address = addr
+    , _node_identity = Nothing -- TODO
+    , _node_headLevel = unTezosWord64 <$> level
+    , _node_peerCount = connections
+    , _node_networkStat = networkStat
+    , _node_fitness = fitness
+    })

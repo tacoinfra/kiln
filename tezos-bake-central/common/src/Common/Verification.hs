@@ -3,17 +3,19 @@
 
 module Common.Verification where
 
+import Data.Time
 import Data.Either.Validation
 import Data.Text (Text)
 import qualified Data.Text as T
 
 import Common.Schema
-import Common.TaggedHash (toBase58Text)
+import Common.TaggedHash (toBase58Text, BlockHash)
 
 data ForkInfoF e = ForkInfo
   { _forkInfo_node :: Node
   , _forkInfo_forkStatus :: ForkStatusF e
-  , _forkInfo_baked :: Baked
+  , _forkInfo_time :: UTCTime
+  , _forkInfo_hash :: BlockHash
   }
 
 data ForkStatusF e
@@ -38,11 +40,12 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   _ -> Success ()
 
 showBadFork :: ForkInfoF e -> [Error]
-showBadFork (ForkInfo node status baked) = pure $ Error (_event_time baked) $ T.concat
-          [ "node: ", _node_address node
+showBadFork (ForkInfo node status bakedTime bakedHash) = pure $ Error bakedTime $ T.concat
+          [ "node: ", maybe "" toBase58Text $ _node_identity node
+          , "@", _node_address node
           , " BAKER STATE:" , showForkStatus status
-          , " for block:", toBase58Text $ _bakedEvent_hash $ _event_detail baked
-          , " @ ",  T.pack $ show $ _event_time baked
+          , " for block:", toBase58Text $ bakedHash
+          , " @ ",  T.pack $ show $ bakedTime
           , "\n"
           ]
 

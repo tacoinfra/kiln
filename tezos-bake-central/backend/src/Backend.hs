@@ -76,7 +76,7 @@ import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
 import qualified Web.ClientSession as CS
 
-import Backend.ChainHealth (obtainNode, scanForkInfo, validateForkyBlocks)
+import Backend.ChainHealth (scanForkInfo, validateForkyBlocks)
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
@@ -140,7 +140,10 @@ nodeWorker delay httpMgr db = do
               insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         for_ headBlockRsp $ \headBlockInfo -> do
-          updateAndNotify nodeId [Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level) ]
+          updateAndNotify nodeId
+            [ Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level)
+            , Node_fitnessField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_fitness)
+            ]
         return (nodeAddr, headBlockRsp)
       let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
           headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
@@ -195,74 +198,73 @@ clientWorker delay emailFromAddress httpMgr db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
-      let blockHeightTimeout :: NominalDiffTime = fromIntegral
-            $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
-            $ listToMaybe params
-      toUpdate <- [queryQ| SELECT id, address
-                           FROM "Client"
-                           WHERE updated < ?maxTime OR updated IS NULL
-                           ORDER BY updated NULLS FIRST |]
-      mLevelAndProto <- getLatestProtoInfo
+      allNodes  <- select $ Not $ isFieldNothing Node_fitnessField
+      for_ ( maximumByMay (on compare _node_fitness) allNodes ) $ \bestNode -> do
+        let blockHeightTimeout :: NominalDiffTime = fromIntegral
+              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
+              $ listToMaybe params
+        toUpdate <- [queryQ| SELECT id, address
+                             FROM "Client"
+                             WHERE updated < ?maxTime OR updated IS NULL
+                             ORDER BY updated NULLS FIRST |]
+        mLevelAndProto <- getLatestProtoInfo
 
-      for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
-        say address
-        -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-        configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
-        configResponse <- Http.httpJSON configRequest
-        let clientConfig = Http.getResponseBody configResponse :: ClientConfig
-            clientConfigJson = Json clientConfig
-            clientNodeRPCContext = NodeRPCContext httpMgr (_clientConfig_nodeUri clientConfig)
+        for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
+          say address
+          -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+          configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
+          configResponse <- Http.httpJSON configRequest
+          let clientConfig = Http.getResponseBody configResponse :: ClientConfig
+              clientConfigJson = Json clientConfig
 
-        (_, node) <- runNodeRPCT clientNodeRPCContext obtainNode
-        nodeId <- addNode node
+          request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
+          response <- Http.httpJSON request
+          let report = Http.getResponseBody response :: Report
+              reportJson = Json report
 
-        request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
-        response <- Http.httpJSON request
-        let report = Http.getResponseBody response :: Report
-            reportJson = Json report
+          case maximumMay $ fmap _event_time $ _report_seen report of
+            Nothing -> return ()
+            Just b -> when (addUTCTime blockHeightTimeout b < now) $
+              void $ queueAllEmails emailFromAddress 
+                [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
-        case maximumMay $ fmap _event_time $ _report_seen report of
-          Nothing -> return ()
-          Just b -> when (addUTCTime blockHeightTimeout b < now) $
-            queueAllEmails emailFromAddress
-              [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
+          for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
+            let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+                rewardDelay l =
+                  let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
+                      rc = c + _protoInfo_preservedCycles protoInfo
 
-        for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
-          let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
-              rewardDelay l =
-                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                    rc = c + _protoInfo_preservedCycles protoInfo
+                  in rc * _protoInfo_blocksPerCycle protoInfo
+                insertValues = Values ["int8", "varchar", "int8", "int8"]
+                  [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
+            unless (null $ _report_baked report) $ do
+              void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
+                              ?insertValues
+                              ON CONFLICT DO NOTHING |]
 
-                in rc * _protoInfo_blocksPerCycle protoInfo
-              insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
-          unless (null $ _report_baked report) $ do
-            void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
-                            ?insertValues
-                            ON CONFLICT DO NOTHING |]
+          _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
+                          VALUES (?cid, ?reportJson, ?clientConfigJson)
+                          ON CONFLICT (client) DO UPDATE SET
+                            report = ?reportJson
+                          , config = ?clientConfigJson
+                          |]
+          forkInfo <- scanForkInfo httpMgr now report bestNode
+          liftIO $ validateForkyBlocks sayShow forkInfo
 
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config, node)
-                        VALUES (?cid, ?reportJson, ?clientConfigJson, ?nodeId)
-                        ON CONFLICT (client) DO UPDATE SET
-                          report = ?reportJson
-                        , config = ?clientConfigJson
-                        , node = ?nodeId |]
-        forkInfo <- mapM (scanForkInfo httpMgr now report) [node]
-        liftIO $ validateForkyBlocks sayShow $ concat forkInfo
-
-        updateAndNotify cid [Client_updatedField =. Just now]
-        case sortBy (compare `on` _event_time) (_report_errors report) of
-          [] -> return ()
-          es -> do
-            lastError <- liftIO $ readIORef lastErrorRef
-            let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
-            case new of
-              [] -> return ()
-              (x:_) -> do
-                liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-                queueAllEmails emailFromAddress new
-        -- TODO.  debounce below as above
-        flip validateForkyBlocks (concat forkInfo) $ queueAllEmails emailFromAddress
+          updateAndNotify cid [Client_updatedField =. Just now]
+          case sortBy (compare `on` _event_time) (_report_errors report) of
+            [] -> return ()
+            es -> do
+              lastError <- liftIO $ readIORef lastErrorRef
+              let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
+              case new of
+                [] -> return ()
+                (x:_) -> do
+                  liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
+                  queueAllEmails emailFromAddress new
+          -- TODO.  debounce below as above
+          flip validateForkyBlocks forkInfo $ \errors ->
+            void $ queueAllEmails emailFromAddress errors
 
 backend :: IO ()
 backend = do
