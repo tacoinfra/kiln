@@ -18,10 +18,10 @@ import Control.Monad.Fix
 import Control.Monad.Trans
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
+import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
-import qualified Data.ByteString.Base16 as BS16
 import Data.Fixed
 import Data.Foldable (toList)
 import Data.List
@@ -34,6 +34,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Format
+import qualified Form.Checks as Check
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
 import qualified Obelisk.ExecutableConfig
@@ -51,15 +52,16 @@ import Rhyolite.Route
 import Rhyolite.Schema
 import Rhyolite.WebSocket
 
+import Common (tshow)
 import Common.Api
 import Common.App
-import Common.Json (TezosWord64 (..))
 import Common.Fitness
+import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema hiding (Event)
 import Common.TaggedHash
 import Common.Tez
-import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos, uiButton)
+import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos, uiButton, validateUri)
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -252,7 +254,6 @@ optionsTab = divClass "ui grid" $ do
   nodes <- watchNodeAddresses
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
-    let isEmailAddress = const True
     notificatees <- watchNotificatees
 
     let
@@ -262,7 +263,7 @@ optionsTab = divClass "ui grid" $ do
         ev <- uiButton "mini compact orange" "Send test"
         void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
 
-    rec (addN, removeN) <- listInput "user@example.com" isEmailAddress emailWidget notificatees (Right "" <$ addedN)
+    rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
         addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
         requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
@@ -273,8 +274,6 @@ optionsTab = divClass "ui grid" $ do
       updatedForm <- mailServerForm form0
       requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
 
-    return ()
-
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Monitored Clients"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
@@ -283,12 +282,9 @@ optionsTab = divClass "ui grid" $ do
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
-      el "tr" $ do
-        addressInput <- el "td" $ textInput def
-        addButton <- el "td" $ buttonWithInfo "Add Baker" "Begin monitoring the baker at the address entered."
-        let address = value addressInput
-            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
-        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+
+      addE <- urlInputRow "Add Baker" "Begin monitoring the baker at the address entered."
+      void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
 
     divClass "ui medium header" $ text "Nodes"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
@@ -300,17 +296,19 @@ optionsTab = divClass "ui grid" $ do
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
-      el "tr" $ do
-        addressInput <- el "td" $ textInput def
-        -- idInput <- el "td" $ textInput def
-        addButton <- el "td" $ buttonWithInfo "Add Node" "Begin monitoring the node at the address entered."
-        let address = value addressInput
-            -- TODO: display error when errors on nonempty
-            nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-            addE = tag (current address) $ leftmost [addButton, keypress Enter addressInput]
-        requestingIdentity . ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
 
-  return ()
+      addE <- urlInputRow "Add Node" "Begin monitoring the node at the address entered."
+      let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
+      void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+
+  where
+    urlInputRow label info = el "tr" $ do
+      (tdEl, address) <- el' "td" $ formItem
+        $ validatedInput validateUri
+        $ def & Txt.setPlaceholder "http://host:port"
+      addButton <- el "td" $ buttonWithInfo label info
+      return $ fmap tshow $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
+
 
 mailServerForm
   :: ( DomBuilder t m

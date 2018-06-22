@@ -20,6 +20,7 @@ import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
+import qualified Data.Text as T
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import Network.Mail.Mime (Address (..), simpleMail')
@@ -56,34 +57,36 @@ requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLogg
           (_, node) <- runNodeRPCT ctx obtainNode
           insertAndNotify_ node
 
-        PublicRequest_RemoveNode addr -> do
-          nodeIds <- stripOnly <$> [queryQ| SELECT id FROM "Node" where address = ?addr |]
+        PublicRequest_RemoveNode addrRaw -> do
+          let addr = cleanUri addrRaw
+          nodeIds :: [Id Node] <- stripOnly <$> [queryQ| SELECT id FROM "Node" where address = ?addr |]
           let inNodeIds = In nodeIds
           -- delete parameters
           _ <- [executeQ| DELETE FROM "Parameters" where node in ?inNodeIds |]
           -- delete node
           _ <- [executeQ| DELETE FROM "Node" where id in ?inNodeIds |]
           -- notify
-          for_ nodeIds $ \nodeId -> void $ notifyEntityId NotificationType_Delete (nodeId :: Id Node)
+          notifyEntitiesDeleted nodeIds
 
-        PublicRequest_AddClient addr -> do
+        PublicRequest_AddClient addrRaw -> do
+          let addr = cleanUri addrRaw
           insertAndNotify_ $ Client { _client_address = addr, _client_updated = Nothing }
 
         PublicRequest_RemoveClient addr -> do
           _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
-          cids <- stripOnly <$>
+          cids :: [Id Client] <- stripOnly <$>
             [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
           let inCids = In cids
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
-          for_ cids $ \cid -> notifyEntityId NotificationType_Delete (cid :: Id Client)
+          notifyEntitiesDeleted cids
 
         PublicRequest_AddNotificatee email -> do
           insertAndNotify_ $ Notificatee { _notificatee_email = email }
 
         PublicRequest_RemoveNotificatee email -> do
-          nids <- stripOnly <$> [queryQ| SELECT n.id FROM "Notificatee" n WHERE n.email = ?email |]
+          nids :: [Id Notificatee] <- stripOnly <$> [queryQ| SELECT n.id FROM "Notificatee" n WHERE n.email = ?email |]
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
-          for_ nids $ \nid -> notifyEntityId NotificationType_Delete (nid :: Id Notificatee)
+          notifyEntitiesDeleted nids
 
         PublicRequest_SendTestEmail email -> void $ queueEmail
           (simpleMail'
@@ -93,7 +96,6 @@ requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLogg
             "This is a test email!"
           )
           Nothing
-
 
         PublicRequest_SetMailServerConfig mailServerView password -> do
           now <- getTime
@@ -120,6 +122,10 @@ requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLogg
     ApiRequest_Private key r ->
       case r of
         PrivateRequest_NoOp -> return ()
+
+    where
+      cleanUri = T.dropAround (`elem` ['/', ' ', '\t'])
+      notifyEntitiesDeleted ids = for_ ids $ void . notifyEntityId NotificationType_Delete
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

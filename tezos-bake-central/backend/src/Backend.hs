@@ -82,6 +82,7 @@ import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Common (tshow)
 import Common.Base16ByteString (unbase16ByteString)
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
@@ -130,6 +131,7 @@ nodeWorker delay httpMgr db = do
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
       heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+        say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
         for_ params $ \protoInfo -> do
@@ -197,12 +199,12 @@ clientWorker delay emailFromAddress httpMgr db = do
     runNoLoggingT $ runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
+      params :: Maybe Parameters <- listToMaybe <$> select (CondEmpty `limitTo` 1) -- TODO, take the newest
       allNodes  <- select $ Not $ isFieldNothing Node_fitnessField
       for_ ( maximumByMay (on compare _node_fitness) allNodes ) $ \bestNode -> do
         let blockHeightTimeout :: NominalDiffTime = fromIntegral
-              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
-              $ listToMaybe params
+              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo) params
+
         toUpdate <- [queryQ| SELECT id, address
                              FROM "Client"
                              WHERE updated < ?maxTime OR updated IS NULL
@@ -210,22 +212,18 @@ clientWorker delay emailFromAddress httpMgr db = do
         mLevelAndProto <- getLatestProtoInfo
 
         for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
-          say address
+          say $ "Updating client at " <> address
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-          configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
-          configResponse <- Http.httpJSON configRequest
-          let clientConfig = Http.getResponseBody configResponse :: ClientConfig
-              clientConfigJson = Json clientConfig
+          clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
+          let clientConfigJson = Json clientConfig
 
-          request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
-          response <- Http.httpJSON request
-          let report = Http.getResponseBody response :: Report
-              reportJson = Json report
+          report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
+          let reportJson = Json report
 
           case maximumMay $ fmap _event_time $ _report_seen report of
             Nothing -> return ()
             Just b -> when (addUTCTime blockHeightTimeout b < now) $
-              void $ queueAllEmails emailFromAddress 
+              void $ queueAllEmails emailFromAddress
                 [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
           for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
@@ -249,7 +247,7 @@ clientWorker delay emailFromAddress httpMgr db = do
                           , config = ?clientConfigJson
                           |]
           forkInfo <- scanForkInfo httpMgr now report bestNode
-          liftIO $ validateForkyBlocks sayShow forkInfo
+          validateForkyBlocks sayShow forkInfo
 
           updateAndNotify cid [Client_updatedField =. Just now]
           case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -264,7 +262,8 @@ clientWorker delay emailFromAddress httpMgr db = do
                   queueAllEmails emailFromAddress new
           -- TODO.  debounce below as above
           flip validateForkyBlocks forkInfo $ \errors ->
-            void $ queueAllEmails emailFromAddress errors
+            queueAllEmails emailFromAddress errors
+
 
 backend :: IO ()
 backend = do

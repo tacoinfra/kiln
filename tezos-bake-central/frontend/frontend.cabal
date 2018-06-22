@@ -19,16 +19,17 @@ library
 
   build-depends:
       base
-    , bytestring
     , base16-bytestring
-    , either
+    , bytestring
     , common
     , containers
     , data-default
+    , either
     , file-embed
     , ghcjs-dom
     , lens
     , mtl
+    , network-uri
     , obelisk-executable-config
     , reflex
     , reflex-dom-core
