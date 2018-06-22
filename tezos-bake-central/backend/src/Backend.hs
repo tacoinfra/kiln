@@ -82,6 +82,7 @@ import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Common (tshow)
 import Common.Base16ByteString (unbase16ByteString)
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
@@ -130,6 +131,7 @@ nodeWorker delay httpMgr db = do
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
       heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+        say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
         for_ params $ \protoInfo -> do
@@ -210,17 +212,13 @@ clientWorker delay emailFromAddress httpMgr db = do
         mLevelAndProto <- getLatestProtoInfo
 
         for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
-          say $ "Updating node at " <> address
+          say $ "Updating client at " <> address
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-          configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
-          configResponse <- Http.httpJSON configRequest
-          let clientConfig = Http.getResponseBody configResponse :: ClientConfig
-              clientConfigJson = Json clientConfig
+          clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
+          let clientConfigJson = Json clientConfig
 
-          request <- Http.parseRequest ("http://" <> T.unpack address <> "/events")
-          response <- Http.httpJSON request
-          let report = Http.getResponseBody response :: Report
-              reportJson = Json report
+          report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
+          let reportJson = Json report
 
           case maximumMay $ fmap _event_time $ _report_seen report of
             Nothing -> return ()
@@ -249,7 +247,7 @@ clientWorker delay emailFromAddress httpMgr db = do
                           , config = ?clientConfigJson
                           |]
           forkInfo <- scanForkInfo httpMgr now report bestNode
-          liftIO $ validateForkyBlocks sayShow forkInfo
+          validateForkyBlocks sayShow forkInfo
 
           updateAndNotify cid [Client_updatedField =. Just now]
           case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -265,6 +263,7 @@ clientWorker delay emailFromAddress httpMgr db = do
           -- TODO.  debounce below as above
           flip validateForkyBlocks forkInfo $ \errors ->
             queueAllEmails emailFromAddress errors
+
 
 backend :: IO ()
 backend = do

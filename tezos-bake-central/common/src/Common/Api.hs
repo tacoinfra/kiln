@@ -52,6 +52,5 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-
 makeRequestForDataInstance ''PublicRequest ''Bake
 makeRequestForDataInstance ''PrivateRequest ''Bake
