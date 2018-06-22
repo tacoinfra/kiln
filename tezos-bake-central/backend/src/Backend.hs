@@ -197,12 +197,12 @@ clientWorker delay emailFromAddress httpMgr db = do
     runNoLoggingT $ runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      params :: [Parameters] <- fmap snd <$> selectAll -- TODO, take the newest
+      params :: Maybe Parameters <- listToMaybe <$> select (CondEmpty `limitTo` 1) -- TODO, take the newest
       allNodes  <- select $ Not $ isFieldNothing Node_fitnessField
       for_ ( maximumByMay (on compare _node_fitness) allNodes ) $ \bestNode -> do
         let blockHeightTimeout :: NominalDiffTime = fromIntegral
-              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo )
-              $ listToMaybe params
+              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo) params
+
         toUpdate <- [queryQ| SELECT id, address
                              FROM "Client"
                              WHERE updated < ?maxTime OR updated IS NULL
@@ -210,7 +210,7 @@ clientWorker delay emailFromAddress httpMgr db = do
         mLevelAndProto <- getLatestProtoInfo
 
         for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
-          say address
+          say $ "Updating node at " <> address
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
           configRequest <- Http.parseRequest ("http://" <> T.unpack address <> "/config")
           configResponse <- Http.httpJSON configRequest
@@ -225,7 +225,7 @@ clientWorker delay emailFromAddress httpMgr db = do
           case maximumMay $ fmap _event_time $ _report_seen report of
             Nothing -> return ()
             Just b -> when (addUTCTime blockHeightTimeout b < now) $
-              void $ queueAllEmails emailFromAddress 
+              void $ queueAllEmails emailFromAddress
                 [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
           for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
@@ -264,7 +264,7 @@ clientWorker delay emailFromAddress httpMgr db = do
                   queueAllEmails emailFromAddress new
           -- TODO.  debounce below as above
           flip validateForkyBlocks forkInfo $ \errors ->
-            void $ queueAllEmails emailFromAddress errors
+            queueAllEmails emailFromAddress errors
 
 backend :: IO ()
 backend = do

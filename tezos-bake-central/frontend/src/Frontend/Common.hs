@@ -8,12 +8,17 @@
 module Frontend.Common where
 
 import Control.Lens ((%~))
+import Data.List (find)
 import Data.Map (Map)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Network.URI as Uri
 import Reflex.Dom.Core
+import qualified Reflex.Dom.Form.Validators as Validator
+import qualified Reflex.Dom.TextField as Txt
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
@@ -25,20 +30,6 @@ buttonWithInfo label t =
   fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: "ui button" <> "data-tooltip" =: t) $ do
     text label
 
--- | Simple form with a submit button that is disabled when the form is invalid.
-simpleForm :: (DomBuilder t m, PostBuild t m) => Text -> Maybe Text -> m (Dynamic t (Maybe a)) -> m (Event t a)
-simpleForm submitLabel submitTooltip form = do
-  (formResult, submit) <- formWithSubmit $ do
-    formResult <- form
-    elDynAttr "button"
-      (ffor formResult $ \r ->
-        "type" =: "submit" <>
-        "class" =: ("ui small button" <> if isJust r then "" else " disabled") <>
-        maybe mempty ("data-tooltip" =:) submitTooltip
-      )
-      (text submitLabel)
-    return formResult
-  return $ fmapMaybe id $ tag (current formResult) submit
 
 tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
@@ -80,3 +71,18 @@ elDynAttrWithPreventDefaultEvent'
 elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
   (\elCfg -> elCfg & elementConfig_eventSpec %~
     addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const preventDefault))
+
+
+validateUri :: Validator.Validator t m Uri.URI
+validateUri = Validator.Validator checkUri setUrlType
+  where
+    checkUri txt = case Uri.parseURI $ T.unpack txt of
+      Nothing -> Left "Please enter a valid URI"
+      Just uri -> maybe (Right uri) (Left . snd) $ find fst
+        [ (T.toLower (T.pack $ Uri.uriScheme uri) `notElem` ["http:", "https:"], "URL scheme must be http or https")
+        , (T.null $ maybe "" (T.strip . T.pack . Uri.uriRegName) (Uri.uriAuthority uri), "URL must have a host name or IP address")
+        , (not $ null $ Uri.uriQuery uri, "URL must not have a query")
+        , (not $ null $ Uri.uriFragment uri, "URL must not have a fragment")
+        ]
+
+    setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
