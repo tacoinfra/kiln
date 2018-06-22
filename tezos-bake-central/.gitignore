@@ -2,4 +2,4 @@ dist/
 dist-*/
 result
 ghcid-output.txt
-
+.obelisk/impl/.attr-cache/
