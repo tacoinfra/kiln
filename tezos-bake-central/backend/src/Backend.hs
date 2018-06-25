@@ -284,6 +284,7 @@ updateBakeRate ctx (headLevel, headBlockHash, protoInfo) delegates = do
   runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) cycleRange)) >>= \case
     Left e -> sayShow e
     Right allBakingRights -> do
+      -- Filter out baking rights that apply to levels in the future.
       let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= headLevel) <$> allBakingRights
       for_ delegates $ \delegate -> do
         say $ "Updating delegate " <> toPublicKeyHashText delegate

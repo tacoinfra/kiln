@@ -159,6 +159,7 @@ instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
 
 instance FromField PublicKeyHash where
+  -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
 
