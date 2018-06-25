@@ -4,19 +4,25 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NodeRPC where
 
 import Control.Exception
+import Control.Lens (to, (<&>), (^?))
 import Control.Monad.Reader
 import Data.Aeson
+import qualified Data.Aeson.Lens as Json
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable
+import Data.Word (Word64, Word8)
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Method (Method, methodGet, methodPost)
@@ -32,8 +38,7 @@ import Common.Schema
 data NodeRPCContext = NodeRPCContext
   { _nodeRPCContext_httpManager :: Manager
   , _nodeRPCContext_node :: Text
-  }
-  deriving (Typeable)
+  } deriving (Typeable)
 
 newtype NodeRPCT m a = NodeRPCT { unNodeRPCT :: ReaderT NodeRPCContext m a }
   deriving (Functor, Applicative, Monad, MonadIO, PostgresRaw, Typeable)
@@ -51,8 +56,17 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     RConnections -> do
       (vs :: RpcResponse [Value]) <- nodeRPCImpl methodGet "/network/connections"
       return $ fmap (fromIntegral . Prelude.length) vs
+    RBakingRights block cycles -> do
+      resp :: RpcResponse [Value] <- nodeRPCImpl methodGet $ blockIdToUrl block <> "/helpers/baking_rights"
+        <> (if null cycles then "" else "?" <> T.intercalate "&" ["cycle=" <> tshow n | n <- cycles])
+      return $ resp <&> \vals -> Map.fromListWith (<>) $ flip mapMaybe vals $ \val -> do
+        level :: Word64 <- val ^? Json.key "level" . Json._Integer . to fromIntegral
+        delegate :: PublicKeyHash <- val ^? Json.key "delegate" . Json._JSON
+        priority :: Word8 <- val ^? Json.key "priority" . Json._Integer . to fromIntegral
+        Just (delegate, Map.singleton level priority)
     RNetworkStat -> nodeRPCImpl methodGet "/network/stat"
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
+
 
 rpcError_HttpException :: HttpException -> RpcResponse a
 rpcError_HttpException err = Left $ RpcError_HttpException $ T.pack $ show err
@@ -84,14 +98,14 @@ nodeRPCImpl' decoder method_ rpcSelector = NodeRPCT $ do
           ]
         }
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
-  result' <- liftIO $ try $ httpLbs request mgr
+  result' <- liftIO $ try @HttpException $ httpLbs request mgr
   let logFailure :: RpcResponse a -> ReaderT NodeRPCContext m (RpcResponse a)
       logFailure (Left bad) = do
         say $ "NODERPC ERROR:" <> tshow rpcUrl <> " >> " <> tshow bad
         return $ Left bad
       logFailure ok = return ok
   logFailure =<< case result' of
-    Left (err :: HttpException) -> return (rpcError_HttpException err)
+    Left err -> return (rpcError_HttpException err)
     Right result -> case responseStatus result of
       Status 200 _ -> do
         let body = responseBody result

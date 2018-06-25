@@ -4,21 +4,21 @@
 module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
 
 import Control.Lens ((^.))
-import Data.Maybe
-import Data.Function (on)
 import Control.Monad.IO.Class (MonadIO)
+import Data.Function (on)
+import Data.Maybe
 import Data.Semigroup ((<>))
 import Data.Time (UTCTime, addUTCTime)
 import qualified Network.HTTP.Client as Http
-import Say (say)
 import Safe (maximumByMay)
+import Say (say)
 
 import Backend.NodeRPC
 import Common (tshow)
 import Common.Json (TezosWord64 (..))
 import Common.Schema
-import Common.Verification
 import Common.TaggedHash
+import Common.Verification
 
 type ForkInfo = ForkInfoF RpcError
 
@@ -96,14 +96,15 @@ checkChainHealth now delay seenBaked = do
 obtainNode :: (MonadIO m, MonadTezosNode m) => m (RpcResponse BlockInfo, Node)
 obtainNode = do
   addr <- nodeAddress
-  (info, level, fitness) <- nodeRPC (RBlock headId) >>= \case
+  (info, level, headHash, fitness) <- nodeRPC (RBlock headId) >>= \case
     Left bad -> do
       say "Couldn't get head block."
-      return (Left bad, Nothing, Nothing)
+      return (Left bad, Nothing, Nothing, Nothing)
     Right headInfo -> do
       return
         ( Right headInfo
         , Just $ headInfo ^. blockInfo_header . blockInfoHeader_level
+        , Just $ headInfo ^. blockInfo_hash
         , Just $ headInfo ^. blockInfo_header . blockInfoHeader_fitness
         )
   connections <- nodeRPC RConnections >>= \case
@@ -120,6 +121,7 @@ obtainNode = do
     { _node_address = addr
     , _node_identity = Nothing -- TODO
     , _node_headLevel = unTezosWord64 <$> level
+    , _node_headBlockHash = headHash
     , _node_peerCount = connections
     , _node_networkStat = networkStat
     , _node_fitness = fitness

@@ -19,8 +19,9 @@ import Data.ByteString (ByteString)
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed
 import Data.Int (Int64)
+import Data.Text (Text)
 import Data.Text.Encoding as T
-import Data.Word
+import Data.Word (Word64)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
@@ -28,10 +29,10 @@ import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.FromField
-import Database.PostgreSQL.Simple.ToField
+import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema ()
-import Rhyolite.Backend.Schema.TH
+import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Json (..))
 
 import Common.Base16ByteString
@@ -83,8 +84,6 @@ instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
-instance NeverNull Tezzies
-
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
@@ -92,12 +91,13 @@ instance FromField Tezzies where
   fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
 
 instance NeverNull (HashedValue a ByteString)
-instance NeverNull (Json BlockInfo)
 instance NeverNull (Json BakedEvent)
-instance NeverNull PublicKeyHash
-instance NeverNull NetworkStat
-instance NeverNull TezosWord64
+instance NeverNull (Json BlockInfo)
 instance NeverNull Fitness
+instance NeverNull NetworkStat
+instance NeverNull PublicKeyHash
+instance NeverNull TezosWord64
+instance NeverNull Tezzies
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -126,17 +126,18 @@ instance FromField TezosWord64 where
   fromField f b = TezosWord64 <$> fromField f b
 
 instance PrimitivePersistField TezosWord64 where
-  toPrimitivePersistValue x (TezosWord64 c) = toPrimitivePersistValue x c
+  toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
 
+instance PrimitivePersistField (HashedValue t ByteString) where
+  toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = HashedValue $ fromPrimitivePersistValue x v
 
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
   toPersistValues = primToPersistValue . unTezosWord64
   fromPersistValues = (fmap.first) TezosWord64 . primFromPersistValue
   dbType p (TezosWord64 x) = dbType p x
-
-
 
 instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"
@@ -145,10 +146,21 @@ instance PersistField PublicKeyHash where
   fromPersistValues = (fmap.first) toPublicKeyHash . primFromPersistValue
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
-  dbType p (PublicKeyHash_Ed25519 x) = dbType p $ toBase58Text x
-  dbType p (PublicKeyHash_Secp256k1 x) = dbType p $ toBase58Text x
+  dbType p _ = dbType p ("" :: Text)
 
--- instance PersistField Operation
+instance PrimitivePersistField PublicKeyHash where
+  toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x
+  toPrimitivePersistValue a (PublicKeyHash_Secp256k1 x) = toPrimitivePersistValue a $ toBase58Text x
+  fromPrimitivePersistValue a = toPublicKeyHash . fromPrimitivePersistValue a
+    where
+      toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
+
+instance ToField PublicKeyHash where
+  toField a = toField (toPublicKeyHashText a)
+
+instance FromField PublicKeyHash where
+  fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
+
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
@@ -198,6 +210,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _pendingReward_uniqueness
             type: constraint
             fields: [_pendingReward_client, _pendingReward_hash]
+  - entity: DelegateStats
+    constructors:
+      - name: DelegateStats
+        uniques:
+          - name: _delegateStats_uniqueness
+            type: constraint
+            fields: [_delegateStats_publicKeyHash]
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -220,12 +239,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_password
 |]
 
-fmap concat $ mapM (uncurry makeDefaultKeyIdInt64)
+fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
+  , (''DelegateStats, 'DelegateStatsKey)
+  , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
+  , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
-  , (''Notificatee, 'NotificateeKey)
-  , (''MailServerConfig, 'MailServerConfigKey)
   ]

@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -15,7 +16,7 @@ import Control.Applicative ((<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
-import Control.Lens ((.~), (<&>), (^.))
+import Control.Lens (ifor, ix, to, (.~), (<&>), (^.), (^?))
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -31,9 +32,12 @@ import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (sortBy)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
@@ -62,6 +66,7 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), exec
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail, queueEmail)
 import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
+import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Route (RouteEnv)
@@ -86,8 +91,9 @@ import Common (tshow)
 import Common.Base16ByteString (unbase16ByteString)
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
+import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema
-import Common.TaggedHash (toBase58Text)
+import Common.TaggedHash (BlockHash, toBase58Text)
 import Frontend (frontend)
 
 seconds :: Int -> Int
@@ -144,6 +150,7 @@ nodeWorker delay httpMgr db = do
         for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId
             [ Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level)
+            , Node_headBlockHashField =. Just (headBlockInfo ^. blockInfo_hash)
             , Node_fitnessField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_fitness)
             ]
         return (nodeAddr, headBlockRsp)
@@ -165,20 +172,19 @@ nodeWorker delay httpMgr db = do
 
 -- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
 -- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
-getLatestProtoInfo :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Word64, ProtoInfo))
+getLatestProtoInfo :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Word64, BlockHash, ProtoInfo))
 getLatestProtoInfo = do
-  nodeIds <- [queryQ| SELECT n.id, n."headLevel"
-                      FROM "Node" n LEFT JOIN "Parameters" p ON p.node = n.id
-                      WHERE n."headLevel" IS NOT NULL
-                      ORDER BY n."headLevel" DESC
-                      LIMIT 1 |]
+  nodeIds <- listToMaybe <$> [queryQ|
+    SELECT n.id, n."headLevel", n."headBlockHash"
+      FROM "Node" n LEFT JOIN "Parameters" p ON p.node = n.id
+     WHERE n."headLevel" IS NOT NULL
+     ORDER BY n."headLevel" DESC
+     LIMIT 1 |]
   case nodeIds of
-    ((nid, headLevel):_) -> do
-      rs <- project Parameters_protoInfoField $ (Parameters_nodeField ==. (nid :: Id Node)) `limitTo` 1
-      return $ case rs of
-        (info:_) -> Just (headLevel, info)
-        _ -> Nothing
-    [] -> return Nothing
+    Just (nid :: Id Node, Just headLevel, Just headBlockHash) -> do
+      info <- fmap listToMaybe $ project Parameters_protoInfoField $ (Parameters_nodeField ==. nid ) `limitTo` 1
+      return $ (headLevel, headBlockHash,) <$> info
+    _ -> return Nothing
 
 queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => Address -> [Error] -> m ()
 queueAllEmails fromAddr message = do
@@ -200,8 +206,8 @@ clientWorker delay emailFromAddress httpMgr db = do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
       params :: Maybe Parameters <- listToMaybe <$> select (CondEmpty `limitTo` 1) -- TODO, take the newest
-      allNodes  <- select $ Not $ isFieldNothing Node_fitnessField
-      for_ ( maximumByMay (on compare _node_fitness) allNodes ) $ \bestNode -> do
+      allNodes <- select $ Not $ isFieldNothing Node_fitnessField
+      for_ (maximumByMay (on compare _node_fitness) allNodes) $ \bestNode -> do
         let blockHeightTimeout :: NominalDiffTime = fromIntegral
               $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo) params
 
@@ -211,7 +217,7 @@ clientWorker delay emailFromAddress httpMgr db = do
                              ORDER BY updated NULLS FIRST |]
         mLevelAndProto <- getLatestProtoInfo
 
-        for_ toUpdate $ \(cid :: Id Client, address :: Text) -> do
+        clientDelegates <- for toUpdate $ \(cid :: Id Client, address :: Text) -> do
           say $ "Updating client at " <> address
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
           clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
@@ -220,13 +226,12 @@ clientWorker delay emailFromAddress httpMgr db = do
           report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
           let reportJson = Json report
 
-          case maximumMay $ fmap _event_time $ _report_seen report of
-            Nothing -> return ()
-            Just b -> when (addUTCTime blockHeightTimeout b < now) $
-              void $ queueAllEmails emailFromAddress
+          for_ (maximumMay $ fmap _event_time $ _report_seen report) $ \b ->
+            when (addUTCTime blockHeightTimeout b < now) $
+              queueAllEmails emailFromAddress
                 [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
 
-          for_ mLevelAndProto $ \(_headLevel, protoInfo) -> do
+          for_ mLevelAndProto $ \(_headLevel, _headBlockHash, protoInfo) -> do
             let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
                 rewardDelay l =
                   let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
@@ -263,6 +268,51 @@ clientWorker delay emailFromAddress httpMgr db = do
           -- TODO.  debounce below as above
           flip validateForkyBlocks forkInfo $ \errors ->
             queueAllEmails emailFromAddress errors
+
+          return $ _clientConfig_delegates clientConfig
+
+        for_ mLevelAndProto $ \latestProtoInfo -> do
+          updateBakeRate (NodeRPCContext httpMgr $ _node_address bestNode) latestProtoInfo (Set.fromList $ concat clientDelegates)
+
+
+updateBakeRate :: (MonadIO m, PersistBackend m) => NodeRPCContext -> (Word64, BlockHash, ProtoInfo) -> Set PublicKeyHash -> m ()
+updateBakeRate ctx (headLevel, headBlockHash, protoInfo) delegates = do
+  let
+    latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
+    cycleRange = [latestCycle - fromIntegral (_protoInfo_preservedCycles protoInfo) .. latestCycle]
+  say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
+  runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) cycleRange)) >>= \case
+    Left e -> sayShow e
+    Right allBakingRights -> do
+      let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= headLevel) <$> allBakingRights
+      for_ delegates $ \delegate -> do
+        say $ "Updating delegate " <> toPublicKeyHashText delegate
+        bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix delegate) $ \levelWithRight delegatePriority -> do
+          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (headLevel - levelWithRight))) >>= \case
+            Left e -> sayShow e >> pure Nothing
+            Right blockWithRights -> return $
+              let
+                baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
+                delegateUtilizedRightToBake =
+                  if baker == delegate then Just True -- The delegate baked this block
+                  else
+                    -- See if the baker had a lower priority than the delegate.
+                    -- If so then the delegate didn't miss a legitimate opportunity to bake.
+                      bakingRights ^? ix baker . ix levelWithRight . to (< delegatePriority)
+              in delegateUtilizedRightToBake
+
+        let
+          baked = sum $ (\x -> if x == Just True then 1 else 0) <$> bakingRightsUtilized
+          rights = fromIntegral $ length bakingRightsUtilized
+
+        delegateStatsId :: Maybe (Id DelegateStats) <- fmap (fmap toId . listToMaybe) $
+          project AutoKeyField ((DelegateStats_publicKeyHashField ==. delegate) `limitTo` 1)
+        case delegateStatsId of
+          Nothing -> insertAndNotify_ $ DelegateStats delegate baked rights
+          Just dsId -> updateAndNotify dsId
+            [ DelegateStats_bakedBlocksField =. (baked :: Word64)
+            , DelegateStats_bakingRightsField =. (rights :: Word64)
+            ]
 
 
 backend :: IO ()

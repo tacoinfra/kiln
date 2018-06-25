@@ -16,6 +16,7 @@ import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup)
 import Database.Groundhog.Postgresql
+import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb)
@@ -46,8 +47,8 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
                    WHERE c.id IN ?selClients |]
     let clientInfo = Map.fromList $ do
           (cid, report, config, balance) <- rs
-          return (cid, First (ClientInfo cid <$> report <*> config <*> balance ))
-    return (Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs))
+          return (cid, First (ClientInfo cid <$> report <*> config <*> balance))
+    return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
   parameters <- whenJust (_bakeViewSelector_parameters vs) $ \a -> do
     param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
     return $ single (_parameters_protoInfo <$> param) a
@@ -55,18 +56,26 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     rs <- [queryQ| SELECT n.id, n.address from "Node" n |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
   nodes <- do
-    let selNodes = In (Map.keys (_bakeViewSelector_nodes vs))
+    let selNodes = In $ Map.keys (_bakeViewSelector_nodes vs)
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.identity, n."headLevel", n."peerCount"
+        , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
         , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
         , n."fitness"
       FROM "Node" n
       WHERE n.id IN ?selNodes |]
     let nodeInfo = Map.fromList $ do
-          (nid, addr, ident, headLevel, peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
-          return (nid, First $ Just (Node addr ident headLevel peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness))
+          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
+          return (nid, First $ Just (Node addr ident headLevel headBlockHash peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness))
     return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
+  delegateStats <- do
+    let inKeys = In $ Map.keys (_bakeViewSelector_delegateStats vs)
+    rs <- [queryQ|SELECT "publicKeyHash", "bakedBlocks", "bakingRights" FROM "DelegateStats" WHERE "publicKeyHash" IN ?inKeys|]
+    let rsMap = Map.fromList
+          [ (publicKeyHash, DelegateStats publicKeyHash bakedBlocks bakingRights)
+          | (publicKeyHash, bakedBlocks, bakingRights) <- rs
+          ]
+    return $ Map.intersectionWith (,) (First . Just <$> rsMap) (_bakeViewSelector_delegateStats vs)
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
     rs <- selectAll
     return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
@@ -91,6 +100,7 @@ viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       , _bakeView_parameters = parameters
       , _bakeView_nodes = nodes
       , _bakeView_nodeAddresses = nodeAddresses
+      , _bakeView_delegateStats = delegateStats
       , _bakeView_notificatees = notificatees
       , _bakeView_mailServer = mailServer
       , _bakeView_summaryGraph = summaryGraph
