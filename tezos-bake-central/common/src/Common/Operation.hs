@@ -122,7 +122,7 @@ data SourcedOperations
     }
   | ManagerOperations
     { _managerOperations_contract :: Contract
-    , _managerOperations_fee :: Tezzies
+    , _managerOperations_fee :: Tez
     , _managerOperations_counter :: Counter
     , _managerOperations_operations :: [ManagerOperation]
     }
@@ -186,7 +186,7 @@ instance TezosBinary AmendmentOperation where
 data ManagerOperation
   = Reveal PublicKey -- ^ Signature.Public_key.t
   | Transaction
-    { _transaction_amount :: Tezzies
+    { _transaction_amount :: Tez
     , _transaction_parameters :: Maybe Script
     , _transaction_destination :: Contract
     }
@@ -196,7 +196,7 @@ data ManagerOperation
     , _origination_script :: Maybe Script
     , _origination_spendable :: Bool
     , _origination_delgatable :: Bool
-    , _origination_credit :: Tezzies
+    , _origination_credit :: Tez
     }
   | Delegation (Maybe PublicKeyHash)
   deriving (Eq, Ord, Show, Generic, Typeable)
@@ -248,7 +248,7 @@ acceptablePasses = \case
   AnonymousOperations _ -> [2]
   SourcedOperations (ManagerOperations _ _ _ _) -> [3]
 
-sumFees :: ProtoOperation -> Tezzies
+sumFees :: ProtoOperation -> Tez
 sumFees = \case
-  SourcedOperations mOp@(ManagerOperations _ _ _ _) -> _managerOperations_fee mOp
+  SourcedOperations mOp@ManagerOperations{} -> _managerOperations_fee mOp
   _ -> 0

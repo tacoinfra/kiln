@@ -19,6 +19,13 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 
+import Common (tshow)
+import Common.Tez (Tez (..))
+
+
+tez :: Tez -> Text
+tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
+
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
