@@ -63,8 +63,8 @@ import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema hiding (Event)
 import Common.TaggedHash (toBase58Text)
-import Common.Tez (Tezzies (..))
-import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos, uiButton, validateUri)
+import Common.Tez (Tez (..))
+import Frontend.Common (buttonWithInfo, formWithSubmit, tez, tooltip, tooltipPos, uiButton, validateUri)
 
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -169,9 +169,6 @@ headTag = do
   elAttr "meta" ("charset" =: "utf-8") blank
 
 
-tezzies :: Tezzies -> Text
-tezzies (Tezzies n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (T.pack (show n))) <> "ꜩ"
-
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
            | UITab_Client (Id Client) Text
@@ -238,7 +235,7 @@ summaryTab = divClass "ui grid" $ do
       Nothing -> blank
       Just (total, graphText) -> do
         setInnerHTML (_element_raw graphEl) graphText
-        text $ "Total rewards earned: " <> tezzies (Tezzies total)
+        text $ "Total rewards earned: " <> tez (Tez total)
   whenJustDyn (fmap fst <$> summaryReport) $ \report -> do
     let baked = sortBy (flip (comparing _event_time)) (_report_baked report)
     divClass "ten wide column" $ do
@@ -255,7 +252,7 @@ summaryTab = divClass "ui grid" $ do
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
-            Just protoInfo -> text . tezzies $ blockRewards b protoInfo
+            Just protoInfo -> text . tez $ blockRewards b protoInfo
   return ()
 
 
@@ -417,22 +414,22 @@ clientTab cid addr = do
             <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
 
         for_ (_clientInfo_balance clientInfo) $ \tz -> do
-          elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
+          elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
             text "Current Balance: "
-            text (tezzies tz)
+            text (tez tz)
           dyn_ $ ffor dparameters $ \parameters -> for_ parameters $ \protoInfo -> do
             let bSD = _protoInfo_blockSecurityDeposit protoInfo
                 eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                 failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
             case failures of
               (t:_) -> do
-                text $ "The identity in use by this baker has not enough tezzies to pay the security deposit for " <> t <> ". "
-                text $ "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                text $ "You'll need to transfer sufficient tezzies into the account before it can continue."
+                text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
+                text $ "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
+                text $ "You'll need to transfer sufficient tez into the account before it can continue."
               [] | tz < 4 * (bSD + eSD) -> do
-                text $ "The identity in use by this baker is running somewhat low on tezzies. "
-                  <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
-                  <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
+                text $ "The identity in use by this baker is running somewhat low on tez. "
+                  <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
+                  <> "Be sure to keep enough tez in the account to pay the security deposits on blocks you'll be baking or endorsing."
               _ -> blank
 
         elClass "p" "counts" $ do
@@ -496,7 +493,7 @@ clientTab cid addr = do
             el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
             el "td" . dyn . ffor dparameters $ \case
               Nothing -> blank
-              Just protoInfo -> text . tezzies $ blockRewards b protoInfo
+              Just protoInfo -> text . tez $ blockRewards b protoInfo
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =

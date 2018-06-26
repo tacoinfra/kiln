@@ -61,18 +61,18 @@ instance HasResolution a => PersistField (Fixed a) where
   fromPersistValues = primFromPersistValue
   dbType _ _ = DbTypePrimitive DbInt64 False Nothing Nothing
 
-instance PrimitivePersistField Tezzies where
-  toPrimitivePersistValue p (Tezzies x) = toPrimitivePersistValue p x
-  fromPrimitivePersistValue p v = Tezzies $ fromPrimitivePersistValue p v
+instance PrimitivePersistField Tez where
+  toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
+  fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
 
-instance ToField Tezzies where
-  toField (Tezzies n) = toField n
+instance ToField Tez where
+  toField (Tez n) = toField n
 
-instance PersistField Tezzies where
-  persistName _ = "Tezzies"
+instance PersistField Tez where
+  persistName _ = "Tez"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (Tezzies x) = dbType p x
+  dbType p (Tez x) = dbType p x
 
 instance PersistField PeriodSequence where
   persistName _ = "PeriodSequence"
@@ -87,8 +87,8 @@ instance PrimitivePersistField PeriodSequence where
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
-instance FromField Tezzies where
-  fromField f b = Tezzies <$> fromField f b -- is this sign-correct?
+instance FromField Tez where
+  fromField f b = Tez <$> fromField f b -- is this sign-correct?
 
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
@@ -97,7 +97,7 @@ instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull TezosWord64
-instance NeverNull Tezzies
+instance NeverNull Tez
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"

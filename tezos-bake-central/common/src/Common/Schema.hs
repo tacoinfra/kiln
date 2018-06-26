@@ -60,25 +60,25 @@ instance Foldable PeriodSequenceF where
 type PeriodSequence = PeriodSequenceF TezosWord64
 
 data ProtoInfo = ProtoInfo
-  { _protoInfo_blockReward :: Tezzies
-  , _protoInfo_blockSecurityDeposit :: Tezzies
+  { _protoInfo_blockReward :: Tez
+  , _protoInfo_blockSecurityDeposit :: Tez
   , _protoInfo_blocksPerCommitment :: Int
   , _protoInfo_blocksPerCycle :: Int
   , _protoInfo_blocksPerRollSnapshot :: Int
   , _protoInfo_blocksPerVotingPeriod :: Int
   , _protoInfo_dictatorPubkey :: Text -- PublicKeyHash
-  , _protoInfo_endorsementReward :: Tezzies
-  , _protoInfo_endorsementSecurityDeposit :: Tezzies
+  , _protoInfo_endorsementReward :: Tez
+  , _protoInfo_endorsementSecurityDeposit :: Tez
   , _protoInfo_endorsersPerBlock :: Int
   --, _protoInfo_firstFreeBakingSlot :: Int
   , _protoInfo_maxOperationDataLength :: Int
   , _protoInfo_michelsonMaximumTypeSize :: Int
-  , _protoInfo_originationBurn :: Tezzies
+  , _protoInfo_originationBurn :: Tez
   , _protoInfo_preservedCycles :: Int
   , _protoInfo_proofOfWorkThreshold :: TezosWord64
-  , _protoInfo_seedNonceRevelationTip :: Tezzies
+  , _protoInfo_seedNonceRevelationTip :: Tez
   , _protoInfo_timeBetweenBlocks :: PeriodSequence -- repeating sequence of seconds
-  , _protoInfo_tokensPerRoll :: Tezzies
+  , _protoInfo_tokensPerRoll :: Tez
   -- TODO: these didn't show up in my quick greppings, so I don't know the types too exactly.
   -- , _protoInfo_instructionsPerTransaction :: 40000
   -- , _protoInfo_maxRevelationsPerBlock :: 32,
@@ -149,7 +149,7 @@ data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
   , _clientInfo_report :: !(Json Report)
   , _clientInfo_config :: !(Json ClientConfig)
-  , _clientInfo_balance :: !(Maybe Tezzies)
+  , _clientInfo_balance :: !(Maybe Tez)
   -- , _clientInfo_node :: Id Node
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ClientInfo
@@ -249,15 +249,15 @@ data Report = Report
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
 
-blockRewards :: Event BakedEvent -> ProtoInfo -> Tezzies
+blockRewards :: Event BakedEvent -> ProtoInfo -> Tez
 blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
   where
     blockHeader = unbase16ByteString $ _bakedEvent_signedHeader $ _event_detail b
     nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
     fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
-endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tezzies
-endorsementReward b p = Tezzies $ getTezzies (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
+endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tez
+endorsementReward b p = Tez $ getTez (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
 
 -- Used to produce info on the summary tab
 instance Semigroup Report where
@@ -283,7 +283,7 @@ data ClientConfig = ClientConfig
 
 data Account = Account
   { _account_manager :: PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
-  , _account_balance :: Tezzies -- "2052452947621"
+  , _account_balance :: Tez -- "2052452947621"
   , _account_spendable :: Bool -- true
   -- , _account_delegate :: {"setable":false,"value":"tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"}
   , _account_counter :: TezosWord64 -- 1540
