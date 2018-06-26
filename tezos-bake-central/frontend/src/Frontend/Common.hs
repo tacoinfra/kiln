@@ -10,7 +10,6 @@ module Frontend.Common where
 import Control.Lens ((%~))
 import Data.List (find)
 import Data.Map (Map)
-import Data.Maybe (isJust)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)

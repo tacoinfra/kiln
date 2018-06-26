@@ -25,10 +25,10 @@ import Say (say)
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
-import Common (tshow)
+import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
-import Common.Schema (Client (..), ClientInfo, MailServerConfig (..), Node (..), Notificatee (..),
-                      Parameters (..))
+import Common.Schema (Client (..), ClientInfo, DelegateStats (..), MailServerConfig (..), Node (..),
+                      Notificatee (..), Parameters (..))
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -94,6 +94,14 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   }
           return $ nodeAddresses <> nodes
         Error e -> parseErr notifyMessage e
+      handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success (dsId :: Id DelegateStats) -> do
+          delegateStats :: Maybe DelegateStats <- get $ fromId dsId
+          whenJust delegateStats $ \stats -> do
+            let publicKeyHash = _delegateStats_publicKeyHash stats
+            whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a ->
+              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ Just stats, a) }
+        Error e -> parseErr notifyMessage e
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
           (notificatee :: Maybe Notificatee) <- get $ fromId nid
@@ -116,6 +124,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "Client" -> handleClient
     "Parameters" -> handleParameters
     "Node" -> handleNode
+    "DelegateStats" -> handleDelegateStats
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
     _ -> do

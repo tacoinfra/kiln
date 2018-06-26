@@ -12,7 +12,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
-
 module Common.Schema where
 
 import qualified Cases
@@ -25,13 +24,14 @@ import Data.Fixed
 import Data.Function
 import Data.Int
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map (Map)
 import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time
 import Data.Typeable
 import Data.Word
-import GHC.Generics
+import GHC.Generics (Generic)
 import Rhyolite.Schema
 
 import Common.Base16ByteString
@@ -39,7 +39,7 @@ import Common.BlockHeader
 import Common.Fitness
 import Common.Json (TezosWord64)
 import Common.Operation
-import Common.PublicKeyHash
+import Common.PublicKeyHash (PublicKeyHash)
 import Common.TaggedHash
 import Common.Tez
 
@@ -84,19 +84,14 @@ data ProtoInfo = ProtoInfo
   -- , _protoInfo_maxRevelationsPerBlock :: 32,
   -- , _protoInfo_nonceLength :: 32,
   -- , _protoInfo_proofOfWorkNonceSize :: 8
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 type Baked = Event BakedEvent
 
 data Error = Error
   { _error_time :: UTCTime
   , _error_text :: Text
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
-instance FromJSON Error
-instance ToJSON Error
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 data BlockInfo = BlockInfo
   { _blockInfo_protocol :: ProtocolHash
@@ -105,7 +100,7 @@ data BlockInfo = BlockInfo
   , _blockInfo_header :: BlockInfoHeader
   , _blockInfo_metadata :: BlockInfoMetadata
   --, _blockInfo_operations :: [[ProtoOperation]]
-  }
+  } deriving (Eq, Show, Generic, Typeable)
 
 data BlockInfoHeader = BlockInfoHeader
   { _blockInfoHeader_level :: TezosWord64
@@ -119,7 +114,7 @@ data BlockInfoHeader = BlockInfoHeader
   -- , _blockInfoHeader_priority
   -- , _blockInfoHeader_proofOfWorkNonce
   -- , _blockInfoHeader_signature
-  }
+  } deriving (Eq, Show, Generic, Typeable)
 
 data BlockInfoMetadata = BlockInfoMetadata
   { _blockInfoMetadata_protocol :: ProtocolHash
@@ -132,40 +127,31 @@ data BlockInfoMetadata = BlockInfoMetadata
   , _blockInfoMetadata_baker :: PublicKeyHash
   -- , _blockInfoMetadata_level
   --, _blockInfoMetadata_votingPeriodKind
-  }
-  deriving (Eq, Show, Generic, Typeable)
+  } deriving (Eq, Show, Generic, Typeable)
 
 type ClientAddress = Text
 
 data Client = Client
   { _client_address :: ClientAddress
   , _client_updated :: Maybe UTCTime
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Client
-instance FromJSON Client
-instance ToJSON Client
 
 data PendingReward = PendingReward
   { _pendingReward_client :: Id Client
   , _pendingReward_hash :: Text -- needed because we need to be able to tell that we're not adding the same reward twice
   , _pendingReward_level :: TezosWord64
   , _pendingReward_amount :: Micro
-  }
-  deriving (Eq, Show, Generic, Typeable)
-
+  } deriving (Eq, Show, Generic, Typeable)
 instance HasId PendingReward
 
 data ClientInfo = ClientInfo
-  { _clientInfo_client :: Id Client
-  , _clientInfo_report :: Json Report
-  , _clientInfo_config :: Json ClientConfig
-  , _clientInfo_balance :: Maybe Tezzies
+  { _clientInfo_client :: !(Id Client)
+  , _clientInfo_report :: !(Json Report)
+  , _clientInfo_config :: !(Json ClientConfig)
+  , _clientInfo_balance :: !(Maybe Tezzies)
   -- , _clientInfo_node :: Id Node
-  }
-  deriving (Eq, Show, Generic, Typeable)
-
+  } deriving (Eq, Show, Generic, Typeable)
 instance HasId ClientInfo
 
 data NetworkStat = NetworkStat
@@ -173,27 +159,23 @@ data NetworkStat = NetworkStat
   , _networkStat_totalRecv :: TezosWord64 -- bytes
   , _networkStat_currentInflow :: Int32 -- bytes/s
   , _networkStat_currentOutflow :: Int32 -- bytes/s
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 data Node = Node
   { _node_address :: !ClientAddress
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe Word64)
+  , _node_headBlockHash :: !(Maybe BlockHash)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
 data Parameters = Parameters
   { _parameters_node :: Id Node
   , _parameters_protoInfo :: ProtoInfo
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
 
 data Level = Level
@@ -204,23 +186,18 @@ data Level = Level
   , _level_levelPosition :: Int
   , _level_votingPeriod :: Int
   , _level_votingPeriodPosition :: Int
-  }
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data BakedEventOperation = BakedEventOperation
   { _bakedEventOperation_branch :: BlockHash
   , _bakedEventOperation_data :: Base16ByteString ProtoOperation
-  }
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   , _bakedEvent_operations :: [[BakedEventOperation]]
   , _bakedEvent_signedHeader :: Base16ByteString BlockHeader
-  }
-  deriving (Show, Eq, Ord, Typeable, Generic)
-
-
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SeenEvent = SeenEvent
   { _seenEvent_hash :: BlockHash
@@ -230,22 +207,19 @@ data SeenEvent = SeenEvent
   , _seenEvent_predecessor :: BlockHash
   -- , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
-  }
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Event e = Event
   { _event_detail :: e
   , _event_seq :: Int
   , _event_time :: UTCTime
   , _event_worker :: Text
-  }
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
   , _errorEvent_trace :: Json [Value]
-  }
-  deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Typeable, Generic)
 
 data EndorseEvent = EndorseEvent
   { _endorseEvent_hash :: BlockHash
@@ -254,8 +228,8 @@ data EndorseEvent = EndorseEvent
   , _endorseEvent_delegate :: PublicKeyHash
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
-  }
-  deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Typeable, Generic)
+
 
 mkErr :: Event ErrorEvent -> Error
 mkErr err = Error
@@ -269,8 +243,7 @@ data Report = Report
   , _report_errors :: [Event ErrorEvent]
   , _report_seen :: [Event SeenEvent]
   , _report_startTime :: UTCTime
-  }
-  deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Typeable, Generic)
 
 -- TODO: handle parsing errors
 blockLevel :: Event BakedEvent -> Int
@@ -306,8 +279,7 @@ data ClientConfig = ClientConfig
   , _clientConfig_delegates :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
   , _clientConfig_nodeUri :: ClientAddress
-  }
-  deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Typeable, Generic)
 
 data Account = Account
   { _account_manager :: PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
@@ -315,10 +287,10 @@ data Account = Account
   , _account_spendable :: Bool -- true
   -- , _account_delegate :: {"setable":false,"value":"tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"}
   , _account_counter :: TezosWord64 -- 1540
-  }
+  } deriving (Show, Eq, Generic, Typeable)
 
 newtype BlockPrefix = BlockPrefix Text
-  deriving (Eq, Show, Generic, Typeable, ToJSON, FromJSON)
+  deriving (Eq, Show, Generic, Typeable)
 
 data BlockId = BlockId
   { _blockId_chainId :: DynamicParamChainId
@@ -376,15 +348,15 @@ data NodeRPCRequest a where
   RProtoConstants :: NodeRPCRequest ProtoInfo
   RContract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
   RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
+  RBakingRights :: BlockId -> [Word64] -> NodeRPCRequest (Map PublicKeyHash (Map Word64 Word8))
   RNetworkStat :: NodeRPCRequest NetworkStat
 
 
-data RpcError =
-    RpcError_HttpException Text
+data RpcError
+  = RpcError_HttpException Text
   | RpcError_UnexpectedStatus Int BS.ByteString
   | RpcError_NonJSON String LBS.ByteString
   deriving (Eq, Ord, Show, Generic, Typeable)
-
 
 type RpcResponse = Either RpcError
 
@@ -393,11 +365,16 @@ class MonadTezosNode m where
   nodeAddress :: m Text
 
 
+data DelegateStats = DelegateStats
+  { _delegateStats_publicKeyHash :: !PublicKeyHash
+  , _delegateStats_bakedBlocks :: !Word64
+  , _delegateStats_bakingRights :: !Word64
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId DelegateStats
+
 data Notificatee = Notificatee
   { _notificatee_email :: Email
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 
 data SmtpProtocol
@@ -414,7 +391,6 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_password :: Text
   , _mailServerConfig_madeDefaultAt :: UTCTime
   } deriving (Eq, Generic, Ord, Show)
-
 instance HasId MailServerConfig
 
 
@@ -433,6 +409,7 @@ concat <$> traverse (deriveJSON defaultOptions
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
+  , ''DelegateStats
   , ''DynamicParamBlockHash
   , ''DynamicParamChainId
   , ''EndorseEvent
@@ -453,6 +430,7 @@ concat <$> traverse makeLenses
   , 'BlockInfo
   , 'BlockInfoHeader
   , 'BlockInfoMetadata
+  , 'DelegateStats
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent

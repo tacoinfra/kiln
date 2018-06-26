@@ -13,27 +13,30 @@
 module Frontend where
 
 import Control.Lens (_1, _2)
-import Control.Monad
-import Control.Monad.Fix
-import Control.Monad.Trans
+import Control.Monad ((<=<))
+import Control.Monad.Fix (MonadFix)
+import Control.Monad.IO.Class (liftIO)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
-import Data.Fixed
-import Data.Foldable (toList)
-import Data.List
+import Data.Fixed (Micro)
+import Data.Foldable (for_, toList)
+import Data.Functor (void)
+import Data.List (sortBy)
 import qualified Data.Map as BaseMap
-import Data.Maybe
-import Data.Monoid ()
-import Data.Ord
-import Data.Semigroup
+import Data.Maybe (fromMaybe, isJust)
+import Data.Ord (comparing)
+import Data.Semigroup (First (..), (<>))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time.Format
+import Data.Time.Format (defaultTimeLocale, formatTime)
+import Data.Traversable (for)
 import qualified Form.Checks as Check
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
@@ -46,21 +49,21 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api
 import Rhyolite.App (getSingle)
-import Rhyolite.Frontend.App
+import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
-import Rhyolite.Route
-import Rhyolite.Schema
-import Rhyolite.WebSocket
+import Rhyolite.Route (RouteEnv)
+import Rhyolite.Schema (Email, Id, Json (..))
+import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 
 import Common (tshow)
 import Common.Api
 import Common.App
-import Common.Fitness
+import Common.Fitness (unFitness)
 import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash
+import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema hiding (Event)
-import Common.TaggedHash
-import Common.Tez
+import Common.TaggedHash (toBase58Text)
+import Common.Tez (Tezzies (..))
 import Frontend.Common (buttonWithInfo, formWithSubmit, tooltip, tooltipPos, uiButton, validateUri)
 
 
@@ -111,6 +114,14 @@ watchClient cidDyn = do
     { _bakeViewSelector_clients = Map.singleton cid 1
     }
   return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
+
+
+watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash DelegateStats))
+watchDelegateStats delegates = do
+  theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
+    { _bakeViewSelector_delegateStats = Map.fromSet (const 1) ds
+    }
+  return $ ffor theView $ Map.mapMaybe (\(First r, _) -> r) . _bakeView_delegateStats
 
 watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
 watchClientAddresses = do
@@ -177,10 +188,10 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
         nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
-          fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
+          fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
             semuiTab ("N:" <> name) (UITab_Node cid) currentTab
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-          fmap leftmost . forM (Map.toList cs) $ \(cid, name) ->
+          fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
             semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
         optionsT <- semuiTab "Options" UITab_Options currentTab
         return (leftmost [summaryT, clientT, nodeT, optionsT])
@@ -238,7 +249,7 @@ summaryTab = divClass "ui grid" $ do
           el "th" $ text "Level"
           el "th" $ text "Block Hash"
           el "th" $ text "Reward"
-        forM_ baked $ \b -> el "tr" $ do
+        for_ baked $ \b -> el "tr" $ do
           el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
           el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
@@ -392,7 +403,7 @@ nodeTab nid = do
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Text -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
-  divClass "ui grid" . void . dyn . ffor (Map.lookup cid <$> clients) $ \case
+  divClass "ui grid" $ dyn_ $ ffor (Map.lookup cid <$> clients) $ \case
     Nothing -> text "Waiting for response..."
     Just clientInfo -> do
       dparameters <- watchProtoInfo
@@ -400,15 +411,16 @@ clientTab cid addr = do
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
-        divClass "ui medium header" . text $ addr
-        elAttr "div" ("class" =: "delegates") $ do
+        elClass "h3" "ui medium header" $ text addr
+        divClass "delegates" $ do
           text $ "ID: "
             <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
-        forM_ (_clientInfo_balance clientInfo) $ \tz -> do
+
+        for_ (_clientInfo_balance clientInfo) $ \tz -> do
           elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tezzies in the account that this baker is using.") $ do
             text "Current Balance: "
             text (tezzies tz)
-          dyn . ffor dparameters $ \parameters -> forM_ parameters $ \protoInfo -> do
+          dyn_ $ ffor dparameters $ \parameters -> for_ parameters $ \protoInfo -> do
             let bSD = _protoInfo_blockSecurityDeposit protoInfo
                 eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                 failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
@@ -422,26 +434,53 @@ clientTab cid addr = do
                   <> "The security deposit for baking is currently " <> tezzies bSD <> " and for endorsement is currently " <> tezzies eSD <> ". "
                   <> "Be sure to keep enough tezzies in the account to pay the security deposits on blocks you'll be baking or endorsing."
               _ -> blank
-        divClass "counts" $ do
+
+        elClass "p" "counts" $ do
           {-
           tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
             "Blocks baked:" <> (T.pack . show $ length baked) -- incorrect
           -}
           tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
             "Errors: " <> (T.pack . show $ length errors)
+
+        elClass "p" "efficiency" $ do
+          delegateStatsDyn <- watchDelegateStats $ pure $
+            Set.fromList $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo
+          isNullDelegates <- holdUniqDyn $ null <$> delegateStatsDyn
+
+          dyn_ $ ffor isNullDelegates $ \case
+            True -> blank
+            False -> do
+              elClass "h4" "ui medium header" $ text "Efficiency"
+              elClass "table" "ui celled compact striped table" $ do
+                void $ listWithKey (_unAppendMap <$> delegateStatsDyn) $ \delegate stats -> do
+                  el "tr" $ do
+                    el "td" $ text $ toPublicKeyHashText delegate
+                    elClass "td" "right aligned" $ do
+                      baked_ <- holdUniqDyn $ _delegateStats_bakedBlocks <$> stats
+                      rights <- holdUniqDyn $ _delegateStats_bakingRights <$> stats
+                      elAttr "span" ("data-tooltip"=:"Number of blocks where this baker either baked or was beaten by higher proiry baker (over past preserved cycles)") $
+                        display baked_
+                      text " of "
+                      elAttr "span" ("data-tooltip"=:"Number of blocks where this baker had rights to bake at any priority (over past preserved cycles)") $
+                        display rights
+                      text " ("
+                      display $ zipDynWith (\x y -> round (fromIntegral x / fromIntegral y * 100 :: Double) :: Int) baked_ rights
+                      text "%)"
+
         case errors of
           [] -> blank
-          _ -> divClass "errors" $ do
-            divClass "ui medium header" $ text "Errors"
+          _ -> elClass "p" "errors" $ do
+            elClass "h4" "ui medium header" $ text "Errors"
             elClass "table" "ui celled striped table" $ do
               el "thead" . el "tr" $ do
                 elClass "th" "four wide" $ text "Time"
                 el "th" $ text "Message"
-              forM_ errors $ \e -> do
+              for_ errors $ \e -> do
                 el "tr" $ do
                   el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
                   el "td" $ do
-                    forM_ (T.lines (_error_text e)) $ \t ->
+                    for_ (T.lines (_error_text e)) $ \t ->
                       divClass "errorLine" $ text t
       divClass "eight wide column" $ do
         divClass "ui medium header" $ text "Activity"
@@ -451,7 +490,7 @@ clientTab cid addr = do
             el "th" $ text "Level"
             el "th" $ text "Block Hash"
             el "th" $ text "Reward"
-          forM_ baked $ \b -> el "tr" $ do
+          for_ baked $ \b -> el "tr" $ do
             el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
             el "td" . text . T.pack . show . blockLevel $ b
             el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
@@ -495,7 +534,7 @@ listInput ph validate itemWidget items rsp = divClass "list-input" $ do
             , addClick
             ]
       widgetHold_ blank $ ffor rsp $ \case
-        Left errs -> forM_ errs $ elClass "div" "modal-content__text-input-error" . text
+        Left errs -> for_ errs $ elClass "div" "modal-content__text-input-error" . text
         Right success -> elClass "div" "modal-content__text-input-success" $ text success
       remove <- fmap (fmap (leftmost . BaseMap.elems)) $ elClass "ul" "list-input-items" $
         listWithKey (_unAppendMap <$> items) $ \k t -> el "li" $ do

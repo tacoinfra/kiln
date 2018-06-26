@@ -39,19 +39,18 @@ instance ToJSON PublicKeyHash where
 
 instance FromJSON PublicKeyHash where
   parseJSON x = do
-      x' <- T.encodeUtf8 <$> parseJSON x
-      case tryFromBase58 publicKeyHashConstructorDecoders x' of
-        Left bad -> fail $ show bad
-        Right ok -> return ok
-
+    x' <- T.encodeUtf8 <$> parseJSON x
+    case tryFromBase58 publicKeyHashConstructorDecoders x' of
+      Left bad -> fail $ show bad
+      Right ok -> return ok
 
 toPublicKeyHashText :: PublicKeyHash -> Text
 toPublicKeyHashText = \case
-    PublicKeyHash_Ed25519 x -> toBase58Text x
-    PublicKeyHash_Secp256k1 x -> toBase58Text x
+  PublicKeyHash_Ed25519 x -> toBase58Text x
+  PublicKeyHash_Secp256k1 x -> toBase58Text x
 
 instance Show PublicKeyHash where
-  show = ("fromString "  <>) . show . toPublicKeyHashText
+  show = ("fromString " <>) . show . toPublicKeyHashText
 
 instance IsString PublicKeyHash where
   fromString x = either (error . show) id $ tryFromBase58 publicKeyHashConstructorDecoders $ fromString x

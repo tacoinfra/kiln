@@ -28,6 +28,7 @@ import Reflex.Query.Class
 import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 
+import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema
 
 
@@ -40,6 +41,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_parameters :: !(Maybe a)
   , _bakeViewSelector_nodeAddresses :: !(Maybe a)
   , _bakeViewSelector_nodes :: !(AppendMap (Id Node) a)
+  , _bakeViewSelector_delegateStats :: !(AppendMap PublicKeyHash a)
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
   }
@@ -51,6 +53,7 @@ data BakeView a = BakeView
   , _bakeView_parameters :: !(Single ProtoInfo a)
   , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe ClientAddress), a))
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
+  , _bakeView_delegateStats :: !(AppendMap PublicKeyHash (First (Maybe DelegateStats), a))
   , _bakeView_notificatees :: !(AppendMap (Id Notificatee) (First (Maybe Email), a))
   , _bakeView_mailServer :: !(Single MailServerView a)
   , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
@@ -90,6 +93,7 @@ cropBakeView vs v =
         Nothing -> mempty
         Just _ -> _bakeView_nodeAddresses v
       nodes = Map.intersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
+      delegateStats = Map.intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
       notificatees = case _bakeViewSelector_notificatees vs of
         Nothing -> mempty
         Just _ -> _bakeView_notificatees v
@@ -109,6 +113,7 @@ cropBakeView vs v =
       , _bakeView_parameters = parameters
       , _bakeView_nodeAddresses = nodeAddresses
       , _bakeView_nodes = nodes
+      , _bakeView_delegateStats = delegateStats
       , _bakeView_notificatees = notificatees
       , _bakeView_mailServer = mailServer
       , _bakeView_graphs = graphs
@@ -117,13 +122,14 @@ cropBakeView vs v =
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil nil nil nil nil nil nil nil
+  nil = BakeViewSelector nil nil nil nil nil nil nil nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clientAddresses = alignWith f (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
     , _bakeViewSelector_summary = alignWith f (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
     , _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
+    , _bakeViewSelector_delegateStats = alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
     , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = alignWith f (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
@@ -136,6 +142,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
+    , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
     , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
@@ -147,6 +154,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
+    , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_graphs = fmapMaybeSnd f $ _bakeView_graphs a
@@ -181,6 +189,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_clients = mempty
     , _bakeView_parameters = mempty
     , _bakeView_nodes = mempty
+    , _bakeView_delegateStats = mempty
     , _bakeView_notificatees = mempty
     , _bakeView_mailServer = mempty
     , _bakeView_graphs = mempty
@@ -196,6 +205,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
+    , _bakeView_delegateStats = _bakeView_delegateStats u <> _bakeView_delegateStats v
     , _bakeView_notificatees = _bakeView_notificatees u <> _bakeView_notificatees v
     , _bakeView_mailServer = _bakeView_mailServer u <> _bakeView_mailServer v
     , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
