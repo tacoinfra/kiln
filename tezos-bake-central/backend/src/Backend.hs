@@ -12,7 +12,7 @@
 
 module Backend where
 
-import Control.Applicative ((<|>))
+import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
@@ -21,19 +21,17 @@ import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Either.Combinators (rightToMaybe)
 import Data.Foldable (for_, toList)
 import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (sortBy)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Set (Set)
@@ -41,6 +39,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
@@ -52,6 +51,7 @@ import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import Network.URI (URI)
+import qualified Network.URI as URI
 import qualified Network.URI as Uri
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
@@ -77,9 +77,9 @@ import Snap.Core (MonadSnap, route)
 import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
+import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
-import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth (scanForkInfo, validateForkyBlocks)
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
@@ -89,6 +89,7 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Common (tshow)
 import Common.Base16ByteString (unbase16ByteString)
+import qualified Common.Config as Config
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
@@ -319,21 +320,29 @@ updateBakeRate ctx (headLevel, headBlockHash, protoInfo) delegates = do
 backend :: IO ()
 backend = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
-  csk <- CS.getKey "config/clientSessionKey"
 
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
-  let emailFromAddress = Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" $
-        _opts_emailFromAddress =<< SnapServer.getOther cfg
+  emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
+    liftA2 (<|>)
+      (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
+      (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  routeEnv :: Maybe RouteEnv <- case _opts_route =<< SnapServer.getOther cfg of
-    Nothing -> getConfigFromFile "config/route"
-    Just env -> pure $ Just $ uriToRouteEnv env
+  routeEnv :: Maybe RouteEnv <- liftA2 (<|>)
+    (pure $ fmap uriToRouteEnv (_opts_route =<< SnapServer.getOther cfg))
+    (getConfigFromFile (Aeson.decodeStrict . encodeUtf8) $ configPath Config.route)
 
-  routeHead <- for routeEnv $ \env ->
-    snd <$> renderStatic (injectPure "route" $ decodeUtf8 $ LBS.toStrict $ Aeson.encode env)
-  frontendHead <- snd <$> renderStatic (fst frontend)
+  blockExplorer :: Maybe URI <- liftA2 (<|>)
+    (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
+    (getConfigFromFile (URI.parseURI . T.unpack) $ configPath Config.blockExplorer)
+
+  staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
+    [ Just $ fst frontend
+    , injectPure Config.route . decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
+    , injectPure Config.blockExplorer . tshow <$> blockExplorer
+    ]
+  sayShow staticHead
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
   withGargoyleOrConnStr (maybe (Left "db") Right pgConnStr) $ \db -> do
@@ -353,9 +362,9 @@ backend = do
     httpMgr <- Http.newManager Https.tlsManagerSettings
 
     (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-      (requestHandler csk emailFromAddress httpMgr db)
+      (requestHandler emailFromAddress httpMgr db)
       (notifyHandler db)
-      (viewSelectorHandler csk db)
+      (viewSelectorHandler db)
       (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
@@ -363,7 +372,7 @@ backend = do
     addFinalizer =<< clientWorker 10 emailFromAddress httpMgr db
 
     SnapServer.httpServe cfg (route
-      [ ("", rootHandler $ fromMaybe mempty routeHead <> frontendHead)
+      [ ("", rootHandler staticHead)
       , ("/listen", handleListen)
       , ("static", serveAssets "static" "static")
       , ("", serveDirectory "frontend.jsexe")
@@ -402,8 +411,8 @@ clearMailQueueWithDynamicEmailEnv db = do
   clearMailQueue db emailEnv
 
 
-getConfigFromFile :: (FromJSON a) => FilePath -> IO (Maybe a)
-getConfigFromFile f = (rightToMaybe . Aeson.eitherDecode <$> LBS.readFile f)
+getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
+getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
 
@@ -429,6 +438,7 @@ data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
   , _opts_route :: Maybe URI
   , _opts_emailFromAddress :: Maybe Text
+  , _opts_blockExplorer :: Maybe URI
   }
 
 instance Semigroup Opts where
@@ -436,21 +446,28 @@ instance Semigroup Opts where
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
     , _opts_route = _opts_route b <|> _opts_route a
     , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
+    , _opts_blockExplorer = _opts_blockExplorer b <|> _opts_blockExplorer a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
 optsArgDescr =
-  [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x })
-      "Connection string or URI to PostgreSQL database. If blank, use connection string in 'db' file or create a database there if empty."
-  , Option [] ["route"] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x })
-      "Root URL for this service as seen by external users. If blank, use contents of 'config/route'."
-  , Option [] ["email-from"] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x })
-      "Email address to use for 'From' field in email notifications."
+  [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
+      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
+  , Option [] [Config.route] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x }) $
+      "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
+  , Option [] [Config.emailFromAddress] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
+      "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
+  , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ parseUrlOpt x }) $
+      "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
     parseUrlOpt x = fromMaybe (error $ x <> " is not a valid URL") $ Uri.parseURI x
+
+
+configPath :: FilePath -> FilePath
+configPath = ("config" </>)

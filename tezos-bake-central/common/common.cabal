@@ -42,6 +42,7 @@ library
     Common.App
     Common.Base16ByteString
     Common.BlockHeader
+    Common.Config
     Common.Fitness
     Common.Json
     Common.Micheline

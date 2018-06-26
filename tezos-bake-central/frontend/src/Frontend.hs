@@ -12,10 +12,11 @@
 
 module Frontend where
 
-import Control.Lens (_1, _2)
+import Control.Lens ((<&>), _1, _2)
 import Control.Monad ((<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (MonadReader, runReaderT)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
 import qualified Data.ByteString.Base16 as BS16
@@ -25,7 +26,7 @@ import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
 import Data.Foldable (for_, toList)
 import Data.Functor (void)
-import Data.List (sortBy)
+import Data.List (intersperse, sortBy)
 import qualified Data.Map as BaseMap
 import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (comparing)
@@ -58,21 +59,19 @@ import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import Common (tshow)
 import Common.Api
 import Common.App
+import qualified Common.Config as Config
 import Common.Fitness (unFitness)
 import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
+import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema hiding (Event)
-import Common.TaggedHash (toBase58Text)
 import Common.Tez (Tez (..))
-import Frontend.Common (buttonWithInfo, formWithSubmit, tez, tooltip, tooltipPos, uiButton, validateUri)
-
+import Frontend.Common
 
 frontend :: (StaticWidget x (), Widget x ())
 frontend =
   ( headTag
   , void $ do
-      routeStr <- liftIO $ Obelisk.ExecutableConfig.get "route"
-      route :: RouteEnv <- case routeStr of
+      route :: RouteEnv <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
         Just r -> return $ fromMaybe
           (error "Unable to parse injected route")
           (decodeValue' $ LBS.fromStrict $ T.encodeUtf8 r)
@@ -81,17 +80,20 @@ frontend =
           hostWithPort <- getLocationHost
           return $ let (host, port) = T.breakOn ":" hostWithPort
                     in (T.unpack protocol, T.unpack host, T.unpack port)
-      liftIO $ print route
-      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) appMain
+
+      blockExplorerUrl <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) <&> \case
+        Just url -> Just $ either (error . (<> "Error parsing injected block explorer URL " <> T.unpack url <> ": ") . T.unpack) id $ checkUri url
+        Nothing -> Nothing
+
+      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
   )
 
+
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
-watchProtoInfo = do
-  theView <- watchViewSelector . pure $ mempty
+watchProtoInfo =
+  (fmap . fmap) (getSingle . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
-  return $ fmap (getSingle . _bakeView_parameters) theView
-
 
 watchNode :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Node) -> m (Dynamic t (AppendMap (Id Node) Node))
 watchNode cidDyn = do
@@ -177,7 +179,7 @@ data UITab = UITab_Summary
   deriving (Eq, Ord, Show)
 
 
-appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
+appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   nodeAddresses <- watchNodeAddresses
   clientAddresses <- watchClientAddresses
@@ -206,7 +208,7 @@ whenJustDyn d f = dyn_ . ffor d $ \case
   Nothing -> blank
   Just x -> f x
 
-summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
+summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 summaryTab = divClass "ui grid" $ do
   dparameters <- watchProtoInfo
   summaryReport <- watchSummary
@@ -228,7 +230,7 @@ summaryTab = divClass "ui grid" $ do
           text $ "Errors: " <> T.pack (show n)
       whenJustDyn waitingCount $ \n ->
         tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
-          text $ "Waiting: " <> T.pack (show n)
+          text $ "Waiting: " <> tshow n
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
     dyn . ffor mGraph $ \case
@@ -249,7 +251,7 @@ summaryTab = divClass "ui grid" $ do
         for_ baked $ \b -> el "tr" $ do
           el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
+          el "td" . blockHashLink $ _bakedEvent_hash $ _event_detail b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
             Just protoInfo -> text . tez $ blockRewards b protoInfo
@@ -298,8 +300,6 @@ optionsTab = divClass "ui grid" $ do
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
       listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
         let dName = node
-        -- let dId = maybe "???" toBase58Text . _node_identity <$> node
-        -- el "td" $ dynText dId -- TODO
         el "td" $ dynText dName
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
@@ -375,34 +375,36 @@ mailServerForm frm0 = do
     labeled = el "label" . text
 
 
-nodeTab :: MonadRhyoliteFrontendWidget Bake t m => Id Node -> m ()
+nodeTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Node -> m ()
 nodeTab nid = do
   dNode <- watchNode $ pure nid
-  void $ dyn . ffor dNode $ traverse $ \node -> do
-    divClass "ui small header" . text $ "Node Statistics"
-    elAttr "div" ("class" =: "client-node") $ do
-      text $ "Node: " <> _node_address node
-    el "div" . text $ "Head block level " <> case _node_headLevel node of
-      Nothing -> "unknown"
-      Just k -> T.pack (show k)
-    el "div" . text $ "Head block fitness " <> case _node_fitness node of
-      Nothing -> "unknown"
-      Just k ->  T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-    el "div" . text $ "Peer count: " <> case _node_peerCount node of
-      Nothing -> "unknown"
-      Just k -> T.pack (show k)
-    let stat = _node_networkStat node
-    el "div" . text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
-    el "div" . text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
-    el "div" . text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
-    el "div" . text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
+  dyn_ $ ffor (Map.lookup nid <$> dNode) $ \case
+    Nothing -> waitingForResponse
+    Just node -> do
+      divClass "ui small header" . text $ "Node Statistics"
+      elAttr "div" ("class" =: "client-node") $ do
+        text $ "Node: " <> _node_address node
+      el "div" $ do
+        text "Head block level: "
+        maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
+      el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
+        Nothing -> "N/A"
+        Just k ->  T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+      el "div" $ text $ "Peer count: " <> case _node_peerCount node of
+        Nothing -> "N/A"
+        Just k -> T.pack (show k)
+      let stat = _node_networkStat node
+      el "div" $ text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
+      el "div" $ text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
+      el "div" $ text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
+      el "div" $ text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
 
-clientTab :: (MonadRhyoliteFrontendWidget Bake t m) => Id Client -> Text -> m ()
+clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> Text -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
-  divClass "ui grid" $ dyn_ $ ffor (Map.lookup cid <$> clients) $ \case
-    Nothing -> text "Waiting for response..."
-    Just clientInfo -> do
+  dyn_ $ ffor (Map.lookup cid <$> clients) $ \case
+    Nothing -> waitingForResponse
+    Just clientInfo -> divClass "ui grid" $ do
       dparameters <- watchProtoInfo
       let report = unJson (_clientInfo_report clientInfo)
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
@@ -410,22 +412,22 @@ clientTab cid addr = do
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ text addr
         divClass "delegates" $ do
-          text $ "ID: "
-            <> T.intercalate " " (fmap toPublicKeyHashText $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+          text "ID: "
+          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
 
         for_ (_clientInfo_balance clientInfo) $ \tz -> do
           elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
             text "Current Balance: "
             text (tez tz)
-          dyn_ $ ffor dparameters $ \parameters -> for_ parameters $ \protoInfo -> do
+          dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
             let bSD = _protoInfo_blockSecurityDeposit protoInfo
                 eSD = _protoInfo_endorsementSecurityDeposit protoInfo
                 failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
             case failures of
               (t:_) -> do
                 text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
-                text $ "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                text $ "You'll need to transfer sufficient tez into the account before it can continue."
+                  <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
+                  <> "You'll need to transfer sufficient tez into the account before it can continue."
               [] | tz < 4 * (bSD + eSD) -> do
                 text $ "The identity in use by this baker is running somewhat low on tez. "
                   <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
@@ -433,12 +435,8 @@ clientTab cid addr = do
               _ -> blank
 
         elClass "p" "counts" $ do
-          {-
-          tooltip "This counts the number of times that a block was baked and injected into the blockchain by this baker since it began running." . text $
-            "Blocks baked:" <> (T.pack . show $ length baked) -- incorrect
-          -}
-          tooltip "This counts the number of errors that this baker has encountered since it began running." . text $
-            "Errors: " <> (T.pack . show $ length errors)
+          tooltip "This counts the number of errors that this baker has encountered since it began running." $
+            text $ "Errors: " <> tshow (length errors)
 
         elClass "p" "efficiency" $ do
           delegateStatsDyn <- watchDelegateStats $ pure $
@@ -452,7 +450,7 @@ clientTab cid addr = do
               elClass "table" "ui celled compact striped table" $ do
                 void $ listWithKey (_unAppendMap <$> delegateStatsDyn) $ \delegate stats -> do
                   el "tr" $ do
-                    el "td" $ text $ toPublicKeyHashText delegate
+                    el "td" $ publicKeyHashLink delegate
                     elClass "td" "right aligned" $ do
                       baked_ <- holdUniqDyn $ _delegateStats_bakedBlocks <$> stats
                       rights <- holdUniqDyn $ _delegateStats_bakingRights <$> stats
@@ -488,12 +486,14 @@ clientTab cid addr = do
             el "th" $ text "Block Hash"
             el "th" $ text "Reward"
           for_ baked $ \b -> el "tr" $ do
-            el "td" . el "strong" $ text $ T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _event_time $ b
-            el "td" . text . T.pack . show . blockLevel $ b
-            el "td" . text . T.take 14 . toBase58Text . _bakedEvent_hash . _event_detail $ b
-            el "td" . dyn . ffor dparameters $ \case
-              Nothing -> blank
-              Just protoInfo -> text . tez $ blockRewards b protoInfo
+            el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
+            el "td" $ text $ tshow $ blockLevel b
+            el "td" $ blockHashLink $ _bakedEvent_hash $ _event_detail b
+            el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
+              text $ tez $ blockRewards b protoInfo
+
+waitingForResponse :: DomBuilder t m => m ()
+waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =

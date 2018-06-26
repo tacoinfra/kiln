@@ -31,7 +31,6 @@ import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), executeQ, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Schema (Id (..))
-import qualified Web.ClientSession as CS
 
 import Backend.ChainHealth (obtainNode)
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
@@ -43,12 +42,11 @@ import Common.Schema
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
-  => CS.Key
-  -> Address
+  => Address
   -> Http.Manager
   -> Pool Postgresql
   -> RequestHandler Bake m
-requestHandler csk emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $
+requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $
   case req of
     ApiRequest_Public r ->
       case r of

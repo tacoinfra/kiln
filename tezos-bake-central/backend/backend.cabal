@@ -26,6 +26,7 @@ library
     , diagrams-lib
     , diagrams-svg
     , either
+    , filepath
     , frontend
     , groundhog
     , groundhog-postgresql
