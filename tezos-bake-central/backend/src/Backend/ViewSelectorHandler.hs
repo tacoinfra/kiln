@@ -22,7 +22,6 @@ import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)
 import Rhyolite.Backend.Schema (toId)
-import qualified Web.ClientSession as CS
 
 import Backend.BalanceTracking
 import Backend.Graphs
@@ -33,10 +32,9 @@ import Common.Schema
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => CS.Key
-  -> Pool Postgresql
+  => Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler csk db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c |]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
