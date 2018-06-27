@@ -344,7 +344,7 @@ backend = do
     ]
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
-  withGargoyleOrConnStr (maybe (Left "db") Right pgConnStr) $ \db -> do
+  withGargoyleOrConnStr (maybe (Left Config.db) Right pgConnStr) $ \db -> do
     runNoLoggingT $ runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
