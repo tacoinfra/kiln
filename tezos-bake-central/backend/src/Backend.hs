@@ -342,7 +342,6 @@ backend = do
     , injectPure Config.route . decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
     , injectPure Config.blockExplorer . tshow <$> blockExplorer
     ]
-  sayShow staticHead
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
   withGargoyleOrConnStr (maybe (Left "db") Right pgConnStr) $ \db -> do
