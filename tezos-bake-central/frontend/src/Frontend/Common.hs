@@ -9,7 +9,6 @@ module Frontend.Common where
 
 import Control.Lens ((%~))
 import Control.Monad.Reader (MonadReader, asks)
-import Data.List (find)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
