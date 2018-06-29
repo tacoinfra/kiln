@@ -55,8 +55,7 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           (_, node) <- runNodeRPCT ctx obtainNode
           insertAndNotify_ node
 
-        PublicRequest_RemoveNode addrRaw -> do
-          let addr = cleanUri addrRaw
+        PublicRequest_RemoveNode addr -> do
           nodeIds :: [Id Node] <- stripOnly <$> [queryQ| SELECT id FROM "Node" where address = ?addr |]
           let inNodeIds = In nodeIds
           -- delete parameters
@@ -66,8 +65,7 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           -- notify
           notifyEntitiesDeleted nodeIds
 
-        PublicRequest_AddClient addrRaw -> do
-          let addr = cleanUri addrRaw
+        PublicRequest_AddClient addr -> do
           insertAndNotify_ $ Client { _client_address = addr, _client_updated = Nothing }
 
         PublicRequest_RemoveClient addr -> do
@@ -122,7 +120,6 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
         PrivateRequest_NoOp -> return ()
 
     where
-      cleanUri = T.dropAround (`elem` ['/', ' ', '\t'])
       notifyEntitiesDeleted ids = for_ ids $ void . notifyEntityId NotificationType_Delete
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))

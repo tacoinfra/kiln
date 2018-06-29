@@ -15,15 +15,16 @@ import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Network.URI as Uri
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
+import qualified Text.URI as Uri
 
 import Common (tshow)
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.TaggedHash (BlockHash, toBase58Text)
 import Common.Tez (Tez (..))
+import Common.URI (appendPaths, mkRootUri)
 
 
 newtype Cfg = Cfg { _cfg_blockExplorerUrl :: Maybe Uri.URI }
@@ -86,34 +87,24 @@ elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
 
 
 validateUri :: Validator.Validator t m Uri.URI
-validateUri = Validator.Validator checkUri setUrlType
+validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
-
-checkUri :: Text -> Either Text Uri.URI
-checkUri txt = case Uri.parseURI $ T.unpack $ T.strip txt of
-  Nothing -> Left "Please enter a valid URI"
-  Just uri -> maybe (Right uri) (Left . snd) $ find fst
-    [ (T.toLower (T.pack $ Uri.uriScheme uri) `notElem` ["http:", "https:"], "URL scheme must be http or https")
-    , (T.null $ maybe "" (T.strip . T.pack . Uri.uriRegName) (Uri.uriAuthority uri), "URL must have a host name or IP address")
-    , (not $ null $ Uri.uriQuery uri, "URL must not have a query")
-    , (not $ null $ Uri.uriFragment uri, "URL must not have a fragment")
-    ]
 
 blockExplorerLink :: (MonadReader Cfg m, DomBuilder t m) => Text -> m a -> m a
 blockExplorerLink path f = do
   urlCfg <- asks _cfg_blockExplorerUrl
   case urlCfg of
     Nothing -> f
-    Just url -> elAttr "a" ("href"=:(tshow url <> path) <> "target"=:"_blank") f
+    Just url -> elAttr "a" ("href"=:maybe "" Uri.render (url `appendPaths` [path]) <> "target"=:"_blank") f
 
 blockHashLink :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m ()
 blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)
 
 blockHashLinkAs :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m a -> m a
-blockHashLinkAs blockHash = blockExplorerLink ("/" <> toBase58Text blockHash)
+blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
 
 publicKeyHashLink :: (MonadReader Cfg m, DomBuilder t m) => PublicKeyHash -> m ()
-publicKeyHashLink pkh = blockExplorerLink ("/" <> hash) (text hash)
+publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh

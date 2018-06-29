@@ -28,6 +28,7 @@ library
     , hashing
     , lens
     , memory
+    , modern-uri
     , reflex
     , reflex-aeson-orphans
     , rhyolite-common
@@ -47,8 +48,8 @@ library
     Common.Json
     Common.Micheline
     Common.Operation
-    Common.PublicKeyHash
     Common.PublicKey
+    Common.PublicKeyHash
     Common.Schema
     Common.Script
     Common.Seed
@@ -56,6 +57,7 @@ library
     Common.TaggedHash
     Common.Tez
     Common.TezosBinary
+    Common.URI
     Common.Verification
     Common.Vote
 

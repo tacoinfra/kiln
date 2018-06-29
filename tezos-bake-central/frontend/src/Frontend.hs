@@ -55,6 +55,7 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
+import qualified Text.URI as Uri
 
 import Common (tshow)
 import Common.Api
@@ -65,6 +66,7 @@ import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema hiding (Event)
 import Common.Tez (Tez (..))
+import Common.URI (mkRootUri)
 import Frontend.Common
 
 frontend :: (StaticWidget x (), Widget x ())
@@ -82,7 +84,9 @@ frontend =
                     in (T.unpack protocol, T.unpack host, T.unpack port)
 
       blockExplorerUrl <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) <&> \case
-        Just url -> Just $ either (error . (<> "Error parsing injected block explorer URL " <> T.unpack url <> ": ") . T.unpack) id $ checkUri url
+        Just url -> case mkRootUri url of
+          Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
+          Right rootUrl -> Just rootUrl
         Nothing -> Nothing
 
       runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
@@ -315,7 +319,7 @@ optionsTab = divClass "ui grid" $ do
         $ validatedInput validateUri
         $ def & Txt.setPlaceholder "http://host:port"
       addButton <- el "td" $ buttonWithInfo label info
-      return $ fmap tshow $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
+      return $ fmap Uri.render $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
 
 
 mailServerForm
