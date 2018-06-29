@@ -355,7 +355,7 @@ backend = do
         migrateSchema tableInfo
 
     finalizers <- newTVarIO (return ())
-    let addFinalizer f = atomically $ modifyTVar finalizers (f >>)
+    let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
 
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
@@ -476,4 +476,4 @@ configPath :: FilePath -> FilePath
 configPath = ("config" </>)
 
 mkRootUriOrError :: Text -> URI
-mkRootUriOrError x = either (\e -> error $ T.unpack $ "URL " <> x <> " " <> e) id $ mkRootUri x
+mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
