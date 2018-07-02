@@ -16,7 +16,7 @@ import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
-import Control.Lens (ifor, ix, to, (.~), (<&>), (^.), (^?))
+import Control.Lens (ifor, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -50,9 +50,6 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
-import Network.URI (URI)
-import qualified Network.URI as URI
-import qualified Network.URI as Uri
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
 import Prelude hiding ((.))
@@ -80,6 +77,8 @@ import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
+import Text.URI (URI)
+import qualified Text.URI.Lens as Uri
 
 import Backend.ChainHealth (scanForkInfo, validateForkyBlocks)
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
@@ -95,6 +94,7 @@ import Common.Operation (sumFees)
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema
 import Common.TaggedHash (BlockHash, toBase58Text)
+import Common.URI (mkRootUri)
 import Frontend (frontend)
 
 seconds :: Int -> Int
@@ -330,12 +330,14 @@ backend = do
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
   routeEnv :: Maybe RouteEnv <- liftA2 (<|>)
-    (pure $ fmap uriToRouteEnv (_opts_route =<< SnapServer.getOther cfg))
+    (pure $
+      fromMaybe (error "invalid URL") . uriToRouteEnv <$>
+        (_opts_route =<< SnapServer.getOther cfg))
     (getConfigFromFile (Aeson.decodeStrict . encodeUtf8) $ configPath Config.route)
 
   blockExplorer :: Maybe URI <- liftA2 (<|>)
     (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
-    (getConfigFromFile (URI.parseURI . T.unpack) $ configPath Config.blockExplorer)
+    (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
 
   staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
@@ -353,7 +355,7 @@ backend = do
         migrateSchema tableInfo
 
     finalizers <- newTVarIO (return ())
-    let addFinalizer f = atomically $ modifyTVar finalizers (f >>)
+    let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
 
     -- Start a thread to send queued emails
     addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
@@ -421,17 +423,20 @@ withGargoyleOrConnStr cfg f = case cfg of
   Right connStr -> f =<< openDb (encodeUtf8 connStr)
 
 
-uriToRouteEnv :: URI -> RouteEnv
-uriToRouteEnv uri =
-  ( Uri.uriScheme uri
-  , Uri.uriRegName authority
-  , Uri.uriPort authority <> Uri.uriPath uri
-    <> mustBeNull "query" (Uri.uriQuery uri)
-    <> mustBeNull "fragment" (Uri.uriFragment uri)
-  )
+uriToRouteEnv :: URI -> Maybe RouteEnv
+uriToRouteEnv uri = (,,)
+  <$> (uri ^? Uri.uriScheme . _Just . Uri.unRText . to (<> ":") . to T.unpack)
+  <*> (uri ^? Uri.uriAuthority . _Right . to renderBeforePort . to T.unpack)
+  <*> Just (T.unpack renderPortAndAfter)
   where
-    authority = fromMaybe (error "URI must have a host") $ Uri.uriAuthority uri
-    mustBeNull thing x = if null x then "" else error ("URL " <> thing <> " must be empty")
+    renderBeforePort a = maybe "" ((<> "@") . renderUserInfo) (a ^. Uri.authUserInfo)
+      <> (a ^. Uri.authHost . Uri.unRText)
+    renderUserInfo u = (u ^. Uri.uiUsername . Uri.unRText) <> maybe "" (":" <>) (u ^? Uri.uiPassword . _Just . Uri.unRText)
+    renderPortAndAfter =
+      fromMaybe "" (uri ^? Uri.uriAuthority . _Right . Uri.authPort . _Just . to tshow . to (":" <>))
+      <>
+      (if null $ uri ^. Uri.uriPath then "" else renderPieces $ uri ^. Uri.uriPath)
+    renderPieces pieces = "/" <> T.intercalate "/" (map (^. Uri.unRText) pieces)
 
 data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
@@ -456,17 +461,19 @@ optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
 optsArgDescr =
   [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
-  , Option [] [Config.route] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ parseUrlOpt x }) $
+  , Option [] [Config.route] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ mkRootUriOrError $ T.pack x }) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
   , Option [] [Config.emailFromAddress] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ parseUrlOpt x }) $
+  , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ mkRootUriOrError $ T.pack x }) $
       "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
-    parseUrlOpt x = fromMaybe (error $ x <> " is not a valid URL") $ Uri.parseURI x
 
 
 configPath :: FilePath -> FilePath
 configPath = ("config" </>)
+
+mkRootUriOrError :: Text -> URI
+mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x

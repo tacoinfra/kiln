@@ -28,8 +28,8 @@ library
     , file-embed
     , ghcjs-dom
     , lens
+    , modern-uri
     , mtl
-    , network-uri
     , obelisk-executable-config
     , reflex
     , reflex-dom-core

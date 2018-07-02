@@ -38,11 +38,11 @@ library
     , lens
     , lens-aeson
     , mime-mail
+    , modern-uri
     , monad-control
     , monad-logger
     , mtl
     , network
-    , network-uri
     , obelisk-asset-serve-snap
     , obelisk-executable-config-inject
     , postgresql-simple
