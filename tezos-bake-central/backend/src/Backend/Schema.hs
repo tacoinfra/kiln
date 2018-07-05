@@ -192,6 +192,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
     constructors:
@@ -212,14 +213,21 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _pendingReward_uniqueness
             type: constraint
-            fields: [_pendingReward_client, _pendingReward_hash]
+            fields: [_pendingReward_delegate, _pendingReward_hash]
+  - entity: Delegate
+    constructors:
+      - name: Delegate
+        uniques:
+          - name: _delegate_uniqueness
+            type: constraint
+            fields: [_delegate_publicKeyHash]
   - entity: DelegateStats
     constructors:
       - name: DelegateStats
         uniques:
           - name: _delegateStats_uniqueness
             type: constraint
-            fields: [_delegateStats_publicKeyHash]
+            fields: [_delegateStats_delegate]
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -245,6 +253,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
+  , (''Delegate, 'DelegateKey)
   , (''DelegateStats, 'DelegateStatsKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

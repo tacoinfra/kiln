@@ -17,13 +17,19 @@ import Rhyolite.Schema
 import Backend.Schema ()
 import Common.Json (TezosWord64 (..))
 import Common.Schema
+import Common.PublicKeyHash
 
 -- NB: This eventually needs to change, we can't really be getting an unbounded amount of information. Our viewselector needs to become more specific.
-getAllRewards :: (PersistBackend m) => a -> m (AppendMap (Id Client) (First (AppendMap Word64 Micro), a))
+getAllRewards :: (PostgresRaw m, PersistBackend m) => a -> m (AppendMap PublicKeyHash (First (AppendMap Word64 Micro), a))
 getAllRewards a = do
-  rewards <- selectAll -- PendingReward
+  rewards <- [queryQ|
+    SELECT d."publicKeyHash", COALESCE(pr.level, 0), COALESCE(pr.amount, 0)
+    FROM "Delegate" d
+    LEFT OUTER JOIN "PendingReward" pr
+      ON d.id = pr.delegate
+    |] -- selectAll -- PendingReward
   let rewardMap' = Map.fromListWith (Map.unionWith (+))
-        [(_pendingReward_client r, Map.singleton (unTezosWord64 $ _pendingReward_level r) (_pendingReward_amount r)) | (_,r) <- rewards]
+        [(delegate, Map.singleton (unTezosWord64 level) (amount)) | (delegate, level, amount) <- rewards]
       rewardMap = fmap (\x -> (First x, a)) rewardMap'
   return rewardMap
 

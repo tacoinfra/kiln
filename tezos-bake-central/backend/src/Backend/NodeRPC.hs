@@ -56,9 +56,9 @@ instance MonadIO m => MonadTezosNode (NodeRPCT m) where
     RConnections -> do
       (vs :: RpcResponse [Value]) <- nodeRPCImpl methodGet "/network/connections"
       return $ fmap (fromIntegral . Prelude.length) vs
-    RBakingRights block cycles -> do
+    RBakingRights block levels -> do
       resp :: RpcResponse [Value] <- nodeRPCImpl methodGet $ blockIdToUrl block <> "/helpers/baking_rights"
-        <> (if null cycles then "" else "?" <> T.intercalate "&" ["cycle=" <> tshow n | n <- cycles])
+        <> (if null levels then "" else "?" <> T.intercalate "&" ["level=" <> tshow n | n <- levels])
       return $ resp <&> \vals -> Map.fromListWith (<>) $ flip mapMaybe vals $ \val -> do
         level :: Word64 <- val ^? Json.key "level" . Json._Integer . to fromIntegral
         delegate :: PublicKeyHash <- val ^? Json.key "delegate" . Json._JSON

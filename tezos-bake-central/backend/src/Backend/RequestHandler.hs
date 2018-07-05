@@ -68,12 +68,22 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           insertAndNotify_ $ Client { _client_address = addr, _client_updated = Nothing }
 
         PublicRequest_RemoveClient addr -> do
-          _ <- [executeQ| DELETE FROM "PendingReward" p USING "Client" c WHERE p.client = c.id AND c.address = ?addr |]
           cids :: [Id Client] <- stripOnly <$>
             [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
           let inCids = In cids
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
           notifyEntitiesDeleted cids
+
+        PublicRequest_AddDelegate pkh ->
+          insertAndNotify_ $ Delegate pkh
+
+        PublicRequest_RemoveDelegate pkh -> do
+          _ <- [executeQ| DELETE FROM "PendingReward" pr USING "Delegate" c WHERE pr.delegate = d.id AND d."publicKeyHash" = ?pkh |]
+          _ <- [executeQ| DELETE FROM "DelegateStats" ds USING "Delegate" d WHERE ds.delegate = d.id AND d."publicKeyHash" = ?pkh |]
+          dids :: [Id Delegate] <- stripOnly <$> [queryQ| SELECTD id from "Delegate" WHERE "publicKeyHash" = ?pkh |]
+          let inDids = In dids
+          _ <- [executeQ| DELETE FROM "Delegate" d WHERE d.id IN ?inDids |]
+          notifyEntitiesDeleted dids
 
         PublicRequest_AddNotificatee email -> do
           insertAndNotify_ $ Notificatee { _notificatee_email = email }

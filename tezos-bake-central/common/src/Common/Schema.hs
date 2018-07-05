@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TupleSections #-}
 
 module Common.Schema where
 
@@ -66,11 +67,9 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_blocksPerCycle :: Int
   , _protoInfo_blocksPerRollSnapshot :: Int
   , _protoInfo_blocksPerVotingPeriod :: Int
-  , _protoInfo_dictatorPubkey :: Text -- PublicKeyHash
   , _protoInfo_endorsementReward :: Tez
   , _protoInfo_endorsementSecurityDeposit :: Tez
   , _protoInfo_endorsersPerBlock :: Int
-  --, _protoInfo_firstFreeBakingSlot :: Int
   , _protoInfo_maxOperationDataLength :: Int
   , _protoInfo_michelsonMaximumTypeSize :: Int
   , _protoInfo_originationBurn :: Tez
@@ -138,10 +137,10 @@ data Client = Client
 instance HasId Client
 
 data PendingReward = PendingReward
-  { _pendingReward_client :: Id Client
-  , _pendingReward_hash :: Text -- needed because we need to be able to tell that we're not adding the same reward twice
-  , _pendingReward_level :: TezosWord64
-  , _pendingReward_amount :: Micro
+  { _pendingReward_delegate :: !(Id Delegate)
+  , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
+  , _pendingReward_level :: !TezosWord64
+  , _pendingReward_amount :: !Tez
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId PendingReward
 
@@ -149,7 +148,7 @@ data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
   , _clientInfo_report :: !(Json Report)
   , _clientInfo_config :: !(Json ClientConfig)
-  , _clientInfo_balance :: !(Maybe Tez)
+  -- , _clientInfo_balance :: !(Maybe Tez)
   -- , _clientInfo_node :: Id Node
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ClientInfo
@@ -281,13 +280,24 @@ data ClientConfig = ClientConfig
   , _clientConfig_nodeUri :: ClientAddress
   } deriving (Show, Eq, Typeable, Generic)
 
+data Delegate = Delegate
+  { _delegate_publicKeyHash :: !PublicKeyHash
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId Delegate
+
+
+data AccountDelegate = AccountDelegate
+  { _accountDelegate_setable :: !Bool
+  , _accountDelegate_value :: !(Maybe PublicKeyHash)
+  } deriving (Show, Eq, Ord, Generic, Typeable)
+
 data Account = Account
-  { _account_manager :: PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
-  , _account_balance :: Tez -- "2052452947621"
-  , _account_spendable :: Bool -- true
-  -- , _account_delegate :: {"setable":false,"value":"tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"}
-  , _account_counter :: TezosWord64 -- 1540
-  } deriving (Show, Eq, Generic, Typeable)
+  { _account_manager :: !PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
+  , _account_balance :: !Tez -- "2052452947621"
+  , _account_spendable :: !Bool -- true
+  , _account_delegate :: !AccountDelegate
+  , _account_counter :: !TezosWord64 -- 1540
+  } deriving (Show, Eq, Ord, Generic, Typeable)
 
 newtype BlockPrefix = BlockPrefix Text
   deriving (Eq, Show, Generic, Typeable)
@@ -365,12 +375,43 @@ class MonadTezosNode m where
   nodeAddress :: m Text
 
 
+data BakeEfficiency = BakeEfficiency
+  { _bakeEfficiency_bakedBlocks :: !Word64
+  , _bakeEfficiency_bakingRights :: !Word64
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance Semigroup BakeEfficiency where
+  BakeEfficiency x1 x2 <> BakeEfficiency y1 y2 = BakeEfficiency (x1 + y1) (x2 + y2)
+
+instance Monoid BakeEfficiency where
+  mempty = BakeEfficiency 0 0
+  mappend = (<>)
+
 data DelegateStats = DelegateStats
-  { _delegateStats_publicKeyHash :: !PublicKeyHash
-  , _delegateStats_bakedBlocks :: !Word64
-  , _delegateStats_bakingRights :: !Word64
+  { _delegateStats_delegate :: !(Id Delegate)
+  , _delegateStats_efficiency :: !BakeEfficiency
+  , _delegateStats_accountBalance :: !(Maybe Tez) -- "2052452947621"
+  , _delegateStats_accountSpendable :: !(Maybe Bool) -- true
+  , _delegateStats_accountSetable :: !(Maybe Bool)
+  , _delegateStats_accountValue :: !(Maybe PublicKeyHash)
+  , _delegateStats_accountCounter :: !(Maybe TezosWord64) -- 1540
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId DelegateStats
+
+-- | convert the databasey DelegateStats to more jsoney (BakeEfficiency, Account)
+unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe (BakeEfficiency, Account)
+unDelegateStats publicKeyHash stats =
+  let efficiency = _delegateStats_efficiency stats
+      accountDelegate =
+        AccountDelegate
+          <$> _delegateStats_accountSetable stats
+          <*> pure (_delegateStats_accountValue stats)
+      account = Account publicKeyHash
+        <$> _delegateStats_accountBalance stats
+        <*> _delegateStats_accountSpendable stats
+        <*> accountDelegate
+        <*> _delegateStats_accountCounter stats
+  in ((efficiency,) <$> account)
 
 data Notificatee = Notificatee
   { _notificatee_email :: Email
@@ -400,6 +441,8 @@ concat <$> traverse (deriveJSON defaultOptions
       , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
   [ ''Account
+  , ''AccountDelegate
+  , ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
   , ''BlockId
@@ -409,6 +452,7 @@ concat <$> traverse (deriveJSON defaultOptions
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
+  , ''Delegate
   , ''DelegateStats
   , ''DynamicParamBlockHash
   , ''DynamicParamChainId
@@ -425,11 +469,13 @@ concat <$> traverse (deriveJSON defaultOptions
   ]
 
 concat <$> traverse makeLenses
-  [ 'BakedEvent
+  [ 'BakeEfficiency
+  , 'BakedEvent
   , 'BakedEventOperation
   , 'BlockInfo
   , 'BlockInfoHeader
   , 'BlockInfoMetadata
+  , 'Delegate
   , 'DelegateStats
   , 'EndorseEvent
   , 'Error
