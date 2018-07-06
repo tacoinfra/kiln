@@ -143,6 +143,7 @@ instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"
   toPersistValues (PublicKeyHash_Ed25519 x) = primToPersistValue $ toBase58Text x
   toPersistValues (PublicKeyHash_Secp256k1 x) = primToPersistValue $ toBase58Text x
+  toPersistValues (PublicKeyHash_P256 x) = primToPersistValue $ toBase58Text x
   fromPersistValues = (fmap.first) toPublicKeyHash . primFromPersistValue
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
@@ -151,6 +152,7 @@ instance PersistField PublicKeyHash where
 instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x
   toPrimitivePersistValue a (PublicKeyHash_Secp256k1 x) = toPrimitivePersistValue a $ toBase58Text x
+  toPrimitivePersistValue a (PublicKeyHash_P256 x) = toPrimitivePersistValue a $ toBase58Text x
   fromPrimitivePersistValue a = toPublicKeyHash . fromPrimitivePersistValue a
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
@@ -190,6 +192,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
     constructors:
@@ -210,14 +213,21 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _pendingReward_uniqueness
             type: constraint
-            fields: [_pendingReward_client, _pendingReward_hash]
+            fields: [_pendingReward_delegate, _pendingReward_hash]
+  - entity: Delegate
+    constructors:
+      - name: Delegate
+        uniques:
+          - name: _delegate_uniqueness
+            type: constraint
+            fields: [_delegate_publicKeyHash]
   - entity: DelegateStats
     constructors:
       - name: DelegateStats
         uniques:
           - name: _delegateStats_uniqueness
             type: constraint
-            fields: [_delegateStats_publicKeyHash]
+            fields: [_delegateStats_delegate]
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -243,6 +253,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
+  , (''Delegate, 'DelegateKey)
   , (''DelegateStats, 'DelegateStatsKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

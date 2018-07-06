@@ -20,6 +20,7 @@ import Rhyolite.Schema (Email)
 import Common.App (Bake, MailServerView)
 import Common.Schema (ClientAddress)
 import Common.TaggedHash
+import Common.PublicKeyHash
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -48,6 +49,12 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_SendTestEmail
       :: Email
+      -> PublicRequest Bake ()
+    PublicRequest_AddDelegate
+      :: PublicKeyHash
+      -> PublicRequest Bake ()
+    PublicRequest_RemoveDelegate
+      :: PublicKeyHash
       -> PublicRequest Bake ()
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()

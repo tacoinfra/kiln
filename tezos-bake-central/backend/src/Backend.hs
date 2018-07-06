@@ -25,7 +25,7 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (for_, toList)
+import Data.Foldable (for_, traverse_, toList)
 import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -63,11 +63,11 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), exec
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail, queueEmail)
 import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
-import Rhyolite.Backend.Schema (toId)
+import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Route (RouteEnv)
-import Rhyolite.Schema (Id, Json (..))
+import Rhyolite.Schema (Id(..), Json (..))
 import Safe (maximumByMay, maximumMay)
 import Say (say, sayShow)
 import Snap.Core (MonadSnap, route)
@@ -173,19 +173,20 @@ nodeWorker delay httpMgr db = do
 
 -- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
 -- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
-getLatestProtoInfo :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Word64, BlockHash, ProtoInfo))
-getLatestProtoInfo = do
-  nodeIds <- listToMaybe <$> [queryQ|
-    SELECT n.id, n."headLevel", n."headBlockHash"
-      FROM "Node" n LEFT JOIN "Parameters" p ON p.node = n.id
+queryBestNode :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Id Node, Node, ProtoInfo))
+queryBestNode = do
+  nodeIds :: Maybe (Id Node, Id Parameters) <- listToMaybe <$> [queryQ|
+    SELECT n.id, p.id
+      FROM "Node" n JOIN "Parameters" p ON n.id = p.node
      WHERE n."headLevel" IS NOT NULL
      ORDER BY n."headLevel" DESC
      LIMIT 1 |]
-  case nodeIds of
-    Just (nid :: Id Node, Just headLevel, Just headBlockHash) -> do
-      info <- fmap listToMaybe $ project Parameters_protoInfoField $ (Parameters_nodeField ==. nid ) `limitTo` 1
-      return $ (headLevel, headBlockHash,) <$> info
-    _ -> return Nothing
+
+  for nodeIds $ \(nodeId, paramId) -> do
+      Just node <- get (fromId nodeId)
+      Just params <- get (fromId paramId)
+      return (nodeId, node, _parameters_protoInfo params)
+
 
 queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => Address -> [Error] -> m ()
 queueAllEmails fromAddr message = do
@@ -206,17 +207,14 @@ clientWorker delay emailFromAddress httpMgr db = do
     runNoLoggingT $ runDb (Identity db) $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      params :: Maybe Parameters <- listToMaybe <$> select (CondEmpty `limitTo` 1) -- TODO, take the newest
-      allNodes <- select $ Not $ isFieldNothing Node_fitnessField
-      for_ (maximumByMay (on compare _node_fitness) allNodes) $ \bestNode -> do
-        let blockHeightTimeout :: NominalDiffTime = fromIntegral
-              $ maybe 600 (max 15 . (5*) . sum . take 3 . toList . _protoInfo_timeBetweenBlocks . _parameters_protoInfo) params
+      (queryBestNode >>=) $ traverse_ $ \(_nodeId, bestNode, protoInfo) -> do
+        let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
         toUpdate <- [queryQ| SELECT id, address
                              FROM "Client"
                              WHERE updated < ?maxTime OR updated IS NULL
                              ORDER BY updated NULLS FIRST |]
-        mLevelAndProto <- getLatestProtoInfo
+        mLevelAndProto <- queryBestNode
 
         clientDelegates <- for toUpdate $ \(cid :: Id Client, address :: Text) -> do
           say $ "Updating client at " <> address
@@ -272,31 +270,51 @@ clientWorker delay emailFromAddress httpMgr db = do
 
           return $ _clientConfig_delegates clientConfig
 
-        for_ mLevelAndProto $ \latestProtoInfo -> do
-          updateBakeRate (NodeRPCContext httpMgr $ _node_address bestNode) latestProtoInfo (Set.fromList $ concat clientDelegates)
+        insertClientDelegates (Set.fromList $ concat clientDelegates)
 
+insertClientDelegates :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
+insertClientDelegates pkhs = do
+  haveDelegates <- Set.fromList . fmap (_delegate_publicKeyHash . snd) <$> selectAll
+  let needDelegates = Set.difference pkhs haveDelegates
+  traverse_ (insertAndNotify_ . Delegate) needDelegates
 
-updateBakeRate :: (MonadIO m, PersistBackend m) => NodeRPCContext -> (Word64, BlockHash, ProtoInfo) -> Set PublicKeyHash -> m ()
-updateBakeRate ctx (headLevel, headBlockHash, protoInfo) delegates = do
+delegateWorker
+  :: MonadIO m
+  => Int
+  -> Http.Manager
+  -> Pool Postgresql
+  -> m (IO ())
+delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb (Identity db) $ (queryBestNode >>=) $ traverse_ $ \(nid, bestNode, protoInfo) -> do
+  say "Update delegate cycle."
   let
+    headLevel :: Integer = fromIntegral $ fromMaybe (error "queryBestNode returned unfit node") $ _node_headLevel bestNode
     latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
-    cycleRange = [latestCycle - fromIntegral (_protoInfo_preservedCycles protoInfo) .. latestCycle]
+    levelRange = [max 0 (headLevel - 100) .. headLevel]
+    nodeAddr = _node_address bestNode
+    ctx = NodeRPCContext httpMgr nodeAddr
+    headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
   say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
-  runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) cycleRange)) >>= \case
+  delegates :: [(Key Delegate BackendSpecific, Delegate)] <- selectAll
+  -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
+  runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) (fromIntegral <$> levelRange))) >>= \case
     Left e -> sayShow e
     Right allBakingRights -> do
       -- Filter out baking rights that apply to levels in the future.
-      let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= headLevel) <$> allBakingRights
-      for_ delegates $ \delegate -> do
-        say $ "Updating delegate " <> toPublicKeyHashText delegate
-        bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix delegate) $ \levelWithRight delegatePriority -> do
-          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (headLevel - levelWithRight))) >>= \case
+      let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> allBakingRights
+      for_ delegates $ \(dId, delegate) -> do
+        let pkh = _delegate_publicKeyHash delegate
+        say $ "Updating delegate " <> toPublicKeyHashText pkh
+        accountStatusResp <- runNodeRPCT ctx (nodeRPC (RContract headId (_delegate_publicKeyHash delegate)))
+        -- TODO: report errors here
+        let accountStatus = either (const Nothing) Just accountStatusResp
+        bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
+          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - levelWithRight))) >>= \case
             Left e -> sayShow e >> pure Nothing
             Right blockWithRights -> return $
               let
                 baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
                 delegateUtilizedRightToBake =
-                  if baker == delegate then Just True -- The delegate baked this block
+                  if baker == pkh then Just True -- The delegate baked this block
                   else
                     -- See if the baker had a lower priority than the delegate.
                     -- If so then the delegate didn't miss a legitimate opportunity to bake.
@@ -306,16 +324,34 @@ updateBakeRate ctx (headLevel, headBlockHash, protoInfo) delegates = do
         let
           baked = sum $ (\x -> if x == Just True then 1 else 0) <$> bakingRightsUtilized
           rights = fromIntegral $ length bakingRightsUtilized
+          dIdId :: Id Delegate = toId dId
 
-        delegateStatsId :: Maybe (Id DelegateStats) <- fmap (fmap toId . listToMaybe) $
-          project AutoKeyField ((DelegateStats_publicKeyHashField ==. delegate) `limitTo` 1)
+        delegateStatsId :: Maybe (Id DelegateStats) <- fmap fromOnly . listToMaybe <$> [queryQ|
+          SELECT ds.id
+          FROM "DelegateStats" ds
+          WHERE ds.delegate = ?dIdId
+          LIMIT 1
+          |]
         case delegateStatsId of
-          Nothing -> insertAndNotify_ $ DelegateStats delegate baked rights
+          Nothing -> insertAndNotify_ $ DelegateStats
+            { _delegateStats_delegate = (toId dId)
+            , _delegateStats_efficiency = (BakeEfficiency baked rights)
+            , _delegateStats_accountBalance = _account_balance <$> accountStatus
+            , _delegateStats_accountSpendable = _account_spendable <$> accountStatus
+            , _delegateStats_accountSetable = _accountDelegate_setable . _account_delegate <$> accountStatus
+            , _delegateStats_accountValue = _accountDelegate_value <$> _account_delegate =<< accountStatus
+            , _delegateStats_accountCounter = _account_counter <$> accountStatus
+            }
           Just dsId -> updateAndNotify dsId
-            [ DelegateStats_bakedBlocksField =. (baked :: Word64)
-            , DelegateStats_bakingRightsField =. (rights :: Word64)
+            [ DelegateStats_efficiencyField =. (BakeEfficiency baked rights)
+            , DelegateStats_accountBalanceField =. (_account_balance <$> accountStatus)
+            , DelegateStats_accountSpendableField =. (_account_spendable <$> accountStatus)
+            , DelegateStats_accountSetableField =. (_accountDelegate_setable . _account_delegate <$> accountStatus)
+            , DelegateStats_accountValueField =. (_accountDelegate_value <$> _account_delegate =<< accountStatus)
+            , DelegateStats_accountCounterField =. (_account_counter <$> accountStatus)
             ]
 
+        return ()
 
 backend :: IO ()
 backend = do
@@ -371,6 +407,7 @@ backend = do
 
     addFinalizer =<< nodeWorker 30 httpMgr db
     addFinalizer =<< clientWorker 10 emailFromAddress httpMgr db
+    addFinalizer =<< delegateWorker 10 httpMgr db
 
     SnapServer.httpServe cfg (route
       [ ("", rootHandler staticHead)

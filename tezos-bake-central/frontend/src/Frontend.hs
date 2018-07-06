@@ -12,8 +12,9 @@
 
 module Frontend where
 
+import Data.Bifunctor
 import Control.Lens ((<&>), _1, _2)
-import Control.Monad ((<=<))
+import Control.Monad ((<=<), when)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, runReaderT)
@@ -63,11 +64,24 @@ import Common.App
 import qualified Common.Config as Config
 import Common.Fitness (unFitness)
 import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash (PublicKeyHash)
+import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema hiding (Event)
 import Common.Tez (Tez (..))
 import Common.URI (mkRootUri)
 import Frontend.Common
+
+urlInputRow
+  :: (MonadRhyoliteFrontendWidget Bake t m
+    , Eq a
+    , Show a
+    )
+  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t a)
+urlInputRow validator label info placeholder = el "tr" $ do
+  (tdEl, address) <- el' "td" $ formItem
+    $ validatedInput validator
+    $ def & Txt.setPlaceholder placeholder
+  addButton <- el "td" $ buttonWithInfo label info
+  return $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
 
 frontend :: (StaticWidget x (), Widget x ())
 frontend =
@@ -121,8 +135,12 @@ watchClient cidDyn = do
     }
   return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
 
+watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (AppendMap PublicKeyHash ()))
+watchDelegatePublicKeyHashes = do
+  (fmap.fmap) (void . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
+  -- return $ ffor theView $ \v' -> _
 
-watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash DelegateStats))
+watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
   theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
     { _bakeViewSelector_delegateStats = Map.fromSet (const 1) ds
@@ -177,6 +195,7 @@ headTag = do
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
+           | UITab_Delegate PublicKeyHash
            | UITab_Client (Id Client) Text
            | UITab_Node (Id Node)
            | UITab_Options
@@ -187,6 +206,7 @@ appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performa
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   nodeAddresses <- watchNodeAddresses
   clientAddresses <- watchClientAddresses
+  delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
         summaryT <- semuiTab "Summary" UITab_Summary currentTab
@@ -196,14 +216,18 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
             semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
+        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \cs ->
+          fmap leftmost . for (Map.toList cs) $ \(pkh, _) ->
+            semuiTab ("tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
         optionsT <- semuiTab "Options" UITab_Options currentTab
-        return (leftmost [summaryT, clientT, nodeT, optionsT])
+        return (leftmost [summaryT, delegateT, clientT, nodeT, optionsT])
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
     UITab_Summary -> summaryTab
     UITab_Options -> optionsTab
     UITab_Node nid -> nodeTab nid
     UITab_Client cid addr -> clientTab cid addr
+    UITab_Delegate pkh -> delegateTab pkh
   return ()
 
 
@@ -266,6 +290,7 @@ optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), M
 optionsTab = divClass "ui grid" $ do
   clients <- watchClientAddresses
   nodes <- watchNodeAddresses
+  delegates <- watchDelegatePublicKeyHashes
   divClass "four wide column" $ do
     divClass "ui medium header" $ text "Notification Recipients"
     notificatees <- watchNotificatees
@@ -297,8 +322,20 @@ optionsTab = divClass "ui grid" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-      addE <- urlInputRow "Add Baker" "Begin monitoring the baker at the address entered."
+      addE <- fmap Uri.render <$> urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
       void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+
+    divClass "ui medium header" $ text "Delegates"
+    elAttr "table" ("class" =: "ui celled striped compact table") $ do
+      listWithKey (Map._unAppendMap <$> delegates) $ \pkh _ -> el "tr" $ do
+        let dName = toPublicKeyHashText pkh
+        el "td" $ text dName
+        el "td" $ do
+          eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
+          requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
+
+      addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+      void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
 
     divClass "ui medium header" $ text "Nodes"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
@@ -309,18 +346,9 @@ optionsTab = divClass "ui grid" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
           requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
 
-      addE <- urlInputRow "Add Node" "Begin monitoring the node at the address entered."
+      addE <- fmap Uri.render <$> urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
       let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
       void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
-
-  where
-    urlInputRow label info = el "tr" $ do
-      (tdEl, address) <- el' "td" $ formItem
-        $ validatedInput validateUri
-        $ def & Txt.setPlaceholder "http://host:port"
-      addButton <- el "td" $ buttonWithInfo label info
-      return $ fmap Uri.render $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
-
 
 mailServerForm
   :: ( DomBuilder t m
@@ -403,6 +431,57 @@ nodeTab nid = do
       el "div" $ text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
       el "div" $ text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
 
+delegateTab
+  :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  => PublicKeyHash
+  -> m ()
+delegateTab pkh = do
+  delegates <- watchDelegateStats $ pure $ Set.singleton pkh
+  dparameters <- watchProtoInfo
+    -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
+  dyn_ $ ffor (Map.lookup pkh <$> delegates) $ \case
+    Nothing -> waitingForResponse
+    Just (bakeEfficiency, account) -> divClass "ui grid" $ do
+      divClass "eight wide column" $ do
+        elClass "h3" "ui medium header" $ text $ toPublicKeyHashText pkh
+        divClass "delegates" $ do
+
+        let tz = _account_balance account
+        elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
+          text "Current Balance: "
+          text (tez tz)
+        dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
+          let bSD = _protoInfo_blockSecurityDeposit protoInfo
+              eSD = _protoInfo_endorsementSecurityDeposit protoInfo
+              failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
+          case failures of
+            (t:_) -> do
+              text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
+                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
+                <> "You'll need to transfer sufficient tez into the account before it can continue."
+            [] | tz < 4 * (bSD + eSD) -> do
+              text $ "The identity in use by this baker is running somewhat low on tez. "
+                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
+                <> "Be sure to keep enough tez in the account to pay the security deposits on blocks you'll be baking or endorsing."
+            _ -> blank
+
+        elClass "p" "efficiency" $ do
+          elClass "h4" "ui medium header" $ text "Efficiency"
+          elClass "td" "right aligned" $ do
+            let baked = _bakeEfficiency_bakedBlocks bakeEfficiency
+            let rights = _bakeEfficiency_bakingRights bakeEfficiency
+            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker either baked or was beaten by higher proiry baker (over past preserved cycles)") $
+              text $ tshow baked
+            text " of "
+            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker had rights to bake at any priority (over past preserved cycles)") $
+              text $ tshow rights
+            when (rights /= 0) $ do
+              text " ("
+              text $ tshow $ (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
+              text "%)"
+
+
+
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> Text -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
@@ -419,53 +498,9 @@ clientTab cid addr = do
           text "ID: "
           sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
 
-        for_ (_clientInfo_balance clientInfo) $ \tz -> do
-          elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
-            text "Current Balance: "
-            text (tez tz)
-          dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
-            let bSD = _protoInfo_blockSecurityDeposit protoInfo
-                eSD = _protoInfo_endorsementSecurityDeposit protoInfo
-                failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
-            case failures of
-              (t:_) -> do
-                text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
-                  <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                  <> "You'll need to transfer sufficient tez into the account before it can continue."
-              [] | tz < 4 * (bSD + eSD) -> do
-                text $ "The identity in use by this baker is running somewhat low on tez. "
-                  <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                  <> "Be sure to keep enough tez in the account to pay the security deposits on blocks you'll be baking or endorsing."
-              _ -> blank
-
         elClass "p" "counts" $ do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $
             text $ "Errors: " <> tshow (length errors)
-
-        elClass "p" "efficiency" $ do
-          delegateStatsDyn <- watchDelegateStats $ pure $
-            Set.fromList $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo
-          isNullDelegates <- holdUniqDyn $ null <$> delegateStatsDyn
-
-          dyn_ $ ffor isNullDelegates $ \case
-            True -> blank
-            False -> do
-              elClass "h4" "ui medium header" $ text "Efficiency"
-              elClass "table" "ui celled compact striped table" $ do
-                void $ listWithKey (_unAppendMap <$> delegateStatsDyn) $ \delegate stats -> do
-                  el "tr" $ do
-                    el "td" $ publicKeyHashLink delegate
-                    elClass "td" "right aligned" $ do
-                      baked_ <- holdUniqDyn $ _delegateStats_bakedBlocks <$> stats
-                      rights <- holdUniqDyn $ _delegateStats_bakingRights <$> stats
-                      elAttr "span" ("data-tooltip"=:"Number of blocks where this baker either baked or was beaten by higher proiry baker (over past preserved cycles)") $
-                        display baked_
-                      text " of "
-                      elAttr "span" ("data-tooltip"=:"Number of blocks where this baker had rights to bake at any priority (over past preserved cycles)") $
-                        display rights
-                      text " ("
-                      display $ zipDynWith (\x y -> round (fromIntegral x / fromIntegral y * 100 :: Double) :: Int) baked_ rights
-                      text "%)"
 
         case errors of
           [] -> blank

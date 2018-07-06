@@ -26,10 +26,10 @@ import Rhyolite.Schema (Id)
 
 import Common.Schema
 
-cumulativeRewardsGraph :: Word64 -> AppendMap (Id Client) (AppendMap Word64 Micro) -> IO (Maybe (Micro, Text))
+cumulativeRewardsGraph :: (Functor f, Foldable f) => Word64 -> f (AppendMap Word64 Micro) -> IO (Maybe (Micro, Text))
 cumulativeRewardsGraph level rewards = cumulativeRewardsGraph' (fromIntegral level) (fmap (Map.mapKeys fromIntegral) rewards)
 
-cumulativeRewardsGraph' :: Integer -> AppendMap (Id Client) (AppendMap Integer Micro) -> IO (Maybe (Micro, Text))
+cumulativeRewardsGraph' :: Foldable f => Integer -> f (AppendMap Integer Micro) -> IO (Maybe (Micro, Text))
 cumulativeRewardsGraph' level rewards = do
   let totalRewards :: AppendMap Integer Micro
       totalRewards = foldl' (Map.unionWith (+)) Map.empty rewards

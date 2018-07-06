@@ -53,6 +53,9 @@ type Ed25519Signature = HashedValue 'HashType_Ed25519Signature ByteString
 type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature ByteString
 type GenericSignature = HashedValue 'HashType_GenericSignature ByteString
 type ChainId = HashedValue 'HashType_ChainId ByteString
+type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash ByteString
+
+
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/contract_hash.ml
 type ContractHash = HashedValue 'HashType_ContractHash ByteString
@@ -85,6 +88,7 @@ data HashType
   | HashType_ContractHash
   | HashType_NonceHash
   | HashType_BlindedPublicKeyHash
+  | HashType_P256PublicKeyHash
   deriving (Eq, Ord, Show, Typeable, Generic, Enum)
 
 newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
@@ -270,3 +274,6 @@ instance IsBase58Hash 'HashType_BlindedPublicKeyHash where
   prefix _ = "\001\002\049\223"
   hashSize _ = 20
 
+instance IsBase58Hash 'HashType_P256PublicKeyHash where
+  prefix _ = "\006\161\164"
+  hashSize _ = 20

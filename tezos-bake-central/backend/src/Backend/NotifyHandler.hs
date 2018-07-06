@@ -27,8 +27,16 @@ import Backend.Graphs
 import Backend.Schema
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
-import Common.Schema (Client (..), ClientInfo, DelegateStats (..), MailServerConfig (..), Node (..),
-                      Notificatee (..), Parameters (..))
+import Common.Schema (Account (..))
+import Common.Schema (AccountDelegate (..))
+import Common.Schema (Client (..))
+import Common.Schema (ClientInfo)
+import Common.Schema (Delegate (..))
+import Common.Schema (DelegateStats (..), unDelegateStats)
+import Common.Schema (MailServerConfig (..))
+import Common.Schema (Node (..))
+import Common.Schema (Notificatee (..))
+import Common.Schema (Parameters (..))
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
@@ -94,13 +102,19 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   }
           return $ nodeAddresses <> nodes
         Error e -> parseErr notifyMessage e
+      handleDelegate = case fromJSON (_notifyMessage_value notifyMessage) of
+        Success (dId :: Id Delegate) -> do
+          delegate :: Maybe Delegate <- get $ fromId dId
+          let v d a = mempty {_bakeView_delegates = Map.singleton (_delegate_publicKeyHash d) a}
+          return $ maybe mempty id $ (v <$> delegate <*> _bakeViewSelector_delegates aggVS)
       handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
         Success (dsId :: Id DelegateStats) -> do
           delegateStats :: Maybe DelegateStats <- get $ fromId dsId
           whenJust delegateStats $ \stats -> do
-            let publicKeyHash = _delegateStats_publicKeyHash stats
+            delegate :: Delegate <- fmap (maybe (error "Bad Foreign Key Delegate->DelegateStats") id) $ get $ fromId $ _delegateStats_delegate stats
+            let publicKeyHash = _delegate_publicKeyHash delegate
             whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a ->
-              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ Just stats, a) }
+              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ unDelegateStats publicKeyHash stats, a) }
         Error e -> parseErr notifyMessage e
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Success nid -> do
@@ -124,6 +138,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "Client" -> handleClient
     "Parameters" -> handleParameters
     "Node" -> handleNode
+    "Delegate" -> handleDelegate
     "DelegateStats" -> handleDelegateStats
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
