@@ -10,39 +10,43 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Common.Schema where
 
 import qualified Cases
-import Control.Lens.TH
-import Data.Aeson hiding (Error)
-import Data.Aeson.TH
+import Control.Lens.TH (makeLenses)
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.TH (deriveJSON)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import Data.Fixed
-import Data.Function
-import Data.Int
+import Data.Fixed (Micro)
+import Data.Function (fix)
+import Data.Functor.Identity (Identity)
+import Data.Int (Int32, Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
-import Data.Semigroup
+import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time
-import Data.Typeable
-import Data.Word
+import Data.Time (UTCTime)
+import Data.Typeable (Typeable)
+import Data.Word (Word16, Word64, Word8)
 import GHC.Generics (Generic)
-import Rhyolite.Schema
+import Rhyolite.Schema (Email, HasId, Id, Json)
 
-import Common.Base16ByteString
-import Common.BlockHeader
-import Common.Fitness
+import Common.Base16ByteString (Base16ByteString (..))
+import Common.BlockHeader (BlockHeader (..))
+import Common.Fitness (Fitness)
 import Common.Json (TezosWord64)
-import Common.Operation
+import Common.Operation (ProtoOperation, sumFees)
 import Common.PublicKeyHash (PublicKeyHash)
-import Common.TaggedHash
-import Common.Tez
+import Common.TaggedHash (BlockHash, ChainId, ContextHash, CryptoboxPublicKeyHash, OperationHash,
+                          OperationListListHash, ProtocolHash, toBase58Text)
+import Common.Tez (Tez (..))
 
 -- import GADT.JSON (deriveGadtJson)
 
@@ -217,7 +221,7 @@ data Event e = Event
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
-  , _errorEvent_trace :: Json [Value]
+  , _errorEvent_trace :: Json [Aeson.Value]
   } deriving (Show, Eq, Typeable, Generic)
 
 data EndorseEvent = EndorseEvent
@@ -431,14 +435,50 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
   , _mailServerConfig_madeDefaultAt :: UTCTime
-  } deriving (Eq, Generic, Ord, Show)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
+data EndpointType = EndpointType_Node | EndpointType_Client
+  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
+
+data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
+  { _errorLogInaccessibleEndpoint_log :: !(Id ErrorLog)
+  , _errorLogInaccessibleEndpoint_type :: !EndpointType
+  , _errorLogInaccessibleEndpoint_address :: !ClientAddress
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogInaccessibleEndpoint
+
+data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
+  { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
+  , _errorLogBakerNoHeartbeat_lastLevel :: !Word64
+  , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
+  , _errorLogBakerNoHeartbeat_client :: !(Id Client)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerNoHeartbeat
+
+data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
+  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
+
+data ErrorLogMultipleBakersForSameDelegate = ErrorLogMultipleBakersForSameDelegate
+  { _errorLogMultipleBakersForSameDelegate_log :: !(Id ErrorLog)
+  , _errorLogMultipleBakersForSameDelegate_publicKeyHash :: !PublicKeyHash
+  , _errorLogMultipleBakersForSameDelegate_client :: !(Id Client)
+  , _errorLogMultipleBakersForSameDelegate_worker :: !ClientWorker
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogMultipleBakersForSameDelegate
+
+data ErrorLog = ErrorLog
+  { _errorLog_started :: !UTCTime
+  , _errorLog_stopped :: !(Maybe UTCTime)
+  , _errorLog_lastSeen :: !UTCTime
+  , _errorLog_noticeSentAt :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLog
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
-concat <$> traverse (deriveJSON defaultOptions
-      { fieldLabelModifier =     T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
-      , constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
+concat <$> traverse (deriveJSON Aeson.defaultOptions
+      { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
+      , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
   [ ''Account
   , ''AccountDelegate
@@ -452,12 +492,17 @@ concat <$> traverse (deriveJSON defaultOptions
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
+  , ''ClientWorker
   , ''Delegate
   , ''DelegateStats
   , ''DynamicParamBlockHash
   , ''DynamicParamChainId
   , ''EndorseEvent
+  , ''EndpointType
   , ''ErrorEvent
+  , ''ErrorLog
+  , ''ErrorLogInaccessibleEndpoint
+  , ''ErrorLogMultipleBakersForSameDelegate
   , ''Event
   , ''Level
   , ''NetworkStat
@@ -480,6 +525,7 @@ concat <$> traverse makeLenses
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
+  , 'ErrorLog
   , 'Event
   , 'MailServerConfig
   , 'Report

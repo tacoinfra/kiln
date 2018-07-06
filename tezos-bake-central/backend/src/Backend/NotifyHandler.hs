@@ -10,6 +10,8 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (Result (Error, Success), fromJSON)
 import qualified Data.AppendMap as Map
+import Data.Bifunctor (first)
+import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
@@ -25,21 +27,16 @@ import Say (say)
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
+import Backend.ViewSelectorHandler (getErrorLogs)
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
-import Common.Schema (Account (..))
-import Common.Schema (AccountDelegate (..))
-import Common.Schema (Client (..))
-import Common.Schema (ClientInfo)
-import Common.Schema (Delegate (..))
-import Common.Schema (DelegateStats (..), unDelegateStats)
-import Common.Schema (MailServerConfig (..))
-import Common.Schema (Node (..))
-import Common.Schema (Notificatee (..))
-import Common.Schema (Parameters (..))
+import Common.IsMap (IsMap (keysSet))
+import Common.Schema (Account (..), AccountDelegate (..), Client (..), Client (..), ClientInfo, ClientInfo,
+                      Delegate (..), DelegateStats (..), MailServerConfig (..), Node (..), Notificatee (..),
+                      Notificatee (..), Parameters (..), Parameters (..), unDelegateStats)
 
 notifyHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a)
+  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
   => Pool Postgresql
   -> NotifyMessage
   -> BakeViewSelector a
@@ -134,6 +131,13 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                 { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
                 }
         Error e -> parseErr notifyMessage e
+
+      handleLogs = do
+        errors <- getErrorLogs (_bakeViewSelector_errors aggVS)
+        pure $ mempty
+          { _bakeView_errors = first keysSet <$> errors
+          , _bakeView_errorsById = fold $ fst <$> errors
+          }
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
@@ -142,6 +146,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "DelegateStats" -> handleDelegateStats
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
+    "ErrorLogInaccessibleEndpoint" -> handleLogs
     _ -> do
       say $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty

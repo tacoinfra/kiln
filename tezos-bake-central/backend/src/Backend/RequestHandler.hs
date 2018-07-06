@@ -20,6 +20,7 @@ import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
+import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import Network.Mail.Mime (Address (..), simpleMail')

@@ -14,10 +14,10 @@
 
 module Backend.Schema where
 
-import Control.Arrow
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import Data.Coerce (Coercible, coerce)
-import Data.Fixed
+import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text.Encoding as T
@@ -164,6 +164,18 @@ instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
+instance ToField EndpointType where
+  toField a = toField (show a)
+
+instance FromField EndpointType where
+  fromField f b = read <$> fromField f b
+
+instance ToField ClientWorker where
+  toField a = toField (show a)
+
+instance FromField ClientWorker where
+  fromField f b = read <$> fromField f b
+
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
@@ -248,6 +260,12 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
+  - primitive: EndpointType
+  - primitive: ClientWorker
+  - entity: ErrorLog
+  - entity: ErrorLogInaccessibleEndpoint
+  - entity: ErrorLogMultipleBakersForSameDelegate
+  - entity: ErrorLogBakerNoHeartbeat
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -260,4 +278,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
+  , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
+  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
+  , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   ]

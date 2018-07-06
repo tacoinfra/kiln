@@ -7,32 +7,42 @@
 
 module Backend.ViewSelectorHandler where
 
+import Control.Lens (ifor, imap, itraverse, (<&>))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
+import qualified Data.AppendMap as AppendMap
+import Data.Bifunctor (first, second)
+import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup)
+import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Time (UTCTime)
+import Data.Traversable (for)
+import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id)
-import Data.Word
 
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema ()
 import Common (whenJust)
 import Common.App
+import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
+import qualified Common.AppendIntervalMap as AppendIMap
+import Common.IsMap (IsMap (elems, keys, keysSet))
+import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema
-import Common.Json (TezosWord64 (..))
 import Common.Tez
 
 viewSelectorHandler
@@ -130,17 +140,103 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
     Just a -> do
       report <- getSummaryReport
       return $ single report a
+  errors <- getErrorLogs $ _bakeViewSelector_errors vs
   return $ BakeView
-      { _bakeView_clients = clients
-      , _bakeView_clientAddresses = clientAddresses
-      , _bakeView_parameters = parameters
-      , _bakeView_nodes = nodes
-      , _bakeView_nodeAddresses = nodeAddresses
-      , _bakeView_delegateStats = delegateStats
-      , _bakeView_notificatees = notificatees
-      , _bakeView_mailServer = mailServer
-      , _bakeView_summaryGraph = summaryGraph
-      , _bakeView_summary = summary
-      , _bakeView_graphs = mempty
-      , _bakeView_delegates = delegates
-      }
+    { _bakeView_clients = clients
+    , _bakeView_clientAddresses = clientAddresses
+    , _bakeView_parameters = parameters
+    , _bakeView_nodes = nodes
+    , _bakeView_nodeAddresses = nodeAddresses
+    , _bakeView_delegateStats = delegateStats
+    , _bakeView_notificatees = notificatees
+    , _bakeView_mailServer = mailServer
+    , _bakeView_summaryGraph = summaryGraph
+    , _bakeView_summary = summary
+    , _bakeView_graphs = mempty
+    , _bakeView_delegates = delegates
+    , _bakeView_errors = first keysSet <$> errors
+    , _bakeView_errorsById = fold $ fst <$> errors
+    }
+
+getErrorLogs
+  :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m, Show a)
+  => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
+  -> m (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime))
+      (AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))), a))
+getErrorLogs intervalMap = do
+  let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
+  allLogs :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView)
+    <- leftBiasedUnions <$> for (keys flattenedIntervalMap) runQueries
+
+  -- Unflatten the results by finding which interval each log corresponded to.
+  pure $ fold $ flip imap allLogs $ \logId (errorLog@(ErrorLog started stopped _ _), view) ->
+      let relevantIntervals = intervalMap `AppendIMap.intersecting` ClosedInterval (Bounded started) (maybe UpperInfinity Bounded stopped)
+      in relevantIntervals <&> \a ->
+          (AppendMap.singleton logId $ First (Just (errorLog, view)), a)
+
+  where
+    runQueries (ClosedInterval lowWithInf highWithInf) = do
+      let (low, high) = (getBounded lowWithInf, getBounded highWithInf)
+      ies <- [queryQ|
+        SELECT
+            el.id
+          , el.started AT TIME ZONE 'UTC'
+          , el.stopped AT TIME ZONE 'UTC'
+          , el."lastSeen" AT TIME ZONE 'UTC'
+          , el."noticeSentAt" AT TIME ZONE 'UTC'
+          , t.type, t.address
+        FROM "ErrorLog" el
+        JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
+        WHERE
+          ((?low IS NULL OR el.started >= ?low) AND
+          (?high IS NULL OR el.started <= ?high)) OR
+          ((?low IS NULL OR el.stopped >= ?low) AND
+          (?high IS NULL OR el.stopped <= ?high))
+        ORDER BY el.id ASC
+        |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress) ->
+          ( elId :: Id ErrorLog
+          , ( ErrorLog
+                { _errorLog_started = elStarted
+                , _errorLog_stopped = elStopped
+                , _errorLog_lastSeen = elLastSeen
+                , _errorLog_noticeSentAt = elNoticeSentAt
+                }
+            , ErrorLogInaccessibleEndpoint elId tType tAddress
+            )
+          )
+
+      mbs <- [queryQ|
+        SELECT
+            el.id
+          , el.started AT TIME ZONE 'UTC'
+          , el.stopped AT TIME ZONE 'UTC'
+          , el."lastSeen" AT TIME ZONE 'UTC'
+          , el."noticeSentAt" AT TIME ZONE 'UTC'
+          , t."publicKeyHash", t.client, t.worker
+        FROM "ErrorLog" el
+        JOIN "ErrorLogMultipleBakersForSameDelegate" t ON t.log = el.id
+        WHERE
+          ((?low IS NULL OR el.started >= ?low) AND
+          (?high IS NULL OR el.started <= ?high)) OR
+          ((?low IS NULL OR el.stopped >= ?low) AND
+          (?high IS NULL OR el.stopped <= ?high))
+        ORDER BY el.id ASC
+        |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
+          ( elId :: Id ErrorLog
+          , ( ErrorLog
+                { _errorLog_started = elStarted
+                , _errorLog_stopped = elStopped
+                , _errorLog_lastSeen = elLastSeen
+                , _errorLog_noticeSentAt = elNoticeSentAt
+                }
+            , ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker
+            )
+          )
+
+      let toView f = fmap (second f)
+      pure $ leftBiasedUnions
+        [ toView ErrorLogView_InaccessibleEndpoint ies
+        , toView ErrorLogView_MultipleBakersForSameDelegate mbs
+        ]
+
+    leftBiasedUnions = AppendMap.unionsWith const

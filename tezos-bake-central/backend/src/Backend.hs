@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -25,7 +24,7 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (for_, traverse_, toList)
+import Data.Foldable (for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -67,7 +66,7 @@ import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Route (RouteEnv)
-import Rhyolite.Schema (Id(..), Json (..))
+import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay, maximumMay)
 import Say (say, sayShow)
 import Snap.Core (MonadSnap, route)
@@ -140,13 +139,18 @@ nodeWorker delay httpMgr db = do
       heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        params <- runNodeRPCT ctx $ nodeRPC RProtoConstants
-        for_ params $ \protoInfo -> do
-          [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
-            (Only (pid :: Id Parameters): _) ->
-              updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
-            _ ->
-              insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
+        runNodeRPCT ctx (nodeRPC RProtoConstants) >>= \case
+          Left e -> do
+            now <- getTime
+            logId <- fmap toId $ insert $ ErrorLog now Nothing now Nothing
+            insertAndNotify_ $ ErrorLogInaccessibleEndpoint logId EndpointType_Node nodeAddr
+          Right protoInfo -> do
+            [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
+              (Only (pid :: Id Parameters): _) ->
+                updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
+              _ ->
+                insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
+
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId
@@ -225,10 +229,39 @@ clientWorker delay emailFromAddress httpMgr db = do
           report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
           let reportJson = Json report
 
-          for_ (maximumMay $ fmap _event_time $ _report_seen report) $ \b ->
-            when (addUTCTime blockHeightTimeout b < now) $
-              queueAllEmails emailFromAddress
-                [Error now ("baker " <> address <> " has not seen a block recently!\nLast block was at " <> T.pack (show b) <> ".")]
+          for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->
+            when (addUTCTime blockHeightTimeout (_event_time seenEvent) < now) $ do
+              existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
+                SELECT el.id, t.id
+                FROM "ErrorLog" el
+                JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
+                WHERE t.cid = ?cid AND t.stopped IS NULL OR t.stopped >= NOW() - INTERVAL '5 minutes'
+                ORDER BY t.stopped, t.lastSeen, t.started
+                LIMIT 1
+              |]
+              let
+                seenLevel = _seenEvent_level $ _event_detail seenEvent
+                seenHash = _seenEvent_hash $ _event_detail seenEvent
+              case existingLog of
+                Nothing -> do
+                  logId <- toId <$> insert ErrorLog
+                    { _errorLog_started = now
+                    , _errorLog_stopped = Nothing
+                    , _errorLog_lastSeen = now
+                    , _errorLog_noticeSentAt = Nothing
+                    }
+                  insertAndNotify_ ErrorLogBakerNoHeartbeat
+                    { _errorLogBakerNoHeartbeat_log = logId
+                    , _errorLogBakerNoHeartbeat_lastLevel = seenLevel
+                    , _errorLogBakerNoHeartbeat_lastBlockHash = seenHash
+                    , _errorLogBakerNoHeartbeat_client = cid
+                    }
+                Just (logId, specificLogId) -> do
+                  update [ ErrorLog_lastSeenField =. now ] (AutoKeyField ==. fromId logId)
+                  updateAndNotify specificLogId
+                    [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
+                    , ErrorLogBakerNoHeartbeat_lastBlockHashField =. seenHash
+                    ]
 
           for_ mLevelAndProto $ \(_headLevel, _headBlockHash, protoInfo) -> do
             let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))

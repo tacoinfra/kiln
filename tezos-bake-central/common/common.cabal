@@ -26,6 +26,7 @@ library
     , either
     , file-embed
     , hashing
+    , IntervalMap
     , lens
     , memory
     , modern-uri
@@ -41,6 +42,7 @@ library
     Common
     Common.Api
     Common.App
+    Common.AppendIntervalMap
     Common.Base16ByteString
     Common.BlockHeader
     Common.Config

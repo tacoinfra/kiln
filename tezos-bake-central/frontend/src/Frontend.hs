@@ -25,7 +25,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList)
+import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import qualified Data.Map as BaseMap
@@ -37,6 +37,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import qualified Form.Checks as Check
@@ -49,7 +50,7 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (formItem, validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
-import Rhyolite.Api
+import Rhyolite.Api (public)
 import Rhyolite.App (getSingle)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
@@ -61,8 +62,11 @@ import qualified Text.URI as Uri
 import Common (tshow)
 import Common.Api
 import Common.App
+import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import qualified Common.Config as Config
 import Common.Fitness (unFitness)
+import Common.IsMap (IsMap (restrictKeys))
 import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema hiding (Event)
@@ -97,11 +101,10 @@ frontend =
           return $ let (host, port) = T.breakOn ":" hostWithPort
                     in (T.unpack protocol, T.unpack host, T.unpack port)
 
-      blockExplorerUrl <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) <&> \case
-        Just url -> case mkRootUri url of
+      blockExplorerUrl <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) $ fmap $ \url ->
+        case mkRootUri url of
           Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
-          Right rootUrl -> Just rootUrl
-        Nothing -> Nothing
+          Right rootUrl -> rootUrl
 
       runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
   )
@@ -118,7 +121,7 @@ watchNode cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_nodes = Map.singleton cid 1
     }
-  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
+  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
 watchNodeAddresses = do
@@ -133,7 +136,7 @@ watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = Map.singleton cid 1
     }
-  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
+  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
 
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (AppendMap PublicKeyHash ()))
 watchDelegatePublicKeyHashes = do
@@ -152,29 +155,28 @@ watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = Just 1
     }
-  return . ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
+  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = Just 1
     }
-  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
 
 watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
 watchSummary = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summary v
+  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summary v
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
 watchSummaryGraph = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
-
+  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
@@ -182,9 +184,21 @@ watchMailServer =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = Just 1 }
 
+watchErrors
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))))
+watchErrors intervals = do
+  theView <- watchViewSelector $ ffor intervals $ \ivals -> mempty
+    { _bakeViewSelector_errors = AppendIMap.fromSet (const 1) ivals
+    }
+  pure $ ffor theView $ \v ->
+    ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
+
+
 headTag :: DomBuilder t m => m ()
 headTag = do
-  mapM_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
+  traverse_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
     [ "css/font-awesome.min.css"
     , "semantic-ui/semantic.css"
     , "css/main.css"
@@ -259,6 +273,11 @@ summaryTab = divClass "ui grid" $ do
       whenJustDyn waitingCount $ \n ->
         tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
           text $ "Waiting: " <> tshow n
+
+      errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
+      dyn_ $ ffor errors $ traverse_ $ \logs -> for_ logs $ \log ->
+        el "p" $ text $ tshow log
+
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
     dyn . ffor mGraph $ \case
@@ -266,6 +285,7 @@ summaryTab = divClass "ui grid" $ do
       Just (total, graphText) -> do
         setInnerHTML (_element_raw graphEl) graphText
         text $ "Total rewards earned: " <> tez (Tez total)
+
   whenJustDyn (fmap fst <$> summaryReport) $ \report -> do
     let baked = sortBy (flip (comparing _event_time)) (_report_baked report)
     divClass "ten wide column" $ do
@@ -283,6 +303,7 @@ summaryTab = divClass "ui grid" $ do
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
             Just protoInfo -> text . tez $ blockRewards b protoInfo
+
   return ()
 
 
