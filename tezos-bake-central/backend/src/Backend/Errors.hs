@@ -25,7 +25,8 @@ import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, executeQ, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
-import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
+                                updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id)
 
@@ -81,7 +82,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
         , _error_text = "Baker at " <> maybe "?" _client_address client <> " has not seen a block for while!"
         }]
     Just (logId, specificLogId) -> do
-      updateErrorLogWith logId specificLogId
+      updateErrorLogBy logId specificLogId
         [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
         , ErrorLogBakerNoHeartbeat_lastBlockHashField =. seenHash
         ]
@@ -98,8 +99,8 @@ reportInaccessibleEndpointError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig m)
   => EndpointType -> ClientAddress -> m ()
 reportInaccessibleEndpointError endpointType addr = do
-  existingLog :: Maybe (Id ErrorLog) <- listToMaybe . stripOnly <$> [queryQ|
-    SELECT el.id
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
      WHERE t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
@@ -117,7 +118,7 @@ reportInaccessibleEndpointError endpointType addr = do
         { _error_time = now
         , _error_text = "Unable to connect to " <> typeName <> " at " <> addr
         }]
-    Just logId -> updateErrorLog logId
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleEndpointError :: (Monad m, PostgresRaw m) => EndpointType -> ClientAddress -> m ()
 clearInaccessibleEndpointError endpointType addr = void $ [executeQ|
@@ -148,7 +149,7 @@ reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
           [showBadFork $ ForkInfo n (if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
 
     Just (logId, specificLogId) -> do
-      updateErrorLogWith logId specificLogId
+      updateErrorLogBy logId specificLogId
         [ ErrorLogNodeOnFork_tooOldField =. tooOld
         , ErrorLogNodeOnFork_bakedBlockField =. bakedBlock
         , ErrorLogNodeOnFork_bakedBlockTimeField =. bakedBlockTime
@@ -161,25 +162,25 @@ clearNodeOnForkError nodeId = void $ [executeQ|
    WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
   |]
 
-
-
-insertErrorLog :: (PersistBackend m, PersistEntity a) => (Id ErrorLog -> a) -> m ()
 insertErrorLog mkErrorLog = do
   now <- getTime
-  logId <- insertAndNotify ErrorLog
+  logId <- toId <$> insert ErrorLog
     { _errorLog_started = now
     , _errorLog_stopped = Nothing
     , _errorLog_lastSeen = now
     , _errorLog_noticeSentAt = Nothing
     }
-  insert_ $ mkErrorLog logId
+  insertAndNotify_ $ mkErrorLog logId
 
-updateErrorLog :: (PersistBackend m) => Id ErrorLog -> m ()
-updateErrorLog logId = do
+updateErrorLog logId specificLogId = do
+  updateErrorLogLastSeen logId
+  notifyEntityId NotificationType_Update specificLogId
+
+updateErrorLogBy logId specificLogId updates = do
+  updateErrorLogLastSeen logId
+  updateAndNotify specificLogId updates
+
+updateErrorLogLastSeen :: PersistBackend m => Id ErrorLog -> m ()
+updateErrorLogLastSeen logId = do
   now <- getTime
-  updateAndNotify logId [ErrorLog_lastSeenField =. now]
-
--- TODO: The type for this is not easy to write down.
-updateErrorLogWith logId specificLogId updates = do
-  update updates (AutoKeyField ==. fromId specificLogId)
-  updateErrorLog logId
+  update [ErrorLog_lastSeenField =. now] (AutoKeyField ==. fromId logId)

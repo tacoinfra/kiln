@@ -38,7 +38,7 @@ import Common.Schema
 
 data Bake = Bake
 
-type TimeWindowMap a = AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
+type TimeWindow = ClosedInterval (WithInfinity UTCTime)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_summary :: !(Maybe a)
@@ -51,7 +51,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_delegateStats :: !(AppendMap PublicKeyHash a)
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
-  , _bakeViewSelector_errors :: !(TimeWindowMap a)
+  , _bakeViewSelector_errors :: !(AppendIntervalMap TimeWindow a)
   --, _bakeViewSelector_errorsByClient :: !(AppendMap ClientAddress (TimeWindowMap a))
   } deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -68,7 +68,7 @@ data BakeView a = BakeView
   , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_summaryGraph :: !(Single (Micro, Text) a)
   , _bakeView_graphs :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
-  , _bakeView_errors :: !(AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (Set (Id ErrorLog), a))
+  , _bakeView_errors :: !(AppendIntervalMap TimeWindow (Set (Id ErrorLog), a))
   , _bakeView_errorsById :: !(AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))))
   } deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
@@ -84,6 +84,8 @@ instance ToJSON MailServerView
 
 data ErrorLogView
   = ErrorLogView_InaccessibleEndpoint ErrorLogInaccessibleEndpoint
+  | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
+  | ErrorLogView_NodeOnFork ErrorLogNodeOnFork
   | ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate
   deriving (Eq, Generic, Typeable, Show)
 instance FromJSON ErrorLogView

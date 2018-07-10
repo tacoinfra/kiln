@@ -1,3 +1,5 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -31,9 +33,10 @@ import Database.PostgreSQL.Simple (Only (..))
 import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Rhyolite.Backend.Account ()
-import Rhyolite.Backend.Schema ()
+import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Json (..))
+import Rhyolite.Schema (Id, Json (..))
 
 import Common.Base16ByteString
 import Common.Fitness
@@ -104,6 +107,11 @@ unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
+
+type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, PersistEntity a, PrimitivePersistField (Key a BackendSpecific))
+
+getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
+getId = get . fromId
 
 
 instance TezosBinary a => PersistField (Base16ByteString a) where

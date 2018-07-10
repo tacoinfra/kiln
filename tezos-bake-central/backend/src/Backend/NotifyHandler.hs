@@ -2,26 +2,32 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
 
+import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Aeson (Result (Error, Success), fromJSON)
+import Data.Aeson (FromJSON, fromJSON)
+import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as Map
 import Data.Bifunctor (first)
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
-import Database.Groundhog.Postgresql (Postgresql, get, select, (==.))
+import qualified Data.Set as Set
+import Database.Groundhog.Postgresql (PersistBackend, Postgresql, get, select, (==.))
 import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id)
+import Rhyolite.Backend.Schema.Class (DefaultKeyId)
+import Rhyolite.Schema (Id, IdData)
 import Say (say)
 
 import Backend.BalanceTracking
@@ -29,11 +35,10 @@ import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs)
 import Common (tshow, whenJust)
-import Common.App (BakeView (..), BakeViewSelector (..), mailServerConfigToView)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
+                   mailServerConfigToView)
 import Common.IsMap (IsMap (keysSet))
-import Common.Schema (Account (..), AccountDelegate (..), Client (..), Client (..), ClientInfo, ClientInfo,
-                      Delegate (..), DelegateStats (..), MailServerConfig (..), Node (..), Notificatee (..),
-                      Notificatee (..), Parameters (..), Parameters (..), unDelegateStats)
+import Common.Schema
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
@@ -41,9 +46,10 @@ notifyHandler
   -> NotifyMessage
   -> BakeViewSelector a
   -> m (BakeView a)
-notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
+notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
   let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success cid -> do
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success cid -> do
           (client :: Maybe Client) <- get $ fromId (cid :: Id Client)
           (infos :: [ClientInfo]) <- select (ClientInfo_clientField ==. cid)
           let emptyV :: BakeView a
@@ -74,18 +80,20 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   , _bakeView_summary = single summaryReport a
                   }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
-        Error e -> parseErr notifyMessage e
-      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id Node) of
-        Success nid -> do
+
+      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id Node) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success nid -> do
           (params :: [Parameters]) <- select (Parameters_nodeField ==. nid)
           return $ case _bakeViewSelector_parameters aggVS of
             Nothing -> mempty :: BakeView a
             Just a -> (mempty :: BakeView a)
               { _bakeView_parameters = single (_parameters_protoInfo <$> listToMaybe params) a
               }
-        Error e -> parseErr notifyMessage e
+
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success nid -> do
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success nid -> do
           (node :: Maybe Node) <- get $ fromId nid
           let nodes = case Map.lookup nid (_bakeViewSelector_nodes aggVS) of
                 Nothing -> mempty
@@ -98,46 +106,70 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
                   { _bakeView_nodeAddresses = Map.singleton nid (First $ _node_address <$> node, a)
                   }
           return $ nodeAddresses <> nodes
-        Error e -> parseErr notifyMessage e
+
       handleDelegate = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success (dId :: Id Delegate) -> do
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (dId :: Id Delegate) -> do
           delegate :: Maybe Delegate <- get $ fromId dId
           let v d a = mempty {_bakeView_delegates = Map.singleton (_delegate_publicKeyHash d) a}
-          return $ maybe mempty id $ (v <$> delegate <*> _bakeViewSelector_delegates aggVS)
+          return $ fromMaybe mempty $ v <$> delegate <*> _bakeViewSelector_delegates aggVS
+
       handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success (dsId :: Id DelegateStats) -> do
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (dsId :: Id DelegateStats) -> do
           delegateStats :: Maybe DelegateStats <- get $ fromId dsId
           whenJust delegateStats $ \stats -> do
-            delegate :: Delegate <- fmap (maybe (error "Bad Foreign Key Delegate->DelegateStats") id) $ get $ fromId $ _delegateStats_delegate stats
+            delegate :: Delegate <- fmap (fromMaybe $ error "Bad Foreign Key Delegate->DelegateStats") $ get $ fromId $ _delegateStats_delegate stats
             let publicKeyHash = _delegate_publicKeyHash delegate
             whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a ->
               return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ unDelegateStats publicKeyHash stats, a) }
-        Error e -> parseErr notifyMessage e
+
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
-        Success nid -> do
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success nid -> do
           (notificatee :: Maybe Notificatee) <- get $ fromId nid
           return $ case _bakeViewSelector_notificatees aggVS of
             Nothing -> mempty
             Just a -> (mempty :: BakeView a)
               { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
               }
-        Error e -> parseErr notifyMessage e
-      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Result (Id MailServerConfig) of
-        Success nid -> case _bakeViewSelector_mailServer aggVS of
-            Nothing -> return mempty
-            Just a -> do
-              (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
-              return $ (mempty :: BakeView a)
-                { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
-                }
-        Error e -> parseErr notifyMessage e
 
-      handleLogs = do
-        errors <- getErrorLogs (_bakeViewSelector_errors aggVS)
-        pure $ mempty
-          { _bakeView_errors = first keysSet <$> errors
-          , _bakeView_errorsById = fold $ fst <$> errors
-          }
+      handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id MailServerConfig) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success nid -> case _bakeViewSelector_mailServer aggVS of
+          Nothing -> return mempty
+          Just a -> do
+            (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
+            return $ (mempty :: BakeView a)
+              { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
+              }
+
+      handleErrorLog
+        :: forall e m2. (EntityWithId e, FromJSON (IdData e), PersistBackend m2, MonadIO m2)
+        => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> m2 (BakeView a)
+      handleErrorLog getLogId toView = case fromJSON (_notifyMessage_value notifyMessage) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (specificLogId :: Id e) -> do
+          specificLog' :: Maybe e <- getId specificLogId
+          whenJust specificLog' $ \specificLog -> do
+            let logId = getLogId specificLog
+            errorLog' :: Maybe ErrorLog <- get $ fromId logId
+            whenJust errorLog' $ \errorLog -> do
+              let
+                relevantIntervals :: AppendIMap.AppendIntervalMap TimeWindow a =
+                  _bakeViewSelector_errors aggVS `AppendIMap.intersecting`
+                    ClosedInterval
+                      (Bounded $ _errorLog_started errorLog)
+                      (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
+
+              pure $ if null relevantIntervals
+                then mempty :: BakeView a
+                else mempty
+                  { _bakeView_errors = (,) (Set.singleton logId) <$> relevantIntervals
+                  , _bakeView_errorsById =
+                      Map.singleton logId (First (Just (errorLog, toView specificLog)))
+                  }
+
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
@@ -146,7 +178,10 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT . runDb (Identity db) $ do
     "DelegateStats" -> handleDelegateStats
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
-    "ErrorLogInaccessibleEndpoint" -> handleLogs
+    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
+    "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
+    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
     _ -> do
       say $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty
