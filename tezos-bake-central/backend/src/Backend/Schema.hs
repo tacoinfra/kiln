@@ -266,6 +266,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleEndpoint
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogBakerNoHeartbeat
+  - entity: ErrorLogNodeOnFork
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -282,4 +283,5 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
+  , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
   ]

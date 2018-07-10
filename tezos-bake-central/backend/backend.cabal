@@ -64,8 +64,12 @@ library
 
   exposed-modules:
     Backend
+
+  other-modules:
     Backend.BalanceTracking
     Backend.ChainHealth
+    Backend.Config
+    Backend.Errors
     Backend.Graphs
     Backend.NodeRPC
     Backend.NotifyHandler

@@ -19,6 +19,7 @@ import Control.Lens (ifor, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -26,9 +27,11 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
 import Data.Foldable (for_, toList, traverse_)
 import Data.Function (on, (&))
+import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (sortBy)
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
@@ -39,7 +42,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Text.IO as T
-import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
 import Data.Word (Word64)
@@ -60,7 +62,7 @@ import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
-import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail, queueEmail)
+import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
 import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
@@ -79,7 +81,9 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
-import Backend.ChainHealth (scanForkInfo, validateForkyBlocks)
+import Backend.ChainHealth (scanForkInfo)
+import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Backend.Errors
 import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
@@ -94,17 +98,12 @@ import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema
 import Common.TaggedHash (BlockHash, toBase58Text)
 import Common.URI (mkRootUri)
+import Common.Verification (ForkInfoF (..), ForkStatusF (..), validateForkyBlocks)
 import Frontend (frontend)
+
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
-
-mailFor :: Address -> Text -> [Error] -> Mail
-mailFor fromAddr toAddr errs =
-  let
-    toA = Address Nothing toAddr
-    body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -124,15 +123,15 @@ addNode node = do
     _ -> insertAndNotify node
 
 nodeWorker
-  :: (MonadIO m)
-  => Int -- delay between checking for updates, in seconds
+  :: Int -- delay between checking for updates, in seconds
+  -> AppConfig
   -> Http.Manager
   -> Pool Postgresql
-  -> m (IO ())
-nodeWorker delay httpMgr db = do
+  -> IO (IO ())
+nodeWorker delay appConfig httpMgr db = do
   worker (seconds delay) $ do
     say "Update node cycle."
-    runNoLoggingT . runDb (Identity db) $ do
+    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
@@ -140,11 +139,9 @@ nodeWorker delay httpMgr db = do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         runNodeRPCT ctx (nodeRPC RProtoConstants) >>= \case
-          Left e -> do
-            now <- getTime
-            logId <- fmap toId $ insert $ ErrorLog now Nothing now Nothing
-            insertAndNotify_ $ ErrorLogInaccessibleEndpoint logId EndpointType_Node nodeAddr
+          Left e -> reportInaccessibleEndpointError EndpointType_Node nodeAddr
           Right protoInfo -> do
+            clearInaccessibleEndpointError EndpointType_Node nodeAddr
             [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
               (Only (pid :: Id Parameters): _) ->
                 updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
@@ -192,33 +189,25 @@ queryBestNode = do
       return (nodeId, node, _parameters_protoInfo params)
 
 
-queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m) => Address -> [Error] -> m ()
-queueAllEmails fromAddr message = do
-  ns <- select CondEmpty
-  for_ ns $ \n ->
-    queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
-
-clientWorker :: (MonadIO m)
-             => Int -- delay between checking for updates, in seconds
-             -> Address
-             -> Http.Manager
-             -> Pool Postgresql
-             -> m (IO ())
-clientWorker delay emailFromAddress httpMgr db = do
-  lastErrorRef <- liftIO $ newIORef Nothing
+clientWorker
+  :: Int -- delay between checking for updates, in seconds
+  -> AppConfig
+  -> Http.Manager
+  -> Pool Postgresql
+  -> IO (IO ())
+clientWorker delay appConfig httpMgr db = do
   worker (seconds delay) $ do
     say "Update client cycle."
-    runNoLoggingT $ runDb (Identity db) $ do
+    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
       now <- getTime
       let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      (queryBestNode >>=) $ traverse_ $ \(_nodeId, bestNode, protoInfo) -> do
+      (queryBestNode >>=) $ traverse_ $ \(nodeId, bestNode, protoInfo) -> do
         let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
         toUpdate <- [queryQ| SELECT id, address
                              FROM "Client"
                              WHERE updated < ?maxTime OR updated IS NULL
                              ORDER BY updated NULLS FIRST |]
-        mLevelAndProto <- queryBestNode
 
         clientDelegates <- for toUpdate $ \(cid :: Id Client, address :: Text) -> do
           say $ "Updating client at " <> address
@@ -230,52 +219,22 @@ clientWorker delay emailFromAddress httpMgr db = do
           let reportJson = Json report
 
           for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->
-            when (addUTCTime blockHeightTimeout (_event_time seenEvent) < now) $ do
-              existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
-                SELECT el.id, t.id
-                FROM "ErrorLog" el
-                JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
-                WHERE t.cid = ?cid AND t.stopped IS NULL OR t.stopped >= NOW() - INTERVAL '5 minutes'
-                ORDER BY t.stopped, t.lastSeen, t.started
-                LIMIT 1
-              |]
-              let
-                seenLevel = _seenEvent_level $ _event_detail seenEvent
-                seenHash = _seenEvent_hash $ _event_detail seenEvent
-              case existingLog of
-                Nothing -> do
-                  logId <- toId <$> insert ErrorLog
-                    { _errorLog_started = now
-                    , _errorLog_stopped = Nothing
-                    , _errorLog_lastSeen = now
-                    , _errorLog_noticeSentAt = Nothing
-                    }
-                  insertAndNotify_ ErrorLogBakerNoHeartbeat
-                    { _errorLogBakerNoHeartbeat_log = logId
-                    , _errorLogBakerNoHeartbeat_lastLevel = seenLevel
-                    , _errorLogBakerNoHeartbeat_lastBlockHash = seenHash
-                    , _errorLogBakerNoHeartbeat_client = cid
-                    }
-                Just (logId, specificLogId) -> do
-                  update [ ErrorLog_lastSeenField =. now ] (AutoKeyField ==. fromId logId)
-                  updateAndNotify specificLogId
-                    [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
-                    , ErrorLogBakerNoHeartbeat_lastBlockHashField =. seenHash
-                    ]
+            if addUTCTime blockHeightTimeout (_event_time seenEvent) < now then
+              reportNoBakerHeartbeatError cid (_event_detail seenEvent)
+            else
+              clearNoBakerHeartbeatError cid
 
-          for_ mLevelAndProto $ \(_headLevel, _headBlockHash, protoInfo) -> do
-            let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
-                rewardDelay l =
-                  let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                      rc = c + _protoInfo_preservedCycles protoInfo
-
-                  in rc * _protoInfo_blocksPerCycle protoInfo
-                insertValues = Values ["int8", "varchar", "int8", "int8"]
-                  [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
-            unless (null $ _report_baked report) $ do
-              void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
-                              ?insertValues
-                              ON CONFLICT DO NOTHING |]
+          let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+              rewardDelay l =
+                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
+                    rc = c + _protoInfo_preservedCycles protoInfo
+                in rc * _protoInfo_blocksPerCycle protoInfo
+              insertValues = Values ["int8", "varchar", "int8", "int8"]
+                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
+          unless (null $ _report_baked report) $ do
+            void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
+                            ?insertValues
+                            ON CONFLICT DO NOTHING |]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
                           VALUES (?cid, ?reportJson, ?clientConfigJson)
@@ -287,19 +246,25 @@ clientWorker delay emailFromAddress httpMgr db = do
           validateForkyBlocks sayShow forkInfo
 
           updateAndNotify cid [Client_updatedField =. Just now]
-          case sortBy (compare `on` _event_time) (_report_errors report) of
-            [] -> return ()
-            es -> do
-              lastError <- liftIO $ readIORef lastErrorRef
-              let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
-              case new of
-                [] -> return ()
-                (x:_) -> do
-                  liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-                  queueAllEmails emailFromAddress new
+          -- case sortBy (compare `on` _event_time) (_report_errors report) of
+          --   [] -> return ()
+          --   es -> do
+          --     lastError <- liftIO $ readIORef lastErrorRef
+          --     let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
+          --     case new of
+          --       [] -> return ()
+          --       (x:_) -> do
+          --         liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
+          --         queueAllEmails new
           -- TODO.  debounce below as above
-          flip validateForkyBlocks forkInfo $ \errors ->
-            queueAllEmails emailFromAddress errors
+          flip validateForkyBlocks forkInfo $ \errors -> do
+            case nonEmpty errors of
+              Nothing -> clearNodeOnForkError nodeId
+              Just es -> for_ es $ \e -> do
+                let tooOld = case _forkInfo_forkStatus e of
+                      ForkStatus_TooOld -> True
+                      _ -> False
+                reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
 
           return $ _clientConfig_delegates clientConfig
 
@@ -307,9 +272,10 @@ clientWorker delay emailFromAddress httpMgr db = do
 
 insertClientDelegates :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
 insertClientDelegates pkhs = do
-  haveDelegates <- Set.fromList . fmap (_delegate_publicKeyHash . snd) <$> selectAll
+  haveDelegates <- Set.fromList . fmap _delegate_publicKeyHash <$> select CondEmpty
   let needDelegates = Set.difference pkhs haveDelegates
   traverse_ (insertAndNotify_ . Delegate) needDelegates
+
 
 delegateWorker
   :: MonadIO m
@@ -342,7 +308,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
         let accountStatus = either (const Nothing) Just accountStatusResp
         bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
           runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - levelWithRight))) >>= \case
-            Left e -> sayShow e >> pure Nothing
+            Left e -> sayShow e $> Nothing
             Right blockWithRights -> return $
               let
                 baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
@@ -359,7 +325,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
           rights = fromIntegral $ length bakingRightsUtilized
           dIdId :: Id Delegate = toId dId
 
-        delegateStatsId :: Maybe (Id DelegateStats) <- fmap fromOnly . listToMaybe <$> [queryQ|
+        delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . stripOnly <$> [queryQ|
           SELECT ds.id
           FROM "DelegateStats" ds
           WHERE ds.delegate = ?dIdId
@@ -438,8 +404,9 @@ backend = do
       (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
 
-    addFinalizer =<< nodeWorker 30 httpMgr db
-    addFinalizer =<< clientWorker 10 emailFromAddress httpMgr db
+    let appConfig = AppConfig emailFromAddress
+    addFinalizer =<< nodeWorker 30 appConfig httpMgr db
+    addFinalizer =<< clientWorker 10 appConfig httpMgr db
     addFinalizer =<< delegateWorker 10 httpMgr db
 
     SnapServer.httpServe cfg (route

@@ -467,6 +467,15 @@ data ErrorLogMultipleBakersForSameDelegate = ErrorLogMultipleBakersForSameDelega
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameDelegate
 
+data ErrorLogNodeOnFork = ErrorLogNodeOnFork
+  { _errorLogNodeOnFork_log :: !(Id ErrorLog)
+  , _errorLogNodeOnFork_node :: !(Id Node)
+  , _errorLogNodeOnFork_tooOld :: !Bool
+  , _errorLogNodeOnFork_bakedBlock :: !BlockHash
+  , _errorLogNodeOnFork_bakedBlockTime :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeOnFork
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -501,8 +510,10 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''EndpointType
   , ''ErrorEvent
   , ''ErrorLog
+  , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleEndpoint
   , ''ErrorLogMultipleBakersForSameDelegate
+  , ''ErrorLogNodeOnFork
   , ''Event
   , ''Level
   , ''NetworkStat
@@ -526,6 +537,10 @@ concat <$> traverse makeLenses
   , 'Error
   , 'ErrorEvent
   , 'ErrorLog
+  , 'ErrorLogBakerNoHeartbeat
+  , 'ErrorLogInaccessibleEndpoint
+  , 'ErrorLogMultipleBakersForSameDelegate
+  , 'ErrorLogNodeOnFork
   , 'Event
   , 'MailServerConfig
   , 'Report
