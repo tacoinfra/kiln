@@ -37,7 +37,6 @@ import Backend.ViewSelectorHandler (getErrorLogs)
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
                    mailServerConfigToView)
-import Common.IsMap (IsMap (keysSet))
 import Common.Schema
 
 notifyHandler

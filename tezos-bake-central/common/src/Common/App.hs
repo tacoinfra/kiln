@@ -19,6 +19,7 @@ import qualified Data.AppendMap as Map
 import Data.Fixed (Micro)
 import Data.Semigroup (First (..), Semigroup, (<>))
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.These (These (That, This), mergeThese, these)
 import Data.Time (UTCTime)
@@ -32,9 +33,14 @@ import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
-import Common.IsMap (IsMap (elems, intersectionWith, keys, keysSet, restrictKeys))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema
+
+
+restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
+restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
+
 
 data Bake = Bake
 
@@ -104,7 +110,7 @@ cropBakeView vs v =
   let clientAddresses = case _bakeViewSelector_clientAddresses vs of
         Nothing -> mempty
         Just _ -> _bakeView_clientAddresses v
-      clients = intersectionWith const (_bakeView_clients v) (_bakeViewSelector_clients vs)
+      clients = Map.intersectionWith const (_bakeView_clients v) (_bakeViewSelector_clients vs)
       parameters = case _bakeViewSelector_parameters vs of
         Nothing -> mempty
         Just _ -> _bakeView_parameters v
@@ -114,22 +120,22 @@ cropBakeView vs v =
       delegates = case _bakeViewSelector_delegates vs of
         Nothing -> mempty
         Just _ -> _bakeView_delegates v
-      nodes = intersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
-      delegateStats = intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
+      nodes = Map.intersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
+      delegateStats = Map.intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
       notificatees = case _bakeViewSelector_notificatees vs of
         Nothing -> mempty
         Just _ -> _bakeView_notificatees v
       mailServer = case _bakeViewSelector_mailServer vs of
         Nothing -> mempty
         Just _ -> _bakeView_mailServer v
-      graphs = intersectionWith const (_bakeView_graphs v) (_bakeViewSelector_clients vs)
+      graphs = Map.intersectionWith const (_bakeView_graphs v) (_bakeViewSelector_clients vs)
       summary = case _bakeViewSelector_summary vs of
         Nothing -> mempty
         Just _ -> _bakeView_summary v
       summaryGraph = case _bakeViewSelector_summary vs of
         Nothing -> mempty
         Just _ -> _bakeView_summaryGraph v
-      errors = intersectionWith const (_bakeView_errors v) (_bakeViewSelector_errors vs)
+      errors = AppendIMap.intersectionWith const (_bakeView_errors v) (_bakeViewSelector_errors vs)
   in BakeView
       { _bakeView_clientAddresses = clientAddresses
       , _bakeView_clients = clients
@@ -144,7 +150,7 @@ cropBakeView vs v =
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
       , _bakeView_errors = errors
-      , _bakeView_errorsById = restrictKeys (_bakeView_errorsById v) (foldMap fst $ elems errors)
+      , _bakeView_errorsById = restrictKeys (_bakeView_errorsById v) (foldMap fst $ AppendIMap.elems errors)
       }
 
 instance Align BakeViewSelector where
@@ -195,7 +201,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_errors = errors
     , _bakeView_errorsById =
         -- Crop the 'ErrorLog's to only those with the IDs referenced in the cropped set of errors.
-        restrictKeys (_bakeView_errorsById a) (foldMap fst $ elems errors)
+        restrictKeys (_bakeView_errorsById a) (foldMap fst $ AppendIMap.elems errors)
     }
     where
       errors = fmapMaybeSnd f (_bakeView_errors a)

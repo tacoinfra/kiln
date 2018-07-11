@@ -67,7 +67,6 @@ import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInf
 import qualified Common.AppendIntervalMap as AppendIMap
 import qualified Common.Config as Config
 import Common.Fitness (unFitness)
-import Common.IsMap (IsMap (restrictKeys))
 import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema hiding (Event)

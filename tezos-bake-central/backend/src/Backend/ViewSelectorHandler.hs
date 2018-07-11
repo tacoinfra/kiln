@@ -39,7 +39,6 @@ import Common (whenJust)
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.IsMap (IsMap (elems, keys, keysSet))
 import Common.Json (TezosWord64 (..))
 import Common.PublicKeyHash
 import Common.Schema
@@ -154,7 +153,7 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
     , _bakeView_summary = summary
     , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
-    , _bakeView_errors = first keysSet <$> errors
+    , _bakeView_errors = first AppendMap.keysSet <$> errors
     , _bakeView_errorsById = fold $ fst <$> errors
     }
 
@@ -166,7 +165,7 @@ getErrorLogs
 getErrorLogs intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   allLogs :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-    <- leftBiasedUnions <$> for (keys flattenedIntervalMap) runQueries
+    <- leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
 
   -- Unflatten the results by finding which interval each log corresponded to.
   pure $ fold $ flip imap allLogs $ \logId (errorLog@(ErrorLog started stopped _ _), view) ->

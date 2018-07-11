@@ -26,29 +26,12 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Reflex.FunctorMaybe (FunctorMaybe (fmapMaybe))
 
-import Common.IsMap
-
 type IsInterval i e = IntervalClass.Interval i e
 
 newtype AppendIntervalMap k v = AppendIntervalMap { unAppendIntervalMap :: IMap.IntervalMap k v }
   deriving (Functor, Foldable, Traversable, Show, Eq, Ord)
 
 deriving instance (IsInterval k e, Ord k, Read k, Read v) => Read (AppendIntervalMap k v)
-
--- TODO: Can we derive this?
-instance (IsInterval k e, Ord k) => IsMap k AppendIntervalMap where
-  intersectionWithKey f a b = AppendIntervalMap $ intersectionWithKey f (unAppendIntervalMap a) (unAppendIntervalMap b)
-  unionWithKey f a b = AppendIntervalMap $ unionWithKey f (unAppendIntervalMap a) (unAppendIntervalMap b)
-  mapMaybeWithKey f = AppendIntervalMap . mapMaybeWithKey f . unAppendIntervalMap
-  toList = IMap.toList . unAppendIntervalMap
-
-  keys = keys . unAppendIntervalMap
-  keysSet = keysSet . unAppendIntervalMap
-  elems = elems . unAppendIntervalMap
-  mapWithKey f = AppendIntervalMap . mapWithKey f . unAppendIntervalMap
-  filterWithKey f = AppendIntervalMap . filterWithKey f . unAppendIntervalMap
-  intersectionWith f a b = AppendIntervalMap $ intersectionWith f (unAppendIntervalMap a) (unAppendIntervalMap b)
-  unionWith f a b = AppendIntervalMap $ unionWith f (unAppendIntervalMap a) (unAppendIntervalMap b)
 
 instance (IsInterval k e, Ord k, Semigroup v) => Semigroup (AppendIntervalMap k v) where
   (<>) = unionWith (<>)
@@ -86,6 +69,39 @@ fromList = AppendIntervalMap . IMap.fromList
 
 fromAscList :: forall k v e. (Ord k, IsInterval k e) => [(k, v)] -> AppendIntervalMap k v
 fromAscList = AppendIntervalMap . IMap.fromAscList
+
+intersectionWithKey :: forall k a b c e. (Ord k, IsInterval k e) => (k -> a -> b -> c) -> AppendIntervalMap k a -> AppendIntervalMap k b -> AppendIntervalMap k c
+intersectionWithKey f a b = AppendIntervalMap $ IMap.intersectionWithKey f (unAppendIntervalMap a) (unAppendIntervalMap b)
+
+unionWithKey :: forall k v e. (Ord k, IsInterval k e) => (k -> v -> v -> v) -> AppendIntervalMap k v -> AppendIntervalMap k v -> AppendIntervalMap k v
+unionWithKey f a b = AppendIntervalMap $ IMap.unionWithKey f (unAppendIntervalMap a) (unAppendIntervalMap b)
+
+mapMaybeWithKey :: forall k a b e. (Ord k, IsInterval k e) => (k -> a -> Maybe b) -> AppendIntervalMap k a -> AppendIntervalMap k b
+mapMaybeWithKey f = AppendIntervalMap . IMap.mapMaybeWithKey f . unAppendIntervalMap
+
+toList :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [(k, v)]
+toList = IMap.toList . unAppendIntervalMap
+
+keys :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [k]
+keys = IMap.keys . unAppendIntervalMap
+
+keysSet :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> Set k
+keysSet = IMap.keysSet . unAppendIntervalMap
+
+elems :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [v]
+elems = IMap.elems . unAppendIntervalMap
+
+mapWithKey :: forall k a b e. (Ord k, IsInterval k e) => (k -> a -> b) -> AppendIntervalMap k a -> AppendIntervalMap k b
+mapWithKey f = AppendIntervalMap . IMap.mapWithKey f . unAppendIntervalMap
+
+filterWithKey :: forall k v e. (Ord k, IsInterval k e) => (k -> v -> Bool) -> AppendIntervalMap k v -> AppendIntervalMap k v
+filterWithKey f = AppendIntervalMap . IMap.filterWithKey f . unAppendIntervalMap
+
+intersectionWith :: forall k a b c e. (Ord k, IsInterval k e) => (a -> b -> c) -> AppendIntervalMap k a -> AppendIntervalMap k b -> AppendIntervalMap k c
+intersectionWith f a b = AppendIntervalMap $ IMap.intersectionWith f (unAppendIntervalMap a) (unAppendIntervalMap b)
+
+unionWith :: forall k v e. (Ord k, IsInterval k e) => (v -> v -> v) -> AppendIntervalMap k v -> AppendIntervalMap k v -> AppendIntervalMap k v
+unionWith f a b = AppendIntervalMap $ IMap.unionWith f (unAppendIntervalMap a) (unAppendIntervalMap b)
 
 fromSet :: forall k v e. (Ord k, IsInterval k e) => (k -> v) -> Set k -> AppendIntervalMap k v
 fromSet toV s = fromAscList [(k, toV k) | k <- Set.toAscList s]
