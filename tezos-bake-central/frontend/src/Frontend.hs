@@ -12,14 +12,14 @@
 
 module Frontend where
 
-import Data.Bifunctor
 import Control.Lens ((<&>), _1, _2)
-import Control.Monad ((<=<), when)
+import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
+import Data.Bifunctor
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
@@ -28,6 +28,7 @@ import Data.Fixed (Micro)
 import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
 import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (comparing)
@@ -223,17 +224,17 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
-        summaryT <- semuiTab "Summary" UITab_Summary currentTab
+        summaryT <- semuiTab (text "Summary") UITab_Summary currentTab
         nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab ("N:" <> name) (UITab_Node cid) currentTab
+            semuiTab (text $ "N:" <> name) (UITab_Node cid) currentTab
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
+            semuiTab (text $ "B:" <> name) (UITab_Client cid name) currentTab
         delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(pkh, _) ->
-            semuiTab ("tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
-        optionsT <- semuiTab "Options" UITab_Options currentTab
+            semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
+        optionsT <- semuiTab (text "Options") UITab_Options currentTab
         return (leftmost [summaryT, delegateT, clientT, nodeT, optionsT])
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
@@ -275,8 +276,33 @@ summaryTab = divClass "ui grid" $ do
           text $ "Waiting: " <> tshow n
 
       errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
-      dyn_ $ ffor errors $ traverse_ $ \logs -> for_ logs $ \log ->
-        el "p" $ text $ tshow log
+      dyn_ $ ffor errors $ traverse_ $ traverse_ $ traverse_ $ \(log, specificLog) -> do
+        let header = divClass "header" . text
+        divClass "ui error message" $ do
+          case specificLog of
+            ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
+              let endpointTypeName = case endpointType of
+                    EndpointType_Node -> "node"
+                    EndpointType_Client -> "client"
+              header $ "Unable to connect to " <> endpointTypeName <> " at " <> address
+
+            ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
+              header "Baker lagging behind" -- TODO Show client address
+              el "p" $ do
+                text "Last block level seen: "
+                blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+
+            ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
+              header "Node is on fork" -- TODO Fill this out
+
+            ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
+              header "Multiple bakers for same delegate" -- TODO Fill this out
+
+          el "p" $ do
+            text $ "First seen: " <> tshow (_errorLog_started log) <> " | "
+            case _errorLog_stopped log of
+              Nothing -> text $ "Last seen: " <> tshow (_errorLog_lastSeen log)
+              Just stopped -> text $ "Stopped: " <> tshow stopped
 
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
@@ -307,7 +333,7 @@ summaryTab = divClass "ui grid" $ do
   return ()
 
 
-optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
+optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClientAddresses
   nodes <- watchNodeAddresses
@@ -349,8 +375,7 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "Delegates"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
       listWithKey (Map._unAppendMap <$> delegates) $ \pkh _ -> el "tr" $ do
-        let dName = toPublicKeyHashText pkh
-        el "td" $ text dName
+        el "td" $ publicKeyHashLink pkh
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
           requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
@@ -464,8 +489,7 @@ delegateTab pkh = do
     Nothing -> waitingForResponse
     Just (bakeEfficiency, account) -> divClass "ui grid" $ do
       divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ text $ toPublicKeyHashText pkh
-        divClass "delegates" $ do
+        elClass "h3" "ui medium header" $ publicKeyHashLink pkh
 
         let tz = _account_balance account
         elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
@@ -523,20 +547,19 @@ clientTab cid addr = do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $
             text $ "Errors: " <> tshow (length errors)
 
-        case errors of
-          [] -> blank
-          _ -> elClass "p" "errors" $ do
-            elClass "h4" "ui medium header" $ text "Errors"
-            elClass "table" "ui celled striped table" $ do
-              el "thead" . el "tr" $ do
-                elClass "th" "four wide" $ text "Time"
-                el "th" $ text "Message"
-              for_ errors $ \e -> do
-                el "tr" $ do
-                  el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
-                  el "td" $ do
-                    for_ (T.lines (_error_text e)) $ \t ->
-                      divClass "errorLine" $ text t
+        for_ (nonEmpty errors) $ \es -> elClass "p" "errors" $ do
+          elClass "h4" "ui medium header" $ text "Errors"
+          elClass "table" "ui celled striped table" $ do
+            el "thead" . el "tr" $ do
+              elClass "th" "four wide" $ text "Time"
+              el "th" $ text "Message"
+            for_ es $ \e -> do
+              el "tr" $ do
+                el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
+                el "td" $ do
+                  for_ (T.lines (_error_text e)) $ \t ->
+                    divClass "errorLine" $ text t
+
       divClass "eight wide column" $ do
         divClass "ui medium header" $ text "Activity"
         elAttr "table" ("class" =: "ui celled striped table") $ do
@@ -555,11 +578,10 @@ clientTab cid addr = do
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
 
-semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
+semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =
   fmap ((k <$) . domEvent Click . fst) $
-    elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
-      text label
+    elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") label
 
 -- | Control that allows the user to build a list of items.
 listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)

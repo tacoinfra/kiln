@@ -168,7 +168,7 @@ insertErrorLog mkErrorLog = do
     { _errorLog_started = now
     , _errorLog_stopped = Nothing
     , _errorLog_lastSeen = now
-    , _errorLog_noticeSentAt = Nothing
+    , _errorLog_noticeSentAt = Just now
     }
   insertAndNotify_ $ mkErrorLog logId
 
