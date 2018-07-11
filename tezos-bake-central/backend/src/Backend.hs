@@ -15,7 +15,7 @@ import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
-import Control.Lens (ifor, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -25,13 +25,14 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (for_, toList, traverse_)
+import Data.Foldable (foldl', for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (sortBy)
 import Data.List.NonEmpty (nonEmpty)
+import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
@@ -58,7 +59,7 @@ import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend (withDb)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb)
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
@@ -246,6 +247,9 @@ clientWorker delay appConfig httpMgr db = do
           validateForkyBlocks sayShow forkInfo
 
           updateAndNotify cid [Client_updatedField =. Just now]
+
+          -- TODO: Add back errors reported by client RPC
+
           -- case sortBy (compare `on` _event_time) (_report_errors report) of
           --   [] -> return ()
           --   es -> do
@@ -257,14 +261,13 @@ clientWorker delay appConfig httpMgr db = do
           --         liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
           --         queueAllEmails new
           -- TODO.  debounce below as above
-          flip validateForkyBlocks forkInfo $ \errors -> do
-            case nonEmpty errors of
-              Nothing -> clearNodeOnForkError nodeId
-              Just es -> for_ es $ \e -> do
-                let tooOld = case _forkInfo_forkStatus e of
-                      ForkStatus_TooOld -> True
-                      _ -> False
-                reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
+          flip validateForkyBlocks forkInfo $ \errors -> case nonEmpty errors of
+            Nothing -> clearNodeOnForkError nodeId
+            Just es -> for_ es $ \e -> do
+              let tooOld = case _forkInfo_forkStatus e of
+                    ForkStatus_TooOld -> True
+                    _ -> False
+              reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
 
           return $ _clientConfig_delegates clientConfig
 
@@ -293,14 +296,14 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
     ctx = NodeRPCContext httpMgr nodeAddr
     headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
   say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
-  delegates :: [(Key Delegate BackendSpecific, Delegate)] <- selectAll
+  delegates :: Map (Id Delegate) Delegate <- selectMap DelegateConstructor CondEmpty
   -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
   runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) (fromIntegral <$> levelRange))) >>= \case
     Left e -> sayShow e
     Right allBakingRights -> do
       -- Filter out baking rights that apply to levels in the future.
       let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> allBakingRights
-      for_ delegates $ \(dId, delegate) -> do
+      ifor_ delegates $ \dId delegate -> do
         let pkh = _delegate_publicKeyHash delegate
         say $ "Updating delegate " <> toPublicKeyHashText pkh
         accountStatusResp <- runNodeRPCT ctx (nodeRPC (RContract headId (_delegate_publicKeyHash delegate)))
@@ -311,30 +314,33 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
             Left e -> sayShow e $> Nothing
             Right blockWithRights -> return $
               let
+                -- The ID of the baker who baked this block
                 baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
-                delegateUtilizedRightToBake =
-                  if baker == pkh then Just True -- The delegate baked this block
-                  else
-                    -- See if the baker had a lower priority than the delegate.
-                    -- If so then the delegate didn't miss a legitimate opportunity to bake.
-                      bakingRights ^? ix baker . ix levelWithRight . to (< delegatePriority)
-              in delegateUtilizedRightToBake
+              in if baker == pkh then Just True -- Our delegate baked this block so point for us!
+                 else case bakingRights ^? ix baker . ix levelWithRight of
+                    Nothing -> Nothing -- Can't find this baker in the table of rights
+                    Just bakerPriority -> if bakerPriority < delegatePriority
+                      then Nothing -- The baker baked with higher priority so this block doesn't count either way.
+                      else Just False -- The baker baked with lower priority, so point against us.
 
         let
-          baked = sum $ (\x -> if x == Just True then 1 else 0) <$> bakingRightsUtilized
-          rights = fromIntegral $ length bakingRightsUtilized
-          dIdId :: Id Delegate = toId dId
+          calcBakingEfficiency (numBakedAcc, numOpportunitiesAcc) = \case
+            Nothing -> (numBakedAcc, numOpportunitiesAcc)
+            Just True -> (numBakedAcc + 1, numOpportunitiesAcc + 1)
+            Just False -> (numBakedAcc, numOpportunitiesAcc + 1)
+
+          (numBaked, numOpportunities) = foldl' calcBakingEfficiency (0, 0) bakingRightsUtilized
 
         delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . stripOnly <$> [queryQ|
           SELECT ds.id
           FROM "DelegateStats" ds
-          WHERE ds.delegate = ?dIdId
+          WHERE ds.delegate = ?dId
           LIMIT 1
           |]
         case delegateStatsId of
           Nothing -> insertAndNotify_ $ DelegateStats
-            { _delegateStats_delegate = (toId dId)
-            , _delegateStats_efficiency = (BakeEfficiency baked rights)
+            { _delegateStats_delegate = dId
+            , _delegateStats_efficiency = BakeEfficiency numBaked numOpportunities
             , _delegateStats_accountBalance = _account_balance <$> accountStatus
             , _delegateStats_accountSpendable = _account_spendable <$> accountStatus
             , _delegateStats_accountSetable = _accountDelegate_setable . _account_delegate <$> accountStatus
@@ -342,7 +348,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
             , _delegateStats_accountCounter = _account_counter <$> accountStatus
             }
           Just dsId -> updateAndNotify dsId
-            [ DelegateStats_efficiencyField =. (BakeEfficiency baked rights)
+            [ DelegateStats_efficiencyField =. BakeEfficiency numBaked numOpportunities
             , DelegateStats_accountBalanceField =. (_account_balance <$> accountStatus)
             , DelegateStats_accountSpendableField =. (_account_spendable <$> accountStatus)
             , DelegateStats_accountSetableField =. (_accountDelegate_setable . _account_delegate <$> accountStatus)
