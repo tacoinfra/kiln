@@ -160,8 +160,8 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
 
 getErrorLogs
   :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m, Show a)
-  => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
-  -> m (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime))
+  => AppendIntervalMap TimeWindow a
+  -> m (AppendIntervalMap TimeWindow
       (AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))), a))
 getErrorLogs intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
@@ -177,66 +177,121 @@ getErrorLogs intervalMap = do
   where
     runQueries (ClosedInterval lowWithInf highWithInf) = do
       let (low, high) = (getBounded lowWithInf, getBounded highWithInf)
-      ies <- [queryQ|
-        SELECT
-            el.id
-          , el.started AT TIME ZONE 'UTC'
-          , el.stopped AT TIME ZONE 'UTC'
-          , el."lastSeen" AT TIME ZONE 'UTC'
-          , el."noticeSentAt" AT TIME ZONE 'UTC'
-          , t.type, t.address
-        FROM "ErrorLog" el
-        JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
-        WHERE
-          ((?low IS NULL OR el.started >= ?low) AND
-          (?high IS NULL OR el.started <= ?high)) OR
-          ((?low IS NULL OR el.stopped >= ?low) AND
-          (?high IS NULL OR el.stopped <= ?high))
-        ORDER BY el.id ASC
-        |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress) ->
-          ( elId :: Id ErrorLog
-          , ( ErrorLog
-                { _errorLog_started = elStarted
-                , _errorLog_stopped = elStopped
-                , _errorLog_lastSeen = elLastSeen
-                , _errorLog_noticeSentAt = elNoticeSentAt
-                }
-            , ErrorLogInaccessibleEndpoint elId tType tAddress
+      leftBiasedUnions <$> sequenceA
+        [ [queryQ|
+          SELECT
+              el.id
+            , el.started AT TIME ZONE 'UTC'
+            , el.stopped AT TIME ZONE 'UTC'
+            , el."lastSeen" AT TIME ZONE 'UTC'
+            , el."noticeSentAt" AT TIME ZONE 'UTC'
+            , t.type, t.address
+          FROM "ErrorLog" el
+          JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
+          WHERE
+            ((?low IS NULL OR el.started >= ?low) AND
+            (?high IS NULL OR el.started <= ?high)) OR
+            ((?low IS NULL OR el.stopped >= ?low) AND
+            (?high IS NULL OR el.stopped <= ?high))
+          ORDER BY el.id ASC
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress) ->
+            ( elId :: Id ErrorLog
+            , ( ErrorLog
+                  { _errorLog_started = elStarted
+                  , _errorLog_stopped = elStopped
+                  , _errorLog_lastSeen = elLastSeen
+                  , _errorLog_noticeSentAt = elNoticeSentAt
+                  }
+              , ErrorLogView_InaccessibleEndpoint $ ErrorLogInaccessibleEndpoint elId tType tAddress
+              )
             )
-          )
 
-      mbs <- [queryQ|
-        SELECT
-            el.id
-          , el.started AT TIME ZONE 'UTC'
-          , el.stopped AT TIME ZONE 'UTC'
-          , el."lastSeen" AT TIME ZONE 'UTC'
-          , el."noticeSentAt" AT TIME ZONE 'UTC'
-          , t."publicKeyHash", t.client, t.worker
-        FROM "ErrorLog" el
-        JOIN "ErrorLogMultipleBakersForSameDelegate" t ON t.log = el.id
-        WHERE
-          ((?low IS NULL OR el.started >= ?low) AND
-          (?high IS NULL OR el.started <= ?high)) OR
-          ((?low IS NULL OR el.stopped >= ?low) AND
-          (?high IS NULL OR el.stopped <= ?high))
-        ORDER BY el.id ASC
-        |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
-          ( elId :: Id ErrorLog
-          , ( ErrorLog
-                { _errorLog_started = elStarted
-                , _errorLog_stopped = elStopped
-                , _errorLog_lastSeen = elLastSeen
-                , _errorLog_noticeSentAt = elNoticeSentAt
-                }
-            , ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker
+        , [queryQ|
+          SELECT
+              el.id
+            , el.started AT TIME ZONE 'UTC'
+            , el.stopped AT TIME ZONE 'UTC'
+            , el."lastSeen" AT TIME ZONE 'UTC'
+            , el."noticeSentAt" AT TIME ZONE 'UTC'
+            , t."lastLevel", t."lastBlockHash", t.client
+          FROM "ErrorLog" el
+          JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
+          WHERE
+            ((?low IS NULL OR el.started >= ?low) AND
+            (?high IS NULL OR el.started <= ?high)) OR
+            ((?low IS NULL OR el.stopped >= ?low) AND
+            (?high IS NULL OR el.stopped <= ?high))
+          ORDER BY el.id ASC
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tLastLevel, tLastBlockHash, tClient) ->
+            ( elId :: Id ErrorLog
+            , ( ErrorLog
+                  { _errorLog_started = elStarted
+                  , _errorLog_stopped = elStopped
+                  , _errorLog_lastSeen = elLastSeen
+                  , _errorLog_noticeSentAt = elNoticeSentAt
+                  }
+              , ErrorLogView_BakerNoHeartbeat $
+                  ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient
+              )
             )
-          )
 
-      let toView f = fmap (second f)
-      pure $ leftBiasedUnions
-        [ toView ErrorLogView_InaccessibleEndpoint ies
-        , toView ErrorLogView_MultipleBakersForSameDelegate mbs
+        , [queryQ|
+          SELECT
+              el.id
+            , el.started AT TIME ZONE 'UTC'
+            , el.stopped AT TIME ZONE 'UTC'
+            , el."lastSeen" AT TIME ZONE 'UTC'
+            , el."noticeSentAt" AT TIME ZONE 'UTC'
+            , t."node", t."tooOld", t."bakedBlock", t."bakedBlockTime"
+          FROM "ErrorLog" el
+          JOIN "ErrorLogNodeOnFork" t ON t.log = el.id
+          WHERE
+            ((?low IS NULL OR el.started >= ?low) AND
+            (?high IS NULL OR el.started <= ?high)) OR
+            ((?low IS NULL OR el.stopped >= ?low) AND
+            (?high IS NULL OR el.stopped <= ?high))
+          ORDER BY el.id ASC
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tTooOld, tBakedBlock, tBakedBlockTime) ->
+            ( elId :: Id ErrorLog
+            , ( ErrorLog
+                  { _errorLog_started = elStarted
+                  , _errorLog_stopped = elStopped
+                  , _errorLog_lastSeen = elLastSeen
+                  , _errorLog_noticeSentAt = elNoticeSentAt
+                  }
+              , ErrorLogView_NodeOnFork $
+                  ErrorLogNodeOnFork elId tNode tTooOld tBakedBlock tBakedBlockTime
+              )
+            )
+
+        , [queryQ|
+          SELECT
+              el.id
+            , el.started AT TIME ZONE 'UTC'
+            , el.stopped AT TIME ZONE 'UTC'
+            , el."lastSeen" AT TIME ZONE 'UTC'
+            , el."noticeSentAt" AT TIME ZONE 'UTC'
+            , t."publicKeyHash", t.client, t.worker
+          FROM "ErrorLog" el
+          JOIN "ErrorLogMultipleBakersForSameDelegate" t ON t.log = el.id
+          WHERE
+            ((?low IS NULL OR el.started >= ?low) AND
+            (?high IS NULL OR el.started <= ?high)) OR
+            ((?low IS NULL OR el.stopped >= ?low) AND
+            (?high IS NULL OR el.stopped <= ?high))
+          ORDER BY el.id ASC
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
+            ( elId :: Id ErrorLog
+            , ( ErrorLog
+                  { _errorLog_started = elStarted
+                  , _errorLog_stopped = elStopped
+                  , _errorLog_lastSeen = elLastSeen
+                  , _errorLog_noticeSentAt = elNoticeSentAt
+                  }
+              , ErrorLogView_MultipleBakersForSameDelegate $
+                  ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker
+              )
+            )
         ]
 
     leftBiasedUnions = AppendMap.unionsWith const
