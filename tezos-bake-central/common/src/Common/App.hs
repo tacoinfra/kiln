@@ -58,7 +58,6 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
   , _bakeViewSelector_errors :: !(AppendIntervalMap TimeWindow a)
-  --, _bakeViewSelector_errorsByClient :: !(AppendMap ClientAddress (TimeWindowMap a))
   } deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
@@ -67,7 +66,7 @@ data BakeView a = BakeView
   , _bakeView_parameters :: !(Single ProtoInfo a)
   , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe ClientAddress), a))
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
-  , _bakeView_delegates :: !(AppendMap PublicKeyHash a)
+  , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)
   , _bakeView_delegateStats :: !(AppendMap PublicKeyHash (First (Maybe (BakeEfficiency, Account)), a))
   , _bakeView_notificatees :: !(AppendMap (Id Notificatee) (First (Maybe Email), a))
   , _bakeView_mailServer :: !(Single MailServerView a)

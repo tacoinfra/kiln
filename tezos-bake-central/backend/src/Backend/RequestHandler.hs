@@ -79,9 +79,9 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           insertAndNotify_ $ Delegate pkh
 
         PublicRequest_RemoveDelegate pkh -> do
-          _ <- [executeQ| DELETE FROM "PendingReward" pr USING "Delegate" c WHERE pr.delegate = d.id AND d."publicKeyHash" = ?pkh |]
+          _ <- [executeQ| DELETE FROM "PendingReward" pr USING "Delegate" d WHERE pr.delegate = d.id AND d."publicKeyHash" = ?pkh |]
           _ <- [executeQ| DELETE FROM "DelegateStats" ds USING "Delegate" d WHERE ds.delegate = d.id AND d."publicKeyHash" = ?pkh |]
-          dids :: [Id Delegate] <- stripOnly <$> [queryQ| SELECTD id from "Delegate" WHERE "publicKeyHash" = ?pkh |]
+          dids :: [Id Delegate] <- stripOnly <$> [queryQ| SELECT id FROM "Delegate" WHERE "publicKeyHash" = ?pkh |]
           let inDids = In dids
           _ <- [executeQ| DELETE FROM "Delegate" d WHERE d.id IN ?inDids |]
           notifyEntitiesDeleted dids

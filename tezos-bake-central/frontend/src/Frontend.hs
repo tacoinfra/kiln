@@ -138,10 +138,9 @@ watchClient cidDyn = do
     }
   return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
 
-watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (AppendMap PublicKeyHash ()))
+watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
-  (fmap.fmap) (void . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
-  -- return $ ffor theView $ \v' -> _
+  (fmap.fmap) (fromMaybe mempty . getSingle . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
@@ -230,8 +229,8 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
             semuiTab (text $ "B:" <> name) (UITab_Client cid name) currentTab
-        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \cs ->
-          fmap leftmost . for (Map.toList cs) $ \(pkh, _) ->
+        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
+          fmap leftmost $ for (Set.toList ds) $ \pkh ->
             semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
         optionsT <- semuiTab (text "Options") UITab_Options currentTab
         return (leftmost [summaryT, delegateT, clientT, nodeT, optionsT])
@@ -373,7 +372,8 @@ optionsTab = divClass "ui grid" $ do
 
     divClass "ui medium header" $ text "Delegates"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> delegates) $ \pkh _ -> el "tr" $ do
+
+      listWithKey (traceDyn "delegates" $ BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
         el "td" $ publicKeyHashLink pkh
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."

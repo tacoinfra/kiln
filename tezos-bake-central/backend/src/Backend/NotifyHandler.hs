@@ -109,9 +109,12 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
       handleDelegate = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (dId :: Id Delegate) -> do
-          delegate :: Maybe Delegate <- get $ fromId dId
-          let v d a = mempty {_bakeView_delegates = Map.singleton (_delegate_publicKeyHash d) a}
-          return $ fromMaybe mempty $ v <$> delegate <*> _bakeViewSelector_delegates aggVS
+          say $ "Handling delegate id: " <> tshow dId
+          whenJust (_bakeViewSelector_delegates aggVS) $ \a -> do
+            delegate :: Maybe Delegate <- get $ fromId dId
+            pure $ mempty
+              { _bakeView_delegates = single (Set.singleton . _delegate_publicKeyHash <$> delegate) a
+              }
 
       handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e

@@ -90,7 +90,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
 
 clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m) => Id Client -> m ()
 clearNoBakerHeartbeatError cid = void $ [executeQ|
-  UPDATE "ErrorLog" el SET el.stopped = NOW()
+  UPDATE "ErrorLog" el SET stopped = NOW()
     FROM "ErrorLogBakerNoHeartbeat" t
    WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
   |]

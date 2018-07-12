@@ -136,7 +136,7 @@ nodeWorker delay appConfig httpMgr db = do
       nodes <- [queryQ| SELECT id, address FROM "Node" |]
 
       clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
-      heads <- for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
+      for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
         runNodeRPCT ctx (nodeRPC RProtoConstants) >>= \case
@@ -156,22 +156,7 @@ nodeWorker delay appConfig httpMgr db = do
             , Node_headBlockHashField =. Just (headBlockInfo ^. blockInfo_hash)
             , Node_fitnessField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_fitness)
             ]
-        return (nodeAddr, headBlockRsp)
-      let heads' = toList =<< fmap (\(x, ys) -> fmap ((,) x) ys) heads
-          headMaybe = maximumByMay (on compare $ _blockInfoHeader_fitness . _blockInfo_header . snd) heads'
-      case headMaybe of
-        Nothing -> say "no visible nodes"
-        Just (nodeAddr, blockInfo) -> for_ clients $ \(clientInfoId, Json ci) -> do
-          let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-          let headHash = _blockInfo_hash blockInfo
-          runNodeRPCT ctx $ for_ (_clientConfig_delegates ci) $ \delegate -> do
-            accountResp <- nodeRPC (RContract (blockHashId headHash) delegate)
-            for_ accountResp $ \account -> do
-              let balance = _account_balance account
-              void $ [executeQ| UPDATE "ClientInfo"
-                                SET balance = ?balance
-                                WHERE id = ?clientInfoId
-                              |]
+
 
 -- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
 -- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
@@ -230,12 +215,17 @@ clientWorker delay appConfig httpMgr db = do
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + _protoInfo_preservedCycles protoInfo
                 in rc * _protoInfo_blocksPerCycle protoInfo
-              insertValues = Values ["int8", "varchar", "int8", "int8"]
-                [(cid, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b) | b <- _report_baked report]
-          unless (null $ _report_baked report) $ do
-            void $ [executeQ| INSERT INTO "PendingReward" (client, hash, level, amount)
-                            ?insertValues
-                            ON CONFLICT DO NOTHING |]
+              insertValues = Values ["text", "varchar", "int8", "int8"]
+                [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b)
+                | b <- _report_baked report
+                , delegatePkh <- _clientConfig_delegates clientConfig
+                ]
+          unless (null $ _report_baked report) $ void $ [executeQ|
+            INSERT INTO "PendingReward" (delegate, hash, level, amount)
+            SELECT d.id, x.hash, x.level, x.amount
+            FROM ?insertValues x (delegate_pkh, hash, level, amount)
+            JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
+            ON CONFLICT DO NOTHING |]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
                           VALUES (?cid, ?reportJson, ?clientConfigJson)

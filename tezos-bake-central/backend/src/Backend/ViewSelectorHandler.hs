@@ -20,6 +20,7 @@ import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
+import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Traversable (for)
 import Data.Word (Word64)
@@ -34,7 +35,7 @@ import Rhyolite.Schema (Id)
 
 import Backend.BalanceTracking
 import Backend.Graphs
-import Backend.Schema ()
+import Backend.Schema
 import Common (whenJust)
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
@@ -80,9 +81,10 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
           (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
           return (nid, First $ Just (Node addr ident headLevel headBlockHash peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness))
     return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
+
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
-    pkhs <- [queryQ| SELECT d."publicKeyHash" FROM "Delegate" d |]
-    return $ Map.fromList $ (\(Pg.Only x) -> (x, a)) <$> pkhs
+    flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField CondEmpty
+
   delegateStats <- do
     let inKeys = In $ Map.keys (_bakeViewSelector_delegateStats vs)
     rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
