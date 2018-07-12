@@ -455,9 +455,10 @@ mailServerForm frm0 = do
 nodeTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Node -> m ()
 nodeTab nid = do
   dNode <- watchNode $ pure nid
-  dyn_ $ ffor (Map.lookup nid <$> dNode) $ \case
+  thisNode <- maybeDyn $ Map.lookup nid <$> dNode
+  dyn_ $ ffor thisNode $ \case
     Nothing -> waitingForResponse
-    Just node -> do
+    Just nodeDyn -> dyn_ $ ffor nodeDyn $ \node -> do
       divClass "ui small header" . text $ "Node Statistics"
       elAttr "div" ("class" =: "client-node") $ do
         text $ "Node: " <> _node_address node
@@ -466,15 +467,13 @@ nodeTab nid = do
         maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
       el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
         Nothing -> "N/A"
-        Just k ->  T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-      el "div" $ text $ "Peer count: " <> case _node_peerCount node of
-        Nothing -> "N/A"
-        Just k -> T.pack (show k)
+        Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+      el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
       let stat = _node_networkStat node
-      el "div" $ text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
-      el "div" $ text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
-      el "div" $ text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
-      el "div" $ text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
+      el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
+      el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
+      el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
+      el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
@@ -484,9 +483,10 @@ delegateTab pkh = do
   delegates <- watchDelegateStats $ pure $ Set.singleton pkh
   dparameters <- watchProtoInfo
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  dyn_ $ ffor (Map.lookup pkh <$> delegates) $ \case
+  thisDelegate <- maybeDyn $ Map.lookup pkh <$> delegates
+  dyn_ $ ffor thisDelegate $ \case
     Nothing -> waitingForResponse
-    Just (bakeEfficiency, account) -> divClass "ui grid" $ do
+    Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ publicKeyHashLink pkh
 
