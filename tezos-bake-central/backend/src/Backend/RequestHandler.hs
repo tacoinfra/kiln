@@ -30,6 +30,7 @@ import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), executeQ, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
+import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
 import Backend.ChainHealth (obtainNode)
@@ -56,17 +57,17 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           insertAndNotify_ node
 
         PublicRequest_RemoveNode addr -> do
-          nodeIds :: [Id Node] <- stripOnly <$> [queryQ| SELECT id FROM "Node" where address = ?addr |]
-          let inNodeIds = In nodeIds
-          -- delete parameters
+          nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+          let inNodeIds = In nids
           _ <- [executeQ| DELETE FROM "Parameters" where node in ?inNodeIds |]
-          -- delete node
-          _ <- [executeQ| DELETE FROM "Node" where id in ?inNodeIds |]
-          -- notify
-          notifyEntitiesDeleted nodeIds
+          for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
         PublicRequest_AddClient addr -> do
-          insertAndNotify_ $ Client { _client_address = addr, _client_updated = Nothing }
+          ids :: [Id Node] <- stripOnly <$> [queryQ|
+            INSERT INTO "Node" ("address", updated, deleted) VALUES (?addr, NOW(), FALSE)
+            ON CONFLICT (address) DO UPDATE SET deleted = FALSE
+            RETURNING id|]
+          for_ ids $ notifyEntityId NotificationType_Insert
 
         PublicRequest_RemoveClient addr -> do
           cids :: [Id Client] <- stripOnly <$>
@@ -75,16 +76,18 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
           notifyEntitiesDeleted cids
 
-        PublicRequest_AddDelegate pkh ->
-          insertAndNotify_ $ Delegate pkh
+        PublicRequest_AddDelegate pkh -> do
+          ids :: [Id Delegate] <- stripOnly <$> [queryQ|
+            INSERT INTO "Delegate" ("publicKeyHash", deleted) VALUES (?pkh, FALSE)
+            ON CONFLICT ("publicKeyHash") DO UPDATE SET deleted = FALSE
+            RETURNING id|]
+          for_ ids $ notifyEntityId NotificationType_Insert
 
         PublicRequest_RemoveDelegate pkh -> do
           _ <- [executeQ| DELETE FROM "PendingReward" pr USING "Delegate" d WHERE pr.delegate = d.id AND d."publicKeyHash" = ?pkh |]
           _ <- [executeQ| DELETE FROM "DelegateStats" ds USING "Delegate" d WHERE ds.delegate = d.id AND d."publicKeyHash" = ?pkh |]
-          dids :: [Id Delegate] <- stripOnly <$> [queryQ| SELECT id FROM "Delegate" WHERE "publicKeyHash" = ?pkh |]
-          let inDids = In dids
-          _ <- [executeQ| DELETE FROM "Delegate" d WHERE d.id IN ?inDids |]
-          notifyEntitiesDeleted dids
+          dids :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
+          for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. True]
 
         PublicRequest_AddNotificatee email -> do
           insertAndNotify_ $ Notificatee { _notificatee_email = email }

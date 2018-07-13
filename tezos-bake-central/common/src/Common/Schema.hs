@@ -135,8 +135,9 @@ data BlockInfoMetadata = BlockInfoMetadata
 type ClientAddress = Text
 
 data Client = Client
-  { _client_address :: ClientAddress
-  , _client_updated :: Maybe UTCTime
+  { _client_address :: !ClientAddress
+  , _client_updated :: !(Maybe UTCTime)
+  , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Client
 
@@ -172,6 +173,7 @@ data Node = Node
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
+  , _node_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
@@ -286,6 +288,7 @@ data ClientConfig = ClientConfig
 
 data Delegate = Delegate
   { _delegate_publicKeyHash :: !PublicKeyHash
+  , _delegate_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Delegate
 

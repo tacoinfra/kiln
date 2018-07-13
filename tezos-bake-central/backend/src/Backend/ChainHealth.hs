@@ -125,4 +125,5 @@ obtainNode = do
     , _node_peerCount = connections
     , _node_networkStat = networkStat
     , _node_fitness = fitness
+    , _node_deleted = False
     })

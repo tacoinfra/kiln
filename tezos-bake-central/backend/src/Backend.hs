@@ -48,6 +48,7 @@ import Data.Traversable (for)
 import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
+import qualified Database.PostgreSQL.Simple as Pg
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
@@ -64,7 +65,8 @@ import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Rhyolite.Backend.Listen (insertAndNotify, insertAndNotify_, updateAndNotify)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
+                                updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Concurrent (worker)
@@ -263,11 +265,15 @@ clientWorker delay appConfig httpMgr db = do
 
         insertClientDelegates (Set.fromList $ concat clientDelegates)
 
-insertClientDelegates :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
+insertClientDelegates :: (Monad m, PersistBackend m, PostgresRaw m) => Set PublicKeyHash -> m ()
 insertClientDelegates pkhs = do
-  haveDelegates <- Set.fromList . fmap _delegate_publicKeyHash <$> select CondEmpty
-  let needDelegates = Set.difference pkhs haveDelegates
-  traverse_ (insertAndNotify_ . Delegate) needDelegates
+  let inPkhs = Pg.In $ Set.toList pkhs
+  (existingIds :: [Id Delegate], existingPkhs :: [PublicKeyHash]) <- unzip <$> [queryQ|
+    UPDATE "Delegate" SET deleted = FALSE WHERE "publicKeyHash" IN ?inPkhs RETURNING id, "publicKeyHash"|]
+  for_ existingIds $ notifyEntityId NotificationType_Update
+
+  let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
+  for_ newPkhs $ \pkh -> insertAndNotify $ Delegate pkh False
 
 
 delegateWorker

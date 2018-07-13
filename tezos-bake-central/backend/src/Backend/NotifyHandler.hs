@@ -21,14 +21,15 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
 import qualified Data.Set as Set
-import Database.Groundhog.Postgresql (PersistBackend, Postgresql, get, select, (==.))
+import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, Postgresql, get, select, (&&.),
+                                      (==.))
 import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Schema (Id, IdData)
-import Say (say)
+import Say (sayErr)
 
 import Backend.BalanceTracking
 import Backend.Graphs
@@ -49,20 +50,20 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
   let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success cid -> do
-          (client :: Maybe Client) <- get $ fromId (cid :: Id Client)
-          (infos :: [ClientInfo]) <- select (ClientInfo_clientField ==. cid)
-          let emptyV :: BakeView a
-              emptyV = mempty -- avoid writing type signatures
-              clientsPatch = case Map.lookup cid (_bakeViewSelector_clients aggVS) of
-                Nothing -> emptyV
-                Just a -> emptyV
-                  { _bakeView_clients = Map.singleton cid (First (listToMaybe infos), a)
-                  }
-              clientAddressPatch = case _bakeViewSelector_clientAddresses aggVS of
-                Nothing -> emptyV
-                Just a -> emptyV
-                  { _bakeView_clientAddresses = Map.singleton cid (First (_client_address <$> client), a)
-                  }
+          client :: Maybe Client <- fmap listToMaybe $
+            select $ AutoKeyField ==. fromId cid &&. Client_deletedField ==. False
+          infos :: [ClientInfo] <- select (ClientInfo_clientField ==. cid)
+          let
+            clientsPatch = case Map.lookup cid (_bakeViewSelector_clients aggVS) of
+              Nothing -> mempty
+              Just a -> mempty
+                { _bakeView_clients = Map.singleton cid (First (listToMaybe infos), a)
+                }
+            clientAddressPatch = case _bakeViewSelector_clientAddresses aggVS of
+              Nothing -> mempty
+              Just a -> mempty
+                { _bakeView_clientAddresses = Map.singleton cid (First (_client_address <$> client), a)
+                }
           summaryPatch <- whenJust (_bakeViewSelector_summary aggVS) $ \a -> do
             rewardMap <- getAllRewards a
             maxLevel <- getMaxLevel
@@ -70,33 +71,34 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
             summaryGraph <- whenJust maxLevel $ \l -> do
               mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
               return $ single mGraph a
-            return $ emptyV
+            return $ mempty
               { _bakeView_summaryGraph = summaryGraph
               , _bakeView_summary = single summaryReport a
               }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
 
-      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id Node) of
+      handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> do
+        Aeson.Success (nid :: Id Node) -> do -- TODO: This is probably WRONG. It should be Id Parameters.
           whenJust (_bakeViewSelector_parameters aggVS) $ \a -> do
             params :: Maybe Parameters <- listToMaybe <$> select (Parameters_nodeField ==. nid)
-            pure $ (mempty :: BakeView a)
+            pure $ mempty
               { _bakeView_parameters = single (_parameters_protoInfo <$> params) a
               }
 
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success nid -> do
-          (node :: Maybe Node) <- get $ fromId nid
+          node :: Maybe Node <- fmap listToMaybe $
+            select $ AutoKeyField ==. fromId nid &&. Node_deletedField ==. False
           let nodes = case Map.lookup nid (_bakeViewSelector_nodes aggVS) of
                 Nothing -> mempty
-                Just a -> (mempty :: BakeView a)
+                Just a -> mempty
                   { _bakeView_nodes = Map.singleton nid (First node, a)
                   }
           let nodeAddresses = case _bakeViewSelector_nodeAddresses aggVS of
                 Nothing -> mempty
-                Just a -> (mempty :: BakeView a)
+                Just a -> mempty
                   { _bakeView_nodeAddresses = Map.singleton nid (First $ _node_address <$> node, a)
                   }
           return $ nodeAddresses <> nodes
@@ -104,9 +106,9 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
       handleDelegate = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (dId :: Id Delegate) -> do
-          say $ "Handling delegate id: " <> tshow dId
           whenJust (_bakeViewSelector_delegates aggVS) $ \a -> do
-            delegate :: Maybe Delegate <- get $ fromId dId
+            delegate :: Maybe Delegate <- fmap listToMaybe $
+              select $ AutoKeyField ==. fromId dId &&. Delegate_deletedField ==. False
             pure $ mempty
               { _bakeView_delegates = single (Set.singleton . _delegate_publicKeyHash <$> delegate) a
               }
@@ -176,10 +178,10 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
     "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
     _ -> do
-      say $ "Unhandled NotifyMessage: " <> tshow notifyMessage
+      sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty
 
 parseErr :: (MonadIO m, Show nm, Show err, Monoid r) => nm -> err -> m r
 parseErr nm err = do
-  say $ "Unable to parse NotifyMessage: " <> tshow nm <> ": " <> tshow err
+  sayErr $ "Unable to parse NotifyMessage: " <> tshow nm <> ": " <> tshow err
   return mempty

@@ -28,7 +28,7 @@ import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id)
@@ -51,13 +51,13 @@ viewSelectorHandler
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
-    rs <- [queryQ| SELECT c.id, c.address FROM "Client" c |]
+    rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
   clients <- do
     let selClients = In (Map.keys (_bakeViewSelector_clients vs))
     rs <- [queryQ| SELECT c.id, i.report, i.config
                    FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
-                   WHERE c.id IN ?selClients |]
+                   WHERE c.id IN ?selClients AND NOT c.deleted|]
     let clientInfo = Map.fromList $ do
           (cid, report, config) <- rs
           return (cid, First (ClientInfo cid <$> report <*> config))
@@ -76,14 +76,14 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
         , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
         , n."fitness"
       FROM "Node" n
-      WHERE n.id IN ?selNodes |]
+      WHERE n.id IN ?selNodes AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
           (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
-          return (nid, First $ Just (Node addr ident headLevel headBlockHash peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness))
+          return (nid, First $ Just (Node addr ident headLevel headBlockHash peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness False))
     return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
-    flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField CondEmpty
+    flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
 
   delegateStats <- do
     let inKeys = In $ Map.keys (_bakeViewSelector_delegateStats vs)
@@ -101,8 +101,7 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
           FROM "Delegate" d
           LEFT OUTER JOIN "DelegateStats" ds
             ON d."id" = ds."delegate"
-          WHERE d."publicKeyHash"
-          IN ?inKeys|]
+          WHERE d."publicKeyHash" IN ?inKeys AND NOT d.deleted|]
 
     let
       toRsMap
@@ -124,8 +123,8 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
     return $ Map.intersectionWith (,) (First <$> rsMap) (_bakeViewSelector_delegateStats vs)
 
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
-    rs <- selectAll
-    return $ Map.fromList [(toId nid, (First (Just (_notificatee_email n)), a)) | (nid, n) <- rs]
+    rs <- selectMap' NotificateeConstructor CondEmpty
+    return $ (\n -> (First (Just (_notificatee_email n)), a)) <$> rs
   mailServer <- whenJust (_bakeViewSelector_mailServer vs) $ \a -> do
     ms <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
     return $ single (mailServerConfigToView <$> ms) a
