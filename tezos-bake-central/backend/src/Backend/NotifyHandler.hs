@@ -63,31 +63,26 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
                 Just a -> emptyV
                   { _bakeView_clientAddresses = Map.singleton cid (First (_client_address <$> client), a)
                   }
-          summaryPatch <- case _bakeViewSelector_summary aggVS of
-            Nothing -> return emptyV
-            Just a -> do
-              rewardMap <- getAllRewards a
-              maxLevel <- getMaxLevel
-              summaryReport <- getSummaryReport
-              summaryGraph <- case maxLevel of
-                Just l -> do
-                  mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
-                  return $ single mGraph a
-                _ -> return mempty
-              return $ emptyV
-                  { _bakeView_summaryGraph = summaryGraph
-                  , _bakeView_summary = single summaryReport a
-                  }
+          summaryPatch <- whenJust (_bakeViewSelector_summary aggVS) $ \a -> do
+            rewardMap <- getAllRewards a
+            maxLevel <- getMaxLevel
+            summaryReport <- getSummaryReport
+            summaryGraph <- whenJust maxLevel $ \l -> do
+              mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
+              return $ single mGraph a
+            return $ emptyV
+              { _bakeView_summaryGraph = summaryGraph
+              , _bakeView_summary = single summaryReport a
+              }
           return $ clientsPatch <> clientAddressPatch <> summaryPatch
 
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id Node) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success nid -> do
-          (params :: [Parameters]) <- select (Parameters_nodeField ==. nid)
-          return $ case _bakeViewSelector_parameters aggVS of
-            Nothing -> mempty :: BakeView a
-            Just a -> (mempty :: BakeView a)
-              { _bakeView_parameters = single (_parameters_protoInfo <$> listToMaybe params) a
+          whenJust (_bakeViewSelector_parameters aggVS) $ \a -> do
+            params :: Maybe Parameters <- listToMaybe <$> select (Parameters_nodeField ==. nid)
+            pure $ (mempty :: BakeView a)
+              { _bakeView_parameters = single (_parameters_protoInfo <$> params) a
               }
 
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
@@ -128,23 +123,19 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
 
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> do
-          (notificatee :: Maybe Notificatee) <- get $ fromId nid
-          return $ case _bakeViewSelector_notificatees aggVS of
-            Nothing -> mempty
-            Just a -> (mempty :: BakeView a)
-              { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
-              }
+        Aeson.Success nid -> whenJust (_bakeViewSelector_notificatees aggVS) $ \a -> do
+          notificatee :: Maybe Notificatee <- get $ fromId nid
+          pure $ (mempty :: BakeView a)
+            { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
+            }
 
       handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id MailServerConfig) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> case _bakeViewSelector_mailServer aggVS of
-          Nothing -> return mempty
-          Just a -> do
-            (mailServer :: Maybe MailServerConfig) <- get $ fromId nid
-            return $ (mempty :: BakeView a)
-              { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
-              }
+        Aeson.Success nid -> whenJust (_bakeViewSelector_mailServer aggVS) $ \a -> do
+          mailServer :: Maybe MailServerConfig <- get $ fromId nid
+          pure $ (mempty :: BakeView a)
+            { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
+            }
 
       handleErrorLog
         :: forall e m2. (EntityWithId e, FromJSON (IdData e), PersistBackend m2, MonadIO m2)
