@@ -142,9 +142,9 @@ nodeWorker delay appConfig httpMgr db = do
   worker (seconds delay) $ do
     say "Update node cycle."
     runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      nodes <- [queryQ| SELECT id, address FROM "Node" |]
+      nodes :: [(Id Node, ClientAddress)] <- fmap (first toId) <$> project (AutoKeyField, Node_addressField) CondEmpty
 
-      clients :: [(Id ClientInfo, Json ClientConfig)] <- [queryQ| SELECT id, config FROM "ClientInfo" |]
+      clients :: [(Id ClientInfo, Json ClientConfig)] <- fmap (first toId) <$> project (AutoKeyField, ClientInfo_configField) CondEmpty
       for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
