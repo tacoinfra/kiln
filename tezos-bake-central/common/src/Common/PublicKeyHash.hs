@@ -32,7 +32,10 @@ publicKeyHashConstructorDecoders =
   , TryDecodeBase58 PublicKeyHash_P256
   ]
 
+tryReadPublicKeyHash :: BS.ByteString -> Either HashBase58Error PublicKeyHash
 tryReadPublicKeyHash = tryFromBase58 publicKeyHashConstructorDecoders
+
+tryReadPublicKeyHashText :: Text -> Either HashBase58Error PublicKeyHash
 tryReadPublicKeyHashText = tryReadPublicKeyHash . T.encodeUtf8
 
 instance ToJSON PublicKeyHash where
@@ -84,6 +87,7 @@ rawContextLink pkh = T.intercalate "/"
     rawContextKeyPath :: PublicKeyHash -> Text
     rawContextKeyPath (PublicKeyHash_Ed25519 (HashedValue x)) = "ed25519/" <> hashedValueKeyPath (b16 x)
     rawContextKeyPath (PublicKeyHash_Secp256k1 (HashedValue x)) = "secp256k1/" <> hashedValueKeyPath (b16 x)
+    rawContextKeyPath (PublicKeyHash_P256 (HashedValue x)) = "p256/" <> hashedValueKeyPath (b16 x)
 
     hashedValueKeyPath :: Text -> Text
     hashedValueKeyPath x = T.toLower $ T.intercalate "/"

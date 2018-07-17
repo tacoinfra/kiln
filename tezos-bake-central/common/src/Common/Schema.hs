@@ -20,6 +20,8 @@ import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
+import Data.AppendMap (AppendMap)
+import qualified Data.AppendMap as AppendMap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Fixed (Micro)
@@ -28,13 +30,16 @@ import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Sequence as Seq
 import Data.Set as Set
+import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
-import Data.Word (Word16, Word64, Word8)
+import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 
@@ -128,11 +133,18 @@ data BlockInfoMetadata = BlockInfoMetadata
   -- , _blockInfoMetadata_maxBlockHeaderLength
   -- , _blockInfoMetadata_maxOperationListLength
   , _blockInfoMetadata_baker :: PublicKeyHash
-  -- , _blockInfoMetadata_level
+  , _blockInfoMetadata_level :: Level
   --, _blockInfoMetadata_votingPeriodKind
   } deriving (Eq, Show, Generic, Typeable)
 
 type ClientAddress = Text
+
+
+knownProtocols :: [ProtocolHash]
+knownProtocols =
+  [ "PrihK96nBAFSxVL1GLJTVhu9YnzkMFiBeuJRPA8NwuZVZCE1L6i" -- GENESIS
+  , "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -- BETANET
+  ]
 
 data Client = Client
   { _client_address :: !ClientAddress
@@ -153,7 +165,6 @@ data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
   , _clientInfo_report :: !(Json Report)
   , _clientInfo_config :: !(Json ClientConfig)
-  -- , _clientInfo_balance :: !(Maybe Tez)
   -- , _clientInfo_node :: Id Node
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ClientInfo
@@ -333,11 +344,20 @@ data DynamicParamChainId
 blockHashId :: BlockHash -> BlockId
 blockHashId x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) Nothing
 
+blockHashId' :: ChainId -> BlockHash -> BlockId
+blockHashId' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) Nothing
+
 blockHashIdPred :: BlockHash -> Word64 -> BlockId
 blockHashIdPred x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) . Just
 
+blockHashIdPred' :: ChainId -> BlockHash -> Word64 -> BlockId
+blockHashIdPred' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) . Just
+
 genesisId :: BlockId
 genesisId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Genesis Nothing
+
+chainHeadId :: ChainId -> BlockId
+chainHeadId chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Head Nothing
 
 headId :: BlockId
 headId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Head Nothing
@@ -345,13 +365,15 @@ headId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Head Nothing
 testHeadId :: BlockId
 testHeadId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_TestHead Nothing
 
+chainIdToUrl :: DynamicParamChainId -> Text
+chainIdToUrl chainId = case chainId of
+  DynamicParamChainId_ChainId x -> toBase58Text x
+  DynamicParamChainId_Main -> "main"
+  DynamicParamChainId_Test -> "test"
+
 blockIdToUrl :: BlockId -> Text
-blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainId' <> "/blocks/" <> blockId' <> offset'
+blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainIdToUrl chainId <> "/blocks/" <> blockId' <> offset'
   where
-    chainId' = case chainId of
-      DynamicParamChainId_ChainId x -> toBase58Text x
-      DynamicParamChainId_Main -> "main"
-      DynamicParamChainId_Test -> "test"
     blockId' = case blockId of
       DynamicParamBlockHash_BlockHash x -> toBase58Text x
       DynamicParamBlockHash_Genesis -> "genesis"
@@ -362,12 +384,21 @@ blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainId' <> "/bloc
 data NodeRPCRequest a where
   RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
   RBlock :: BlockId -> NodeRPCRequest BlockInfo
-  RProtoConstants :: NodeRPCRequest ProtoInfo
+  RBlocks :: DynamicParamChainId -> Int -> Set BlockHash -> NodeRPCRequest (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
+  RProtoConstants :: BlockId -> NodeRPCRequest ProtoInfo
   RContract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
   RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
-  RBakingRights :: BlockId -> [Word64] -> NodeRPCRequest (Map PublicKeyHash (Map Word64 Word8))
+
+  -- This only produces results when the cycles requested are between within
+  -- $PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
+  RBakingRights :: BlockId -> [Word64] -> NodeRPCRequest (Seq BakingRights)
+  REndorsingRights :: BlockId -> [Word64] -> NodeRPCRequest (Seq EndorsingRights)
   RNetworkStat :: NodeRPCRequest NetworkStat
 
+  RMonitorHeads :: (RpcResponse MonitorBlock -> IO ()) -> DynamicParamChainId -> NodeRPCRequest (IO ())
+
+bakingRightsMap :: Foldable f => f BakingRights -> AppendMap PublicKeyHash (Map Int Int) -- map from delegate to
+bakingRightsMap = foldMap $ \(BakingRights lvl delegate prio _) -> AppendMap.singleton delegate (Map.singleton lvl prio)
 
 data RpcError
   = RpcError_HttpException Text
@@ -487,6 +518,69 @@ data ErrorLog = ErrorLog
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
+data MonitorBlock = MonitorBlock
+  { _monitorBlock_hash :: BlockHash
+  , _monitorBlock_level :: Word32
+  , _monitorBlock_proto :: Word8
+  , _monitorBlock_predecessor :: BlockHash
+  , _monitorBlock_timestamp :: UTCTime
+  , _monitorBlock_validationPass :: Word8
+  , _monitorBlock_operationsHash :: OperationListListHash
+  , _monitorBlock_fitness :: Fitness
+  , _monitorBlock_context :: ContextHash
+  -- , _monitorBlock_protocolData :: Base16ByteString ??? -- Certainly NOT a blockheader...
+  } deriving (Eq, Generic, Ord, Show)
+
+data BakingRights = BakingRights
+  { _bakingRights_level :: !Int
+  , _bakingRights_delegate :: !PublicKeyHash
+  , _bakingRights_priority :: !Int
+  , _bakingRights_estimatedTime :: !(Maybe UTCTime)
+  } deriving (Eq, Generic, Ord, Show)
+
+data EndorsingRights = EndorsingRights
+  { _endorsingRights_level :: !Int
+  , _endorsingRights_delegate :: !PublicKeyHash
+  , _endorsingRights_slots :: !(Seq Word8)
+  , _endorsingRights_estimatedTime :: !(Maybe UTCTime)
+  } deriving (Eq, Generic, Ord, Show)
+
+data CachedProtocolConstants = CachedProtocolConstants
+  { _cachedProtocolConstants_protocol :: !ProtocolHash
+  , _cachedProtocolConstants_blocksPerCycle :: !Int
+  , _cachedProtocolConstants_preservedCycles :: !Int
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CachedProtocolConstants
+
+-- |  a tag for rights
+data CachedChainCycle = CachedChainCycle
+  { _cachedChainCycle_chainId :: !ChainId
+  , _cachedChainCycle_constants :: !(Id CachedProtocolConstants)
+  , _cachedChainCycle_cycle :: !Int
+  , _cachedChainCycle_hash :: !BlockHash -- Hash of *first* block in cycle,
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CachedChainCycle
+
+data CachedBlock = CachedBlock
+  { _cachedBlock_chain :: !(Id CachedChainCycle)
+  , _cachedBlock_baker :: !PublicKeyHash
+  , _cachedBlock_endorsers :: !(Json (Seq PublicKeyHash))
+  , _cachedBlock_cyclePosition :: !Int
+  , _cachedBlock_hash :: !BlockHash
+  , _cachedBlock_predecessor :: !BlockHash
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CachedBlock
+
+-- rights for block at level `level` for cycle `cycle`+`cycle.constants.preservedCycles`
+data CachedBlockRights = CachedBlockRights
+  { _cachedBlockRights_cycle :: !(Id CachedChainCycle)
+  , _cachedBlockRights_forCycle :: !Word32
+  , _cachedBlockRights_bakers :: !(Json (Seq BakingRights))
+  , _cachedBlockRights_endorsers :: !(Json (Seq EndorsingRights))
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CachedBlockRights
+
+
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
 concat <$> traverse (deriveJSON Aeson.defaultOptions
       { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
@@ -501,6 +595,8 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''BlockInfo
   , ''BlockInfoHeader
   , ''BlockInfoMetadata
+  , ''BakingRights
+  , ''EndorsingRights
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
@@ -519,6 +615,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogNodeOnFork
   , ''Event
   , ''Level
+  , ''MonitorBlock
   , ''NetworkStat
   , ''Node
   , ''ProtoInfo

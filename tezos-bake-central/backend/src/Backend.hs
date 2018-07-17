@@ -1,5 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -11,19 +13,22 @@
 
 module Backend where
 
-import Control.Applicative (liftA2, (<|>))
+import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception (catch, finally, throwIO)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
+import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
+import qualified Data.AppendMap as AppendMap
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
 import Data.Foldable (foldl', for_, toList, traverse_)
@@ -38,15 +43,16 @@ import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Text.IO as T
-import Data.Time.Clock (NominalDiffTime, addUTCTime)
+import qualified Data.Text.Lazy as TL
+import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Data.Traversable (for)
-import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
@@ -63,7 +69,7 @@ import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
@@ -100,7 +106,7 @@ import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
 import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
 import Common.Schema
-import Common.TaggedHash (BlockHash, toBase58Text)
+import Common.TaggedHash
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfoF (..), ForkStatusF (..), validateForkyBlocks)
 import Frontend (frontend)
@@ -142,7 +148,7 @@ nodeWorker delay appConfig httpMgr db = do
       for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        runNodeRPCT ctx (nodeRPC RProtoConstants) >>= \case
+        runNodeRPCT ctx (nodeRPC $ RProtoConstants headId) >>= \case
           Left e -> reportInaccessibleEndpointError EndpointType_Node nodeAddr
           Right protoInfo -> do
             clearInaccessibleEndpointError EndpointType_Node nodeAddr
@@ -150,7 +156,7 @@ nodeWorker delay appConfig httpMgr db = do
               (Only (pid :: Id Parameters): _) ->
                 updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
               _ ->
-                insertAndNotify_ $ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
+                insertAndNotify_ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
 
         headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
         for_ headBlockRsp $ \headBlockInfo -> do
@@ -298,7 +304,9 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
     Left e -> sayShow e
     Right allBakingRights -> do
       -- Filter out baking rights that apply to levels in the future.
-      let bakingRights = Map.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> allBakingRights
+      -- map is from delegate*level to priorotiy
+      let bakingRights :: AppendMap.AppendMap PublicKeyHash (Map Int Int) =
+            AppendMap.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> bakingRightsMap allBakingRights
       ifor_ delegates $ \dId delegate -> do
         let pkh = _delegate_publicKeyHash delegate
         say $ "Updating delegate " <> toPublicKeyHashText pkh
@@ -306,7 +314,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
         -- TODO: report errors here
         let accountStatus = either (const Nothing) Just accountStatusResp
         bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
-          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - levelWithRight))) >>= \case
+          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - fromIntegral levelWithRight))) >>= \case
             Left e -> sayShow e $> Nothing
             Right blockWithRights -> return $
               let
@@ -327,14 +335,9 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
 
           (numBaked, numOpportunities) = foldl' calcBakingEfficiency (0, 0) bakingRightsUtilized
 
-        delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . stripOnly <$> [queryQ|
-          SELECT ds.id
-          FROM "DelegateStats" ds
-          WHERE ds.delegate = ?dId
-          LIMIT 1
-          |]
+        delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . fmap toId <$> project AutoKeyField ((DelegateStats_delegateField ==. dId) `limitTo` 1)
         case delegateStatsId of
-          Nothing -> insertAndNotify_ $ DelegateStats
+          Nothing -> insertAndNotify_ DelegateStats
             { _delegateStats_delegate = dId
             , _delegateStats_efficiency = BakeEfficiency numBaked numOpportunities
             , _delegateStats_accountBalance = _account_balance <$> accountStatus
@@ -353,6 +356,165 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
             ]
 
         return ()
+
+
+timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
+timeit note errback action = do
+  !now <- liftIO getCurrentTime
+  !result <- either errback return =<< runExceptT action
+  !later <- liftIO getCurrentTime
+  sayShow (note, diffUTCTime later now)
+  return result
+
+
+onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
+onRpcError = either (throwError . tshow) pure
+
+
+cacheOneBlock
+  ::( MonadLogger m
+    , MonadBaseControl IO m
+    , MonadIO m
+    , MonadError Text m
+    )
+  => NodeRPCContext
+  -> ChainId
+  -> Id CachedChainCycle
+  -> Int
+  -> BlockHash
+  -> DbPersist Postgresql m (Id CachedBlock)
+cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
+  details <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashId' chain blkHash)
+  let baker = _blockInfoMetadata_baker $ _blockInfo_metadata details
+  let endorsers = Json mempty -- TODO: this requres operations parsing
+  let blkPred = _blockInfoHeader_predecessor $ _blockInfo_header details
+  let cb = CachedBlock chainCycleId baker endorsers cyclePosition blkHash blkPred
+  say $ T.concat
+    [ "\n\t"
+    , toBase58Text $ _cachedBlock_hash cb
+    , " -> "
+    , toBase58Text $ _cachedBlock_predecessor cb
+    , "(\\x"
+    , decodeUtf8 $ BS16.encode $ unHashedValue $ _cachedBlock_hash cb
+    , ")"
+    ]
+  toId <$> insert cb
+
+doThing
+  :: ChainId
+  -> Pool Postgresql
+  -> Http.Manager
+  -> Text
+  -> MonitorBlock
+  -> IO ()
+doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ runDb (Identity db) $ do
+  let ctx = NodeRPCContext mgr nodeUrl
+  let blockHash = _monitorBlock_hash newBlock
+  let blockPredecessor = _monitorBlock_predecessor newBlock
+  -- if non empty, we're done!
+  sayShow (T.pack "NEW BLOCK", nodeUrl, blockHash)
+  fmap listToMaybe (select (CachedBlock_hashField ==. blockHash)) >>= \case
+    Just _ -> return () -- sayShow (T.pack "have block, DONE", blockHash)
+    Nothing -> do
+      fmap listToMaybe [queryQ|
+          SELECT cb.chain, cb."cyclePosition"
+          FROM "CachedBlock" cb
+          JOIN "CachedChainCycle" ccc
+            ON cb.chain = ccc.id
+          JOIN "CachedProtocolConstants" cpc
+            ON ccc.constants = cpc.id
+          WHERE cb.hash = ?blockPredecessor
+            AND cb."cyclePosition" < (cpc."blocksPerCycle" - 1)
+        |] >>= \case
+        Just (chainCycleId, predCyclePosition) -> do
+          -- sayShow (T.pack "Have predecessor in chain", blockPredecessor)
+          cacheOneBlock ctx chain chainCycleId (predCyclePosition + 1) blockHash
+          return ()
+          -- insert_ $ CachedBlock chainCycleId Nothing (Json mempty) (predCyclePosition + 1) (_monitorBlock_hash newBlock) (_monitorBlock_predecessor newBlock)
+        -- we're not caught up yet :(
+        Nothing -> do
+          -- sayShow (T.pack "need chain history", blockHash)
+          block <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashId' chain blockHash)
+          let protoHash = _blockInfoMetadata_protocol $ _blockInfo_metadata block
+          let cycle = _level_cycle $ _blockInfoMetadata_level $ _blockInfo_metadata block
+          let cyclePosition = _level_cyclePosition $ _blockInfoMetadata_level $ _blockInfo_metadata block
+          -- if we're at position n we need a result of length n + 1 to include the first block of the current cycle.
+          cycleInitBlock <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashIdPred' chain blockHash $ fromIntegral cyclePosition)
+          let cycleInitHash :: BlockHash = _blockInfo_hash cycleInitBlock
+          --sayShow cycleInitBlock
+          -- we now have enough information to get our metadata in sync
+
+          (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Int) <- fmap listToMaybe [queryQ|
+              SELECT ccc.id, cpc."preservedCycles"
+              FROM "CachedChainCycle" ccc
+              JOIN "CachedProtocolConstants" cpc
+                ON ccc.constants = cpc.id
+              WHERE hash = ?cycleInitHash
+            |] >>= \case
+            Nothing -> do
+              -- sayShow (T.pack "need chain metadata")
+              (protoId, proto) :: (Id CachedProtocolConstants, CachedProtocolConstants) <- fmap listToMaybe [queryQ|
+                  SELECT "id", "protocol", "blocksPerCycle", "preservedCycles"
+                  FROM "CachedProtocolConstants"
+                  WHERE "protocol" = ?protoHash
+                |] >>= \case
+                Nothing -> do
+                  proto <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RProtoConstants $ blockHashId' chain blockHash)
+                  let
+                    proto' = CachedProtocolConstants
+                      { _cachedProtocolConstants_protocol = protoHash
+                      , _cachedProtocolConstants_blocksPerCycle = _protoInfo_blocksPerCycle proto
+                      , _cachedProtocolConstants_preservedCycles = _protoInfo_preservedCycles proto
+                      }
+                  protoId' <- insert proto'
+                  return (toId protoId', proto')
+                Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
+              -- protocol version data is now in sync
+              cid' <- fmap toId $ insert CachedChainCycle
+                { _cachedChainCycle_chainId = chain
+                , _cachedChainCycle_constants = protoId
+                , _cachedChainCycle_cycle = cycle
+                , _cachedChainCycle_hash = cycleInitHash
+                }
+              return (cid', _cachedProtocolConstants_preservedCycles proto)
+            Just (cid', pc) -> do
+              -- sayShow ("What actually happened?")
+              return (cid', pc)
+          -- chain/cycle is now in sync
+          -- which blocks are still missing?
+          ancestorMap <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlocks (DynamicParamChainId_ChainId chain) (1 + cyclePosition) $ Set.singleton blockHash)
+          ancestors <- maybe (throwError $ "bad heads response from node, missing hash:" <> toBase58Text blockHash) return $ Map.lookup blockHash ancestorMap
+          -- sayShow ("foundAncestors:", Seq.length ancestors, Seq.take 3 ancestors)
+          let inAncestors = In $ toList ancestors
+          maxGoodAncestor :: Int <- fromOnly . head <$> [queryQ|
+              SELECT coalesce(max("cyclePosition"), -1)
+              FROM "CachedBlock"
+              WHERE hash in ?inAncestors
+            |]
+          -- sayShow ("haveAncestors:", maxGoodAncestor)
+          -- let needAncestors = Seq.take (Seq.length ancestors - maxGoodAncestor) ancestors
+          -- sayShow ("needAncestors:", Seq.length needAncestors, Seq.take 3 needAncestors)
+
+          let blocks = cacheOneBlock ctx chain chainCycleId <$> ZipList [cyclePosition,(cyclePosition-1)..(maxGoodAncestor+1)] <*> ZipList (blockHash : toList ancestors)
+          sequence_ blocks
+          -- TODO: it makes sense to insertAndNotify if we actually inserted the MonitorBlock we just recieved...
+          -- we now have our history... all that's left is rights.
+          -- in context $cycleInitBlock, we can find rights for cycles in range [$cycle .. ($cycle - $preservedCycles - 1))]
+          -- but really, the cycle rights that are *determined* by $cycle is just $cycle + $preservedCycles
+          -- except for cycles [0 .. $preservedCycles], which are all determined by the genesis block and not too important anyway.
+          knownRights :: Maybe (Only (Id CachedBlockRights)) <- listToMaybe <$> [queryQ|
+              SELECT id
+              FROM "CachedBlockRights"
+              WHERE cycle = ?chainCycleId
+              |]
+          case knownRights of
+            Just _ -> return ()
+            Nothing -> do
+              -- TODO:  if cycle == 0, request [0..preservedCycles]
+              bRights <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBakingRights (blockHashId' chain blockHash) $ pure $ fromIntegral $ cycle + preservedCycles )
+              eRrights <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ REndorsingRights (blockHashId' chain blockHash) $ pure $ fromIntegral $ cycle + preservedCycles)
+              let cachedRights = CachedBlockRights chainCycleId (fromIntegral $ cycle + preservedCycles) (Json bRights) (Json eRrights)
+              insertAndNotify_ cachedRights
 
 backend :: IO ()
 backend = do
@@ -405,6 +567,14 @@ backend = do
       (viewSelectorHandler db)
       (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
     addFinalizer wsFinalizer
+
+    -- TODO: move this to nodeWorker
+    let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:8732"
+    runNodeRPCT nodeCtx (nodeRPC $ RBlock headId) >>= \case
+      Right blockInfo -> do
+        let chain = _blockInfo_chainId blockInfo
+        void $ runNodeRPCT nodeCtx $ nodeRPC $ RMonitorHeads (either sayShow $ doThing chain db httpMgr "http://127.0.0.1:8732") (DynamicParamChainId_ChainId chain)
+      Left bad -> sayShow bad
 
     let appConfig = AppConfig emailFromAddress
     addFinalizer =<< nodeWorker 30 appConfig httpMgr db

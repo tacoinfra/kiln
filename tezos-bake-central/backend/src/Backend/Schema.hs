@@ -29,8 +29,8 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
-import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.FromField
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
+import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema (fromId)
@@ -120,8 +120,12 @@ instance TezosBinary a => PersistField (Base16ByteString a) where
   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
   dbType p x = dbType p (encodeBinary x)
 
-instance FromField a => FromField (HashedValue t a) where
-  fromField f b = HashedValue <$> fromField f b
+instance FromField (HashedValue t ByteString) where
+  fromField f b = HashedValue . fromBinary <$> fromField f b
+
+instance ToField (HashedValue t ByteString) where
+  toField (HashedValue a) = toField $ Binary a
+
 
 instance PrimitivePersistField a => PersistField (HashedValue t a) where
   persistName _ = "HashedValue"
@@ -275,6 +279,38 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogNodeOnFork
+  - entity: CachedProtocolConstants
+    constructors:
+     - name: CachedProtocolConstants
+       uniques:
+        - name: _cachedprotocolconstants_uniqueness
+          type: constraint
+          fields:
+           - _cachedProtocolConstants_protocol
+  - entity: CachedChainCycle
+    constructors:
+     - name: CachedChainCycle
+       uniques:
+        - name: _cachedchaincycle_uniqueness
+          type: constraint
+          fields:
+           - _cachedChainCycle_hash
+  - entity: CachedBlock
+    constructors:
+     - name: CachedBlock
+       uniques:
+        - name: _cachedblock_uniqueness
+          type: constraint
+          fields:
+           - _cachedBlock_hash
+  - entity: CachedBlockRights
+    constructors:
+     - name: CachedBlockRights
+       uniques:
+        - name: _cachedblockrights_uniqueness
+          type: constraint
+          fields:
+           - _cachedBlockRights_cycle
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -292,4 +328,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
+  , (''CachedBlock, 'CachedBlockKey)
+  , (''CachedBlockRights, 'CachedBlockRightsKey)
+  , (''CachedChainCycle, 'CachedChainCycleKey)
+  , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   ]
