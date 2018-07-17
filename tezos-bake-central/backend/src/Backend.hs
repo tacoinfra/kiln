@@ -142,9 +142,9 @@ nodeWorker delay appConfig httpMgr db = do
   worker (seconds delay) $ do
     say "Update node cycle."
     runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      nodes :: [(Id Node, ClientAddress)] <- fmap (first toId) <$> project (AutoKeyField, Node_addressField) CondEmpty
+      nodes :: [(Id Node, ClientAddress)] <- fmap (first toId) <$>
+        project (AutoKeyField, Node_addressField) (Node_deletedField ==. False)
 
-      clients :: [(Id ClientInfo, Json ClientConfig)] <- fmap (first toId) <$> project (AutoKeyField, ClientInfo_configField) CondEmpty
       for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
@@ -174,14 +174,14 @@ queryBestNode = do
   nodeIds :: Maybe (Id Node, Id Parameters) <- listToMaybe <$> [queryQ|
     SELECT n.id, p.id
       FROM "Node" n JOIN "Parameters" p ON n.id = p.node
-     WHERE n."headLevel" IS NOT NULL
+     WHERE n."headLevel" IS NOT NULL AND NOT n.deleted
      ORDER BY n."headLevel" DESC
      LIMIT 1 |]
 
   for nodeIds $ \(nodeId, paramId) -> do
-      Just node <- get (fromId nodeId)
-      Just params <- get (fromId paramId)
-      return (nodeId, node, _parameters_protoInfo params)
+    Just node <- get (fromId nodeId)
+    Just params <- get (fromId paramId)
+    return (nodeId, node, _parameters_protoInfo params)
 
 
 clientWorker
@@ -200,8 +200,8 @@ clientWorker delay appConfig httpMgr db = do
         let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
         toUpdate <- [queryQ| SELECT id, address
-                             FROM "Client"
-                             WHERE updated < ?maxTime OR updated IS NULL
+                             FROM "Client" c
+                             WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
                              ORDER BY updated NULLS FIRST |]
 
         clientDelegates <- for toUpdate $ \(cid :: Id Client, address :: Text) -> do
@@ -298,7 +298,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
     ctx = NodeRPCContext httpMgr nodeAddr
     headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
   say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
-  delegates :: Map (Id Delegate) Delegate <- selectMap DelegateConstructor CondEmpty
+  delegates :: Map (Id Delegate) Delegate <- selectMap DelegateConstructor (Delegate_deletedField ==. False)
   -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
   runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) (fromIntegral <$> levelRange))) >>= \case
     Left e -> sayShow e
@@ -444,7 +444,7 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
           --sayShow cycleInitBlock
           -- we now have enough information to get our metadata in sync
 
-          (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Int) <- fmap listToMaybe [queryQ|
+          (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Int) <- listToMaybe <$> [queryQ|
               SELECT ccc.id, cpc."preservedCycles"
               FROM "CachedChainCycle" ccc
               JOIN "CachedProtocolConstants" cpc
@@ -453,7 +453,7 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
             |] >>= \case
             Nothing -> do
               -- sayShow (T.pack "need chain metadata")
-              (protoId, proto) :: (Id CachedProtocolConstants, CachedProtocolConstants) <- fmap listToMaybe [queryQ|
+              (protoId, proto) :: (Id CachedProtocolConstants, CachedProtocolConstants) <- listToMaybe <$> [queryQ|
                   SELECT "id", "protocol", "blocksPerCycle", "preservedCycles"
                   FROM "CachedProtocolConstants"
                   WHERE "protocol" = ?protoHash
@@ -470,7 +470,7 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
                   return (toId protoId', proto')
                 Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
               -- protocol version data is now in sync
-              cid' <- fmap toId $ insert CachedChainCycle
+              cid' <- toId <$> insert CachedChainCycle
                 { _cachedChainCycle_chainId = chain
                 , _cachedChainCycle_constants = protoId
                 , _cachedChainCycle_cycle = cycle
@@ -486,8 +486,8 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
           ancestors <- maybe (throwError $ "bad heads response from node, missing hash:" <> toBase58Text blockHash) return $ Map.lookup blockHash ancestorMap
           -- sayShow ("foundAncestors:", Seq.length ancestors, Seq.take 3 ancestors)
           let inAncestors = In $ toList ancestors
-          maxGoodAncestor :: Int <- fromOnly . head <$> [queryQ|
-              SELECT coalesce(max("cyclePosition"), -1)
+          maxGoodAncestor :: Int <- head . stripOnly <$> [queryQ|
+              SELECT COALESCE(MAX("cyclePosition"), -1)
               FROM "CachedBlock"
               WHERE hash in ?inAncestors
             |]
@@ -502,10 +502,11 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
           -- in context $cycleInitBlock, we can find rights for cycles in range [$cycle .. ($cycle - $preservedCycles - 1))]
           -- but really, the cycle rights that are *determined* by $cycle is just $cycle + $preservedCycles
           -- except for cycles [0 .. $preservedCycles], which are all determined by the genesis block and not too important anyway.
-          knownRights :: Maybe (Only (Id CachedBlockRights)) <- listToMaybe <$> [queryQ|
+          knownRights :: Maybe (Id CachedBlockRights) <- listToMaybe . stripOnly <$> [queryQ|
               SELECT id
               FROM "CachedBlockRights"
               WHERE cycle = ?chainCycleId
+              LIMIT 1
               |]
           case knownRights of
             Just _ -> return ()
