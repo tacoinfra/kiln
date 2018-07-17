@@ -22,6 +22,7 @@ import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
@@ -268,9 +269,8 @@ clientWorker delay appConfig httpMgr db = do
 insertClientDelegates :: (Monad m, PersistBackend m, PostgresRaw m) => Set PublicKeyHash -> m ()
 insertClientDelegates pkhs = do
   let inPkhs = Pg.In $ Set.toList pkhs
-  (existingIds :: [Id Delegate], existingPkhs :: [PublicKeyHash]) <- unzip <$> [queryQ|
-    UPDATE "Delegate" SET deleted = FALSE WHERE "publicKeyHash" IN ?inPkhs RETURNING id, "publicKeyHash"|]
-  for_ existingIds $ notifyEntityId NotificationType_Update
+  (existingIds :: [Id Delegate], existingPkhs :: [PublicKeyHash]) <-
+    first (map toId) . unzip <$> project (AutoKeyField, Delegate_publicKeyHashField) CondEmpty
 
   let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
   for_ newPkhs $ \pkh -> insertAndNotify $ Delegate pkh False

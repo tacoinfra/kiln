@@ -17,6 +17,7 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
@@ -52,49 +53,56 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
     ApiRequest_Public r ->
       case r of
         PublicRequest_AddNode addr nodeIdent -> do
-          let ctx = NodeRPCContext httpMgr addr
-          (_, node) <- runNodeRPCT ctx obtainNode
-          insertAndNotify_ node
+          existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+          case nonEmpty existingIds of
+            Nothing -> do
+              let ctx = NodeRPCContext httpMgr addr
+              (_, node) <- runNodeRPCT ctx obtainNode
+              insertAndNotify_ node
+            Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
-          let inNodeIds = In nids
-          _ <- [executeQ| DELETE FROM "Parameters" where node in ?inNodeIds |]
+          let inIds = In nids
+          _ <- [executeQ| DELETE FROM "Parameters" where node in ?inIds |]
           for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
         PublicRequest_AddClient addr -> do
-          ids :: [Id Node] <- stripOnly <$> [queryQ|
-            INSERT INTO "Node" ("address", updated, deleted) VALUES (?addr, NOW(), FALSE)
-            ON CONFLICT (address) DO UPDATE SET deleted = FALSE
-            RETURNING id|]
-          for_ ids $ notifyEntityId NotificationType_Insert
+          existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
+          case nonEmpty existingIds of
+            Nothing -> insertAndNotify_ $ Client
+              { _client_address = addr
+              , _client_updated = Nothing
+              , _client_deleted = False
+              }
+            Just cids -> for_ cids $ \cid -> updateAndNotify cid [Client_deletedField =. False]
 
         PublicRequest_RemoveClient addr -> do
-          cids :: [Id Client] <- stripOnly <$>
-            [queryQ| SELECT id FROM "Client" WHERE "address" = ?addr |]
+          cids :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
           let inCids = In cids
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
           notifyEntitiesDeleted cids
 
         PublicRequest_AddDelegate pkh -> do
-          ids :: [Id Delegate] <- stripOnly <$> [queryQ|
-            INSERT INTO "Delegate" ("publicKeyHash", deleted) VALUES (?pkh, FALSE)
-            ON CONFLICT ("publicKeyHash") DO UPDATE SET deleted = FALSE
-            RETURNING id|]
-          for_ ids $ notifyEntityId NotificationType_Insert
+          existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
+          case nonEmpty existingIds of
+            Nothing -> insertAndNotify_ $ Delegate { _delegate_publicKeyHash = pkh, _delegate_deleted = False }
+            Just dids -> for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. False]
 
         PublicRequest_RemoveDelegate pkh -> do
-          _ <- [executeQ| DELETE FROM "PendingReward" pr USING "Delegate" d WHERE pr.delegate = d.id AND d."publicKeyHash" = ?pkh |]
-          _ <- [executeQ| DELETE FROM "DelegateStats" ds USING "Delegate" d WHERE ds.delegate = d.id AND d."publicKeyHash" = ?pkh |]
           dids :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
+          let inIds = In dids
+          _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.delegate IN ?inIds |]
+          _ <- [executeQ| DELETE FROM "DelegateStats" ds WHERE ds.delegate IN ?inIds |]
           for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. True]
 
         PublicRequest_AddNotificatee email -> do
           insertAndNotify_ $ Notificatee { _notificatee_email = email }
 
         PublicRequest_RemoveNotificatee email -> do
-          nids :: [Id Notificatee] <- stripOnly <$> [queryQ| SELECT n.id FROM "Notificatee" n WHERE n.email = ?email |]
-          _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.email = ?email |]
+          nids :: [Id Notificatee] <- fmap toId <$> project AutoKeyField (Notificatee_emailField ==. email)
+          let inIds = In nids
+          _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.id IN inIds |]
           notifyEntitiesDeleted nids
 
         PublicRequest_SendTestEmail email -> void $ queueEmail

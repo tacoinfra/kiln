@@ -373,7 +373,7 @@ optionsTab = divClass "ui grid" $ do
     divClass "ui medium header" $ text "Delegates"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
 
-      listWithKey (traceDyn "delegates" $ BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+      listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
         el "td" $ publicKeyHashLink pkh
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
