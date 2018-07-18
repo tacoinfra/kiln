@@ -12,22 +12,23 @@
 
 module Frontend where
 
-import Data.Bifunctor
 import Control.Lens ((<&>), _1, _2)
-import Control.Monad ((<=<), when)
+import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
+import Data.Bifunctor
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList)
+import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
 import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (comparing)
@@ -37,6 +38,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import qualified Form.Checks as Check
@@ -49,7 +51,7 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (formItem, validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
-import Rhyolite.Api
+import Rhyolite.Api (public)
 import Rhyolite.App (getSingle)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
@@ -61,6 +63,8 @@ import qualified Text.URI as Uri
 import Common (tshow)
 import Common.Api
 import Common.App
+import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import qualified Common.Config as Config
 import Common.Fitness (unFitness)
 import Common.Json (TezosWord64 (..))
@@ -97,11 +101,10 @@ frontend =
           return $ let (host, port) = T.breakOn ":" hostWithPort
                     in (T.unpack protocol, T.unpack host, T.unpack port)
 
-      blockExplorerUrl <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) <&> \case
-        Just url -> case mkRootUri url of
+      blockExplorerUrl <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) $ fmap $ \url ->
+        case mkRootUri url of
           Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
-          Right rootUrl -> Just rootUrl
-        Nothing -> Nothing
+          Right rootUrl -> rootUrl
 
       runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
   )
@@ -118,7 +121,7 @@ watchNode cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_nodes = Map.singleton cid 1
     }
-  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
+  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
 watchNodeAddresses = do
@@ -133,12 +136,11 @@ watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = Map.singleton cid 1
     }
-  return . ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
+  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
 
-watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (AppendMap PublicKeyHash ()))
+watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
-  (fmap.fmap) (void . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
-  -- return $ ffor theView $ \v' -> _
+  (fmap.fmap) (fromMaybe mempty . getSingle . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
@@ -152,29 +154,28 @@ watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = Just 1
     }
-  return . ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
+  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = Just 1
     }
-  return . ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
 
 watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
 watchSummary = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summary v
+  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summary v
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
 watchSummaryGraph = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe . ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
-
+  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
@@ -182,9 +183,21 @@ watchMailServer =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = Just 1 }
 
+watchErrors
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))))
+watchErrors intervals = do
+  theView <- watchViewSelector $ ffor intervals $ \ivals -> mempty
+    { _bakeViewSelector_errors = AppendIMap.fromSet (const 1) ivals
+    }
+  pure $ ffor theView $ \v ->
+    ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
+
+
 headTag :: DomBuilder t m => m ()
 headTag = do
-  mapM_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
+  traverse_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
     [ "css/font-awesome.min.css"
     , "semantic-ui/semantic.css"
     , "css/main.css"
@@ -209,17 +222,17 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
-        summaryT <- semuiTab "Summary" UITab_Summary currentTab
+        summaryT <- semuiTab (text "Summary") UITab_Summary currentTab
         nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab ("N:" <> name) (UITab_Node cid) currentTab
+            semuiTab (text $ "N:" <> name) (UITab_Node cid) currentTab
         clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab ("B:" <> name) (UITab_Client cid name) currentTab
-        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \cs ->
-          fmap leftmost . for (Map.toList cs) $ \(pkh, _) ->
-            semuiTab ("tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
-        optionsT <- semuiTab "Options" UITab_Options currentTab
+            semuiTab (text $ "B:" <> name) (UITab_Client cid name) currentTab
+        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
+          fmap leftmost $ for (Set.toList ds) $ \pkh ->
+            semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
+        optionsT <- semuiTab (text "Options") UITab_Options currentTab
         return (leftmost [summaryT, delegateT, clientT, nodeT, optionsT])
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
@@ -259,6 +272,38 @@ summaryTab = divClass "ui grid" $ do
       whenJustDyn waitingCount $ \n ->
         tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
           text $ "Waiting: " <> tshow n
+
+      errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
+      dyn_ $ ffor errors $ traverse_ $ traverse_ $ traverse_ $ \(log, specificLog) -> do
+        let header txt = divClass "header" $ text $ case _errorLog_stopped log of
+              Just _ -> "Resolved: " <> txt
+              Nothing -> txt
+        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+          case specificLog of
+            ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
+              let endpointTypeName = case endpointType of
+                    EndpointType_Node -> "node"
+                    EndpointType_Client -> "client"
+              header $ "Unable to connect to " <> endpointTypeName <> " at " <> address
+
+            ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
+              header "Baker lagging behind" -- TODO Show client address
+              el "p" $ do
+                text "Last block level seen: "
+                blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+
+            ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
+              header "Node is on fork" -- TODO Fill this out
+
+            ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
+              header "Multiple bakers for same delegate" -- TODO Fill this out
+
+          el "p" $ do
+            text $ "First seen: " <> tshow (_errorLog_started log) <> " | "
+            case _errorLog_stopped log of
+              Nothing -> text $ "Last seen: " <> tshow (_errorLog_lastSeen log)
+              Just stopped -> text $ "Stopped: " <> tshow stopped
+
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
     dyn . ffor mGraph $ \case
@@ -266,6 +311,7 @@ summaryTab = divClass "ui grid" $ do
       Just (total, graphText) -> do
         setInnerHTML (_element_raw graphEl) graphText
         text $ "Total rewards earned: " <> tez (Tez total)
+
   whenJustDyn (fmap fst <$> summaryReport) $ \report -> do
     let baked = sortBy (flip (comparing _event_time)) (_report_baked report)
     divClass "ten wide column" $ do
@@ -283,10 +329,11 @@ summaryTab = divClass "ui grid" $ do
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
             Just protoInfo -> text . tez $ blockRewards b protoInfo
+
   return ()
 
 
-optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m ()
+optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui grid" $ do
   clients <- watchClientAddresses
   nodes <- watchNodeAddresses
@@ -327,9 +374,9 @@ optionsTab = divClass "ui grid" $ do
 
     divClass "ui medium header" $ text "Delegates"
     elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> delegates) $ \pkh _ -> el "tr" $ do
-        let dName = toPublicKeyHashText pkh
-        el "td" $ text dName
+
+      listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+        el "td" $ publicKeyHashLink pkh
         el "td" $ do
           eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
           requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
@@ -410,9 +457,10 @@ mailServerForm frm0 = do
 nodeTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Node -> m ()
 nodeTab nid = do
   dNode <- watchNode $ pure nid
-  dyn_ $ ffor (Map.lookup nid <$> dNode) $ \case
+  thisNode <- maybeDyn $ Map.lookup nid <$> dNode
+  dyn_ $ ffor thisNode $ \case
     Nothing -> waitingForResponse
-    Just node -> do
+    Just nodeDyn -> dyn_ $ ffor nodeDyn $ \node -> do
       divClass "ui small header" . text $ "Node Statistics"
       elAttr "div" ("class" =: "client-node") $ do
         text $ "Node: " <> _node_address node
@@ -421,15 +469,13 @@ nodeTab nid = do
         maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
       el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
         Nothing -> "N/A"
-        Just k ->  T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-      el "div" $ text $ "Peer count: " <> case _node_peerCount node of
-        Nothing -> "N/A"
-        Just k -> T.pack (show k)
+        Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+      el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
       let stat = _node_networkStat node
-      el "div" $ text $ "Sent: " <> T.pack (show (unTezosWord64 $ _networkStat_totalSent stat)) <> " bytes"
-      el "div" $ text $ "Recv: " <> T.pack (show (unTezosWord64 $ _networkStat_totalRecv stat)) <> " bytes"
-      el "div" $ text $ "Inflow: " <> T.pack (show (_networkStat_currentInflow stat)) <> " bytes/sec"
-      el "div" $ text $ "Outflow: " <> T.pack (show (_networkStat_currentOutflow stat)) <> " bytes/sec"
+      el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
+      el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
+      el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
+      el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
@@ -439,12 +485,12 @@ delegateTab pkh = do
   delegates <- watchDelegateStats $ pure $ Set.singleton pkh
   dparameters <- watchProtoInfo
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  dyn_ $ ffor (Map.lookup pkh <$> delegates) $ \case
+  thisDelegate <- maybeDyn $ Map.lookup pkh <$> delegates
+  dyn_ $ ffor thisDelegate $ \case
     Nothing -> waitingForResponse
-    Just (bakeEfficiency, account) -> divClass "ui grid" $ do
+    Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
       divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ text $ toPublicKeyHashText pkh
-        divClass "delegates" $ do
+        elClass "h3" "ui medium header" $ publicKeyHashLink pkh
 
         let tz = _account_balance account
         elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
@@ -502,20 +548,19 @@ clientTab cid addr = do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $
             text $ "Errors: " <> tshow (length errors)
 
-        case errors of
-          [] -> blank
-          _ -> elClass "p" "errors" $ do
-            elClass "h4" "ui medium header" $ text "Errors"
-            elClass "table" "ui celled striped table" $ do
-              el "thead" . el "tr" $ do
-                elClass "th" "four wide" $ text "Time"
-                el "th" $ text "Message"
-              for_ errors $ \e -> do
-                el "tr" $ do
-                  el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
-                  el "td" $ do
-                    for_ (T.lines (_error_text e)) $ \t ->
-                      divClass "errorLine" $ text t
+        for_ (nonEmpty errors) $ \es -> elClass "p" "errors" $ do
+          elClass "h4" "ui medium header" $ text "Errors"
+          elClass "table" "ui celled striped table" $ do
+            el "thead" . el "tr" $ do
+              elClass "th" "four wide" $ text "Time"
+              el "th" $ text "Message"
+            for_ es $ \e -> do
+              el "tr" $ do
+                el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
+                el "td" $ do
+                  for_ (T.lines (_error_text e)) $ \t ->
+                    divClass "errorLine" $ text t
+
       divClass "eight wide column" $ do
         divClass "ui medium header" $ text "Activity"
         elAttr "table" ("class" =: "ui celled striped table") $ do
@@ -534,11 +579,10 @@ clientTab cid addr = do
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
 
-semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => Text -> k -> Demux t k -> m (Event t k)
+semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> m (Event t k)
 semuiTab label k currentTab =
   fmap ((k <$) . domEvent Click . fst) $
-    elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") $
-      text label
+    elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") label
 
 -- | Control that allows the user to build a list of items.
 listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)

@@ -1,3 +1,5 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,10 +16,10 @@
 
 module Backend.Schema where
 
-import Control.Arrow
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import Data.Coerce (Coercible, coerce)
-import Data.Fixed
+import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Text.Encoding as T
@@ -27,13 +29,14 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
 import Database.Groundhog.TH
-import Database.PostgreSQL.Simple (Only (..))
-import Database.PostgreSQL.Simple.FromField
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
+import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Rhyolite.Backend.Account ()
-import Rhyolite.Backend.Schema ()
+import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Json (..))
+import Rhyolite.Schema (Id, Json (..))
 
 import Common.Base16ByteString
 import Common.Fitness
@@ -105,6 +108,11 @@ unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
 
+type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, PersistEntity a, PrimitivePersistField (Key a BackendSpecific))
+
+getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
+getId = get . fromId
+
 
 instance TezosBinary a => PersistField (Base16ByteString a) where
   persistName _ = "Base16ByteString"
@@ -112,8 +120,12 @@ instance TezosBinary a => PersistField (Base16ByteString a) where
   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
   dbType p x = dbType p (encodeBinary x)
 
-instance FromField a => FromField (HashedValue t a) where
-  fromField f b = HashedValue <$> fromField f b
+instance FromField (HashedValue t ByteString) where
+  fromField f b = HashedValue . fromBinary <$> fromField f b
+
+instance ToField (HashedValue t ByteString) where
+  toField (HashedValue a) = toField $ Binary a
+
 
 instance PrimitivePersistField a => PersistField (HashedValue t a) where
   persistName _ = "HashedValue"
@@ -163,6 +175,18 @@ instance ToField PublicKeyHash where
 instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
+
+instance ToField EndpointType where
+  toField a = toField (show a)
+
+instance FromField EndpointType where
+  fromField f b = read <$> fromField f b
+
+instance ToField ClientWorker where
+  toField a = toField (show a)
+
+instance FromField ClientWorker where
+  fromField f b = read <$> fromField f b
 
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
@@ -248,6 +272,45 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
+  - primitive: EndpointType
+  - primitive: ClientWorker
+  - entity: ErrorLog
+  - entity: ErrorLogInaccessibleEndpoint
+  - entity: ErrorLogMultipleBakersForSameDelegate
+  - entity: ErrorLogBakerNoHeartbeat
+  - entity: ErrorLogNodeOnFork
+  - entity: CachedProtocolConstants
+    constructors:
+     - name: CachedProtocolConstants
+       uniques:
+        - name: _cachedprotocolconstants_uniqueness
+          type: constraint
+          fields:
+           - _cachedProtocolConstants_protocol
+  - entity: CachedChainCycle
+    constructors:
+     - name: CachedChainCycle
+       uniques:
+        - name: _cachedchaincycle_uniqueness
+          type: constraint
+          fields:
+           - _cachedChainCycle_hash
+  - entity: CachedBlock
+    constructors:
+     - name: CachedBlock
+       uniques:
+        - name: _cachedblock_uniqueness
+          type: constraint
+          fields:
+           - _cachedBlock_hash
+  - entity: CachedBlockRights
+    constructors:
+     - name: CachedBlockRights
+       uniques:
+        - name: _cachedblockrights_uniqueness
+          type: constraint
+          fields:
+           - _cachedBlockRights_cycle
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -260,4 +323,13 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
+  , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
+  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
+  , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
+  , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
+  , (''CachedBlock, 'CachedBlockKey)
+  , (''CachedBlockRights, 'CachedBlockRightsKey)
+  , (''CachedChainCycle, 'CachedChainCycleKey)
+  , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   ]

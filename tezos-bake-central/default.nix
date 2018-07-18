@@ -9,8 +9,8 @@ obelisk.project ./. ({ pkgs, ... }:
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "c8456661a6d6fa30efbef7c50394353c13c65e53";
-      sha256 = "0s8wmkq2ivr2wj6srp4qx4388ffrqfhhgxyfw42im8vfjyfp83ld";
+      rev = "173e9bcc7dad469ea9b4110243c829b0f1dd6d9c";
+      sha256 = "0khf21w0rap4isqdxaziby6rj79yrriig72qfnc051ayc9ql81nb";
     };
 
     gargoyle-src = pkgs.fetchFromGitHub {

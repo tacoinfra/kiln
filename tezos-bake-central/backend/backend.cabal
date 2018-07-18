@@ -15,6 +15,7 @@ library
       aeson
     , base
     , bytestring
+    , base16-bytestring
     , Chart
     , Chart-diagrams
     , clientsession
@@ -53,6 +54,7 @@ library
     , rhyolite-backend-snap
     , rhyolite-common
     , safe
+    , safe-exceptions
     , say
     , snap-core
     , snap-loader-static
@@ -64,8 +66,12 @@ library
 
   exposed-modules:
     Backend
+
+  other-modules:
     Backend.BalanceTracking
     Backend.ChainHealth
+    Backend.Config
+    Backend.Errors
     Backend.Graphs
     Backend.NodeRPC
     Backend.NotifyHandler

@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Backend.ChainHealth (scanForkInfo, validateForkyBlocks, obtainNode) where
+module Backend.ChainHealth (scanForkInfo, obtainNode) where
 
 import Control.Lens ((^.))
 import Control.Monad.IO.Class (MonadIO)
@@ -125,4 +125,5 @@ obtainNode = do
     , _node_peerCount = connections
     , _node_networkStat = networkStat
     , _node_fitness = fitness
+    , _node_deleted = False
     })
