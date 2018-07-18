@@ -88,12 +88,14 @@ reportNoBakerHeartbeatError cid eventDetail = do
         ]
 
 
-clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m) => Id Client -> m ()
-clearNoBakerHeartbeatError cid = void $ [executeQ|
-  UPDATE "ErrorLog" el SET stopped = NOW()
-    FROM "ErrorLogBakerNoHeartbeat" t
-   WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
-  |]
+clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Client -> m ()
+clearNoBakerHeartbeatError cid = do
+  lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerNoHeartbeat" t
+    WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notifyEntityId NotificationType_Update
 
 reportInaccessibleEndpointError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig m)
@@ -120,12 +122,15 @@ reportInaccessibleEndpointError endpointType addr = do
         }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
-clearInaccessibleEndpointError :: (Monad m, PostgresRaw m) => EndpointType -> ClientAddress -> m ()
-clearInaccessibleEndpointError endpointType addr = void $ [executeQ|
-  UPDATE "ErrorLog" el SET stopped = NOW()
-    FROM "ErrorLogInaccessibleEndpoint" t
-   WHERE t.log = el.id AND t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
-  |]
+clearInaccessibleEndpointError
+  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> ClientAddress -> m ()
+clearInaccessibleEndpointError endpointType addr = do
+  lids :: [Id ErrorLogInaccessibleEndpoint] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogInaccessibleEndpoint" t
+    WHERE t.log = el.id AND t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notifyEntityId NotificationType_Update
 
 
 reportNodeOnForkError
@@ -155,12 +160,14 @@ reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
         , ErrorLogNodeOnFork_bakedBlockTimeField =. bakedBlockTime
         ]
 
-clearNodeOnForkError :: (Monad m, PostgresRaw m) => Id Node -> m ()
-clearNodeOnForkError nodeId = void $ [executeQ|
-  UPDATE "ErrorLog" el SET stopped = NOW()
-    FROM "ErrorLogNodeOnFork" t
-   WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
-  |]
+clearNodeOnForkError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+clearNodeOnForkError nodeId = do
+  lids :: [Id ErrorLogNodeOnFork] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeOnFork" t
+    WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notifyEntityId NotificationType_Update
 
 insertErrorLog mkErrorLog = do
   now <- getTime
