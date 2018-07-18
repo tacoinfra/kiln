@@ -9,14 +9,12 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Backend where
 
 import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception (catch, finally, throwIO)
+import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
@@ -56,7 +54,7 @@ import Data.Traversable (for)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
-import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Client as Http (Manager, newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
@@ -80,7 +78,7 @@ import Rhyolite.Concurrent (worker)
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay, maximumMay)
-import Say (say, sayShow)
+import Say (say, sayErr, sayShow)
 import Snap.Core (MonadSnap, route)
 import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
@@ -190,87 +188,99 @@ clientWorker
   -> Http.Manager
   -> Pool Postgresql
   -> IO (IO ())
-clientWorker delay appConfig httpMgr db = do
-  worker (seconds delay) $ do
-    say "Update client cycle."
-    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      now <- getTime
-      let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-      (queryBestNode >>=) $ traverse_ $ \(nodeId, bestNode, protoInfo) -> do
-        let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
+clientWorker delay appConfig httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+  say "Update client cycle."
+  now <- getTime
+  let maxTime = Just (addUTCTime (- fromIntegral delay) now)
+  (queryBestNode >>=) $ traverse_ $ \(nodeId, bestNode, protoInfo) -> do
+    let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
-        toUpdate <- [queryQ| SELECT id, address
-                             FROM "Client" c
-                             WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
-                             ORDER BY updated NULLS FIRST |]
+    toUpdate :: [(Id Client, ClientAddress)] <- [queryQ|
+      SELECT id, address
+      FROM "Client" c
+      WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
+      ORDER BY updated NULLS FIRST
+    |]
 
-        clientDelegates <- for toUpdate $ \(cid :: Id Client, address :: Text) -> do
-          say $ "Updating client at " <> address
-          -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-          clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
-          let clientConfigJson = Json clientConfig
+    clientDelegates <- for toUpdate $ \(cid, address) -> do
+      let handlingHttpExc f = (Just <$> f) `catches`
+            [ Handler $ \(e :: Http.JSONException) -> sayErr (tshow e) $> Nothing
+            , Handler $ \(e :: Http.HttpException) -> sayErr (tshow e) $> Nothing
+            ]
 
-          report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
-          let reportJson = Json report
+      result <- handlingHttpExc $ do
+        say $ "Updating client at " <> address
 
-          for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->
-            if addUTCTime blockHeightTimeout (_event_time seenEvent) < now then
-              reportNoBakerHeartbeatError cid (_event_detail seenEvent)
-            else
-              clearNoBakerHeartbeatError cid
+        -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
+        clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
+        let clientConfigJson = Json clientConfig
 
-          let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
-              rewardDelay l =
-                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                    rc = c + _protoInfo_preservedCycles protoInfo
-                in rc * _protoInfo_blocksPerCycle protoInfo
-              insertValues = Values ["text", "varchar", "int8", "int8"]
-                [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b)
-                | b <- _report_baked report
-                , delegatePkh <- _clientConfig_delegates clientConfig
-                ]
-          unless (null $ _report_baked report) $ void $ [executeQ|
-            INSERT INTO "PendingReward" (delegate, hash, level, amount)
-            SELECT d.id, x.hash, x.level, x.amount
-            FROM ?insertValues x (delegate_pkh, hash, level, amount)
-            JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
-            ON CONFLICT DO NOTHING |]
+        report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
+        let reportJson = Json report
 
-          _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                          VALUES (?cid, ?reportJson, ?clientConfigJson)
-                          ON CONFLICT (client) DO UPDATE SET
-                            report = ?reportJson
-                          , config = ?clientConfigJson
-                          |]
-          forkInfo <- scanForkInfo httpMgr now report bestNode
-          validateForkyBlocks sayShow forkInfo
+        for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->
+          if addUTCTime blockHeightTimeout (_event_time seenEvent) < now then
+            reportNoBakerHeartbeatError cid (_event_detail seenEvent)
+          else
+            clearNoBakerHeartbeatError cid
 
-          updateAndNotify cid [Client_updatedField =. Just now]
+        let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+            rewardDelay l =
+              let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
+                  rc = c + _protoInfo_preservedCycles protoInfo
+              in rc * _protoInfo_blocksPerCycle protoInfo
+            insertValues = Values ["text", "varchar", "int8", "int8"]
+              [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b)
+              | b <- _report_baked report
+              , delegatePkh <- _clientConfig_delegates clientConfig
+              ]
+        unless (null $ _report_baked report) $ void $ [executeQ|
+          INSERT INTO "PendingReward" (delegate, hash, level, amount)
+          SELECT d.id, x.hash, x.level, x.amount
+          FROM ?insertValues x (delegate_pkh, hash, level, amount)
+          JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
+          ON CONFLICT DO NOTHING |]
 
-          -- TODO: Add back errors reported by client RPC
+        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
+                        VALUES (?cid, ?reportJson, ?clientConfigJson)
+                        ON CONFLICT (client) DO UPDATE SET
+                          report = ?reportJson
+                        , config = ?clientConfigJson
+                        |]
+        forkInfo <- scanForkInfo httpMgr now report bestNode
+        validateForkyBlocks sayShow forkInfo
 
-          -- case sortBy (compare `on` _event_time) (_report_errors report) of
-          --   [] -> return ()
-          --   es -> do
-          --     lastError <- liftIO $ readIORef lastErrorRef
-          --     let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
-          --     case new of
-          --       [] -> return ()
-          --       (x:_) -> do
-          --         liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-          --         queueAllEmails new
-          -- TODO.  debounce below as above
-          flip validateForkyBlocks forkInfo $ \errors -> case nonEmpty errors of
-            Nothing -> clearNodeOnForkError nodeId
-            Just es -> for_ es $ \e -> do
-              let tooOld = case _forkInfo_forkStatus e of
-                    ForkStatus_TooOld -> True
-                    _ -> False
-              reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
+        updateAndNotify cid [Client_updatedField =. Just now]
 
-          return $ _clientConfig_delegates clientConfig
+      -- TODO: Add back errors reported by client RPC
 
-        insertClientDelegates (Set.fromList $ concat clientDelegates)
+        -- case sortBy (compare `on` _event_time) (_report_errors report) of
+        --   [] -> return ()
+        --   es -> do
+        --     lastError <- liftIO $ readIORef lastErrorRef
+        --     let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
+        --     case new of
+        --       [] -> return ()
+        --       (x:_) -> do
+        --         liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
+        --         queueAllEmails new
+        -- TODO.  debounce below as above
+        flip validateForkyBlocks forkInfo $ \errors -> case nonEmpty errors of
+          Nothing -> clearNodeOnForkError nodeId
+          Just es -> for_ es $ \e -> do
+            let tooOld = case _forkInfo_forkStatus e of
+                  ForkStatus_TooOld -> True
+                  _ -> False
+            reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
+
+        return $ _clientConfig_delegates clientConfig
+
+      case result of
+        Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address
+        Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
+
+    insertClientDelegates (Set.fromList $ concat clientDelegates)
+
 
 insertClientDelegates :: (Monad m, PersistBackend m, PostgresRaw m) => Set PublicKeyHash -> m ()
 insertClientDelegates pkhs = do
