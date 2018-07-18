@@ -66,7 +66,7 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
     param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
     return $ single (_parameters_protoInfo <$> param) a
   nodeAddresses <- whenJust (_bakeViewSelector_nodeAddresses vs) $ \a -> do
-    rs <- [queryQ| SELECT n.id, n.address from "Node" n |]
+    rs <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
   nodes <- do
     let selNodes = In $ Map.keys (_bakeViewSelector_nodes vs)

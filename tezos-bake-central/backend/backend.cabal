@@ -54,6 +54,7 @@ library
     , rhyolite-backend-snap
     , rhyolite-common
     , safe
+    , safe-exceptions
     , say
     , snap-core
     , snap-loader-static
