@@ -275,8 +275,10 @@ summaryTab = divClass "ui grid" $ do
 
       errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
       dyn_ $ ffor errors $ traverse_ $ traverse_ $ traverse_ $ \(log, specificLog) -> do
-        let header = divClass "header" . text
-        divClass "ui error message" $ do
+        let header txt = divClass "header" $ text $ case _errorLog_stopped log of
+              Just _ -> "Resolved: " <> txt
+              Nothing -> txt
+        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           case specificLog of
             ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
               let endpointTypeName = case endpointType of
