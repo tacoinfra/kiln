@@ -23,6 +23,8 @@ library
     , common
     , containers
     , data-default
+    , dependent-map
+    , dependent-sum-template
     , diagrams-core
     , diagrams-lib
     , diagrams-svg

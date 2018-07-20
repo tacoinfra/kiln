@@ -7,7 +7,9 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend where
 
@@ -29,11 +31,14 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Foldable (foldl', for_, toList, traverse_)
+import Data.Dependent.Map (DMap)
+import qualified Data.Dependent.Map as DMap
+import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Map (Map)
@@ -104,7 +109,7 @@ import Common.Base16ByteString (unbase16ByteString)
 import qualified Common.Config as Config
 import Common.Json (TezosWord64 (..))
 import Common.Operation (sumFees)
-import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
+import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema
 import Common.TaggedHash
 import Common.URI (mkRootUri)
@@ -413,34 +418,94 @@ cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
 
 data NodeQuery a where
   NodeQuery_GenesisParameters :: ChainId -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights :: ChainId -> BlockHash -> PublicKeyHash -> RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_Bakers :: ChainId -> BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
+  NodeQuery_BakingRights :: ChainId -> BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_Baker :: ChainId -> BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
 
+deriveGEq ''NodeQuery
+deriveGCompare ''NodeQuery
 
-nodeQueryDataSource :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m) => NodeQuery a -> m a
-nodeQueryDataSource = \case
+nodeQueryDataSourceCached
+  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+  => IORef (DMap NodeQuery Identity) -> NodeQuery a -> m a
+nodeQueryDataSourceCached cacheRef q = do
+  cache <- liftIO $ readIORef cacheRef
+  case DMap.lookup q cache of
+    Just (Identity a) -> pure a
+    Nothing -> do
+      res <- nodeQueryDataSource (nodeQueryDataSourceCached cacheRef) q
+      liftIO $ atomicModifyIORef' cacheRef $ \oldMap ->
+        (DMap.insert q (Identity res) oldMap, ())
+      pure res
+
+nodeQueryDataSource
+  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+  => (forall a. NodeQuery a -> m a) -> NodeQuery a -> m a
+nodeQueryDataSource self = \case
   NodeQuery_GenesisParameters chainId -> do
     currentHead <- nodeRPC $ RBlock $ headId' chainId
     let headLevel = currentHead ^. blockInfo_header . blockInfoHeader_level
     --TODO: if headLevel == 0 then error "error"
     nodeRPC $ RProtoConstants $ blockHashIdPred' chainId (_blockInfo_hash currentHead) (headLevel - 1)
 
-  NodeQuery_BakingRights chainId bh pkh targetLevel -> do
-    proto <- nodeQueryDataSource $ NodeQuery_GenesisParameters chainId
+  NodeQuery_BakingRights chainId branch targetLevel -> do
+    proto <- self $ NodeQuery_GenesisParameters chainId
     let
       cycleForLevel n = Cycle $ unRawLevel $ n `div` _protoInfo_blocksPerCycle proto
       cycleDeterminingRightsForLevel n = max 0 $ cycleForLevel n - _protoInfo_preservedCycles proto
 
-      cyclesToQuery = Set.fromList $ Right <$> [cycleDeterminingRightsForLevel targetLevel]
+      cycleToQuery = Set.singleton $ Right $ cycleDeterminingRightsForLevel targetLevel
 
-    block <- nodeRPC $ RBlock $ blockHashId' chainId bh
+    branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
     let
-      blockLevel = block ^. blockInfo_metadata . blockInfoMetadata_level
+      blockLevel = branchBlock ^. blockInfo_metadata . blockInfoMetadata_level
       cyclesAgo = blockLevel ^. level_cycle - cycleDeterminingRightsForLevel targetLevel
       levelsAgo = RawLevel (unCycle cyclesAgo) * _protoInfo_blocksPerCycle proto - blockLevel ^. level_cyclePosition
 
-    nodeRPC $ RBakingRights (blockHashIdPred' chainId bh levelsAgo) cyclesToQuery
+    if levelsAgo < 0 then sayErr "NEGALEVEL: " else pure ()
+    if levelsAgo == 0 then
+      nodeRPC $ RBakingRights (blockHashId' chainId branch) cycleToQuery
+    else do
+      targetBlock <- nodeRPC $ RBlock $ blockHashIdPred' chainId branch levelsAgo
+      self $ NodeQuery_BakingRights chainId
+        (targetBlock ^. blockInfo_hash)
+        (targetLevel `div` _protoInfo_blocksPerCycle proto * _protoInfo_blocksPerCycle proto)
 
+  NodeQuery_Baker chainId branch rawLevel -> do
+    branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
+    let levelsAgo = branchBlock ^. blockInfo_header . blockInfoHeader_level - rawLevel
+    targetBlock <- nodeRPC $ RBlock $ blockHashIdPred' chainId branch levelsAgo
+    pure ( targetBlock ^. blockInfo_metadata . blockInfoMetadata_baker
+         , targetBlock ^. blockInfo_header . blockInfoHeader_priority
+         )
+
+calculateBakeEfficiency
+  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+  => IORef (DMap NodeQuery Identity) -> ChainId -> BlockHash -> PublicKeyHash -> m BakeEfficiency
+calculateBakeEfficiency cache chainId branch delegate = do
+  branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
+  let branchLevel = branchBlock ^. blockInfo_header . blockInfoHeader_level
+
+  let levels = [branchLevel - 2..branchLevel]
+  rights <- fmap (fmap bakingRightsMap) $ for levels $ nodeQueryDataSourceCached cache . NodeQuery_BakingRights chainId branch
+  bakers <- for levels $ fmap fst . nodeQueryDataSourceCached cache . NodeQuery_Baker chainId branch
+
+  --let rightsInOrder = fmap (\lvl -> Map.findWithDefault mempty lvl rights) levels
+  pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
+  where
+    efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
+    efficiencyOfBlock rights baker = BakeEfficiency
+      { _bakeEfficiency_bakedBlocks = if baker == delegate then 1 else 0
+      , _bakeEfficiency_bakingRights = case (Map.lookup baker rights, Map.lookup delegate rights) of
+          (_, Nothing) -> 0
+          (Just them, Just us) -> if us <= them then 1 else 0
+          (Nothing, _) -> error "Very wrong"
+      }
+
+    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from delegate to
+    bakingRightsMap xs = Map.fromList
+      [ (delegate, prio)
+      | BakingRights _lvl delegate prio _ <- toList xs
+      ]
 
 
 doThing
@@ -620,11 +685,20 @@ backend = do
 
     -- TODO: move this to nodeWorker
     let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
+    cache <- newIORef mempty
     runReaderT (runExceptT $ nodeRPC $ RBlock headId) nodeCtx >>= \case
       Right blockInfo -> do
         let chain = _blockInfo_chainId blockInfo
         void $ flip runReaderT nodeCtx $ runExceptT $ nodeRPC $ RMonitorHeads
-          (either sayShow $ doThing chain db httpMgr "http://127.0.0.1:18731")
+          (\case
+            Left e -> sayErr $ "Bad monitor block: " <> tshow e
+            Right monitorBlock -> do
+              let pkh = "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
+              eff <- flip runReaderT nodeCtx $ runExceptT $
+                calculateBakeEfficiency cache chain (_monitorBlock_hash monitorBlock) pkh
+              sayShow eff
+          )
+          --(either sayShow $ doThing chain db httpMgr "http://127.0.0.1:18731")
           (DynamicParamChainId_ChainId chain)
       Left bad -> sayShow bad
 

@@ -120,7 +120,7 @@ data BlockInfoHeader = BlockInfoHeader
   , _blockInfoHeader_operationsHash :: OperationListListHash
   , _blockInfoHeader_fitness :: Fitness
   , _blockInfoHeader_context :: ContextHash
-  -- , _blockInfoHeader_priority
+  , _blockInfoHeader_priority :: Priority
   -- , _blockInfoHeader_proofOfWorkNonce
   -- , _blockInfoHeader_signature
   } deriving (Eq, Show, Generic, Typeable)
@@ -386,7 +386,7 @@ blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainIdToUrl chain
       DynamicParamBlockHash_Genesis -> "genesis"
       DynamicParamBlockHash_Head -> "head"
       DynamicParamBlockHash_TestHead -> "test_head"
-    offset' = maybe "" (("~" <>) . T.pack . show) offset
+    offset' = maybe "" (("~" <>) . tshow . unRawLevel) offset
 
 
 -- ACTUALLY, 2^30 max (from Ocaml types)
@@ -533,7 +533,7 @@ instance HasId ErrorLog
 
 data MonitorBlock = MonitorBlock
   { _monitorBlock_hash :: BlockHash
-  , _monitorBlock_level :: Word32
+  , _monitorBlock_level :: RawLevel
   , _monitorBlock_proto :: Word8
   , _monitorBlock_predecessor :: BlockHash
   , _monitorBlock_timestamp :: UTCTime

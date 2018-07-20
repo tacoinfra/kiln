@@ -60,7 +60,7 @@ nodeRPC :: forall m a s. (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError R
 nodeRPC = \case
   RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
   RBlock hash -> nodeRPCImpl methodGet (blockIdToUrl hash)
-  RBlocks chain len heads -> byHead <$> nodeRPCImpl methodGet ("/chains/" <> chainIdToUrl chain <> "/blocks?length=" <> tshow len <> foldMap blk2param heads)
+  RBlocks chain (RawLevel len) heads -> byHead <$> nodeRPCImpl methodGet ("/chains/" <> chainIdToUrl chain <> "/blocks?length=" <> tshow len <> foldMap blk2param heads)
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
       byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
@@ -110,7 +110,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
         }
   let
     request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
-    throwLoggedError e = sayErr ("NODERPC ERROR:" <> tshow rpcUrl <> " >> " <> tshow e) *> throwError e
+    throwLoggedError e = sayErr ("NODERPC ERROR: " <> tshow rpcUrl <> " >> " <> tshow e) *> throwError e
 
   liftIO (try @HttpException $ httpLbs request mgr) >>= \case
     Left err -> throwLoggedError $ RpcError_HttpException $ tshow err
