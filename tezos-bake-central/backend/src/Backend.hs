@@ -20,7 +20,7 @@ import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (runReaderT)
+import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as AppendMap
@@ -41,6 +41,7 @@ import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -51,6 +52,7 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Data.Traversable (for)
+import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
@@ -92,7 +94,7 @@ import qualified Text.URI.Lens as Uri
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
-import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
+import Backend.NodeRPC (HasNodeRPC, NodeRPCContext (..), nodeRPC)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
@@ -146,7 +148,7 @@ nodeWorker delay appConfig httpMgr db = do
       for nodes $ \(nodeId :: Id Node, nodeAddr) -> do
         say $ "Updating node at " <> nodeAddr
         let ctx = NodeRPCContext httpMgr nodeAddr -- "http://127.0.0.1:18731"
-        runNodeRPCT ctx (nodeRPC $ RProtoConstants headId) >>= \case
+        runReaderT (runExceptT $ nodeRPC $ RProtoConstants headId) ctx >>= \case
           Left e -> reportInaccessibleEndpointError EndpointType_Node nodeAddr
           Right protoInfo -> do
             clearInaccessibleEndpointError EndpointType_Node nodeAddr
@@ -156,10 +158,10 @@ nodeWorker delay appConfig httpMgr db = do
               _ ->
                 insertAndNotify_ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
 
-        headBlockRsp <- runNodeRPCT ctx . nodeRPC $ RBlock headId
+        headBlockRsp <- runReaderT (runExceptT $ nodeRPC $ RBlock headId) ctx
         for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId
-            [ Node_headLevelField =. Just (unTezosWord64 $ headBlockInfo ^. blockInfo_header . blockInfoHeader_level)
+            [ Node_headLevelField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_level)
             , Node_headBlockHashField =. Just (headBlockInfo ^. blockInfo_hash)
             , Node_fitnessField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_fitness)
             ]
@@ -227,7 +229,7 @@ clientWorker delay appConfig httpMgr db = worker (seconds delay) $ runNoLoggingT
         let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
             rewardDelay l =
               let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                  rc = c + _protoInfo_preservedCycles protoInfo
+                  rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
               in rc * _protoInfo_blocksPerCycle protoInfo
             insertValues = Values ["text", "varchar", "int8", "int8"]
               [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b)
@@ -298,74 +300,73 @@ delegateWorker
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb (Identity db) $ (queryBestNode >>=) $ traverse_ $ \(nid, bestNode, protoInfo) -> do
-  say "Update delegate cycle."
-  let
-    headLevel :: Integer = fromIntegral $ fromMaybe (error "queryBestNode returned unfit node") $ _node_headLevel bestNode
-    latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
-    levelRange = [max 0 (headLevel - 100) .. headLevel]
-    nodeAddr = _node_address bestNode
-    ctx = NodeRPCContext httpMgr nodeAddr
-    headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
-  say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
-  delegates :: Map (Id Delegate) Delegate <- selectMap DelegateConstructor (Delegate_deletedField ==. False)
-  -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
-  runNodeRPCT ctx (nodeRPC (RBakingRights (blockHashId headBlockHash) (fromIntegral <$> levelRange))) >>= \case
-    Left e -> sayShow e
-    Right allBakingRights -> do
-      -- Filter out baking rights that apply to levels in the future.
-      -- map is from delegate*level to priorotiy
-      let bakingRights :: AppendMap.AppendMap PublicKeyHash (Map Int Int) =
-            AppendMap.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> bakingRightsMap allBakingRights
-      ifor_ delegates $ \dId delegate -> do
-        let pkh = _delegate_publicKeyHash delegate
-        say $ "Updating delegate " <> toPublicKeyHashText pkh
-        accountStatusResp <- runNodeRPCT ctx (nodeRPC (RContract headId (_delegate_publicKeyHash delegate)))
-        -- TODO: report errors here
-        let accountStatus = either (const Nothing) Just accountStatusResp
-        bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
-          runNodeRPCT ctx (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - fromIntegral levelWithRight))) >>= \case
-            Left e -> sayShow e $> Nothing
-            Right blockWithRights -> return $
-              let
-                -- The ID of the baker who baked this block
-                baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
-              in if baker == pkh then Just True -- Our delegate baked this block so point for us!
-                 else case bakingRights ^? ix baker . ix levelWithRight of
-                    Nothing -> Nothing -- Can't find this baker in the table of rights
-                    Just bakerPriority -> if bakerPriority < delegatePriority
-                      then Nothing -- The baker baked with higher priority so this block doesn't count either way.
-                      else Just False -- The baker baked with lower priority, so point against us.
+delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb (Identity db) $ (queryBestNode >>=) $ traverse_ $ \(nid, bestNode, protoInfo) ->
+  flip runReaderT (NodeRPCContext httpMgr $ _node_address bestNode) $ do
+    say "Update delegate cycle."
+    let
+      headLevel :: Integer = fromIntegral $ fromMaybe (error "queryBestNode returned unfit node") $ _node_headLevel bestNode
+      latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
+      levelRange = [max 0 (headLevel - 10) .. headLevel]
+      headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
+    say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
+    delegates :: Map (Id Delegate) Delegate <- selectMap DelegateConstructor (Delegate_deletedField ==. False)
+    -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
+    runExceptT (nodeRPC (RBakingRights (blockHashId headBlockHash) (Set.fromList $ Left . RawLevel . fromIntegral <$> levelRange))) >>= \case
+      Left e -> sayShow e
+      Right allBakingRights -> do
+        -- Filter out baking rights that apply to levels in the future.
+        -- map is from delegate*level to priorotiy
+        let bakingRights :: AppendMap.AppendMap PublicKeyHash (Map RawLevel Priority) =
+              AppendMap.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> bakingRightsMap allBakingRights
+        ifor_ delegates $ \dId delegate -> do
+          let pkh = _delegate_publicKeyHash delegate
+          say $ "Updating delegate " <> toPublicKeyHashText pkh
+          accountStatusResp <- runExceptT $ nodeRPC (RContract headId (_delegate_publicKeyHash delegate))
+          -- TODO: report errors here
+          let accountStatus = either (const Nothing) Just accountStatusResp
+          bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
+            runExceptT (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - fromIntegral levelWithRight))) >>= \case
+              Left e -> sayShow e $> Nothing
+              Right blockWithRights -> return $
+                let
+                  -- The ID of the baker who baked this block
+                  baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
+                in if baker == pkh then Just True -- Our delegate baked this block so point for us!
+                  else case bakingRights ^? ix baker . ix levelWithRight of
+                      Nothing -> Nothing -- Can't find this baker in the table of rights
+                      Just bakerPriority -> if bakerPriority < delegatePriority
+                        then Nothing -- The baker baked with higher priority so this block doesn't count either way.
+                        else Just False -- The baker baked with lower priority, so point against us.
 
-        let
-          calcBakingEfficiency (numBakedAcc, numOpportunitiesAcc) = \case
-            Nothing -> (numBakedAcc, numOpportunitiesAcc)
-            Just True -> (numBakedAcc + 1, numOpportunitiesAcc + 1)
-            Just False -> (numBakedAcc, numOpportunitiesAcc + 1)
+          let
+            calcBakingEfficiency (numBakedAcc, numOpportunitiesAcc) = \case
+              Nothing -> (numBakedAcc, numOpportunitiesAcc)
+              Just True -> (numBakedAcc + 1, numOpportunitiesAcc + 1)
+              Just False -> (numBakedAcc, numOpportunitiesAcc + 1)
 
-          (numBaked, numOpportunities) = foldl' calcBakingEfficiency (0, 0) bakingRightsUtilized
+            (numBaked, numOpportunities) = foldl' calcBakingEfficiency (0, 0) bakingRightsUtilized
 
-        delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . fmap toId <$> project AutoKeyField ((DelegateStats_delegateField ==. dId) `limitTo` 1)
-        case delegateStatsId of
-          Nothing -> insertAndNotify_ DelegateStats
-            { _delegateStats_delegate = dId
-            , _delegateStats_efficiency = BakeEfficiency numBaked numOpportunities
-            , _delegateStats_accountBalance = _account_balance <$> accountStatus
-            , _delegateStats_accountSpendable = _account_spendable <$> accountStatus
-            , _delegateStats_accountSetable = _accountDelegate_setable . _account_delegate <$> accountStatus
-            , _delegateStats_accountValue = _accountDelegate_value <$> _account_delegate =<< accountStatus
-            , _delegateStats_accountCounter = _account_counter <$> accountStatus
-            }
-          Just dsId -> updateAndNotify dsId
-            [ DelegateStats_efficiencyField =. BakeEfficiency numBaked numOpportunities
-            , DelegateStats_accountBalanceField =. (_account_balance <$> accountStatus)
-            , DelegateStats_accountSpendableField =. (_account_spendable <$> accountStatus)
-            , DelegateStats_accountSetableField =. (_accountDelegate_setable . _account_delegate <$> accountStatus)
-            , DelegateStats_accountValueField =. (_accountDelegate_value <$> _account_delegate =<< accountStatus)
-            , DelegateStats_accountCounterField =. (_account_counter <$> accountStatus)
-            ]
+          delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . fmap toId <$> project AutoKeyField ((DelegateStats_delegateField ==. dId) `limitTo` 1)
+          case delegateStatsId of
+            Nothing -> insertAndNotify_ DelegateStats
+              { _delegateStats_delegate = dId
+              , _delegateStats_efficiency = BakeEfficiency numBaked numOpportunities
+              , _delegateStats_accountBalance = _account_balance <$> accountStatus
+              , _delegateStats_accountSpendable = _account_spendable <$> accountStatus
+              , _delegateStats_accountSetable = _accountDelegate_setable . _account_delegate <$> accountStatus
+              , _delegateStats_accountValue = _accountDelegate_value <$> _account_delegate =<< accountStatus
+              , _delegateStats_accountCounter = _account_counter <$> accountStatus
+              }
+            Just dsId -> updateAndNotify dsId
+              [ DelegateStats_efficiencyField =. BakeEfficiency numBaked numOpportunities
+              , DelegateStats_accountBalanceField =. (_account_balance <$> accountStatus)
+              , DelegateStats_accountSpendableField =. (_account_spendable <$> accountStatus)
+              , DelegateStats_accountSetableField =. (_accountDelegate_setable . _account_delegate <$> accountStatus)
+              , DelegateStats_accountValueField =. (_accountDelegate_value <$> _account_delegate =<< accountStatus)
+              , DelegateStats_accountCounterField =. (_account_counter <$> accountStatus)
+              ]
 
-        return ()
+          return ()
 
 
 timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
@@ -390,11 +391,11 @@ cacheOneBlock
   => NodeRPCContext
   -> ChainId
   -> Id CachedChainCycle
-  -> Int
+  -> RawLevel
   -> BlockHash
   -> DbPersist Postgresql m (Id CachedBlock)
 cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
-  details <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashId' chain blkHash)
+  details <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashId' chain blkHash) ctx
   let baker = _blockInfoMetadata_baker $ _blockInfo_metadata details
   let endorsers = Json mempty -- TODO: this requres operations parsing
   let blkPred = _blockInfoHeader_predecessor $ _blockInfo_header details
@@ -409,6 +410,38 @@ cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
     , ")"
     ]
   toId <$> insert cb
+
+data NodeQuery a where
+  NodeQuery_GenesisParameters :: ChainId -> NodeQuery ProtoInfo
+  NodeQuery_BakingRights :: ChainId -> BlockHash -> PublicKeyHash -> RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_Bakers :: ChainId -> BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
+
+
+nodeQueryDataSource :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m) => NodeQuery a -> m a
+nodeQueryDataSource = \case
+  NodeQuery_GenesisParameters chainId -> do
+    currentHead <- nodeRPC $ RBlock $ headId' chainId
+    let headLevel = currentHead ^. blockInfo_header . blockInfoHeader_level
+    --TODO: if headLevel == 0 then error "error"
+    nodeRPC $ RProtoConstants $ blockHashIdPred' chainId (_blockInfo_hash currentHead) (headLevel - 1)
+
+  NodeQuery_BakingRights chainId bh pkh targetLevel -> do
+    proto <- nodeQueryDataSource $ NodeQuery_GenesisParameters chainId
+    let
+      cycleForLevel n = Cycle $ unRawLevel $ n `div` _protoInfo_blocksPerCycle proto
+      cycleDeterminingRightsForLevel n = max 0 $ cycleForLevel n - _protoInfo_preservedCycles proto
+
+      cyclesToQuery = Set.fromList $ Right <$> [cycleDeterminingRightsForLevel targetLevel]
+
+    block <- nodeRPC $ RBlock $ blockHashId' chainId bh
+    let
+      blockLevel = block ^. blockInfo_metadata . blockInfoMetadata_level
+      cyclesAgo = blockLevel ^. level_cycle - cycleDeterminingRightsForLevel targetLevel
+      levelsAgo = RawLevel (unCycle cyclesAgo) * _protoInfo_blocksPerCycle proto - blockLevel ^. level_cyclePosition
+
+    nodeRPC $ RBakingRights (blockHashIdPred' chainId bh levelsAgo) cyclesToQuery
+
+
 
 doThing
   :: ChainId
@@ -444,17 +477,17 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
         -- we're not caught up yet :(
         Nothing -> do
           -- sayShow (T.pack "need chain history", blockHash)
-          block <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashId' chain blockHash)
+          block <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashId' chain blockHash) ctx
           let protoHash = _blockInfoMetadata_protocol $ _blockInfo_metadata block
           let cycle = _level_cycle $ _blockInfoMetadata_level $ _blockInfo_metadata block
           let cyclePosition = _level_cyclePosition $ _blockInfoMetadata_level $ _blockInfo_metadata block
           -- if we're at position n we need a result of length n + 1 to include the first block of the current cycle.
-          cycleInitBlock <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlock $ blockHashIdPred' chain blockHash $ fromIntegral cyclePosition)
+          cycleInitBlock <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashIdPred' chain blockHash $ fromIntegral cyclePosition) ctx
           let cycleInitHash :: BlockHash = _blockInfo_hash cycleInitBlock
           --sayShow cycleInitBlock
           -- we now have enough information to get our metadata in sync
 
-          (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Int) <- listToMaybe <$> [queryQ|
+          (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Cycle) <- listToMaybe <$> [queryQ|
               SELECT ccc.id, cpc."preservedCycles"
               FROM "CachedChainCycle" ccc
               JOIN "CachedProtocolConstants" cpc
@@ -469,7 +502,7 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
                   WHERE "protocol" = ?protoHash
                 |] >>= \case
                 Nothing -> do
-                  proto <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RProtoConstants $ blockHashId' chain blockHash)
+                  proto <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RProtoConstants $ blockHashId' chain blockHash) ctx
                   let
                     proto' = CachedProtocolConstants
                       { _cachedProtocolConstants_protocol = protoHash
@@ -479,12 +512,16 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
                   protoId' <- insert proto'
                   return (toId protoId', proto')
                 Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
+
+              previousCycleHash <- fmap _blockInfo_hash . onRpcError <=< flip runReaderT ctx $ runExceptT $ nodeRPC $
+                RBlock (blockHashIdPred' chain cycleInitHash $ fromIntegral $ _cachedProtocolConstants_blocksPerCycle proto)
               -- protocol version data is now in sync
               cid' <- toId <$> insert CachedChainCycle
                 { _cachedChainCycle_chainId = chain
                 , _cachedChainCycle_constants = protoId
                 , _cachedChainCycle_cycle = cycle
                 , _cachedChainCycle_hash = cycleInitHash
+                , _cachedChainCycle_predecessor = previousCycleHash
                 }
               return (cid', _cachedProtocolConstants_preservedCycles proto)
             Just (cid', pc) -> do
@@ -492,11 +529,11 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
               return (cid', pc)
           -- chain/cycle is now in sync
           -- which blocks are still missing?
-          ancestorMap <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBlocks (DynamicParamChainId_ChainId chain) (1 + cyclePosition) $ Set.singleton blockHash)
+          ancestorMap <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlocks (DynamicParamChainId_ChainId chain) (1 + cyclePosition) $ Set.singleton blockHash) ctx
           ancestors <- maybe (throwError $ "bad heads response from node, missing hash:" <> toBase58Text blockHash) return $ Map.lookup blockHash ancestorMap
           -- sayShow ("foundAncestors:", Seq.length ancestors, Seq.take 3 ancestors)
           let inAncestors = In $ toList ancestors
-          maxGoodAncestor :: Int <- head . stripOnly <$> [queryQ|
+          maxGoodAncestor :: RawLevel <- head . stripOnly <$> [queryQ|
               SELECT COALESCE(MAX("cyclePosition"), -1)
               FROM "CachedBlock"
               WHERE hash in ?inAncestors
@@ -505,7 +542,9 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
           -- let needAncestors = Seq.take (Seq.length ancestors - maxGoodAncestor) ancestors
           -- sayShow ("needAncestors:", Seq.length needAncestors, Seq.take 3 needAncestors)
 
-          let blocks = cacheOneBlock ctx chain chainCycleId <$> ZipList [cyclePosition,(cyclePosition-1)..(maxGoodAncestor+1)] <*> ZipList (blockHash : toList ancestors)
+          let blocks = cacheOneBlock ctx chain chainCycleId
+                <$> ZipList [cyclePosition,cyclePosition-1..maxGoodAncestor+1]
+                <*> ZipList (blockHash : toList ancestors)
           sequence_ blocks
           -- TODO: it makes sense to insertAndNotify if we actually inserted the MonitorBlock we just recieved...
           -- we now have our history... all that's left is rights.
@@ -522,8 +561,8 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
             Just _ -> return ()
             Nothing -> do
               -- TODO:  if cycle == 0, request [0..preservedCycles]
-              bRights <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ RBakingRights (blockHashId' chain blockHash) $ pure $ fromIntegral $ cycle + preservedCycles )
-              eRrights <- onRpcError =<< runNodeRPCT ctx (nodeRPC $ REndorsingRights (blockHashId' chain blockHash) $ pure $ fromIntegral $ cycle + preservedCycles)
+              bRights <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBakingRights (blockHashId' chain blockHash) $ Set.singleton $ Right . Cycle . fromIntegral $ cycle + preservedCycles) ctx
+              eRrights <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ REndorsingRights (blockHashId' chain blockHash) $ Set.singleton $ Right . Cycle . fromIntegral $ cycle + preservedCycles) ctx
               let cachedRights = CachedBlockRights chainCycleId (fromIntegral $ cycle + preservedCycles) (Json bRights) (Json eRrights)
               insertAndNotify_ cachedRights
 
@@ -580,11 +619,13 @@ backend = do
     addFinalizer wsFinalizer
 
     -- TODO: move this to nodeWorker
-    let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:8732"
-    runNodeRPCT nodeCtx (nodeRPC $ RBlock headId) >>= \case
+    let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
+    runReaderT (runExceptT $ nodeRPC $ RBlock headId) nodeCtx >>= \case
       Right blockInfo -> do
         let chain = _blockInfo_chainId blockInfo
-        void $ runNodeRPCT nodeCtx $ nodeRPC $ RMonitorHeads (either sayShow $ doThing chain db httpMgr "http://127.0.0.1:8732") (DynamicParamChainId_ChainId chain)
+        void $ flip runReaderT nodeCtx $ runExceptT $ nodeRPC $ RMonitorHeads
+          (either sayShow $ doThing chain db httpMgr "http://127.0.0.1:18731")
+          (DynamicParamChainId_ChainId chain)
       Left bad -> sayShow bad
 
     let appConfig = AppConfig emailFromAddress

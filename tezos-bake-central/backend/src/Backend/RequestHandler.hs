@@ -13,6 +13,7 @@ module Backend.RequestHandler where
 
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_)
 import Data.Functor (void)
@@ -35,7 +36,7 @@ import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
 import Backend.ChainHealth (obtainNode)
-import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
+import Backend.NodeRPC (NodeRPCContext (..))
 import Backend.Schema
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -57,7 +58,7 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           case nonEmpty existingIds of
             Nothing -> do
               let ctx = NodeRPCContext httpMgr addr
-              (_, node) <- runNodeRPCT ctx obtainNode
+              (_, node) <- runReaderT obtainNode ctx
               insertAndNotify_ node
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
 

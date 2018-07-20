@@ -49,9 +49,23 @@ obelisk.project ./. ({ pkgs, ... }:
       rhyolite-backend-snap = rhyolite-src + /backend-snap;
       rhyolite-common = rhyolite-src + /common;
       rhyolite-frontend = rhyolite-src + /frontend;
+
+      vinyl = pkgs.fetchFromGitHub {
+        owner = "VinylRecords";
+        repo = "Vinyl";
+        rev = "v0.8.1";
+        sha256 = "1pqajx2wvap0r7b6fh6cz5s3qbp5583nrp3fqrzvrcrm7xhgaw5d";
+      };
     };
     overrides = self: super: {
       # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+
+      fraxl = pkgs.haskell.lib.dontCheck (self.callCabal2nix "fraxl" (pkgs.fetchFromGitHub {
+        owner = "ElvishJerricco";
+        repo = "fraxl";
+        rev = "ce00bd0eb6a2948ca816411cc8fbc29f5ce8725d";
+        sha256 = "0y1as3ix1bd56603z9f5anpjqh4g3833zym0vflz90j6kf150mvl";
+      }) {});
 
       gargoyle = (self.callCabal2nix "gargoyle" (gargoyle-src + /gargoyle) {});
       gargoyle-postgresql = (self.callCabal2nix "gargoyle-postgresql" (gargoyle-src + /gargoyle-postgresql) {});

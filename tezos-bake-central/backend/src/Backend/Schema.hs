@@ -2,11 +2,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -68,8 +70,8 @@ instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
 
-instance ToField Tez where
-  toField (Tez n) = toField n
+deriving instance ToField Tez
+deriving instance FromField Tez
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -90,17 +92,15 @@ instance PrimitivePersistField PeriodSequence where
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
-instance FromField Tez where
-  fromField f b = Tez <$> fromField f b -- is this sign-correct?
-
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
 instance NeverNull (Json BlockInfo)
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
-instance NeverNull TezosWord64
+instance NeverNull RawLevel
 instance NeverNull Tez
+instance NeverNull TezosWord64
 
 unsafeParseBinary :: TezosBinary a => ByteString -> a
 unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -134,12 +134,26 @@ instance PrimitivePersistField a => PersistField (HashedValue t a) where
   dbType p (HashedValue x) = dbType p x
 
 
-instance FromField TezosWord64 where
-  fromField f b = TezosWord64 <$> fromField f b
+deriving instance ToField TezosWord64
+deriving instance FromField TezosWord64
+
+deriving instance ToField RawLevel
+deriving instance FromField RawLevel
+
+deriving instance ToField Cycle
+deriving instance FromField Cycle
 
 instance PrimitivePersistField TezosWord64 where
   toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField RawLevel where
+  toPrimitivePersistValue x (RawLevel v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = RawLevel $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField Cycle where
+  toPrimitivePersistValue x (Cycle v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = Cycle $ fromPrimitivePersistValue x v
 
 instance PrimitivePersistField (HashedValue t ByteString) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x v
@@ -148,8 +162,21 @@ instance PrimitivePersistField (HashedValue t ByteString) where
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
   toPersistValues = primToPersistValue . unTezosWord64
-  fromPersistValues = (fmap.first) TezosWord64 . primFromPersistValue
+  fromPersistValues = (fmap . first) TezosWord64 . primFromPersistValue
   dbType p (TezosWord64 x) = dbType p x
+
+instance PersistField RawLevel where
+  persistName _ = "RawLevel"
+  toPersistValues (RawLevel x) = primToPersistValue x
+  fromPersistValues = (fmap . first) RawLevel . primFromPersistValue
+  dbType p (RawLevel x) = dbType p x
+
+instance PersistField Cycle where
+  persistName _ = "Cycle"
+  toPersistValues (Cycle x) = primToPersistValue x
+  fromPersistValues = (fmap . first) Cycle . primFromPersistValue
+  dbType p (Cycle x) = dbType p x
+
 
 instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"
@@ -311,6 +338,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           type: constraint
           fields:
            - _cachedBlockRights_cycle
+  - entity: CycleHistory
+    constructors:
+     - name: CycleHistory
+       uniques:
+        - name: _cyclehistory_uniqueness
+          type: constraint
+          fields: [_cycleHistory_ancestor, _cycleHistory_descendant]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -332,4 +366,5 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''CachedBlockRights, 'CachedBlockRightsKey)
   , (''CachedChainCycle, 'CachedChainCycleKey)
   , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
+  , (''CycleHistory, 'CycleHistoryKey)
   ]
