@@ -43,6 +43,7 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 
+import Common (tshow)
 import Common.Base16ByteString (Base16ByteString (..))
 import Common.BlockHeader (BlockHeader (..))
 import Common.Fitness (Fitness)
@@ -72,17 +73,17 @@ type PeriodSequence = PeriodSequenceF TezosWord64
 data ProtoInfo = ProtoInfo
   { _protoInfo_blockReward :: Tez
   , _protoInfo_blockSecurityDeposit :: Tez
-  , _protoInfo_blocksPerCommitment :: Int
-  , _protoInfo_blocksPerCycle :: Int
-  , _protoInfo_blocksPerRollSnapshot :: Int
-  , _protoInfo_blocksPerVotingPeriod :: Int
+  , _protoInfo_blocksPerCommitment :: !RawLevel
+  , _protoInfo_blocksPerCycle :: !RawLevel
+  , _protoInfo_blocksPerRollSnapshot :: !RawLevel
+  , _protoInfo_blocksPerVotingPeriod :: !RawLevel
   , _protoInfo_endorsementReward :: Tez
   , _protoInfo_endorsementSecurityDeposit :: Tez
   , _protoInfo_endorsersPerBlock :: Int
   , _protoInfo_maxOperationDataLength :: Int
   , _protoInfo_michelsonMaximumTypeSize :: Int
   , _protoInfo_originationBurn :: Tez
-  , _protoInfo_preservedCycles :: Int
+  , _protoInfo_preservedCycles :: !Cycle
   , _protoInfo_proofOfWorkThreshold :: TezosWord64
   , _protoInfo_seedNonceRevelationTip :: Tez
   , _protoInfo_timeBetweenBlocks :: PeriodSequence -- repeating sequence of seconds
@@ -111,7 +112,7 @@ data BlockInfo = BlockInfo
   } deriving (Eq, Show, Generic, Typeable)
 
 data BlockInfoHeader = BlockInfoHeader
-  { _blockInfoHeader_level :: TezosWord64
+  { _blockInfoHeader_level :: RawLevel
   , _blockInfoHeader_proto :: Word8
   , _blockInfoHeader_predecessor :: BlockHash
   , _blockInfoHeader_timestamp :: UTCTime
@@ -119,7 +120,7 @@ data BlockInfoHeader = BlockInfoHeader
   , _blockInfoHeader_operationsHash :: OperationListListHash
   , _blockInfoHeader_fitness :: Fitness
   , _blockInfoHeader_context :: ContextHash
-  -- , _blockInfoHeader_priority
+  , _blockInfoHeader_priority :: Priority
   -- , _blockInfoHeader_proofOfWorkNonce
   -- , _blockInfoHeader_signature
   } deriving (Eq, Show, Generic, Typeable)
@@ -179,7 +180,7 @@ data NetworkStat = NetworkStat
 data Node = Node
   { _node_address :: !ClientAddress
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
-  , _node_headLevel :: !(Maybe Word64)
+  , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
@@ -195,10 +196,10 @@ data Parameters = Parameters
 instance HasId Parameters
 
 data Level = Level
-  { _level_cycle :: Int
-  , _level_cyclePosition :: Int
+  { _level_cycle :: Cycle
+  , _level_cyclePosition :: RawLevel
   , _level_expectedCommitment :: Bool
-  , _level_level :: Int
+  , _level_level :: RawLevel
   , _level_levelPosition :: Int
   , _level_votingPeriod :: Int
   , _level_votingPeriodPosition :: Int
@@ -323,7 +324,7 @@ newtype BlockPrefix = BlockPrefix Text
 data BlockId = BlockId
   { _blockId_chainId :: DynamicParamChainId
   , _blockId_blockHash :: DynamicParamBlockHash
-  , _blockId_predecessor :: Maybe Word64 -- ^ Number predecessors prior to block
+  , _blockId_predecessor :: Maybe RawLevel -- ^ Number predecessors prior to block
   }
   deriving (Eq, Ord, Show, Generic, Typeable)
 
@@ -347,20 +348,26 @@ blockHashId x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHas
 blockHashId' :: ChainId -> BlockHash -> BlockId
 blockHashId' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) Nothing
 
-blockHashIdPred :: BlockHash -> Word64 -> BlockId
+blockHashIdPred :: BlockHash -> RawLevel -> BlockId
 blockHashIdPred x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) . Just
 
-blockHashIdPred' :: ChainId -> BlockHash -> Word64 -> BlockId
+blockHashIdPred' :: ChainId -> BlockHash -> RawLevel -> BlockId
 blockHashIdPred' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) . Just
 
 genesisId :: BlockId
 genesisId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Genesis Nothing
+
+genesisId' :: ChainId -> BlockId
+genesisId' chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Genesis Nothing
 
 chainHeadId :: ChainId -> BlockId
 chainHeadId chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Head Nothing
 
 headId :: BlockId
 headId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Head Nothing
+
+headId' :: ChainId -> BlockId
+headId' chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Head Nothing
 
 testHeadId :: BlockId
 testHeadId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_TestHead Nothing
@@ -379,25 +386,35 @@ blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainIdToUrl chain
       DynamicParamBlockHash_Genesis -> "genesis"
       DynamicParamBlockHash_Head -> "head"
       DynamicParamBlockHash_TestHead -> "test_head"
-    offset' = maybe "" (("~" <>) . T.pack . show) offset
+    offset' = maybe "" (("~" <>) . tshow . unRawLevel) offset
+
+
+-- ACTUALLY, 2^30 max (from Ocaml types)
+newtype RawLevel = RawLevel { unRawLevel :: Int32 }
+  deriving (Eq, Ord, Show, Enum, Typeable, Generic, FromJSON, ToJSON, Num, Integral, Real)
+newtype Cycle = Cycle { unCycle :: Int32 }
+  deriving (Eq, Ord, Show, Enum, Typeable, Generic, FromJSON, ToJSON, Num, Integral, Real)
+
+newtype Priority = Priority { unPriority :: Word64 }
+  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON)
 
 data NodeRPCRequest a where
   RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
   RBlock :: BlockId -> NodeRPCRequest BlockInfo
-  RBlocks :: DynamicParamChainId -> Int -> Set BlockHash -> NodeRPCRequest (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
+  RBlocks :: DynamicParamChainId -> RawLevel -> Set BlockHash -> NodeRPCRequest (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
   RProtoConstants :: BlockId -> NodeRPCRequest ProtoInfo
   RContract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
   RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
 
   -- This only produces results when the cycles requested are between within
   -- $PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
-  RBakingRights :: BlockId -> [Word64] -> NodeRPCRequest (Seq BakingRights)
-  REndorsingRights :: BlockId -> [Word64] -> NodeRPCRequest (Seq EndorsingRights)
+  RBakingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq BakingRights)
+  REndorsingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq EndorsingRights)
   RNetworkStat :: NodeRPCRequest NetworkStat
 
   RMonitorHeads :: (RpcResponse MonitorBlock -> IO ()) -> DynamicParamChainId -> NodeRPCRequest (IO ())
 
-bakingRightsMap :: Foldable f => f BakingRights -> AppendMap PublicKeyHash (Map Int Int) -- map from delegate to
+bakingRightsMap :: Foldable f => f BakingRights -> AppendMap PublicKeyHash (Map RawLevel Priority) -- map from delegate to
 bakingRightsMap = foldMap $ \(BakingRights lvl delegate prio _) -> AppendMap.singleton delegate (Map.singleton lvl prio)
 
 data RpcError
@@ -407,10 +424,6 @@ data RpcError
   deriving (Eq, Ord, Show, Generic, Typeable)
 
 type RpcResponse = Either RpcError
-
-class MonadTezosNode m where
-  nodeRPC :: NodeRPCRequest a -> m (RpcResponse a)
-  nodeAddress :: m Text
 
 
 data BakeEfficiency = BakeEfficiency
@@ -520,7 +533,7 @@ instance HasId ErrorLog
 
 data MonitorBlock = MonitorBlock
   { _monitorBlock_hash :: BlockHash
-  , _monitorBlock_level :: Word32
+  , _monitorBlock_level :: RawLevel
   , _monitorBlock_proto :: Word8
   , _monitorBlock_predecessor :: BlockHash
   , _monitorBlock_timestamp :: UTCTime
@@ -532,14 +545,14 @@ data MonitorBlock = MonitorBlock
   } deriving (Eq, Generic, Ord, Show)
 
 data BakingRights = BakingRights
-  { _bakingRights_level :: !Int
+  { _bakingRights_level :: !RawLevel
   , _bakingRights_delegate :: !PublicKeyHash
-  , _bakingRights_priority :: !Int
+  , _bakingRights_priority :: !Priority
   , _bakingRights_estimatedTime :: !(Maybe UTCTime)
   } deriving (Eq, Generic, Ord, Show)
 
 data EndorsingRights = EndorsingRights
-  { _endorsingRights_level :: !Int
+  { _endorsingRights_level :: !RawLevel
   , _endorsingRights_delegate :: !PublicKeyHash
   , _endorsingRights_slots :: !(Seq Word8)
   , _endorsingRights_estimatedTime :: !(Maybe UTCTime)
@@ -547,8 +560,8 @@ data EndorsingRights = EndorsingRights
 
 data CachedProtocolConstants = CachedProtocolConstants
   { _cachedProtocolConstants_protocol :: !ProtocolHash
-  , _cachedProtocolConstants_blocksPerCycle :: !Int
-  , _cachedProtocolConstants_preservedCycles :: !Int
+  , _cachedProtocolConstants_blocksPerCycle :: !RawLevel
+  , _cachedProtocolConstants_preservedCycles :: !Cycle
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId CachedProtocolConstants
 
@@ -556,8 +569,9 @@ instance HasId CachedProtocolConstants
 data CachedChainCycle = CachedChainCycle
   { _cachedChainCycle_chainId :: !ChainId
   , _cachedChainCycle_constants :: !(Id CachedProtocolConstants)
-  , _cachedChainCycle_cycle :: !Int
-  , _cachedChainCycle_hash :: !BlockHash -- Hash of *first* block in cycle,
+  , _cachedChainCycle_cycle :: !Cycle
+  , _cachedChainCycle_hash :: !BlockHash -- Hash of *first* block in cycle.
+  , _cachedChainCycle_predecessor :: !BlockHash -- Hash of first block in *previous* cycle.
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId CachedChainCycle
 
@@ -565,7 +579,7 @@ data CachedBlock = CachedBlock
   { _cachedBlock_chain :: !(Id CachedChainCycle)
   , _cachedBlock_baker :: !PublicKeyHash
   , _cachedBlock_endorsers :: !(Json (Seq PublicKeyHash))
-  , _cachedBlock_cyclePosition :: !Int
+  , _cachedBlock_cyclePosition :: !RawLevel
   , _cachedBlock_hash :: !BlockHash
   , _cachedBlock_predecessor :: !BlockHash
   } deriving (Eq, Generic, Ord, Show, Typeable)
@@ -579,6 +593,13 @@ data CachedBlockRights = CachedBlockRights
   , _cachedBlockRights_endorsers :: !(Json (Seq EndorsingRights))
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId CachedBlockRights
+
+data CycleHistory = CycleHistory
+  { _cycleHistory_ancestor :: !(Id CachedChainCycle)
+  , _cycleHistory_descendant :: !(Id CachedChainCycle)
+  , _cycleHistory_distance :: !Word32
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CycleHistory
 
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
@@ -642,6 +663,7 @@ concat <$> traverse makeLenses
   , 'ErrorLogMultipleBakersForSameDelegate
   , 'ErrorLogNodeOnFork
   , 'Event
+  , 'Level
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent
