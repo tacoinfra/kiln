@@ -17,18 +17,43 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:
-    Tezos.BakeMonitor.Types
+    -- Tezos.BakeMonitor.Types
+    Tezos.BalanceUpdate
+    Tezos.Base16ByteString
+    Tezos.Base58Check
+    Tezos.Block
+    Tezos.BlockHeader
+    Tezos.Contract
+    Tezos.Fitness
+    Tezos.Json
+    Tezos.Level
+    Tezos.Micheline
     Tezos.NodeRPC
+    Tezos.Operation
+    Tezos.PeriodSequence
+    Tezos.ProtocolConstants
+    Tezos.PublicKey
+    Tezos.PublicKeyHash
+    Tezos.Signature
+    Tezos.TestChainStatus
+    Tezos.Tez
+    Tezos.Types
   other-extensions: TemplateHaskell, OverloadedStrings
   build-depends:
     aeson,
     async,
+    base16-bytestring,
+    base58-bytestring,
     bytestring,
     cases,
+    containers,
+    cryptohash,
+    cryptonite,
     http-client,
     http-types,
     lens,
     lens-aeson,
+    memory,
     mtl,
     process,
     scientific,
@@ -36,12 +61,14 @@ library
     snap,
     text,
     time,
+    unordered-containers,
+    template-haskell,
     base
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options: -Wall
 
-executable tezos-test-bake-monitor-rpc
+executable smoketest
   main-is:             Test.hs
   hs-source-dirs:      src-bin
   build-depends:

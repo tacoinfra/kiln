@@ -1,10 +1,10 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.NodeRPC where
 
@@ -14,14 +14,30 @@ import Data.Aeson
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable
-import Data.ByteString.Lazy as LBS
-import GHC.Generics
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Types.Status(Status(..))
 import qualified Data.Text as T
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 
-import Tezos.BakeMonitor.Types
+import Tezos.Types
+
+type RpcResponse = Either RpcError
+data RpcError
+  = RpcError_HttpException Text
+  | RpcError_UnexpectedStatus Int BS.ByteString
+  | RpcError_NonJSON String LBS.ByteString
+  deriving (Eq, Ord, Show, Typeable)
+
+rpcResponse_HttpException :: Text -> Either RpcError a
+rpcResponse_HttpException = Left . RpcError_HttpException
+
+rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> Either RpcError a
+rpcResponse_UnexpectedStatus x y = Left $ RpcError_UnexpectedStatus x y
+
+rpcResponse_NonJSON :: String -> LBS.ByteString -> Either RpcError a
+rpcResponse_NonJSON x y = Left $ RpcError_NonJSON x y
 
 data NodeRPCContext = NodeRPCContext
   { _nodeRPCContext_httpManager :: Manager
@@ -40,18 +56,18 @@ class MonadTezosNode m where
 
 instance MonadIO m => MonadTezosNode (NodeRPCT m) where
   nodeRPC = \case
-    Complete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
-    Block (BlockHash hash) -> nodeRPCImpl ("/blocks/" <> hash)
-    ProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
+    RComplete (BlockPrefix pfx) -> nodeRPCImpl ("/blocks/head/complete/" <> pfx)
+    RBlock hash -> nodeRPCImpl ("/blocks/" <> toBase58Text hash)
+    RProtoConstants -> nodeRPCImpl ("/blocks/head/proto/constants")
   nodeAddress = NodeRPCT $ asks _nodeRPCContext_node
 
 newtype BlockPrefix = BlockPrefix Text
-  deriving (Eq, Show, Generic, Typeable)
+  deriving (Eq, Show, Typeable)
 
 data NodeRPCRequest a where
-  Complete :: BlockPrefix -> NodeRPCRequest [BlockHash]
-  Block :: BlockHash -> NodeRPCRequest BlockInfo
-  ProtoConstants :: NodeRPCRequest ProtoInfo
+  RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
+  RBlock :: BlockHash -> NodeRPCRequest Block
+  RProtoConstants :: NodeRPCRequest ProtoInfo
 
 nodeRPCImpl :: (MonadIO m, FromJSON a) => Text -> NodeRPCT m (RpcResponse a)
 nodeRPCImpl = nodeRPCImpl' eitherDecode
@@ -75,11 +91,12 @@ nodeRPCImpl' decoder rpcSelector = NodeRPCT $ do
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack $ rpcUrl
   result' <- liftIO $ try $ httpLbs request mgr
   case result' of
-    Left err -> return (RpcResponse_HttpException err)
+    Left (err :: HttpException) -> return (rpcResponse_HttpException $ T.pack $ show err)
     Right result -> case responseStatus result of
       Status 200 _ -> do
         let body = responseBody result
         return $ case decoder body of
-          Left err -> RpcResponse_NonJSON err body
-          Right v -> RpcResponse_Success v
-      Status code phrase -> return . RpcResponse_UnexpectedStatus $ Status code phrase
+          Left err -> rpcResponse_NonJSON err body
+          Right v -> Right v
+      Status code phrase -> return $ rpcResponse_UnexpectedStatus code phrase
+
