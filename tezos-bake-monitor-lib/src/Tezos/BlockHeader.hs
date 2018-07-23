@@ -1,12 +1,12 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.BlockHeader where
 
+import Data.Aeson(ToJSON, FromJSON)
 import Data.Word
 import Data.Time
 import Data.Typeable
-import GHC.Generics
 import Data.ByteString (ByteString)
 
 import Tezos.Base16ByteString
@@ -27,11 +27,15 @@ data BlockHeader = BlockHeader
   , _blockHeader_operationsHash :: !OperationListListHash
   , _blockHeader_fitness :: !Fitness
   , _blockHeader_context :: !ContextHash
-  , _blockHeader_priority :: !Word16
+  , _blockHeader_priority :: !Priority
   , _blockHeader_proofOfWorkNonce :: !(Base16ByteString ByteString)
   , _blockHeader_seedNonceHash :: !(Maybe NonceHash)
   , _blockHeader_signature :: !(Maybe Signature)
   }
-  deriving (Show, Eq, Ord, Typeable, Generic)
+  deriving (Show, Eq, Ord, Typeable)
+
+newtype Priority = Priority { unPriority :: Word16 }
+  deriving (Eq, Ord, Typeable, Show, FromJSON, ToJSON)
+
 
 concat <$> traverse deriveTezosJson [ ''BlockHeader ]

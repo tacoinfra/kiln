@@ -7,6 +7,8 @@ module Tezos.Block where
 -- import Data.Attoparsec.ByteString
 import Data.Sequence (Seq)
 import Data.Typeable
+import Data.Word
+import Data.Time
 
 import Tezos.BalanceUpdate
 import Tezos.Base58Check
@@ -16,6 +18,7 @@ import Tezos.Level
 import Tezos.Operation
 import Tezos.PublicKeyHash
 import Tezos.TestChainStatus
+import Tezos.Fitness
 
 -- | "description": "All the information about a block.",
 data Block = Block
@@ -63,9 +66,23 @@ data BlockHeaderMetadata = BlockHeaderMetadata
   }
   deriving (Show, Eq, Ord, Typeable)
 
+data MonitorBlock = MonitorBlock
+  { _monitorBlock_hash :: BlockHash
+  , _monitorBlock_level :: RawLevel
+  , _monitorBlock_proto :: Word8
+  , _monitorBlock_predecessor :: BlockHash
+  , _monitorBlock_timestamp :: UTCTime
+  , _monitorBlock_validationPass :: Word8
+  , _monitorBlock_operationsHash :: OperationListListHash
+  , _monitorBlock_fitness :: Fitness
+  , _monitorBlock_context :: ContextHash
+  -- , _monitorBlock_protocolData :: Base16ByteString ??? -- Certainly NOT a blockheader...
+  } deriving (Eq, Ord, Show)
+
 concat <$> traverse deriveTezosJson
   [ ''Block
   , ''BlockHeaderMetadata
   , ''MaxOperationListLength
   , ''VotingPeriodKind
+  , ''MonitorBlock
   ]

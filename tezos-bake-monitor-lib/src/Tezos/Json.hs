@@ -3,16 +3,17 @@
 
 module Tezos.Json where
 
-import Language.Haskell.TH
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON, Value, encode, camelTo2)
-import qualified Data.Aeson.TH as Aeson
 import Data.Bits (Bits)
+import Data.List (uncons)
 import Data.Proxy (Proxy (..))
 import Data.Scientific (Scientific)
 import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
+import Language.Haskell.TH
 import Text.Read (readMaybe)
+import qualified Data.Aeson.TH as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.Text as T
 
@@ -36,8 +37,9 @@ tezosJsonOptions = tezosJsonOptionsKind "kind"
 
 tezosJsonOptionsKind :: String -> Aeson.Options
 tezosJsonOptionsKind tagFieldName = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = camelTo2 '_' . dropWhile ('_' /=) . tail
-      , Aeson.constructorTagModifier = camelTo2 '_' . dropWhile ('_' /=)
+      { Aeson.fieldLabelModifier = tail . camelTo2 '_' . dropWhile ('_' /=) . tail
+      , Aeson.constructorTagModifier =
+          \ctor -> camelTo2 '_' $ maybe ctor snd $ uncons $ dropWhile ('_' /=) ctor
       , Aeson.sumEncoding = Aeson.defaultTaggedObject
         { Aeson.tagFieldName = tagFieldName
         }

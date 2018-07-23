@@ -9,11 +9,12 @@
 module Tezos.Operation where
 
 import Data.Aeson
-import qualified Data.Aeson.TH as Aeson
 import Data.ByteString (ByteString)
 import Data.Sequence (Seq)
+import Data.Text (Text)
 import Data.Typeable
 import GHC.Word
+import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
 
 import Tezos.BalanceUpdate
@@ -29,19 +30,6 @@ import Tezos.PublicKeyHash
 import Tezos.Signature
 import Tezos.Tez
 
-data OperationKind
-   = OperationKind_Endorsement -- ^         "kind": { "type": "string", "enum": [ "endorsement" ] },
-   | OperationKind_SeedNonceRevelation -- ^         "kind": { "type": "string", "enum": [ "seed_nonce_revelation" ] },
-   | OperationKind_DoubleEndorsementEvidence -- ^         "kind": { "type": "string", "enum": [ "double_endorsement_evidence" ] },
-   | OperationKind_DoubleBakingEvidence -- ^         "kind": { "type": "string", "enum": [ "double_baking_evidence" ] },
-   | OperationKind_ActivateAccount -- ^         "kind": { "type": "string", "enum": [ "activate_account" ] },
-   | OperationKind_Proposals -- ^         "kind": { "type": "string", "enum": [ "proposals" ] },
-   | OperationKind_Ballot -- ^         "kind": { "type": "string", "enum": [ "ballot" ] },
-   | OperationKind_Reveal -- ^         "kind": { "type": "string", "enum": [ "reveal" ] },
-   | OperationKind_Transaction -- ^         "kind": { "type": "string", "enum": [ "transaction" ] },
-   | OperationKind_Origination -- ^         "kind": { "type": "string", "enum": [ "origination" ] },
-   | OperationKind_Delegation -- ^         "kind": { "type": "string", "enum": [ "delegation" ] },
-  deriving (Eq, Ord, Show, Typeable, Enum)
 
 -- | "operation": {
 data Operation = Operation
@@ -54,7 +42,7 @@ data Operation = Operation
   , _operation_signature :: !(Maybe Signature) -- ^         "signature": { "$ref": "#/definitions/Signature" }
   }
   deriving (Eq, Ord, Show, Typeable)
-
+--
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
   = OperationContents_Endorsement                 !OperationContentsEndorsement
@@ -69,6 +57,37 @@ data OperationContents
   | OperationContents_Origination                 !OperationContentsOrigination
   | OperationContents_Delegation                  !OperationContentsDelegation
   deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON OperationContents where
+  parseJSON = withObject "Operation" $ \v -> do
+    kind :: Text <- v .: "kind"
+    case kind of
+      "endorsement"                 -> OperationContents_Endorsement               <$> parseJSON (Object v)
+      "seed_nonce_revelation"       -> OperationContents_SeedNonceRevelation       <$> parseJSON (Object v)
+      "double_endorsement_evidence" -> OperationContents_DoubleEndorsementEvidence <$> parseJSON (Object v)
+      "double_baking_evidence"      -> OperationContents_DoubleBakingEvidence      <$> parseJSON (Object v)
+      "activate_account"            -> OperationContents_ActivateAccount           <$> parseJSON (Object v)
+      "proposals"                   -> OperationContents_Proposals                 <$> parseJSON (Object v)
+      "ballot"                      -> OperationContents_Ballot                    <$> parseJSON (Object v)
+      "reveal"                      -> OperationContents_Reveal                    <$> parseJSON (Object v)
+      "transaction"                 -> OperationContents_Transaction               <$> parseJSON (Object v)
+      "origination"                 -> OperationContents_Origination               <$> parseJSON (Object v)
+      "delegation"                  -> OperationContents_Delegation                <$> parseJSON (Object v)
+      bad -> fail $ "wrong kind:" <> show bad
+
+instance ToJSON OperationContents where
+  toJSON (OperationContents_Endorsement               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "endorsement"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_SeedNonceRevelation       x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "seed_nonce_revelation"       ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_DoubleEndorsementEvidence x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "double_endorsement_evidence" ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_DoubleBakingEvidence      x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "double_baking_evidence"      ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_ActivateAccount           x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "activate_account"            ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Proposals                 x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "proposals"                   ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Ballot                    x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "ballot"                      ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Reveal                    x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "reveal"                      ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Transaction               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "transaction"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Origination               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "origination"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (OperationContents_Delegation                x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "delegation"                  ; _ -> error "toJSON did not return an object" }
+
 
 -- | "kind": { "type": "string", "enum": [ "endorsement" ] },
 data OperationContentsEndorsement = OperationContentsEndorsement
@@ -207,10 +226,10 @@ instance (Typeable a, FromJSON a) => FromJSON (OperationResult a) where
               OperationResultStatus_Skipped -> pure Nothing
               OperationResultStatus_Backtracked -> v .:? "errors"
         x <*> case status of
-          OperationResultStatus_Applied -> Just <$> v .: "content"
+          OperationResultStatus_Applied -> Just <$> parseJSON (Object v)
           OperationResultStatus_Failed -> pure Nothing
           OperationResultStatus_Skipped -> pure Nothing
-          OperationResultStatus_Backtracked -> v .:? "content"
+          OperationResultStatus_Backtracked -> parseJSON (Object v)
 
 instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
   -- toJSON :: forall a. (ToJSON a, Typeable a) => OperationResult a -> Value
@@ -316,7 +335,6 @@ data OperationResultDelegation = OperationResultDelegation
 
 concat <$> traverse deriveTezosJson
   [ ''Operation
-  , ''OperationContents
   , ''OperationContentsEndorsement , ''EndorsementMetadata
   , ''OperationContentsSeedNonceRevelation , ''SeedNonceRevelationMetadata
   , ''OperationContentsDoubleEndorsementEvidence , ''DoubleEndorsementEvidenceMetadata
