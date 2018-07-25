@@ -40,10 +40,12 @@ import Common (whenJust)
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash
+import Tezos.Json (TezosWord64 (..))
+import Tezos.PublicKeyHash
 import Common.Schema
-import Common.Tez
+import Tezos.Tez
+import Tezos.Account
+import Tezos.NodeRPC.Types
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)

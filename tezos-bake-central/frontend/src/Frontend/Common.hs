@@ -19,10 +19,9 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
+import Tezos.Types
+
 import Common (tshow)
-import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
-import Common.TaggedHash (BlockHash, toBase58Text)
-import Common.Tez (Tez (..))
 import Common.URI (appendPaths, mkRootUri)
 
 

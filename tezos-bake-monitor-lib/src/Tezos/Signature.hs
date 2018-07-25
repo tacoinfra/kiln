@@ -3,6 +3,7 @@
 module Tezos.Signature where
 
 import Data.Typeable
+import Data.Semigroup
 import Data.Aeson
 import Data.String
 import qualified Data.ByteString as BS

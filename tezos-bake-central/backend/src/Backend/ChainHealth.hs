@@ -16,11 +16,11 @@ import qualified Network.HTTP.Client as Http
 import Safe (maximumByMay)
 import Say (say)
 
-import Backend.NodeRPC
+import Tezos.NodeRPC
+import Tezos.Lenses
+import Tezos.Types
 import Common (tshow)
-import Common.Json (TezosWord64 (..))
 import Common.Schema
-import Common.TaggedHash
 import Common.Verification
 
 type ForkInfo = ForkInfoF RpcError
@@ -77,17 +77,17 @@ checkChainHealth now delay seenBaked = do
             return $ ForkStatus_BadNode bad
           Right seen -> do
             let ancestorBlockHash = blockHashIdPred
-                  (_blockInfo_hash headInfo)
-                  (headInfo ^. blockInfo_header . blockInfoHeader_level
-                   - seen ^. blockInfo_header . blockInfoHeader_level)
+                  (_block_hash headInfo)
+                  (headInfo ^. block_header . blockHeader_level
+                   - seen ^. block_header . blockHeader_level)
             runExceptT (nodeRPC (RBlock ancestorBlockHash)) >>= \case
               Left bad -> do
                 say "no ancestor"
                 return $ ForkStatus_BadNode bad
               Right ancestor -> do
                 return $ if
-                    (seen ^. blockInfo_header . blockInfoHeader_predecessor) ==
-                    (ancestor ^. blockInfo_header . blockInfoHeader_predecessor)
+                    (seen ^. block_header . blockHeader_predecessor) ==
+                    (ancestor ^. block_header . blockHeader_predecessor)
                   then ForkStatus_Good
                   else ForkStatus_Forked
     return $ ForkInfo node status (_chainHealthBlock_time seenBaked) (_chainHealthBlock_blockHash seenBaked)
@@ -97,7 +97,7 @@ checkChainHealth now delay seenBaked = do
 -- monitor on a different host.  We'll leave it for now since it's "useful",
 -- but this should probably be reported by the client rather than queried by
 -- the monitor
-obtainNode :: (MonadIO m, MonadReader s m, HasNodeRPC s) => m (RpcResponse BlockInfo, Node)
+obtainNode :: (MonadIO m, MonadReader s m, HasNodeRPC s) => m (RpcResponse Block, Node)
 obtainNode = do
   addr <- asks (_nodeRPCContext_node . view nodeRPCContext)
   (info, level, headHash, fitness) <- runExceptT (nodeRPC (RBlock headId)) >>= \case
@@ -107,9 +107,9 @@ obtainNode = do
     Right headInfo -> do
       return
         ( Right headInfo
-        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_level
-        , Just $ headInfo ^. blockInfo_hash
-        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_fitness
+        , Just $ headInfo ^. block_header . blockHeader_level
+        , Just $ headInfo ^. block_hash
+        , Just $ headInfo ^. block_header . blockHeader_fitness
         )
   connections <- runExceptT (nodeRPC RConnections) >>= \case
     Left bad -> do

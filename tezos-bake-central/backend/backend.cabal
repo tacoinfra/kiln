@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , tezos-bake-monitor-lib
     , base
     , bytestring
     , base16-bytestring
@@ -70,12 +71,12 @@ library
     Backend
 
   other-modules:
+    Backend.CachedNodeRPC
     Backend.BalanceTracking
     Backend.ChainHealth
     Backend.Config
     Backend.Errors
     Backend.Graphs
-    Backend.NodeRPC
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema

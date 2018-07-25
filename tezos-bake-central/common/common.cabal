@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , tezos-bake-monitor-lib
     , attoparsec
     , base
     , base16-bytestring
@@ -43,24 +44,9 @@ library
     Common.Api
     Common.App
     Common.AppendIntervalMap
-    Common.Base16ByteString
-    Common.BlockHeader
     Common.Config
-    Common.Fitness
-    Common.Json
-    Common.Micheline
-    Common.Operation
-    Common.PublicKey
-    Common.PublicKeyHash
     Common.Schema
-    Common.Script
-    Common.Seed
-    Common.Signature
-    Common.TaggedHash
-    Common.Tez
-    Common.TezosBinary
     Common.URI
     Common.Verification
-    Common.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

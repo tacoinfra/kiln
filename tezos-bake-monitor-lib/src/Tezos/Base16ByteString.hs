@@ -5,6 +5,7 @@
 module Tezos.Base16ByteString where
 
 import Data.Aeson
+import Data.Semigroup
 import Data.Aeson.Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS

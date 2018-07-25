@@ -30,10 +30,11 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAn
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id)
 
+import Tezos.Types
+
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Schema
 import Common.Schema
-import Common.TaggedHash (BlockHash)
 import Common.Verification (ForkInfoF (..), ForkStatusF (..), showBadFork)
 
 mailFor :: Address -> Text -> [Error] -> Mail

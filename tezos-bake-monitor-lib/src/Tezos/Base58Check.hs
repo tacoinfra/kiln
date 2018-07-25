@@ -12,6 +12,7 @@
 module Tezos.Base58Check where
 
 import Control.Monad
+import Data.Semigroup
 import Data.Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS

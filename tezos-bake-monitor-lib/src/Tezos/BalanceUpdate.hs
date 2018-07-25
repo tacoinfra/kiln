@@ -5,6 +5,7 @@
 module Tezos.BalanceUpdate where
 
 import Data.Aeson
+import Data.Semigroup
 import Data.Text (Text)
 import Data.Typeable
 import qualified Data.HashMap.Strict as HashMap
@@ -16,22 +17,22 @@ import Tezos.Level
 import Tezos.Json
 
 data FreezerCategory
-   = FreezerCategory_Rewards -- ^ *category": { "type": "string", "enum": [ "rewards" ] },
-   | FreezerCategory_Fees -- ^ *category": { "type": "string", "enum": [ "fees" ] },
-   | FreezerCategory_Deposits -- ^ *category": { "type": "string", "enum": [ "deposits" ] },
+   = FreezerCategory_Rewards --  *category": { "type": "string", "enum": [ "rewards" ] },
+   | FreezerCategory_Fees --  *category": { "type": "string", "enum": [ "fees" ] },
+   | FreezerCategory_Deposits --  *category": { "type": "string", "enum": [ "deposits" ] },
   deriving (Eq, Ord, Show, Typeable)
 
 data ContractUpdate = ContractUpdate
-  { _contractUpdate_contract :: !ContractId -- ^ *contract": { "$ref": "#/definitions/contract_id" },
-  , _contractUpdate_change :: !Tez -- ^ *change": { "$ref": "#/definitions/int64" } },
+  { _contractUpdate_contract :: !ContractId --  *contract": { "$ref": "#/definitions/contract_id" },
+  , _contractUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" } },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data FreezerUpdate = FreezerUpdate
-  { _freezerUpdate_category :: !FreezerCategory -- ^ "category": { "type": "string", "enum": ... }
-  , _freezerUpdate_delegate :: !PublicKeyHash -- ^ *delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _freezerUpdate_level :: !RawLevel -- ^ *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-  , _freezerUpdate_change :: !Tez -- ^ *change": { "$ref": "#/definitions/int64" }
+  { _freezerUpdate_category :: !FreezerCategory --  "category": { "type": "string", "enum": ... }
+  , _freezerUpdate_delegate :: !PublicKeyHash --  *delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _freezerUpdate_level :: !RawLevel --  *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _freezerUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" }
   }
   deriving (Eq, Ord, Show, Typeable)
 

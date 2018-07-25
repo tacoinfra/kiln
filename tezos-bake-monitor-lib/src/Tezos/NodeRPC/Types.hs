@@ -6,6 +6,7 @@
 module Tezos.NodeRPC.Types where
 
 import Data.Int
+import Data.Semigroup
 import Data.Map (Map)
 import Data.Sequence (Seq)
 import Data.Set (Set)
@@ -28,7 +29,7 @@ data NodeRPCRequest a where
   RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
 
   -- This only produces results when the cycles requested are between within
-  -- $PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
+  -- PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
   RBakingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq BakingRights)
   REndorsingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq EndorsingRights)
   RNetworkStat :: NodeRPCRequest NetworkStat
@@ -47,7 +48,7 @@ data RpcError
 data BlockId = BlockId
   { _blockId_chainId :: DynamicParamChainId
   , _blockId_blockHash :: DynamicParamBlockHash
-  , _blockId_predecessor :: Maybe RawLevel -- ^ Number predecessors prior to block
+  , _blockId_predecessor :: Maybe RawLevel --  Number predecessors prior to block
   }
   deriving (Eq, Ord, Show, Typeable)
 

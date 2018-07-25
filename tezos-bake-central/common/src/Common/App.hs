@@ -32,9 +32,10 @@ import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 
+import Tezos.Types
+
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema
 
 

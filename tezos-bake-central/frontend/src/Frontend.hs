@@ -60,17 +60,16 @@ import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import qualified Text.URI as Uri
 
+import Tezos.Types
+import Tezos.NodeRPC.Types
+
 import Common (tshow)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import qualified Common.Config as Config
-import Common.Fitness (unFitness)
-import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema hiding (Event)
-import Common.Tez (Tez (..))
 import Common.URI (mkRootUri)
 import Frontend.Common
 

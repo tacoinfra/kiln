@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DoAndIfThenElse #-}
@@ -13,10 +14,13 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wall #-}
+
 module Common.Schema where
 
 import qualified Cases
 import Control.Lens.TH (makeLenses)
+import Control.Lens (views)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
@@ -42,58 +46,20 @@ import Data.Typeable (Typeable)
 import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
-
 import Common (tshow)
-import Common.Base16ByteString (Base16ByteString (..))
-import Common.BlockHeader (BlockHeader (..))
-import Common.Fitness (Fitness)
-import Common.Json (TezosWord64)
-import Common.Operation (ProtoOperation, sumFees)
-import Common.PublicKeyHash (PublicKeyHash)
-import Common.TaggedHash (BlockHash, ChainId, ContextHash, CryptoboxPublicKeyHash, OperationHash,
-                          OperationListListHash, ProtocolHash, toBase58Text)
-import Common.Tez (Tez (..))
+import Tezos.Lenses (balanceUpdates)
+import Tezos.Json
+import Tezos.Types
+import Tezos.NodeRPC
+import Tezos.Operation
 
--- import GADT.JSON (deriveGadtJson)
 
--- TODO:  all of the hashey things in Tezos are some mystery hash in base58
--- with a wonky 1.5-2 letter prefix.  maybe capture that and get read/show
--- instances once and for all...
-
-newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
-  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor)
-
-instance Foldable PeriodSequenceF where
-  foldMap f (PeriodSequence xs) = go xs where
-    go (x :| []) = fix (f x `mappend`)
-    go (x :| (y:ys)) = f x `mappend` go (y :| ys)
-
-type PeriodSequence = PeriodSequenceF TezosWord64
-
-data ProtoInfo = ProtoInfo
-  { _protoInfo_blockReward :: Tez
-  , _protoInfo_blockSecurityDeposit :: Tez
-  , _protoInfo_blocksPerCommitment :: !RawLevel
-  , _protoInfo_blocksPerCycle :: !RawLevel
-  , _protoInfo_blocksPerRollSnapshot :: !RawLevel
-  , _protoInfo_blocksPerVotingPeriod :: !RawLevel
-  , _protoInfo_endorsementReward :: Tez
-  , _protoInfo_endorsementSecurityDeposit :: Tez
-  , _protoInfo_endorsersPerBlock :: Int
-  , _protoInfo_maxOperationDataLength :: Int
-  , _protoInfo_michelsonMaximumTypeSize :: Int
-  , _protoInfo_originationBurn :: Tez
-  , _protoInfo_preservedCycles :: !Cycle
-  , _protoInfo_proofOfWorkThreshold :: TezosWord64
-  , _protoInfo_seedNonceRevelationTip :: Tez
-  , _protoInfo_timeBetweenBlocks :: PeriodSequence -- repeating sequence of seconds
-  , _protoInfo_tokensPerRoll :: Tez
-  -- TODO: these didn't show up in my quick greppings, so I don't know the types too exactly.
-  -- , _protoInfo_instructionsPerTransaction :: 40000
-  -- , _protoInfo_maxRevelationsPerBlock :: 32,
-  -- , _protoInfo_nonceLength :: 32,
-  -- , _protoInfo_proofOfWorkNonceSize :: 8
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+sumFees :: PublicKeyHash -> Operation -> Tez
+sumFees delegate = getSum . views balanceUpdates getFee
+  where
+    getFee :: BalanceUpdate -> Sum Tez
+    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == delegate = Sum (_freezerUpdate_change x)
+    getFee _ = Sum 0
 
 type Baked = Event BakedEvent
 
@@ -102,45 +68,10 @@ data Error = Error
   , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-data BlockInfo = BlockInfo
-  { _blockInfo_protocol :: ProtocolHash
-  , _blockInfo_chainId :: ChainId
-  , _blockInfo_hash :: BlockHash
-  , _blockInfo_header :: BlockInfoHeader
-  , _blockInfo_metadata :: BlockInfoMetadata
-  --, _blockInfo_operations :: [[ProtoOperation]]
-  } deriving (Eq, Show, Generic, Typeable)
-
-data BlockInfoHeader = BlockInfoHeader
-  { _blockInfoHeader_level :: RawLevel
-  , _blockInfoHeader_proto :: Word8
-  , _blockInfoHeader_predecessor :: BlockHash
-  , _blockInfoHeader_timestamp :: UTCTime
-  , _blockInfoHeader_validationPass :: Word8
-  , _blockInfoHeader_operationsHash :: OperationListListHash
-  , _blockInfoHeader_fitness :: Fitness
-  , _blockInfoHeader_context :: ContextHash
-  , _blockInfoHeader_priority :: Priority
-  -- , _blockInfoHeader_proofOfWorkNonce
-  -- , _blockInfoHeader_signature
-  } deriving (Eq, Show, Generic, Typeable)
-
-data BlockInfoMetadata = BlockInfoMetadata
-  { _blockInfoMetadata_protocol :: ProtocolHash
-  , _blockInfoMetadata_nextProtocol :: ProtocolHash
-  -- , _blockInfoMetadata_testChainStatus
-  -- , _blockInfoMetadata_maxOperationsTtl
-  -- , _blockInfoMetadata_maxOperationDataLength
-  -- , _blockInfoMetadata_maxBlockHeaderLength
-  -- , _blockInfoMetadata_maxOperationListLength
-  , _blockInfoMetadata_baker :: PublicKeyHash
-  , _blockInfoMetadata_level :: Level
-  --, _blockInfoMetadata_votingPeriodKind
-  } deriving (Eq, Show, Generic, Typeable)
-
 type ClientAddress = Text
 
 
+-- TODO: move to ~-lib
 knownProtocols :: [ProtocolHash]
 knownProtocols =
   [ "PrihK96nBAFSxVL1GLJTVhu9YnzkMFiBeuJRPA8NwuZVZCE1L6i" -- GENESIS
@@ -170,13 +101,6 @@ data ClientInfo = ClientInfo
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ClientInfo
 
-data NetworkStat = NetworkStat
-  { _networkStat_totalSent :: TezosWord64 -- bytes
-  , _networkStat_totalRecv :: TezosWord64 -- bytes
-  , _networkStat_currentInflow :: Int32 -- bytes/s
-  , _networkStat_currentOutflow :: Int32 -- bytes/s
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-
 data Node = Node
   { _node_address :: !ClientAddress
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
@@ -195,25 +119,16 @@ data Parameters = Parameters
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
 
-data Level = Level
-  { _level_cycle :: Cycle
-  , _level_cyclePosition :: RawLevel
-  , _level_expectedCommitment :: Bool
-  , _level_level :: RawLevel
-  , _level_levelPosition :: Int
-  , _level_votingPeriod :: Int
-  , _level_votingPeriodPosition :: Int
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
 data BakedEventOperation = BakedEventOperation
   { _bakedEventOperation_branch :: BlockHash
-  , _bakedEventOperation_data :: Base16ByteString ProtoOperation
+  , _bakedEventOperation_data :: Operation
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   , _bakedEvent_operations :: [[BakedEventOperation]]
-  , _bakedEvent_signedHeader :: Base16ByteString BlockHeader
+  , _bakedEvent_signedHeader :: BlockHeader
+  , _bakedEvent_delegate :: !PublicKeyHash
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SeenEvent = SeenEvent
@@ -241,7 +156,7 @@ data ErrorEvent = ErrorEvent
 data EndorseEvent = EndorseEvent
   { _endorseEvent_hash :: BlockHash
   , _endorseEvent_level :: Int
-  , _endorseEvent_slot :: Int
+  , _endorseEvent_slot :: Int -- todo, pluralize
   , _endorseEvent_delegate :: PublicKeyHash
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
@@ -262,16 +177,16 @@ data Report = Report
   , _report_startTime :: UTCTime
   } deriving (Show, Eq, Typeable, Generic)
 
--- TODO: handle parsing errors
 blockLevel :: Event BakedEvent -> Int
-blockLevel = fromIntegral . _blockHeader_level . unbase16ByteString . _bakedEvent_signedHeader . _event_detail
+blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
 
 blockRewards :: Event BakedEvent -> ProtoInfo -> Tez
 blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
   where
-    blockHeader = unbase16ByteString $ _bakedEvent_signedHeader $ _event_detail b
+    blockHeader = _bakedEvent_signedHeader $ _event_detail b
     nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
-    fees = getSum $ (foldMap.foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
+    delegate = _bakedEvent_delegate $ _event_detail b
+    fees = getSum $ (foldMap.foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tez
 endorsementReward b p = Tez $ getTez (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
@@ -304,127 +219,8 @@ data Delegate = Delegate
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Delegate
 
-
-data AccountDelegate = AccountDelegate
-  { _accountDelegate_setable :: !Bool
-  , _accountDelegate_value :: !(Maybe PublicKeyHash)
-  } deriving (Show, Eq, Ord, Generic, Typeable)
-
-data Account = Account
-  { _account_manager :: !PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
-  , _account_balance :: !Tez -- "2052452947621"
-  , _account_spendable :: !Bool -- true
-  , _account_delegate :: !AccountDelegate
-  , _account_counter :: !TezosWord64 -- 1540
-  } deriving (Show, Eq, Ord, Generic, Typeable)
-
-newtype BlockPrefix = BlockPrefix Text
-  deriving (Eq, Show, Generic, Typeable)
-
-data BlockId = BlockId
-  { _blockId_chainId :: DynamicParamChainId
-  , _blockId_blockHash :: DynamicParamBlockHash
-  , _blockId_predecessor :: Maybe RawLevel -- ^ Number predecessors prior to block
-  }
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
-data DynamicParamBlockHash
-  = DynamicParamBlockHash_BlockHash BlockHash
-  | DynamicParamBlockHash_Genesis
-  | DynamicParamBlockHash_Head
-  | DynamicParamBlockHash_TestHead
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
-data DynamicParamChainId
-  = DynamicParamChainId_ChainId ChainId
-  | DynamicParamChainId_Main
-  | DynamicParamChainId_Test
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
--- Smart constructors for "dynamic" url patterns in NodeRPC
-blockHashId :: BlockHash -> BlockId
-blockHashId x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) Nothing
-
-blockHashId' :: ChainId -> BlockHash -> BlockId
-blockHashId' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) Nothing
-
-blockHashIdPred :: BlockHash -> RawLevel -> BlockId
-blockHashIdPred x = BlockId DynamicParamChainId_Main (DynamicParamBlockHash_BlockHash x) . Just
-
-blockHashIdPred' :: ChainId -> BlockHash -> RawLevel -> BlockId
-blockHashIdPred' chain x = BlockId (DynamicParamChainId_ChainId chain) (DynamicParamBlockHash_BlockHash x) . Just
-
-genesisId :: BlockId
-genesisId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Genesis Nothing
-
-genesisId' :: ChainId -> BlockId
-genesisId' chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Genesis Nothing
-
-chainHeadId :: ChainId -> BlockId
-chainHeadId chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Head Nothing
-
-headId :: BlockId
-headId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_Head Nothing
-
-headId' :: ChainId -> BlockId
-headId' chain = BlockId (DynamicParamChainId_ChainId chain) DynamicParamBlockHash_Head Nothing
-
-testHeadId :: BlockId
-testHeadId = BlockId DynamicParamChainId_Main DynamicParamBlockHash_TestHead Nothing
-
-chainIdToUrl :: DynamicParamChainId -> Text
-chainIdToUrl chainId = case chainId of
-  DynamicParamChainId_ChainId x -> toBase58Text x
-  DynamicParamChainId_Main -> "main"
-  DynamicParamChainId_Test -> "test"
-
-blockIdToUrl :: BlockId -> Text
-blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainIdToUrl chainId <> "/blocks/" <> blockId' <> offset'
-  where
-    blockId' = case blockId of
-      DynamicParamBlockHash_BlockHash x -> toBase58Text x
-      DynamicParamBlockHash_Genesis -> "genesis"
-      DynamicParamBlockHash_Head -> "head"
-      DynamicParamBlockHash_TestHead -> "test_head"
-    offset' = maybe "" (("~" <>) . tshow . unRawLevel) offset
-
-
--- ACTUALLY, 2^30 max (from Ocaml types)
-newtype RawLevel = RawLevel { unRawLevel :: Int32 }
-  deriving (Eq, Ord, Show, Enum, Typeable, Generic, FromJSON, ToJSON, Num, Integral, Real)
-newtype Cycle = Cycle { unCycle :: Int32 }
-  deriving (Eq, Ord, Show, Enum, Typeable, Generic, FromJSON, ToJSON, Num, Integral, Real)
-
-newtype Priority = Priority { unPriority :: Word64 }
-  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON)
-
-data NodeRPCRequest a where
-  RComplete :: BlockPrefix -> NodeRPCRequest [BlockHash]
-  RBlock :: BlockId -> NodeRPCRequest BlockInfo
-  RBlocks :: DynamicParamChainId -> RawLevel -> Set BlockHash -> NodeRPCRequest (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
-  RProtoConstants :: BlockId -> NodeRPCRequest ProtoInfo
-  RContract :: BlockId -> PublicKeyHash -> NodeRPCRequest Account
-  RConnections :: NodeRPCRequest Word64 -- just a count for now, but there's more data there we may someday be interested in
-
-  -- This only produces results when the cycles requested are between within
-  -- $PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
-  RBakingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq BakingRights)
-  REndorsingRights :: BlockId -> Set (Either RawLevel Cycle) -> NodeRPCRequest (Seq EndorsingRights)
-  RNetworkStat :: NodeRPCRequest NetworkStat
-
-  RMonitorHeads :: (RpcResponse MonitorBlock -> IO ()) -> DynamicParamChainId -> NodeRPCRequest (IO ())
-
 bakingRightsMap :: Foldable f => f BakingRights -> AppendMap PublicKeyHash (Map RawLevel Priority) -- map from delegate to
 bakingRightsMap = foldMap $ \(BakingRights lvl delegate prio _) -> AppendMap.singleton delegate (Map.singleton lvl prio)
-
-data RpcError
-  = RpcError_HttpException Text
-  | RpcError_UnexpectedStatus Int BS.ByteString
-  | RpcError_NonJSON String LBS.ByteString
-  deriving (Eq, Ord, Show, Generic, Typeable)
-
-type RpcResponse = Either RpcError
-
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
@@ -461,6 +257,7 @@ unDelegateStats publicKeyHash stats =
         <$> _delegateStats_accountBalance stats
         <*> _delegateStats_accountSpendable stats
         <*> accountDelegate
+        <*> pure Nothing -- TOOD: something?
         <*> _delegateStats_accountCounter stats
   in ((efficiency,) <$> account)
 
@@ -531,33 +328,6 @@ data ErrorLog = ErrorLog
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
-data MonitorBlock = MonitorBlock
-  { _monitorBlock_hash :: BlockHash
-  , _monitorBlock_level :: RawLevel
-  , _monitorBlock_proto :: Word8
-  , _monitorBlock_predecessor :: BlockHash
-  , _monitorBlock_timestamp :: UTCTime
-  , _monitorBlock_validationPass :: Word8
-  , _monitorBlock_operationsHash :: OperationListListHash
-  , _monitorBlock_fitness :: Fitness
-  , _monitorBlock_context :: ContextHash
-  -- , _monitorBlock_protocolData :: Base16ByteString ??? -- Certainly NOT a blockheader...
-  } deriving (Eq, Generic, Ord, Show)
-
-data BakingRights = BakingRights
-  { _bakingRights_level :: !RawLevel
-  , _bakingRights_delegate :: !PublicKeyHash
-  , _bakingRights_priority :: !Priority
-  , _bakingRights_estimatedTime :: !(Maybe UTCTime)
-  } deriving (Eq, Generic, Ord, Show)
-
-data EndorsingRights = EndorsingRights
-  { _endorsingRights_level :: !RawLevel
-  , _endorsingRights_delegate :: !PublicKeyHash
-  , _endorsingRights_slots :: !(Seq Word8)
-  , _endorsingRights_estimatedTime :: !(Maybe UTCTime)
-  } deriving (Eq, Generic, Ord, Show)
-
 data CachedProtocolConstants = CachedProtocolConstants
   { _cachedProtocolConstants_protocol :: !ProtocolHash
   , _cachedProtocolConstants_blocksPerCycle :: !RawLevel
@@ -607,25 +377,15 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
       { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
       , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
       })
-  [ ''Account
-  , ''AccountDelegate
-  , ''BakeEfficiency
+  [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
-  , ''BlockId
-  , ''BlockInfo
-  , ''BlockInfoHeader
-  , ''BlockInfoMetadata
-  , ''BakingRights
-  , ''EndorsingRights
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
   , ''Delegate
   , ''DelegateStats
-  , ''DynamicParamBlockHash
-  , ''DynamicParamChainId
   , ''EndorseEvent
   , ''EndpointType
   , ''ErrorEvent
@@ -635,11 +395,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeOnFork
   , ''Event
-  , ''Level
-  , ''MonitorBlock
-  , ''NetworkStat
   , ''Node
-  , ''ProtoInfo
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
@@ -649,9 +405,6 @@ concat <$> traverse makeLenses
   [ 'BakeEfficiency
   , 'BakedEvent
   , 'BakedEventOperation
-  , 'BlockInfo
-  , 'BlockInfoHeader
-  , 'BlockInfoMetadata
   , 'Delegate
   , 'DelegateStats
   , 'EndorseEvent
@@ -663,7 +416,6 @@ concat <$> traverse makeLenses
   , 'ErrorLogMultipleBakersForSameDelegate
   , 'ErrorLogNodeOnFork
   , 'Event
-  , 'Level
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent

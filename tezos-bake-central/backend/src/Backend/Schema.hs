@@ -18,13 +18,15 @@
 
 module Backend.Schema where
 
+import Data.Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Text (Text)
-import Data.Text.Encoding as T
+import qualified Data.Text.Encoding as T
+import Data.Typeable
 import Data.Word (Word64)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
@@ -39,15 +41,16 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
+import qualified Data.Sequence as Seq
 
-import Common.Base16ByteString
-import Common.Fitness
-import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash
+import Tezos.Types
+import Tezos.NodeRPC.Types
+import Tezos.Base58Check
+  ( HashedValue(..)
+  , tryFromBase58
+  )
 import Common.Schema
-import Common.TaggedHash
-import Common.Tez
-import Common.TezosBinary
+--import Common.TezosBinary
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -94,7 +97,7 @@ instance FromField Micro where
 
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
-instance NeverNull (Json BlockInfo)
+-- instance NeverNull (Json BlockInfo)
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
@@ -102,8 +105,8 @@ instance NeverNull RawLevel
 instance NeverNull Tez
 instance NeverNull TezosWord64
 
-unsafeParseBinary :: TezosBinary a => ByteString -> a
-unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+-- unsafeParseBinary :: TezosBinary a => ByteString -> a
+-- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
@@ -114,11 +117,11 @@ getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
 getId = get . fromId
 
 
-instance TezosBinary a => PersistField (Base16ByteString a) where
-  persistName _ = "Base16ByteString"
-  toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
-  fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
-  dbType p x = dbType p (encodeBinary x)
+-- instance TezosBinary a => PersistField (Base16ByteString a) where
+--   persistName _ = "Base16ByteString"
+--   toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
+--   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
+--   dbType p x = dbType p (encodeBinary x)
 
 instance FromField (HashedValue t ByteString) where
   fromField f b = HashedValue . fromBinary <$> fromField f b
@@ -132,7 +135,6 @@ instance PrimitivePersistField a => PersistField (HashedValue t a) where
   toPersistValues = primToPersistValue . unHashedValue
   fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
   dbType p (HashedValue x) = dbType p x
-
 
 deriving instance ToField TezosWord64
 deriving instance FromField TezosWord64
@@ -187,6 +189,19 @@ instance PersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
+
+instance (ToJSON a, FromJSON a) => PrimitivePersistField (FitnessF a) where
+  toPrimitivePersistValue p (FitnessF x) = toPrimitivePersistValue p (Json x)
+  fromPrimitivePersistValue p = FitnessF . unJson . fromPrimitivePersistValue p
+
+instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
+  persistName _ = "Fitness"
+  toPersistValues = toPersistValues . Json . unFitnessF
+  fromPersistValues vs = (first $ FitnessF . unJson) <$> fromPersistValues vs
+  dbType p (FitnessF x) = dbType p (Json x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
+
+instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
+  fromField a b = FitnessF . unJson <$> (fromField a b)
 
 instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x

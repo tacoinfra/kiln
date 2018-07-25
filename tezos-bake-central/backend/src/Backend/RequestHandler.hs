@@ -35,8 +35,9 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyE
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
+import Tezos.NodeRPC (NodeRPCContext (..))
+
 import Backend.ChainHealth (obtainNode)
-import Backend.NodeRPC (NodeRPCContext (..))
 import Backend.Schema
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App

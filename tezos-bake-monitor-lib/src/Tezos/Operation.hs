@@ -9,6 +9,7 @@
 module Tezos.Operation where
 
 import Data.Aeson
+import Data.Semigroup
 import Data.ByteString (ByteString)
 import Data.Sequence (Seq)
 import Data.Text (Text)
@@ -33,13 +34,13 @@ import Tezos.Tez
 
 -- | "operation": {
 data Operation = Operation
-  { _operation_protocol :: !ProtocolHash -- ^         "protocol": { "type": "string", "enum": [ "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" ] },
-  , _operation_chainId :: !ChainId -- ^         "chain_id": { "$ref": "#/definitions/Chain_id" },
-  , _operation_hash :: !OperationHash -- ^         "hash": { "$ref": "#/definitions/Operation_hash" },
-  , _operation_branch :: !BlockHash -- ^         "branch": { "$ref": "#/definitions/block_hash" },
-  , _operation_contents :: !(Seq OperationContents) -- ^         "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.operation_contents_and_result" } },
-                                                 -- ^         "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.contents" } },
-  , _operation_signature :: !(Maybe Signature) -- ^         "signature": { "$ref": "#/definitions/Signature" }
+  { _operation_protocol :: !ProtocolHash --          "protocol": { "type": "string", "enum": [ "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" ] },
+  , _operation_chainId :: !ChainId --          "chain_id": { "$ref": "#/definitions/Chain_id" },
+  , _operation_hash :: !OperationHash --          "hash": { "$ref": "#/definitions/Operation_hash" },
+  , _operation_branch :: !BlockHash --          "branch": { "$ref": "#/definitions/block_hash" },
+  , _operation_contents :: !(Seq OperationContents) --          "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.operation_contents_and_result" } },
+                                                 --          "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.contents" } },
+  , _operation_signature :: !(Maybe Signature) --          "signature": { "$ref": "#/definitions/Signature" }
   }
   deriving (Eq, Ord, Show, Typeable)
 --
@@ -92,87 +93,87 @@ instance ToJSON OperationContents where
 -- | "kind": { "type": "string", "enum": [ "endorsement" ] },
 data OperationContentsEndorsement = OperationContentsEndorsement
   { _operationContentsEndorsement_metadata :: EndorsementMetadata
-  , _operationContentsEndorsement_level :: RawLevel -- ^ "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _operationContentsEndorsement_level :: RawLevel --  "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data EndorsementMetadata = EndorsementMetadata
-  { _endorsementMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
-  , _endorsementMetadata_delegate :: !PublicKeyHash-- ^ "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _endorsementMetadata_slots :: !(Seq Word8) -- ^ "slots": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 255 } }
+  { _endorsementMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
+  , _endorsementMetadata_delegate :: !PublicKeyHash--  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _endorsementMetadata_slots :: !(Seq Word8) --  "slots": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 255 } }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "seed_nonce_revelation" ] },
 data OperationContentsSeedNonceRevelation = OperationContentsSeedNonceRevelation
   { _operationContentsSeedNonceRevelation_metadata :: SeedNonceRevelationMetadata
-  , _operationContentsSeedNonceRevelation_level :: RawLevel -- ^ "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-  , _operationContentsSeedNonceRevelation_nonce :: !(Base16ByteString ByteString) -- ^ "nonce": { "type": "string", "pattern": "^[a-zA-Z0-9]+$" },
+  , _operationContentsSeedNonceRevelation_level :: RawLevel --  "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _operationContentsSeedNonceRevelation_nonce :: !(Base16ByteString ByteString) --  "nonce": { "type": "string", "pattern": "^[a-zA-Z0-9]+$" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data SeedNonceRevelationMetadata = SeedNonceRevelationMetadata
-  { _seedNonceRevelationMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
+  { _seedNonceRevelationMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data InlinedEndorsement = InlinedEndorsement
-  { _inlinedEndorsement_branch :: !BlockHash-- ^ "branch": { "$ref": "#/definitions/block_hash" },
-  , _inlinedEndorsement_operations :: !InlinedEndorsementContents -- ^ "operations": { "$ref": "#/definitions/inlined.endorsement.contents" },
-  , _inlinedEndorsement_signature :: !(Maybe Signature) -- ^ "signature": { "$ref": "#/definitions/Signature" }
+  { _inlinedEndorsement_branch :: !BlockHash--  "branch": { "$ref": "#/definitions/block_hash" },
+  , _inlinedEndorsement_operations :: !InlinedEndorsementContents --  "operations": { "$ref": "#/definitions/inlined.endorsement.contents" },
+  , _inlinedEndorsement_signature :: !(Maybe Signature) --  "signature": { "$ref": "#/definitions/Signature" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data InlinedEndorsementContents = InlinedEndorsementContents
-  { _inlinedEndorsementContents_level :: RawLevel -- ^ "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } },
+  { _inlinedEndorsementContents_level :: RawLevel --  "level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "double_endorsement_evidence" ] },
 data OperationContentsDoubleEndorsementEvidence = OperationContentsDoubleEndorsementEvidence
   { _operationContentsDoubleEndorsementEvidence_metadata :: DoubleEndorsementEvidenceMetadata
-  , _operationContentsDoubleEndorsementEvidence_op1 :: InlinedEndorsement -- ^ "op1": { "$ref": "#/definitions/inlined.endorsement" },
-  , _operationContentsDoubleEndorsementEvidence_op2 :: InlinedEndorsement -- ^ "op2": { "$ref": "#/definitions/inlined.endorsement" },
+  , _operationContentsDoubleEndorsementEvidence_op1 :: InlinedEndorsement --  "op1": { "$ref": "#/definitions/inlined.endorsement" },
+  , _operationContentsDoubleEndorsementEvidence_op2 :: InlinedEndorsement --  "op2": { "$ref": "#/definitions/inlined.endorsement" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data DoubleEndorsementEvidenceMetadata = DoubleEndorsementEvidenceMetadata
-  { _doubleEndorsementEvidenceMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
+  { _doubleEndorsementEvidenceMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "double_baking_evidence" ] },
 data OperationContentsDoubleBakingEvidence = OperationContentsDoubleBakingEvidence
   { _operationContentsDoubleBakingEvidence_metadata :: !DoubleBakingEvidenceMetadata
-  , _operationContentsDoubleBakingEvidence_bh1 :: !BlockHeader -- ^ "bh1": { "$ref": "#/definitions/block_header.alpha.full_header" },
-  , _operationContentsDoubleBakingEvidence_bh2 :: !BlockHeader -- ^ "bh2": { "$ref": "#/definitions/block_header.alpha.full_header" },
+  , _operationContentsDoubleBakingEvidence_bh1 :: !BlockHeader --  "bh1": { "$ref": "#/definitions/block_header.alpha.full_header" },
+  , _operationContentsDoubleBakingEvidence_bh2 :: !BlockHeader --  "bh2": { "$ref": "#/definitions/block_header.alpha.full_header" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data DoubleBakingEvidenceMetadata = DoubleBakingEvidenceMetadata
-  { _doubleBakingEvidenceMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
+  { _doubleBakingEvidenceMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "activate_account" ] },
 data OperationContentsActivateAccount = OperationContentsActivateAccount
   { _operationContentsActivateAccount_metadata :: !ActivateMetadata
-  , _operationContentsActivateAccount_pkh :: !Ed25519PublicKeyHash-- ^ "pkh": { "$ref": "#/definitions/Ed25519.Public_key_hash" },
-  , _operationContentsActivateAccount_secret :: !(Base16ByteString ByteString) -- ^ "secret": { "type": "string", "pattern": "^[a-zA-Z0-9]+$" },
+  , _operationContentsActivateAccount_pkh :: !Ed25519PublicKeyHash--  "pkh": { "$ref": "#/definitions/Ed25519.Public_key_hash" },
+  , _operationContentsActivateAccount_secret :: !(Base16ByteString ByteString) --  "secret": { "type": "string", "pattern": "^[a-zA-Z0-9]+$" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data ActivateMetadata = ActivateMetadata
-  { _activateMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
+  { _activateMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "proposals" ] },
 data OperationContentsProposals = OperationContentsProposals
-  { _operationContentsProposals_metadata :: !() -- ^ "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
-  , _operationContentsProposals_source :: !PublicKeyHash -- ^ "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsProposals_period :: !RawLevel -- ^ "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-  , _operationContentsProposals_proposals :: !(Seq ProtocolHash) -- ^ "proposals": { "type": "array", "items": { "$ref": "#/definitions/Protocol_hash" } },
+  { _operationContentsProposals_metadata :: !() --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
+  , _operationContentsProposals_source :: !PublicKeyHash --  "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsProposals_period :: !RawLevel --  "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _operationContentsProposals_proposals :: !(Seq ProtocolHash) --  "proposals": { "type": "array", "items": { "$ref": "#/definitions/Protocol_hash" } },
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -185,27 +186,27 @@ data Ballot
 
 -- | "kind": { "type": "string", "enum": [ "ballot" ] },
 data OperationContentsBallot = OperationContentsBallot
-  { _operationContentsBallot_metadata :: !() -- ^ "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
-  , _operationContentsBallot_source :: !PublicKeyHash -- ^ "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsBallot_period :: !RawLevel -- ^ "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-  , _operationContentsBallot_proposal :: !ProtocolHash -- ^ "proposal": { "$ref": "#/definitions/Protocol_hash" },
+  { _operationContentsBallot_metadata :: !() --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
+  , _operationContentsBallot_source :: !PublicKeyHash --  "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsBallot_period :: !RawLevel --  "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _operationContentsBallot_proposal :: !ProtocolHash --  "proposal": { "$ref": "#/definitions/Protocol_hash" },
   , _operationContentsBallot_ballot :: !Ballot
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data ManagerOperationMetadata a = ManagerOperationMetadata
-  { _managerOperationMetadata_balanceUpdates :: !(Seq BalanceUpdate) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
-  , _managerOperationMetadata_operationResult :: !(OperationResult a) -- ^ "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
+  { _managerOperationMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
+  , _managerOperationMetadata_operationResult :: !(OperationResult a) --  "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
   -- I don't see these in the output from the nodes, seems redundant,  i'll skip them for now.
-  -- , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) -- ^ "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
+  -- , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data OperationResultStatus
-  =  OperationResultStatus_Applied     -- ^ no errors, have result
-  |  OperationResultStatus_Failed      -- ^ have errors no result
-  |  OperationResultStatus_Skipped     -- ^ no errors, no result
-  |  OperationResultStatus_Backtracked -- ^ errors and result
+  =  OperationResultStatus_Applied     --  no errors, have result
+  |  OperationResultStatus_Failed      --  have errors no result
+  |  OperationResultStatus_Skipped     --  no errors, no result
+  |  OperationResultStatus_Backtracked --  errors and result
   deriving (Eq, Ord, Show, Typeable)
 
 -- | only certain combinations of status/errors/content are valid, but ignore that for now
@@ -253,12 +254,12 @@ instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
 -- | "kind": { "type": "string", "enum": [ "reveal" ] },
 data OperationContentsReveal = OperationContentsReveal
   { _operationContentsReveal_metadata :: ManagerOperationMetadata OperationResultReveal
-  , _operationContentsReveal_source :: !ContractId -- ^ "source": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsReveal_fee :: !Tez -- ^ "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsReveal_counter :: !Integer-- ^ "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsReveal_gasLimit :: !Integer -- ^ "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsReveal_storageLimit :: !Integer -- ^ "storage_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsReveal_publicKey :: !PublicKey -- ^ "public_key": { "$ref": "#/definitions/Signature.Public_key" },
+  , _operationContentsReveal_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
+  , _operationContentsReveal_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
+  , _operationContentsReveal_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_publicKey :: !PublicKey --  "public_key": { "$ref": "#/definitions/Signature.Public_key" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -269,64 +270,64 @@ data OperationResultReveal = OperationResultReveal
 -- | "kind": { "type": "string", "enum": [ "transaction" ] },
 data OperationContentsTransaction = OperationContentsTransaction
   { _operationContentsTransaction_metadata :: ManagerOperationMetadata OperationResultTransaction
-  , _operationContentsTransaction_source :: !ContractId -- ^ "source": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsTransaction_fee :: !Tez -- ^ "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsTransaction_counter :: !Integer-- ^ "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsTransaction_gasLimit :: !Integer -- ^ "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsTransaction_storageLimit :: !Integer -- ^ "storage_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsTransaction_amount :: !Tez -- ^ "amount": { "$ref": "#/definitions/mutez" },
-  , _operationContentsTransaction_destination :: !ContractId -- ^ "destination": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsTransaction_parameters :: !Expression -- ^ "parameters": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
+  , _operationContentsTransaction_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
+  , _operationContentsTransaction_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
+  , _operationContentsTransaction_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_amount :: !Tez --  "amount": { "$ref": "#/definitions/mutez" },
+  , _operationContentsTransaction_destination :: !ContractId --  "destination": { "$ref": "#/definitions/contract_id" },
+  , _operationContentsTransaction_parameters :: !Expression --  "parameters": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 
 -- | "operation.alpha.operation_result.transaction": {
 data OperationResultTransaction = OperationResultTransaction
-  { _operationResultTransaction_storage :: !(Maybe Expression) -- ^ "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
-  , _operationResultTransaction_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
-  , _operationResultTransaction_originatedContracts :: !(Maybe (Seq ContractId)) -- ^ "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
-  , _operationResultTransaction_consumedGas :: !(Maybe Integer) -- ^ "consumed_gas": { "$ref": "#/definitions/bignum" },
-  , _operationResultTransaction_storageSize :: !(Maybe Integer) -- ^ "storage_size": { "$ref": "#/definitions/bignum" },
-  , _operationResultTransaction_paidStorageSizeDiff :: !(Maybe Integer) -- ^ "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+  { _operationResultTransaction_storage :: !(Maybe Expression) --  "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
+  , _operationResultTransaction_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
+  , _operationResultTransaction_originatedContracts :: !(Maybe (Seq ContractId)) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
+  , _operationResultTransaction_consumedGas :: !(Maybe Integer) --  "consumed_gas": { "$ref": "#/definitions/bignum" },
+  , _operationResultTransaction_storageSize :: !(Maybe Integer) --  "storage_size": { "$ref": "#/definitions/bignum" },
+  , _operationResultTransaction_paidStorageSizeDiff :: !(Maybe Integer) --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "origination" ] },
 data OperationContentsOrigination = OperationContentsOrigination
   { _operationContentsOrigination_metadata :: ManagerOperationMetadata OperationResultOrigination
-  , _operationContentsOrigination_source :: !ContractId -- ^ "source": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsOrigination_fee :: !Tez -- ^ "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsOrigination_counter :: !Integer-- ^ "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsOrigination_gasLimit :: !Integer -- ^ "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsOrigination_storageLimit :: !Integer -- ^ "storage_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsOrigination_managerPubkey :: !PublicKeyHash -- ^ "managerPubkey": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsOrigination_balance :: !Tez -- ^ "balance": { "$ref": "#/definitions/mutez" },
-  , _operationContentsOrigination_spendable :: !Bool -- ^ "spendable": { "type": "boolean" },
-  , _operationContentsOrigination_delegatable :: !Bool -- ^ "delegatable": { "type": "boolean" },
-  , _operationContentsOrigination_delegate :: !PublicKeyHash -- ^ "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsOrigination_script :: !ContractScript -- ^ "script": { "$ref": "#/definitions/scripted.contracts" },
+  , _operationContentsOrigination_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
+  , _operationContentsOrigination_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
+  , _operationContentsOrigination_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_managerPubkey :: !PublicKeyHash --  "managerPubkey": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsOrigination_balance :: !Tez --  "balance": { "$ref": "#/definitions/mutez" },
+  , _operationContentsOrigination_spendable :: !Bool --  "spendable": { "type": "boolean" },
+  , _operationContentsOrigination_delegatable :: !Bool --  "delegatable": { "type": "boolean" },
+  , _operationContentsOrigination_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsOrigination_script :: !ContractScript --  "script": { "$ref": "#/definitions/scripted.contracts" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
 data OperationResultOrigination = OperationResultOrigination
-  { _operationResultOrigination_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) -- ^ "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
-  , _operationResultOrigination_originatedContracts :: !(Maybe (Seq ContractId)) -- ^ "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
-  , _operationResultOrigination_consumedGas :: !(Maybe Integer) -- ^ "consumed_gas": { "$ref": "#/definitions/bignum" },
-  , _operationResultOrigination_storageSize :: !(Maybe Integer) -- ^ "storage_size": { "$ref": "#/definitions/bignum" },
-  , _operationResultOrigination_paidStorageSizeDiff :: !(Maybe Integer) -- ^ "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+  { _operationResultOrigination_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
+  , _operationResultOrigination_originatedContracts :: !(Maybe (Seq ContractId)) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
+  , _operationResultOrigination_consumedGas :: !(Maybe Integer) --  "consumed_gas": { "$ref": "#/definitions/bignum" },
+  , _operationResultOrigination_storageSize :: !(Maybe Integer) --  "storage_size": { "$ref": "#/definitions/bignum" },
+  , _operationResultOrigination_paidStorageSizeDiff :: !(Maybe Integer) --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
   }
   deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "delegation" ] },
 data OperationContentsDelegation = OperationContentsDelegation
   { _operationContentsDelegation_metadata :: ManagerOperationMetadata OperationResultDelegation
-  , _operationContentsDelegation_source :: !ContractId -- ^ "source": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsDelegation_fee :: !Tez -- ^ "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsDelegation_counter :: !Integer-- ^ "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_gasLimit :: !Integer -- ^ "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_storageLimit :: !Integer -- ^ "storage_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_delegate :: !PublicKeyHash -- ^ "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsDelegation_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
+  , _operationContentsDelegation_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
+  , _operationContentsDelegation_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
   }
   deriving (Eq, Ord, Show, Typeable)
 

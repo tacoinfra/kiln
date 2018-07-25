@@ -4,6 +4,7 @@
 module Tezos.Contract where
 
 import Data.Aeson
+import Data.Semigroup
 import Data.String
 import qualified Data.ByteString as BS
 import Data.Text (Text)
@@ -61,8 +62,8 @@ instance IsString ContractId where
 
 -- | "scripted.contracts": {
 data ContractScript = ContractScript
-  { _contractScript_code :: Expression -- ^ "code": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
-  , _contractScript_storage :: Expression -- ^ "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" }
+  { _contractScript_code :: Expression --  "code": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
+  , _contractScript_storage :: Expression --  "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" }
   }
   deriving (Eq, Ord, Show, Typeable)
 

@@ -5,7 +5,6 @@ in
 obelisk.project ./. ({ pkgs, ... }:
   let
     reflex-platform = obelisk.reflex-platform;
-
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
@@ -58,14 +57,14 @@ obelisk.project ./. ({ pkgs, ... }:
       };
     };
     overrides = self: super: {
-      # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+      tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
 
-      fraxl = pkgs.haskell.lib.dontCheck (self.callCabal2nix "fraxl" (pkgs.fetchFromGitHub {
-        owner = "ElvishJerricco";
-        repo = "fraxl";
-        rev = "ce00bd0eb6a2948ca816411cc8fbc29f5ce8725d";
-        sha256 = "0y1as3ix1bd56603z9f5anpjqh4g3833zym0vflz90j6kf150mvl";
-      }) {});
+      # fraxl = pkgs.haskell.lib.dontCheck (self.callCabal2nix "fraxl" (pkgs.fetchFromGitHub {
+      #   owner = "ElvishJerricco";
+      #   repo = "fraxl";
+      #   rev = "ce00bd0eb6a2948ca816411cc8fbc29f5ce8725d";
+      #   sha256 = "0y1as3ix1bd56603z9f5anpjqh4g3833zym0vflz90j6kf150mvl";
+      # }) {});
 
       gargoyle = (self.callCabal2nix "gargoyle" (gargoyle-src + /gargoyle) {});
       gargoyle-postgresql = (self.callCabal2nix "gargoyle-postgresql" (gargoyle-src + /gargoyle-postgresql) {});

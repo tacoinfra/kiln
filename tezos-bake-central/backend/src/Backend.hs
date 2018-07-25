@@ -9,7 +9,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module Backend where
 
@@ -96,25 +95,26 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
+import Tezos.Base58Check (HashedValue(..))
+import Tezos.Types
+import Tezos.Lenses
+import Tezos.NodeRPC -- (HasNodeRPC, NodeRPCContext (..), nodeRPC, RpcError)
+
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
-import Backend.NodeRPC (HasNodeRPC, NodeRPCContext (..), nodeRPC)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler
 import Backend.Schema
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Common (tshow)
-import Common.Base16ByteString (unbase16ByteString)
 import qualified Common.Config as Config
-import Common.Json (TezosWord64 (..))
-import Common.Operation (sumFees)
-import Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText, tryReadPublicKeyHashText)
 import Common.Schema
-import Common.TaggedHash
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfoF (..), ForkStatusF (..), validateForkyBlocks)
 import Frontend (frontend)
+
+import Backend.CachedNodeRPC
 
 
 seconds :: Int -> Int
@@ -166,9 +166,9 @@ nodeWorker delay appConfig httpMgr db = do
         headBlockRsp <- runReaderT (runExceptT $ nodeRPC $ RBlock headId) ctx
         for_ headBlockRsp $ \headBlockInfo -> do
           updateAndNotify nodeId
-            [ Node_headLevelField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_level)
-            , Node_headBlockHashField =. Just (headBlockInfo ^. blockInfo_hash)
-            , Node_fitnessField =. Just (headBlockInfo ^. blockInfo_header . blockInfoHeader_fitness)
+            [ Node_headLevelField =. Just (headBlockInfo ^. block_header . blockHeader_level)
+            , Node_headBlockHashField =. Just (headBlockInfo ^. block_hash)
+            , Node_fitnessField =. Just (headBlockInfo ^. block_header . blockHeader_fitness)
             ]
 
 
@@ -231,13 +231,18 @@ clientWorker delay appConfig httpMgr db = worker (seconds delay) $ runNoLoggingT
           else
             clearNoBakerHeartbeatError cid
 
-        let bakingReward blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees . unbase16ByteString . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+        -- TODO: this is quite "wrong" in the sense that we haven't confirmed the
+        -- acceptance of this block, we should really only use this event to
+        -- know if the baker itself is active.  The reqards should be computed
+        -- based on nodes reporting new blocks.  Even if we baked, if that was
+        -- a different branch, there's no reward.
+        let bakingReward delegate blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
             rewardDelay l =
               let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                   rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
               in rc * _protoInfo_blocksPerCycle protoInfo
             insertValues = Values ["text", "varchar", "int8", "int8"]
-              [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward b)
+              [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward delegatePkh b)
               | b <- _report_baked report
               , delegatePkh <- _clientConfig_delegates clientConfig
               ]
@@ -335,7 +340,7 @@ delegateWorker delay httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb
               Right blockWithRights -> return $
                 let
                   -- The ID of the baker who baked this block
-                  baker = blockWithRights ^. blockInfo_metadata . blockInfoMetadata_baker
+                  baker = blockWithRights ^. block_metadata . blockMetadata_baker
                 in if baker == pkh then Just True -- Our delegate baked this block so point for us!
                   else case bakingRights ^? ix baker . ix levelWithRight of
                       Nothing -> Nothing -- Can't find this baker in the table of rights
@@ -401,9 +406,9 @@ cacheOneBlock
   -> DbPersist Postgresql m (Id CachedBlock)
 cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
   details <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashId' chain blkHash) ctx
-  let baker = _blockInfoMetadata_baker $ _blockInfo_metadata details
+  let baker = _blockMetadata_baker $ _block_metadata details
   let endorsers = Json mempty -- TODO: this requres operations parsing
-  let blkPred = _blockInfoHeader_predecessor $ _blockInfo_header details
+  let blkPred = _blockHeader_predecessor $ _block_header details
   let cb = CachedBlock chainCycleId baker endorsers cyclePosition blkHash blkPred
   say $ T.concat
     [ "\n\t"
@@ -416,74 +421,13 @@ cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
     ]
   toId <$> insert cb
 
-data NodeQuery a where
-  NodeQuery_GenesisParameters :: ChainId -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights :: ChainId -> BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_Baker :: ChainId -> BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
-
-deriveGEq ''NodeQuery
-deriveGCompare ''NodeQuery
-
-nodeQueryDataSourceCached
-  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
-  => IORef (DMap NodeQuery Identity) -> NodeQuery a -> m a
-nodeQueryDataSourceCached cacheRef q = do
-  cache <- liftIO $ readIORef cacheRef
-  case DMap.lookup q cache of
-    Just (Identity a) -> pure a
-    Nothing -> do
-      res <- nodeQueryDataSource (nodeQueryDataSourceCached cacheRef) q
-      liftIO $ atomicModifyIORef' cacheRef $ \oldMap ->
-        (DMap.insert q (Identity res) oldMap, ())
-      pure res
-
-nodeQueryDataSource
-  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
-  => (forall a. NodeQuery a -> m a) -> NodeQuery a -> m a
-nodeQueryDataSource self = \case
-  NodeQuery_GenesisParameters chainId -> do
-    currentHead <- nodeRPC $ RBlock $ headId' chainId
-    let headLevel = currentHead ^. blockInfo_header . blockInfoHeader_level
-    --TODO: if headLevel == 0 then error "error"
-    nodeRPC $ RProtoConstants $ blockHashIdPred' chainId (_blockInfo_hash currentHead) (headLevel - 1)
-
-  NodeQuery_BakingRights chainId branch targetLevel -> do
-    proto <- self $ NodeQuery_GenesisParameters chainId
-    let
-      cycleForLevel n = Cycle $ unRawLevel $ n `div` _protoInfo_blocksPerCycle proto
-      cycleDeterminingRightsForLevel n = max 0 $ cycleForLevel n - _protoInfo_preservedCycles proto
-
-      cycleToQuery = Set.singleton $ Right $ cycleDeterminingRightsForLevel targetLevel
-
-    branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
-    let
-      blockLevel = branchBlock ^. blockInfo_metadata . blockInfoMetadata_level
-      cyclesAgo = blockLevel ^. level_cycle - cycleDeterminingRightsForLevel targetLevel
-      levelsAgo = RawLevel (unCycle cyclesAgo) * _protoInfo_blocksPerCycle proto - blockLevel ^. level_cyclePosition
-
-    if levelsAgo < 0 then sayErr "NEGALEVEL: " else pure ()
-    if levelsAgo == 0 then
-      nodeRPC $ RBakingRights (blockHashId' chainId branch) cycleToQuery
-    else do
-      targetBlock <- nodeRPC $ RBlock $ blockHashIdPred' chainId branch levelsAgo
-      self $ NodeQuery_BakingRights chainId
-        (targetBlock ^. blockInfo_hash)
-        (targetLevel `div` _protoInfo_blocksPerCycle proto * _protoInfo_blocksPerCycle proto)
-
-  NodeQuery_Baker chainId branch rawLevel -> do
-    branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
-    let levelsAgo = branchBlock ^. blockInfo_header . blockInfoHeader_level - rawLevel
-    targetBlock <- nodeRPC $ RBlock $ blockHashIdPred' chainId branch levelsAgo
-    pure ( targetBlock ^. blockInfo_metadata . blockInfoMetadata_baker
-         , targetBlock ^. blockInfo_header . blockInfoHeader_priority
-         )
 
 calculateBakeEfficiency
   :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
   => IORef (DMap NodeQuery Identity) -> ChainId -> BlockHash -> PublicKeyHash -> m BakeEfficiency
 calculateBakeEfficiency cache chainId branch delegate = do
   branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
-  let branchLevel = branchBlock ^. blockInfo_header . blockInfoHeader_level
+  let branchLevel = branchBlock ^. block_header . blockHeader_level
 
   let levels = [branchLevel - 2..branchLevel]
   rights <- fmap (fmap bakingRightsMap) $ for levels $ nodeQueryDataSourceCached cache . NodeQuery_BakingRights chainId branch
@@ -543,12 +487,12 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
         Nothing -> do
           -- sayShow (T.pack "need chain history", blockHash)
           block <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashId' chain blockHash) ctx
-          let protoHash = _blockInfoMetadata_protocol $ _blockInfo_metadata block
-          let cycle = _level_cycle $ _blockInfoMetadata_level $ _blockInfo_metadata block
-          let cyclePosition = _level_cyclePosition $ _blockInfoMetadata_level $ _blockInfo_metadata block
+          let protoHash = _blockMetadata_protocol $ _block_metadata block
+          let cycle = _level_cycle $ _blockMetadata_level $ _block_metadata block
+          let cyclePosition = _level_cyclePosition $ _blockMetadata_level $ _block_metadata block
           -- if we're at position n we need a result of length n + 1 to include the first block of the current cycle.
           cycleInitBlock <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ RBlock $ blockHashIdPred' chain blockHash $ fromIntegral cyclePosition) ctx
-          let cycleInitHash :: BlockHash = _blockInfo_hash cycleInitBlock
+          let cycleInitHash :: BlockHash = _block_hash cycleInitBlock
           --sayShow cycleInitBlock
           -- we now have enough information to get our metadata in sync
 
@@ -578,7 +522,7 @@ doThing chain db mgr nodeUrl newBlock = timeit "doThing" say $ runNoLoggingT $ r
                   return (toId protoId', proto')
                 Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
 
-              previousCycleHash <- fmap _blockInfo_hash . onRpcError <=< flip runReaderT ctx $ runExceptT $ nodeRPC $
+              previousCycleHash <- fmap _block_hash . onRpcError <=< flip runReaderT ctx $ runExceptT $ nodeRPC $
                 RBlock (blockHashIdPred' chain cycleInitHash $ fromIntegral $ _cachedProtocolConstants_blocksPerCycle proto)
               -- protocol version data is now in sync
               cid' <- toId <$> insert CachedChainCycle
@@ -688,7 +632,7 @@ backend = do
     cache <- newIORef mempty
     runReaderT (runExceptT $ nodeRPC $ RBlock headId) nodeCtx >>= \case
       Right blockInfo -> do
-        let chain = _blockInfo_chainId blockInfo
+        let chain = _block_chainId blockInfo
         void $ flip runReaderT nodeCtx $ runExceptT $ nodeRPC $ RMonitorHeads
           (\case
             Left e -> sayErr $ "Bad monitor block: " <> tshow e
@@ -805,7 +749,6 @@ optsArgDescr =
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
-
 
 configPath :: FilePath -> FilePath
 configPath = ("config" </>)

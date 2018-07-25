@@ -4,6 +4,7 @@
 module Tezos.Fitness where
 
 import Data.Aeson
+import Data.Semigroup
 -- import Data.Attoparsec.ByteString ((<?>))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16

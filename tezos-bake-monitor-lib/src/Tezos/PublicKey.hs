@@ -3,6 +3,7 @@
 module Tezos.PublicKey where
 
 import Data.Aeson
+import Data.Semigroup
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T

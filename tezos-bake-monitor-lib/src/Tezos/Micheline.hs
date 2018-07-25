@@ -36,7 +36,7 @@ michelineV1Primitive = Seq.fromList [
   "OR", "IF_NONE", "SELF", "IF", "Left", "int", "big_map", "SENDER", "option",
   "DUP", "EQ", "NOW", "key_hash", "GET", "list", "key", "True", "GT",
   "parameter", "IF_LEFT", "FAILWITH", "PAIR", "LOOP_LEFT", "Pair", "RENAME",
-  "EMPTY_MAP", "CREATE_CONTRACT", "HASH_KEY", "ISNAT", "code", "AND" 
+  "EMPTY_MAP", "CREATE_CONTRACT", "HASH_KEY", "ISNAT", "code", "AND"
   ]
 
 

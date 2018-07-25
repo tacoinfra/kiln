@@ -4,6 +4,7 @@
 module Tezos.PublicKeyHash where
 
 import Data.Aeson
+import Data.Semigroup
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import Data.String

@@ -17,7 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:
-    -- Tezos.BakeMonitor.Types
+    Tezos.Account
     Tezos.BalanceUpdate
     Tezos.Base16ByteString
     Tezos.Base58Check
@@ -27,8 +27,12 @@ library
     Tezos.Fitness
     Tezos.Json
     Tezos.Level
+    Tezos.Lenses
     Tezos.Micheline
     Tezos.NodeRPC
+    Tezos.NodeRPC.Network
+    -- Tezos.NodeRPC.Schema
+    Tezos.NodeRPC.Types
     Tezos.Operation
     Tezos.PeriodSequence
     Tezos.ProtocolConstants
@@ -58,7 +62,6 @@ library
     process,
     scientific,
     semigroups,
-    snap,
     text,
     time,
     unordered-containers,
@@ -68,12 +71,12 @@ library
   default-language:    Haskell2010
   ghc-options: -Wall
 
-executable smoketest
+executable tezos-lib-smoketest
   main-is:             Test.hs
   hs-source-dirs:      src-bin
   build-depends:
-    mtl,
     tezos-bake-monitor-lib,
+    mtl,
     http-client,
     http-client-tls,
     base

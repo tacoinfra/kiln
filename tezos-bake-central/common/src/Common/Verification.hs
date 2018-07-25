@@ -9,7 +9,7 @@ import qualified Data.Text as T
 import Data.Time
 
 import Common.Schema
-import Common.TaggedHash (BlockHash, toBase58Text)
+import Tezos.Types
 
 data ForkInfoF e = ForkInfo
   { _forkInfo_node :: Node
