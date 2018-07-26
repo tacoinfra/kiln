@@ -327,7 +327,7 @@ data OperationContentsOrigination = OperationContentsOrigination
 -- src/proto_002_PsYLVpVv/lib_protocol/src/operation_repr.ml:258:             (dft "spendable" bool true)
   , _operationContentsOrigination_delegatable :: !Bool --  "delegatable": { "type": "boolean" },
 -- src/proto_002_PsYLVpVv/lib_protocol/src/operation_repr.ml:259:             (dft "delegatable" bool true)
-  , _operationContentsOrigination_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsOrigination_delegate :: !(Maybe PublicKeyHash) --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
   , _operationContentsOrigination_script :: !(Maybe ContractScript) --  "script": { "$ref": "#/definitions/scripted.contracts" },
   }
   deriving (Eq, Ord, Show, Typeable)
@@ -347,7 +347,7 @@ instance FromJSON OperationContentsOrigination where
     <*> v .: "balance"
     <*> v .:? "spendable" .!= True
     <*> v .:? "delegatable" .!= True
-    <*> v .: "delegate"
+    <*> v .:? "delegate"
     <*> v .:? "script"
 
 data OperationResultOrigination = OperationResultOrigination
@@ -381,7 +381,7 @@ data OperationContentsDelegation = OperationContentsDelegation
   , _operationContentsDelegation_counter :: !TezosWord64--  "counter": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsDelegation_gasLimit :: !TezosWord64 --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsDelegation_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  , _operationContentsDelegation_delegate :: !(Maybe PublicKeyHash) --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
   }
   deriving (Eq, Ord, Show, Typeable)
 

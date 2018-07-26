@@ -51,7 +51,9 @@ type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature ByteString
 type GenericSignature = HashedValue 'HashType_GenericSignature ByteString
 type ChainId = HashedValue 'HashType_ChainId ByteString
 type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash ByteString
+type P256PublicKey = HashedValue 'HashType_P256PublicKey ByteString
 type P256Signature = HashedValue 'HashType_P256Signature ByteString
+
 
 
 
@@ -90,6 +92,7 @@ data HashType
   | HashType_BlindedPublicKeyHash
   | HashType_P256PublicKeyHash
   | HashType_P256Signature
+  | HashType_P256PublicKey
   deriving (Eq, Ord, Show, Typeable, Enum)
 
 newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
@@ -282,3 +285,7 @@ instance IsBase58Hash 'HashType_P256PublicKeyHash where
 instance IsBase58Hash 'HashType_P256Signature where
   prefix _ = "\054\240\044\052"
   hashSize _ = 64
+
+instance IsBase58Hash 'HashType_P256PublicKey where
+  prefix _ = "\003\178\139\127" 
+  hashSize _ = 33

@@ -16,6 +16,7 @@ import Tezos.Base58Check
 data PublicKey
   = PublicKey_Ed25519 Ed25519PublicKey
   | PublicKey_Secp256k1 Secp256k1PublicKey
+  | PublicKey_P256 P256PublicKey
   deriving (Eq, Ord)
 
 -- TODO: This could be done for any such sum of hashes with TH?
@@ -23,14 +24,17 @@ publicKeyConstructorDecoders :: [TryDecodeBase58 PublicKey]
 publicKeyConstructorDecoders =
   [ TryDecodeBase58 PublicKey_Ed25519
   , TryDecodeBase58 PublicKey_Secp256k1
+  , TryDecodeBase58 PublicKey_P256
   ]
 
 instance ToJSON PublicKey where
   toJSON (PublicKey_Ed25519 x) = toJSON x
   toJSON (PublicKey_Secp256k1 x) = toJSON x
+  toJSON (PublicKey_P256 x) = toJSON x
 
   toEncoding (PublicKey_Ed25519 x) = toEncoding x
   toEncoding (PublicKey_Secp256k1 x) = toEncoding x
+  toEncoding (PublicKey_P256 x) = toEncoding x
 
 instance FromJSON PublicKey where
   parseJSON x = do
@@ -44,6 +48,7 @@ toPublicKeyText :: PublicKey -> Text
 toPublicKeyText = \case
     PublicKey_Ed25519 x -> T.pack $ show x
     PublicKey_Secp256k1 x -> T.pack $ show x
+    PublicKey_P256 x -> T.pack $ show x
 
 instance Show PublicKey where
   show = ("fromString "  <>) . show . toPublicKeyText

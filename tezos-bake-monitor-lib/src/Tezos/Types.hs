@@ -39,6 +39,7 @@ import Tezos.Base58Check
   , ChainId
   , P256PublicKeyHash
   , P256Signature
+  , P256PublicKey
   , ContractHash
   , NonceHash
   , CycleNonce

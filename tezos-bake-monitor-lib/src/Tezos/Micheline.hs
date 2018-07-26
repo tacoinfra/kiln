@@ -16,6 +16,7 @@ import qualified Data.Sequence as Seq
 import Data.Typeable
 
 import Tezos.Base16ByteString
+import Tezos.Json
 
 
 newtype MichelinePrimitive = MichelinePrimitive Text
@@ -41,20 +42,21 @@ michelineV1Primitive = Seq.fromList [
 
 
 
-
-data Expression
-   = Expression_Int !Integer
-   | Expression_String !Text
-   | Expression_Bytes !(Base16ByteString ByteString)
-   | Expression_Seq !(Seq (Expression))
-   | Expression_Prim !(MichelinePrimitive)
-  deriving (Eq, Ord, Show, Typeable)
-
-
-deriveJSON Aeson.defaultOptions
-      { Aeson.sumEncoding = Aeson.ObjectWithSingleField
-      , Aeson.constructorTagModifier = Aeson.camelTo2 '_' . tail . dropWhile ('_' /=)
-      } ''Expression
+type Expression = JsonValue
+-- TODO: this is not how it works; i'll have to do this properly later
+-- data Expression
+--    = Expression_Int !Integer
+--    | Expression_String !Text
+--    | Expression_Bytes !(Base16ByteString ByteString)
+--    | Expression_Seq !(Seq (Expression))
+--    | Expression_Prim !(MichelinePrimitive)
+--   deriving (Eq, Ord, Show, Typeable)
+-- 
+-- 
+-- deriveJSON Aeson.defaultOptions
+--       { Aeson.sumEncoding = Aeson.ObjectWithSingleField
+--       , Aeson.constructorTagModifier = Aeson.camelTo2 '_' . tail . dropWhile ('_' /=)
+--       } ''Expression
 
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:48:        (dft "annots" (list string) [])))
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:116:                (dft "expectedPrimitiveNames" (list prim_encoding) [])
