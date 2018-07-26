@@ -53,5 +53,8 @@ data Expression
 
 deriveJSON Aeson.defaultOptions
       { Aeson.sumEncoding = Aeson.ObjectWithSingleField
-      , Aeson.constructorTagModifier = Aeson.camelTo2 '_' . dropWhile ('_' /=)
+      , Aeson.constructorTagModifier = Aeson.camelTo2 '_' . tail . dropWhile ('_' /=)
       } ''Expression
+
+-- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:48:        (dft "annots" (list string) [])))
+-- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:116:                (dft "expectedPrimitiveNames" (list prim_encoding) [])

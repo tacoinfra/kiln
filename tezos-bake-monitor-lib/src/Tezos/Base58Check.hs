@@ -264,7 +264,7 @@ instance IsBase58Hash 'HashType_Secp256k1Signature where
   hashSize _ = 64
 
 instance IsBase58Hash 'HashType_ContractHash where
-  prefix _ =  "\003\099\029"
+  prefix _ =  "\002\090\121"
   hashSize _ = 20
 
 instance IsBase58Hash 'HashType_NonceHash where

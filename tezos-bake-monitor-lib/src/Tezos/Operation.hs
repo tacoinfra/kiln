@@ -8,6 +8,7 @@
 
 module Tezos.Operation where
 
+import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Semigroup
 import Data.ByteString (ByteString)
@@ -199,6 +200,8 @@ data ManagerOperationMetadata a = ManagerOperationMetadata
   , _managerOperationMetadata_operationResult :: !(OperationResult a) --  "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
   -- I don't see these in the output from the nodes, seems redundant,  i'll skip them for now.
   -- , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:500:           (dft "internal_operation_results"
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:501:              (list internal_operation_result_encoding) [])) ;
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -219,18 +222,20 @@ data OperationResult a = OperationResult
 
 instance (Typeable a, FromJSON a) => FromJSON (OperationResult a) where
   -- parseJSON :: forall a. (Typeable a, FromJSON a)  => Value -> Aeson.Parser (OperationResult a)
-  parseJSON = withObject (show $ typeRep (Proxy :: Proxy a)) $ \v -> do
-        status <- v .: "status"
-        let x = OperationResult status <$> case status of
-              OperationResultStatus_Applied -> pure Nothing
-              OperationResultStatus_Failed -> v .:? "errors"
-              OperationResultStatus_Skipped -> pure Nothing
-              OperationResultStatus_Backtracked -> v .:? "errors"
-        x <*> case status of
-          OperationResultStatus_Applied -> Just <$> parseJSON (Object v)
-          OperationResultStatus_Failed -> pure Nothing
-          OperationResultStatus_Skipped -> pure Nothing
-          OperationResultStatus_Backtracked -> parseJSON (Object v)
+  parseJSON = withObject (show $ typeRep (Proxy :: Proxy a)) $ \v -> OperationResult
+    <$> v .: "status"
+    <*> v .:? "errors"
+    <*> (Just <$> parseJSON (Object v) <|> pure Nothing)
+        -- let x = OperationResult status <$> case status of
+        --       OperationResultStatus_Applied -> pure Nothing
+        --       OperationResultStatus_Failed -> v .:? "errors"
+        --       OperationResultStatus_Skipped -> pure Nothing
+        --       OperationResultStatus_Backtracked -> v .:? "errors"
+        -- x <*> case status of
+        --   OperationResultStatus_Applied -> Just <$> parseJSON (Object v)
+        --   OperationResultStatus_Failed -> pure Nothing
+        --   OperationResultStatus_Skipped -> pure Nothing
+        --   OperationResultStatus_Backtracked -> parseJSON (Object v)
 
 instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
   -- toJSON :: forall a. (ToJSON a, Typeable a) => OperationResult a -> Value
@@ -256,9 +261,9 @@ data OperationContentsReveal = OperationContentsReveal
   { _operationContentsReveal_metadata :: ManagerOperationMetadata OperationResultReveal
   , _operationContentsReveal_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
   , _operationContentsReveal_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsReveal_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsReveal_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsReveal_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_counter :: !TezosWord64--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_gasLimit :: !TezosWord64 --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsReveal_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsReveal_publicKey :: !PublicKey --  "public_key": { "$ref": "#/definitions/Signature.Public_key" },
   }
   deriving (Eq, Ord, Show, Typeable)
@@ -272,12 +277,12 @@ data OperationContentsTransaction = OperationContentsTransaction
   { _operationContentsTransaction_metadata :: ManagerOperationMetadata OperationResultTransaction
   , _operationContentsTransaction_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
   , _operationContentsTransaction_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsTransaction_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsTransaction_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsTransaction_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_counter :: !TezosWord64--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_gasLimit :: !TezosWord64 --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsTransaction_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsTransaction_amount :: !Tez --  "amount": { "$ref": "#/definitions/mutez" },
   , _operationContentsTransaction_destination :: !ContractId --  "destination": { "$ref": "#/definitions/contract_id" },
-  , _operationContentsTransaction_parameters :: !Expression --  "parameters": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
+  , _operationContentsTransaction_parameters :: !(Maybe Expression) --  "parameters": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -285,48 +290,97 @@ data OperationContentsTransaction = OperationContentsTransaction
 -- | "operation.alpha.operation_result.transaction": {
 data OperationResultTransaction = OperationResultTransaction
   { _operationResultTransaction_storage :: !(Maybe Expression) --  "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" },
-  , _operationResultTransaction_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
-  , _operationResultTransaction_originatedContracts :: !(Maybe (Seq ContractId)) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
-  , _operationResultTransaction_consumedGas :: !(Maybe Integer) --  "consumed_gas": { "$ref": "#/definitions/bignum" },
-  , _operationResultTransaction_storageSize :: !(Maybe Integer) --  "storage_size": { "$ref": "#/definitions/bignum" },
-  , _operationResultTransaction_paidStorageSizeDiff :: !(Maybe Integer) --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+  , _operationResultTransaction_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:170:           (dft "balance_updates" Delegate.balance_updates_encoding [])
+  , _operationResultTransaction_originatedContracts :: !(Seq ContractId) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:171:           (dft "originated_contracts" (list Contract.encoding) [])
+  , _operationResultTransaction_consumedGas :: !TezosWord64 --  "consumed_gas": { "$ref": "#/definitions/bignum" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:172:           (dft "consumed_gas" z Z.zero)
+  , _operationResultTransaction_storageSize :: !TezosWord64 --  "storage_size": { "$ref": "#/definitions/bignum" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:173:           (dft "storage_size" z Z.zero)
+  , _operationResultTransaction_paidStorageSizeDiff :: !TezosWord64 --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:174:           (dft "paid_storage_size_diff" z Z.zero))
   }
   deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON OperationResultTransaction where
+  parseJSON = withObject "OperationResultTransaction" $ \v -> OperationResultTransaction
+    <$> v .: "storage"
+    <*> v .:? "balance_updates" .!= mempty
+    <*> v .:? "originated_contracts" .!= mempty
+    <*> v .:? "consumed_gas" .!= 0
+    <*> v .:? "storage_size" .!= 0
+    <*> v .:? "paid_storage_size_diff" .!= 0
+
 
 -- | "kind": { "type": "string", "enum": [ "origination" ] },
 data OperationContentsOrigination = OperationContentsOrigination
   { _operationContentsOrigination_metadata :: ManagerOperationMetadata OperationResultOrigination
   , _operationContentsOrigination_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
   , _operationContentsOrigination_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsOrigination_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsOrigination_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsOrigination_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_counter :: !TezosWord64--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_gasLimit :: !TezosWord64 --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsOrigination_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsOrigination_managerPubkey :: !PublicKeyHash --  "managerPubkey": { "$ref": "#/definitions/Signature.Public_key_hash" },
   , _operationContentsOrigination_balance :: !Tez --  "balance": { "$ref": "#/definitions/mutez" },
   , _operationContentsOrigination_spendable :: !Bool --  "spendable": { "type": "boolean" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/operation_repr.ml:258:             (dft "spendable" bool true)
   , _operationContentsOrigination_delegatable :: !Bool --  "delegatable": { "type": "boolean" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/operation_repr.ml:259:             (dft "delegatable" bool true)
   , _operationContentsOrigination_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsOrigination_script :: !ContractScript --  "script": { "$ref": "#/definitions/scripted.contracts" },
+  , _operationContentsOrigination_script :: !(Maybe ContractScript) --  "script": { "$ref": "#/definitions/scripted.contracts" },
   }
   deriving (Eq, Ord, Show, Typeable)
 
+instance FromJSON OperationContentsOrigination where
+  parseJSON = withObject "OperationContentsOrigination" $ \v -> OperationContentsOrigination
+    <$> v .: "metadata"
+    <*> v .: "source"
+    <*> v .: "fee"
+    <*> v .: "counter"
+    <*> v .: "gas_limit"
+    <*> v .: "storage_limit"
+    -- We need this hand written instance due to
+    -- https://gitlab.com/tezos/tezos/issues/276
+    -- Once that's resolved, we can go back to deriving this as usual
+    <*> (v .: "manager_pubkey" <|> v .: "managerPubkey")
+    <*> v .: "balance"
+    <*> v .:? "spendable" .!= True
+    <*> v .:? "delegatable" .!= True
+    <*> v .: "delegate"
+    <*> v .:? "script"
+
 data OperationResultOrigination = OperationResultOrigination
-  { _operationResultOrigination_balanceUpdates :: !(Maybe (Seq BalanceUpdate)) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
-  , _operationResultOrigination_originatedContracts :: !(Maybe (Seq ContractId)) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
-  , _operationResultOrigination_consumedGas :: !(Maybe Integer) --  "consumed_gas": { "$ref": "#/definitions/bignum" },
-  , _operationResultOrigination_storageSize :: !(Maybe Integer) --  "storage_size": { "$ref": "#/definitions/bignum" },
-  , _operationResultOrigination_paidStorageSizeDiff :: !(Maybe Integer) --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+  { _operationResultOrigination_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:208:           (dft "balance_updates" Delegate.balance_updates_encoding [])
+  , _operationResultOrigination_originatedContracts :: !(Seq ContractId) --  "originated_contracts": { "type": "array", "items": { "$ref": "#/definitions/contract_id" } },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:209:           (dft "originated_contracts" (list Contract.encoding) [])
+  , _operationResultOrigination_consumedGas :: !TezosWord64 --  "consumed_gas": { "$ref": "#/definitions/bignum" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:210:           (dft "consumed_gas" z Z.zero)
+  , _operationResultOrigination_storageSize :: !TezosWord64 --  "storage_size": { "$ref": "#/definitions/bignum" },
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:211:           (dft "storage_size" z Z.zero)
+  , _operationResultOrigination_paidStorageSizeDiff :: !TezosWord64 --  "paid_storage_size_diff": { "$ref": "#/definitions/bignum" }
+-- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:212:           (dft "paid_storage_size_diff" z Z.zero))
   }
   deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON OperationResultOrigination where
+  parseJSON = withObject "OperationResultOrigination" $ \v -> OperationResultOrigination
+    <$> v .:? "balance_updates" .!= mempty
+    <*> v .:? "originated_contracts" .!= mempty
+    <*> v .:? "consumed_gas" .!= 0
+    <*> v .:? "storage_size" .!= 0
+    <*> v .:? "paid_storage_size_diff" .!= 0
+
 
 -- | "kind": { "type": "string", "enum": [ "delegation" ] },
 data OperationContentsDelegation = OperationContentsDelegation
   { _operationContentsDelegation_metadata :: ManagerOperationMetadata OperationResultDelegation
   , _operationContentsDelegation_source :: !ContractId --  "source": { "$ref": "#/definitions/contract_id" },
   , _operationContentsDelegation_fee :: !Tez --  "fee": { "$ref": "#/definitions/mutez" },
-  , _operationContentsDelegation_counter :: !Integer--  "counter": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_gasLimit :: !Integer --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
-  , _operationContentsDelegation_storageLimit :: !Integer --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_counter :: !TezosWord64--  "counter": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_gasLimit :: !TezosWord64 --  "gas_limit": { "$ref": "#/definitions/positive_bignum" },
+  , _operationContentsDelegation_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsDelegation_delegate :: !PublicKeyHash --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
   }
   deriving (Eq, Ord, Show, Typeable)
@@ -346,8 +400,7 @@ concat <$> traverse deriveTezosJson
   , ''OperationContentsBallot , ''Ballot
   , ''OperationResultStatus
   , ''OperationContentsReveal , ''OperationResultReveal
-  , ''OperationContentsTransaction , ''OperationResultTransaction
-  , ''OperationContentsOrigination , ''OperationResultOrigination
+  , ''OperationContentsTransaction
   , ''OperationContentsDelegation, ''OperationResultDelegation
   ]
 
@@ -358,3 +411,11 @@ instance (ToJSON a, Typeable a) => ToJSON (ManagerOperationMetadata a) where
 
 instance (FromJSON a, Typeable a) => FromJSON (ManagerOperationMetadata a) where
   parseJSON = $(Aeson.mkParseJSON tezosJsonOptions ''ManagerOperationMetadata)
+
+concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions) 
+  [ ''OperationContentsOrigination
+  , ''OperationResultOrigination
+  , ''OperationResultTransaction
+  ]
+
+-- src/proto_002_PsYLVpVv/lib_protocol/src/helpers_services.ml:358:             (dft "proof_of_work_nonce"

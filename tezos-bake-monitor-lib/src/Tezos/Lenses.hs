@@ -3,7 +3,6 @@
 {-# LANGUAGE LambdaCase #-}
 module Tezos.Lenses where
 
-import Data.Foldable
 import Control.Lens.TH (makeLenses)
 import Control.Lens.Traversal
 
@@ -56,7 +55,6 @@ concat <$> traverse makeLenses
  , 'SeedNonceRevelationMetadata
  ]
 
--- balanceUpdates :: Operation -> [BalanceUpdate]
 balanceUpdates :: Traversal' Operation BalanceUpdate
 balanceUpdates = operation_contents . traverse . go
   where
