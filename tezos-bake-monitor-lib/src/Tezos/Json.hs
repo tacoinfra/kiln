@@ -8,7 +8,6 @@ import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON, Value, encod
 import Data.Bits (Bits)
 import Data.List (uncons)
 import Data.Proxy (Proxy (..))
-import Data.HashMap.Strict (HashMap)
 import Data.Map (Map)
 import Data.Scientific (Scientific)
 import Data.Semigroup

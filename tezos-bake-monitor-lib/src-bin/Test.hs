@@ -17,7 +17,14 @@ import System.ProgressBar
 import Tezos.NodeRPC
 import Tezos.Types
 
-
+showProgress :: Block -> Progress -> String
+showProgress blk (Progress x y) = T.unpack $ T.concat
+  [ T.pack $ show x
+  , "/"
+  , T.pack $ show y
+  , "@"
+  , toBase58Text (_block_hash blk)
+  ]
 main :: IO ()
 main = do
   nodeAddr:_ <- getArgs
@@ -33,5 +40,5 @@ main = do
   let headLvl = _blockHeader_level $ _block_header headBlk
   flip traverse_ [3 .. headLvl] $ \n -> do
     blk <- step $ RBlock (blockHashIdPred (_block_hash headBlk) (headLvl - n))
-    autoProgressBar (const "scan") (const $ show $ _block_hash blk) 80 (Progress (fromIntegral n) (fromIntegral headLvl))
+    autoProgressBar (const "scan") (showProgress blk) 80 (Progress (fromIntegral n) (fromIntegral headLvl))
   void $ putStrLn "constants" >> (step $ RProtoConstants headId)

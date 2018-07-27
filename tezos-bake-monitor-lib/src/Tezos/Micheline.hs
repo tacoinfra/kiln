@@ -6,14 +6,16 @@
 
 module Tezos.Micheline where
 
-import Data.Aeson (ToJSON, FromJSON)
-import Data.Aeson.TH (deriveJSON)
-import qualified Data.Aeson.Types as Aeson
-import Data.Text (Text)
+import Control.Applicative
+import Data.Aeson (ToJSON, FromJSON, (.:), (.:?), (.!=), withObject, toEncoding, toJSON, parseJSON)
 import Data.ByteString (ByteString)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq
+import Data.Text (Text)
 import Data.Typeable
+import qualified Data.Aeson.TH as Aeson
+import qualified Data.Aeson.Types as Aeson
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Sequence as Seq
 
 import Tezos.Base16ByteString
 import Tezos.Json
@@ -42,21 +44,50 @@ michelineV1Primitive = Seq.fromList [
 
 
 
-type Expression = JsonValue
--- TODO: this is not how it works; i'll have to do this properly later
--- data Expression
---    = Expression_Int !Integer
---    | Expression_String !Text
---    | Expression_Bytes !(Base16ByteString ByteString)
---    | Expression_Seq !(Seq (Expression))
---    | Expression_Prim !(MichelinePrimitive)
---   deriving (Eq, Ord, Show, Typeable)
--- 
--- 
--- deriveJSON Aeson.defaultOptions
---       { Aeson.sumEncoding = Aeson.ObjectWithSingleField
---       , Aeson.constructorTagModifier = Aeson.camelTo2 '_' . tail . dropWhile ('_' /=)
---       } ''Expression
+data Expression
+   = Expression_Int !TezosWord64
+   | Expression_String !Text
+   | Expression_Bytes !(Base16ByteString ByteString)
+   | Expression_Seq !(Seq (Expression))
+   | Expression_Prim !(MichelinePrimAp)
+  deriving (Eq, Ord, Show, Typeable)
+
+data MichelinePrimAp = MichelinePrimAp
+  { _michelinePrimAp_prim :: !MichelinePrimitive
+  , _michelinePrimAp_args :: !(Seq Expression)
+  } deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON MichelinePrimAp where
+  parseJSON = withObject "Prim" $ \v -> MichelinePrimAp
+    <$> v .: "prim"
+    <*> v .:? "args" .!= mempty
+
+concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions)
+  [ ''MichelinePrimAp
+  ]
+
+instance FromJSON Expression where
+  parseJSON v = Expression_Seq <$> parseJSON v
+            <|> Expression_Prim <$> parseJSON v
+            <|> Expression_String <$> withObject "Expression_String" (.: "string") v
+            <|> Expression_Int <$> withObject "Expression_Int" (.: "int") v
+            <|> Expression_Bytes <$> withObject "Expression_Bytes" (.: "bytes") v
+
+
+instance ToJSON Expression where
+  toJSON (Expression_Seq xs) = toJSON xs
+  toJSON (Expression_Prim xs) = toJSON xs
+  toJSON (Expression_String x) = Aeson.Object (HashMap.singleton "string" $ toJSON x)
+  toJSON (Expression_Int x) = Aeson.Object (HashMap.singleton "int" $ toJSON x)
+  toJSON (Expression_Bytes x) = Aeson.Object (HashMap.singleton "bytes" $ toJSON x)
+
+
+  -- toEncoding (Expression_Seq xs) = toEncoding xs
+  -- toEncoding (Expression_Prim xs) = toEncoding xs
+  -- toEncoding (Expression_String x) = toEncoding $ Object ("string" := x)
+  -- toEncoding (Expression_Int x) = Object ("int" := x)
+  -- toEncoding (Expression_bytes x) = Object ("bytes" := x)
+
 
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:48:        (dft "annots" (list string) [])))
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:116:                (dft "expectedPrimitiveNames" (list prim_encoding) [])

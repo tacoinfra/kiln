@@ -31,7 +31,8 @@ data ContractUpdate = ContractUpdate
 data FreezerUpdate = FreezerUpdate
   { _freezerUpdate_category :: !FreezerCategory --  "category": { "type": "string", "enum": ... }
   , _freezerUpdate_delegate :: !PublicKeyHash --  *delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _freezerUpdate_level :: !RawLevel --  *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+    -- yes, cycle, in spite of the name!
+  , _freezerUpdate_level :: !Cycle --  *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   , _freezerUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" }
   }
   deriving (Eq, Ord, Show, Typeable)
