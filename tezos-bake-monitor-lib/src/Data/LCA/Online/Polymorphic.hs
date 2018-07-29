@@ -49,6 +49,9 @@ module Data.LCA.Online.Polymorphic
   , (~=)
   , lca, mlca
   , View(..)
+  , nearest
+  , graft
+  , concatPaths
   ) where
 
 import Control.Applicative hiding (empty)
@@ -57,6 +60,9 @@ import Data.Foldable hiding (toList)
 #if __GLASGOW_HASKELL__ < 710
 import Data.Monoid (Monoid(..))
 #endif
+
+import Data.Function(on)
+import Safe.Foldable(maximumByMay)
 
 import Prelude hiding
   ( drop
@@ -324,6 +330,25 @@ mlca f g xs0 ys0 = case compare nxs nys of
       where w2 = div w 2
     goT as bs _ ta tb pa pb = (as <> f (measureT ta), pa, bs <> g (measureT tb), pb)
 {-# INLINE mlca #-}
+
+nearest
+  :: (Foldable f, Monoid a, Monoid b, Eq k)
+  => Path k b -> f (Path k a) -> Maybe (Path k a)
+nearest x = maximumByMay (compare `on` lal x)
+  where
+    -- least ancestor level.  the inverse distance between leaves.
+    lal :: (Monoid a, Monoid b, Eq k) => Path k b -> Path k a -> Int
+    lal y z = length $ lca z y
+
+-- restore sharing between paths by taking the part of branch not on trunk.
+graft :: (Monoid a, Eq k) => Path k a -> Path k a -> Path k a
+graft trunk branch = concatPaths common leaves
+  where
+    common = lca trunk branch
+    leaves = keep (length branch - length common) branch
+
+concatPaths :: (Monoid a, Eq k) => Path k a -> Path k a -> Path k a
+concatPaths trunk = foldr (uncurry cons) trunk . toList
 
 -- | Provides a consistent 'View' for peeling off the bottom node of a path.
 data View k f a
