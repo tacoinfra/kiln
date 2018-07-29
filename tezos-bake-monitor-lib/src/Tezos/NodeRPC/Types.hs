@@ -6,6 +6,7 @@
 
 module Tezos.NodeRPC.Types where
 
+import Control.Lens (re, (^.), Prism')
 import Data.Int
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -46,6 +47,21 @@ data RpcError
   | RpcError_NonJSON String LBS.ByteString
   deriving (Eq, Ord, Show, Typeable)
 
+class AsRpcError e where
+  asRpcError :: Prism' e RpcError
+
+instance AsRpcError RpcError where
+  asRpcError = id
+
+rpcResponse_HttpException :: (AsRpcError e) => Text -> e
+rpcResponse_HttpException x = RpcError_HttpException x ^. re asRpcError
+
+rpcResponse_UnexpectedStatus :: (AsRpcError e) => Int -> BS.ByteString -> e
+rpcResponse_UnexpectedStatus x y = RpcError_UnexpectedStatus x y ^. re asRpcError
+
+rpcResponse_NonJSON :: (AsRpcError e) => String -> LBS.ByteString -> e
+rpcResponse_NonJSON x y = RpcError_NonJSON x y ^. re asRpcError
+
 
 -- RPC "dynamic parameter"
 data BlockId = BlockId
@@ -73,6 +89,7 @@ chainIdToUrl chainId = case chainId of
   DynamicParamChainId_ChainId x -> toBase58Text x
   DynamicParamChainId_Main -> "main"
   DynamicParamChainId_Test -> "test"
+
 
 blockIdToUrl :: BlockId -> Text
 blockIdToUrl (BlockId chainId blockId offset) = "/chains/" <> chainIdToUrl chainId <> "/blocks/" <> blockId' <> offset'

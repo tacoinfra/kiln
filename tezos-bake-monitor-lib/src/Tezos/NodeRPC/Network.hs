@@ -37,7 +37,12 @@ import Tezos.Types
 -- newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
 --   deriving (Functor, Applicative, Monad, MonadIO)
 
-nodeRPC :: forall m a s. (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m) => NodeRPCRequest a -> m a
+nodeRPC :: forall m e a s.
+  ( MonadIO m
+  , MonadReader s m , HasNodeRPC s
+  , MonadError e m , AsRpcError e
+  )
+  => NodeRPCRequest a -> m a
 nodeRPC = \case
   RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
   RBlock hash -> nodeRPCImpl methodGet (blockIdToUrl hash)
@@ -74,24 +79,20 @@ class HasNodeRPC s where
   nodeRPCContext :: Lens' s NodeRPCContext
 instance HasNodeRPC NodeRPCContext where nodeRPCContext = id
 
-
-rpcResponse_HttpException :: Text -> Either RpcError a
-rpcResponse_HttpException = Left . RpcError_HttpException
-
-rpcResponse_UnexpectedStatus :: Int -> BS.ByteString -> Either RpcError a
-rpcResponse_UnexpectedStatus x y = Left $ RpcError_UnexpectedStatus x y
-
-rpcResponse_NonJSON :: String -> LBS.ByteString -> Either RpcError a
-rpcResponse_NonJSON x y = Left $ RpcError_NonJSON x y
-
-
-nodeRPCImpl
-  :: forall m a s. (MonadIO m, FromJSON a, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+nodeRPCImpl :: forall m a s e.
+  ( MonadIO m
+  , FromJSON a
+  , MonadReader s m , HasNodeRPC s
+  , MonadError e m , AsRpcError e
+  )
   => Method -> Text -> m a
 nodeRPCImpl = nodeRPCImpl' eitherDecode
 
-nodeRPCImpl'
-  :: forall m a s. (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+nodeRPCImpl' :: forall m a s e.
+  ( MonadIO m
+  , MonadReader s m, HasNodeRPC s
+  , MonadError e m, AsRpcError e
+  )
   => (LBS.ByteString -> Either String a) -> Method -> Text -> m a
 nodeRPCImpl' decoder method_ rpcSelector = do
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
@@ -114,26 +115,31 @@ nodeRPCImpl' decoder method_ rpcSelector = do
     throwLoggedError e = {-sayErr ("NODERPC ERROR: " <> (T.pack $ show rpcUrl) <> " >> " <> (T.pack $ show e)) *>-} throwError e
 
   liftIO (try @HttpException $ httpLbs request mgr) >>= \case
-    Left err -> throwLoggedError $ RpcError_HttpException $ (T.pack $ show err)
+    Left err -> throwLoggedError $ rpcResponse_HttpException $ (T.pack $ show err)
     Right result -> case responseStatus result of
       Status 200 _ -> do
         let body = responseBody result
         case decoder body of
-          Left err -> throwLoggedError $ RpcError_NonJSON err body
+          Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
-      Status code phrase -> throwLoggedError $ RpcError_UnexpectedStatus code phrase
+      Status code phrase -> throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
-
-nodeRPCChunkedImpl
-  :: forall m a s. (MonadIO m, FromJSON a, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+nodeRPCChunkedImpl :: forall m a s e.
+  ( MonadIO m, FromJSON a
+  , MonadReader s m, HasNodeRPC s
+  , MonadError e m, AsRpcError e
+  )
   => (RpcResponse a -> IO ())
   -> Method
   -> Text
   -> m (IO ())
 nodeRPCChunkedImpl = nodeRPCChunkedImpl' eitherDecode
 
-nodeRPCChunkedImpl'
-  :: forall m a s. (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
+nodeRPCChunkedImpl' :: forall m a s e.
+  ( MonadIO m
+  , MonadReader s m, HasNodeRPC s
+  , MonadError e m, AsRpcError e
+  )
   => (LBS.ByteString -> Either String a)
   -> (RpcResponse a -> IO ())
   -> Method
@@ -147,7 +153,7 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
 
   let
     cb' :: LBS.ByteString -> IO ()
-    cb' chunk = callback $ first (\err -> RpcError_NonJSON err chunk) $ decoder chunk
+    cb' chunk = callback $ first (\err -> rpcResponse_NonJSON err chunk) $ decoder chunk
 
     rpcUrl = node <> rpcSelector
 
@@ -164,7 +170,7 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
         }
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
   liftIO (try @HttpException $ responseOpen request mgr) >>= \case
-    Left err -> throwError $ RpcError_HttpException $ (T.pack $ show err)
+    Left err -> throwError $ rpcResponse_HttpException $ (T.pack $ show err)
     Right response -> do
       -- sayShow $ void response
       let
@@ -172,7 +178,7 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
         worker :: LBS.ByteString -> IO ()
         worker leftover = do
           try @HttpException (brRead bodyReader) >>= \case
-            Left err -> callback $ Left $ RpcError_HttpException $ (T.pack $ show err)
+            Left err -> callback $ Left $ rpcResponse_HttpException $ (T.pack $ show err)
             Right chunk -> do
               -- sayShow chunk
               let Just (xs, x) = unsnoc $ LBS.split (fromIntegral $ ord '\n') (leftover <> LBS.fromStrict chunk)
