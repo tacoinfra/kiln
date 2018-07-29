@@ -12,6 +12,7 @@ import Data.ByteString (ByteString)
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Typeable
+import qualified Data.Aeson.Encoding.Internal as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.HashMap.Strict as HashMap
@@ -81,12 +82,11 @@ instance ToJSON Expression where
   toJSON (Expression_Int x) = Aeson.Object (HashMap.singleton "int" $ toJSON x)
   toJSON (Expression_Bytes x) = Aeson.Object (HashMap.singleton "bytes" $ toJSON x)
 
-
-  -- toEncoding (Expression_Seq xs) = toEncoding xs
-  -- toEncoding (Expression_Prim xs) = toEncoding xs
-  -- toEncoding (Expression_String x) = toEncoding $ Object ("string" := x)
-  -- toEncoding (Expression_Int x) = Object ("int" := x)
-  -- toEncoding (Expression_bytes x) = Object ("bytes" := x)
+  toEncoding (Expression_Seq xs) = toEncoding xs
+  toEncoding (Expression_Prim xs) = toEncoding xs
+  toEncoding (Expression_String x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "string" ( toEncoding x )))
+  toEncoding (Expression_Int x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "int" ( toEncoding x )))
+  toEncoding (Expression_Bytes x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "bytes" ( toEncoding x )))
 
 
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:48:        (dft "annots" (list string) [])))
