@@ -3,7 +3,7 @@
 
 module Tezos.Level where
 
-import Data.Aeson (ToJSON, FromJSON)
+import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Typeable
 
 import Tezos.Json
@@ -13,7 +13,7 @@ newtype RawLevel = RawLevel {unRawLevel :: Int}
   deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, FromJSON)
 -- Units of blocksPerCycle, not neccesarily absolute level above genesis block
 newtype Cycle = Cycle {unCycle :: Int}
-  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, FromJSON)
+  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 
 -- | "level": {
 data Level = Level

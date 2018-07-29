@@ -9,6 +9,8 @@
 
 module Tezos.Operation where
 
+import Control.Lens(Traversal')
+import Control.Lens.TH (makeLenses)
 import Control.Applicative ((<|>))
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
@@ -420,5 +422,56 @@ concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions)
   , ''OperationResultOrigination
   , ''OperationResultTransaction
   ]
+concat <$> traverse makeLenses
+ [ 'Operation
+ , 'ActivateMetadata
+ , 'DoubleBakingEvidenceMetadata
+ , 'DoubleEndorsementEvidenceMetadata
+ , 'EndorsementMetadata
+ , 'InlinedEndorsement
+ , 'InlinedEndorsementContents
+ , 'ManagerOperationMetadata
+ , 'OperationContentsActivateAccount
+ , 'OperationContentsBallot
+ , 'OperationContentsDelegation
+ , 'OperationContentsDoubleBakingEvidence
+ , 'OperationContentsDoubleEndorsementEvidence
+ , 'OperationContentsEndorsement
+ , 'OperationContentsOrigination
+ , 'OperationContentsProposals
+ , 'OperationContentsReveal
+ , 'OperationContentsSeedNonceRevelation
+ , 'OperationContentsTransaction
+ , 'OperationResult
+ , 'OperationResultDelegation
+ , 'OperationResultOrigination
+ , 'OperationResultReveal
+ , 'OperationResultTransaction
+ , 'SeedNonceRevelationMetadata
+ ]
 
+instance HasBalanceUpdates Operation where
+  -- balanceUpdates :: Traversal' Operation BalanceUpdate
+  balanceUpdates = operation_contents . traverse . go
+    where
+      go :: Traversal' OperationContents BalanceUpdate
+      go f = \case
+        OperationContents_Endorsement op -> OperationContents_Endorsement <$> (operationContentsEndorsement_metadata . endorsementMetadata_balanceUpdates . traverse $ f ) op
+        OperationContents_SeedNonceRevelation op -> OperationContents_SeedNonceRevelation <$> (operationContentsSeedNonceRevelation_metadata . seedNonceRevelationMetadata_balanceUpdates . traverse $ f) op
+        OperationContents_DoubleEndorsementEvidence op -> OperationContents_DoubleEndorsementEvidence <$> (operationContentsDoubleEndorsementEvidence_metadata . doubleEndorsementEvidenceMetadata_balanceUpdates . traverse $ f) op
+        OperationContents_DoubleBakingEvidence op -> OperationContents_DoubleBakingEvidence <$> (operationContentsDoubleBakingEvidence_metadata . doubleBakingEvidenceMetadata_balanceUpdates . traverse$ f) op
+        OperationContents_ActivateAccount op -> OperationContents_ActivateAccount <$> (operationContentsActivateAccount_metadata . activateMetadata_balanceUpdates . traverse $ f) op
+
+        -- have no balance consequences
+        OperationContents_Proposals op -> pure $ OperationContents_Proposals op
+        OperationContents_Ballot op -> pure $ OperationContents_Ballot op
+
+        -- all have the saem fields
+        OperationContents_Reveal op -> OperationContents_Reveal <$> (operationContentsReveal_metadata . mgOpFees $ f) op
+        OperationContents_Transaction op -> OperationContents_Transaction <$> (operationContentsTransaction_metadata . mgOpFees $ f) op
+        OperationContents_Origination op -> OperationContents_Origination <$> (operationContentsOrigination_metadata . mgOpFees $ f) op
+        OperationContents_Delegation op -> OperationContents_Delegation <$> (operationContentsDelegation_metadata . mgOpFees $ f) op
+
+      mgOpFees :: forall a. Traversal' (ManagerOperationMetadata a) BalanceUpdate
+      mgOpFees = managerOperationMetadata_balanceUpdates . traverse
 -- src/proto_002_PsYLVpVv/lib_protocol/src/helpers_services.ml:358:             (dft "proof_of_work_nonce"

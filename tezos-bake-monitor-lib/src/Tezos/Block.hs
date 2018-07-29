@@ -5,6 +5,7 @@
 module Tezos.Block where
 
 -- import Data.Attoparsec.ByteString
+import Control.Lens.TH (makeLenses)
 import Data.Sequence (Seq)
 import Data.Typeable
 import Data.Word
@@ -30,7 +31,6 @@ data Block = Block
   , _block_operations :: Seq (Seq Operation) --  "operations": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/operation" } } }
   }
   deriving (Show, Eq, Ord, Typeable)
-
 
 data MaxOperationListLength = MaxOperationListLength --  "max_operation_list_length": {
   { _maxOperationListLength_maxSize :: !Int --  "max_size": { "type": "integer", "minimum": -1073741824, "maximum": 1073741823 },
@@ -87,3 +87,19 @@ concat <$> traverse deriveTezosJson
   , ''VotingPeriodKind
   , ''MonitorBlock
   ]
+
+concat <$> traverse makeLenses
+ [ 'Block
+ , 'BlockHeader
+ , 'BlockMetadata
+ , 'MaxOperationListLength --  "max_operation_list_length": {
+ , 'MonitorBlock
+ ]
+
+instance HasBalanceUpdates Block where
+  balanceUpdates f blk = blk' <$> md' <*> ops'
+    where
+      blk' x y = blk {_block_metadata = x, _block_operations = y}
+      md' = (blockMetadata_balanceUpdates . traverse) f $ _block_metadata blk
+      ops' = (traverse . traverse . balanceUpdates) f $ _block_operations blk
+
