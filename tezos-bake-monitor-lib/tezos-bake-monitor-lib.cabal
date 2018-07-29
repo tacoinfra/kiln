@@ -42,6 +42,7 @@ library
     Tezos.TestChainStatus
     Tezos.Tez
     Tezos.Types
+    Data.LCA.Online.Polymorphic
   other-extensions: TemplateHaskell, OverloadedStrings
   build-depends:
     aeson,
