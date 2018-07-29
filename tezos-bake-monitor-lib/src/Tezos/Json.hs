@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -10,7 +11,9 @@ import Data.List (uncons)
 import Data.Proxy (Proxy (..))
 import Data.Map (Map)
 import Data.Scientific (Scientific)
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Text (Text)
 import Data.Typeable (Typeable, typeRep)
 import Data.Vector (Vector)

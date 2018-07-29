@@ -1,9 +1,12 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Tezos.Signature where
 
 import Data.Typeable
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Aeson
 import Data.String
 import qualified Data.ByteString as BS

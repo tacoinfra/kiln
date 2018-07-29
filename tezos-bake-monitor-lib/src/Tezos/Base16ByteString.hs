@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -5,7 +6,9 @@
 module Tezos.Base16ByteString where
 
 import Data.Aeson
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Aeson.Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS

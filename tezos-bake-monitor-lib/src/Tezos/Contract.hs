@@ -1,10 +1,13 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.Contract where
 
 import Data.Aeson
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.String
 import qualified Data.ByteString as BS
 import Data.Text (Text)

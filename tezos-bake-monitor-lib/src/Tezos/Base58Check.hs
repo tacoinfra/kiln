@@ -12,7 +12,9 @@
 module Tezos.Base58Check where
 
 import Control.Monad
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS

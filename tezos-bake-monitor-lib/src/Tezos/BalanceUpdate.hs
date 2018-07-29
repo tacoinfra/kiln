@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -5,7 +6,9 @@
 module Tezos.BalanceUpdate where
 
 import Data.Aeson
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Text (Text)
 import Data.Typeable
 import qualified Data.HashMap.Strict as HashMap

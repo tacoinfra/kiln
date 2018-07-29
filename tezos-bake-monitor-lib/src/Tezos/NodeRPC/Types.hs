@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -6,7 +7,9 @@
 module Tezos.NodeRPC.Types where
 
 import Data.Int
+#if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
+#endif
 import Data.Map (Map)
 import Data.Sequence (Seq)
 import Data.Set (Set)
