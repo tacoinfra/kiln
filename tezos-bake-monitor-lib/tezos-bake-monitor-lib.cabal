@@ -42,6 +42,7 @@ library
     Tezos.TestChainStatus
     Tezos.Tez
     Tezos.Types
+    Tezos.History
     Data.LCA.Online.Polymorphic
   other-extensions: TemplateHaskell, OverloadedStrings
   build-depends:
@@ -54,6 +55,7 @@ library
     containers,
     cryptohash,
     cryptonite,
+    groups,
     http-client,
     http-types,
     lens,
@@ -84,5 +86,6 @@ executable tezos-lib-smoketest
     http-client-tls,
     text,
     terminal-progress-bar,
+    containers,
     base
   ghc-options: -Wall
