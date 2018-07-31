@@ -35,7 +35,7 @@ import Tezos.Types
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Schema
 import Common.Schema
-import Common.Verification (ForkInfoF (..), ForkStatusF (..), showBadFork)
+import Common.Verification (ForkInfo (..), ForkStatus (..), showBadFork)
 
 mailFor :: Address -> Text -> [Error] -> Mail
 mailFor fromAddr toAddr errs =
@@ -152,7 +152,7 @@ reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
       node <- get $ fromId nodeId
       for_ node $ \n ->
         queueAllEmails
-          [showBadFork $ ForkInfo n (if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
+          [showBadFork $ ForkInfo n (Left $ if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId

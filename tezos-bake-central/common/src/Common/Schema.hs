@@ -47,7 +47,6 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 import Common (tshow)
-import Tezos.Lenses (balanceUpdates)
 import Tezos.Json
 import Tezos.Types
 import Tezos.NodeRPC
@@ -112,6 +111,18 @@ data Node = Node
   , _node_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
+
+mkNode addr = Node
+    { _node_address = addr
+    , _node_identity = Nothing -- TODO
+    , _node_headLevel = Nothing
+    , _node_headBlockHash = Nothing
+    , _node_peerCount = Nothing
+    , _node_networkStat = NetworkStat 0 0 0 0
+    , _node_fitness = Nothing
+    , _node_deleted = False
+    }
+
 
 data Parameters = Parameters
   { _parameters_node :: Id Node

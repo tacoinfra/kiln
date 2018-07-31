@@ -12,6 +12,7 @@
 module Backend.RequestHandler where
 
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -35,6 +36,8 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyE
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
+import Tezos.Types(Block)
+import Tezos.NodeRPC.Types (RpcError)
 import Tezos.NodeRPC (NodeRPCContext (..))
 
 import Backend.ChainHealth (obtainNode)
@@ -59,7 +62,8 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           case nonEmpty existingIds of
             Nothing -> do
               let ctx = NodeRPCContext httpMgr addr
-              (_, node) <- runReaderT obtainNode ctx
+              node' :: Either RpcError (Block, Node) <- runExceptT $ runReaderT obtainNode ctx
+              let node =  either (const (mkNode addr)) snd node'
               insertAndNotify_ node
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
 
