@@ -96,5 +96,6 @@ obelisk.project ./. ({ pkgs, ... }:
 
       # Needed?
       heist = pkgs.haskell.lib.doJailbreak super.heist; # allow heist to use newer version of aeson
+      terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
     };
 })
