@@ -7,8 +7,7 @@ module Backend.ChainHealth (scanForkInfo, obtainNode) where
 
 import Control.Monad (void)
 import Control.Lens (view, (^.))
-import Control.Monad.Error (MonadError, throwError, catchError)
-import Control.Monad.Except (runExceptT)
+import Control.Monad.Except (MonadError, throwError, catchError, runExceptT)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.Function (on)

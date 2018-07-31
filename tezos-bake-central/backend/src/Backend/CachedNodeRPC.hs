@@ -10,7 +10,7 @@
 module Backend.CachedNodeRPC where
 
 import Control.Lens
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Data.Dependent.Map (DMap)

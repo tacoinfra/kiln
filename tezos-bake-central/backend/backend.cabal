@@ -71,6 +71,10 @@ library
     Backend
 
   other-modules:
+    Backend.Workers
+    Backend.Workers.Node
+    Backend.Workers.Client
+    Backend.Workers.Delegate
     Backend.CachedNodeRPC
     Backend.BalanceTracking
     Backend.ChainHealth

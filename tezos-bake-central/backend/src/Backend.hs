@@ -101,6 +101,11 @@ import Tezos.Types
 import Tezos.Lenses
 import Tezos.NodeRPC -- (HasNodeRPC, NodeRPCContext (..), nodeRPC, RpcError)
 
+
+import Backend.Workers.Node
+import Backend.Workers.Client
+import Backend.Workers.Delegate
+
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
@@ -138,245 +143,7 @@ addNode node = do
       return nodeId
     _ -> insertAndNotify node
 
-nodeWorker
-  :: Int -- delay between checking for updates, in seconds
-  -> AppConfig
-  -> Http.Manager
-  -> Pool Postgresql
-  -> IO (IO ())
-nodeWorker delay appConfig httpMgr db = do
-  worker (seconds delay) $ do
-    say "Update node cycle."
-    nodes :: [(Id Node, ClientAddress)] <- runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      fmap (first toId) <$>
-        project (AutoKeyField, Node_addressField) (Node_deletedField ==. False)
 
-    let nodeError :: ClientAddress -> RpcError -> ExceptT RpcError IO ()
-        nodeError nodeAddr _ = ExceptT ( fmap Right ( runNoLoggingT ( runDb (Identity db) ( flip runReaderT appConfig ( reportInaccessibleEndpointError EndpointType_Node nodeAddr )))))
-    for nodes $ \(nodeId :: Id Node, nodeAddr) -> runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
-      say $ "Updating node at " <> nodeAddr
-      protoInfo <- nodeRPC $ RProtoConstants headId
-      headBlockInfo <- nodeRPC $ RBlock headId
-      runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-        clearInaccessibleEndpointError EndpointType_Node nodeAddr
-        [queryQ| SELECT id FROM "Parameters" WHERE node = ?nodeId |] >>= \case
-          (Only (pid :: Id Parameters): _) ->
-            updateAndNotify pid [Parameters_protoInfoField =. protoInfo]
-          _ ->
-            insertAndNotify_ Parameters {_parameters_node = nodeId, _parameters_protoInfo = protoInfo}
-
-        updateAndNotify nodeId
-          [ Node_headLevelField =. Just (headBlockInfo ^. block_header . blockHeader_level)
-          , Node_headBlockHashField =. Just (headBlockInfo ^. block_hash)
-          , Node_fitnessField =. Just (headBlockInfo ^. block_header . blockHeader_fitness)
-          ]
-
-
--- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
--- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
-queryBestNode :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Id Node, Node, ProtoInfo))
-queryBestNode = do
-  nodeIds :: Maybe (Id Node, Id Parameters) <- listToMaybe <$> [queryQ|
-    SELECT n.id, p.id
-      FROM "Node" n JOIN "Parameters" p ON n.id = p.node
-     WHERE n."headLevel" IS NOT NULL AND NOT n.deleted
-     ORDER BY n."headLevel" DESC
-     LIMIT 1 |]
-
-  for nodeIds $ \(nodeId, paramId) -> do
-    Just node <- get (fromId nodeId)
-    Just params <- get (fromId paramId)
-    return (nodeId, node, _parameters_protoInfo params)
-
-
-clientWorker
-  :: Int -- delay between checking for updates, in seconds
-  -> AppConfig
-  -> Http.Manager
-  -> Pool Postgresql
-  -> IO (IO ())
-clientWorker delay appConfig httpMgr db = worker (seconds delay) $ runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-  say "Update client cycle."
-  now <- getTime
-  let maxTime = Just (addUTCTime (- fromIntegral delay) now)
-  (queryBestNode >>=) $ traverse_ $ \(nodeId, bestNode, protoInfo) -> do
-    let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
-
-    toUpdate :: [(Id Client, ClientAddress)] <- [queryQ|
-      SELECT id, address
-      FROM "Client" c
-      WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
-      ORDER BY updated NULLS FIRST
-    |]
-
-    clientDelegates <- for toUpdate $ \(cid, address) -> do
-      let handlingHttpExc f = (Just <$> f) `catches`
-            [ Handler $ \(e :: Http.JSONException) -> sayErr (tshow e) $> Nothing
-            , Handler $ \(e :: Http.HttpException) -> sayErr (tshow e) $> Nothing
-            ]
-
-      result <- handlingHttpExc $ do
-        say $ "Updating client at " <> address
-
-        -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-        clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
-        let clientConfigJson = Json clientConfig
-
-        report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
-        let reportJson = Json report
-
-        for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->
-          if addUTCTime blockHeightTimeout (_event_time seenEvent) < now then
-            reportNoBakerHeartbeatError cid (_event_detail seenEvent)
-          else
-            clearNoBakerHeartbeatError cid
-
-        -- TODO: this is quite "wrong" in the sense that we haven't confirmed the
-        -- acceptance of this block, we should really only use this event to
-        -- know if the baker itself is active.  The reqards should be computed
-        -- based on nodes reporting new blocks.  Even if we baked, if that was
-        -- a different branch, there's no reward.
-        let bakingReward delegate blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
-            rewardDelay l =
-              let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                  rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
-              in rc * _protoInfo_blocksPerCycle protoInfo
-            insertValues = Values ["text", "varchar", "int8", "int8"]
-              [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward delegatePkh b)
-              | b <- _report_baked report
-              , delegatePkh <- _clientConfig_delegates clientConfig
-              ]
-        unless (null $ _report_baked report) $ void $ [executeQ|
-          INSERT INTO "PendingReward" (delegate, hash, level, amount)
-          SELECT d.id, x.hash, x.level, x.amount
-          FROM ?insertValues x (delegate_pkh, hash, level, amount)
-          JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
-          ON CONFLICT DO NOTHING |]
-
-        _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                        VALUES (?cid, ?reportJson, ?clientConfigJson)
-                        ON CONFLICT (client) DO UPDATE SET
-                          report = ?reportJson
-                        , config = ?clientConfigJson
-                        |]
-        forkInfo <- scanForkInfo httpMgr now report bestNode
-        validateForkyBlocks sayShow forkInfo
-
-        updateAndNotify cid [Client_updatedField =. Just now]
-
-      -- TODO: Add back errors reported by client RPC
-
-        -- case sortBy (compare `on` _event_time) (_report_errors report) of
-        --   [] -> return ()
-        --   es -> do
-        --     lastError <- liftIO $ readIORef lastErrorRef
-        --     let (new,_) = span ((>= lastError) . Just . _error_time) (mkErr <$> es)
-        --     case new of
-        --       [] -> return ()
-        --       (x:_) -> do
-        --         liftIO $ writeIORef lastErrorRef (Just $ _error_time x)
-        --         queueAllEmails new
-        -- TODO.  debounce below as above
-        flip validateForkyBlocks forkInfo $ \errors -> case nonEmpty errors of
-          Nothing -> clearNodeOnForkError nodeId
-          Just es -> for_ es $ \e -> do
-            let tooOld = case _forkInfo_forkStatus e of
-                  Left ForkStatus_TooOld -> True
-                  _ -> False
-            reportNodeOnForkError nodeId tooOld (_forkInfo_hash e) (_forkInfo_time e)
-
-        return $ _clientConfig_delegates clientConfig
-
-      case result of
-        Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address
-        Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
-
-    insertClientDelegates (Set.fromList $ concat clientDelegates)
-
-
-insertClientDelegates :: (Monad m, PersistBackend m, PostgresRaw m) => Set PublicKeyHash -> m ()
-insertClientDelegates pkhs = do
-  let inPkhs = Pg.In $ Set.toList pkhs
-  (existingIds :: [Id Delegate], existingPkhs :: [PublicKeyHash]) <-
-    first (map toId) . unzip <$> project (AutoKeyField, Delegate_publicKeyHashField) CondEmpty
-
-  let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
-  for_ newPkhs $ \pkh -> insertAndNotify $ Delegate pkh False
-
-
-delegateWorker
-  :: MonadIO m
-  => Int
-  -> Http.Manager
-  -> Pool Postgresql
-  -> m (IO ())
-delegateWorker delay httpMgr db = worker (seconds delay) $ do
-  mBestNode <- runNoLoggingT $ runDb (Identity db) $ queryBestNode
-  for_  mBestNode $ \(nid, bestNode, protoInfo) -> (flip runReaderT (NodeRPCContext httpMgr $ _node_address bestNode)) $ do
-    say "Update delegate cycle."
-    let
-      headLevel :: Integer = fromIntegral $ fromMaybe (error "queryBestNode returned unfit node") $ _node_headLevel bestNode
-      latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
-      levelRange = [max 0 (headLevel - 10) .. headLevel]
-      headBlockHash = fromMaybe (error "have block level but not hash!") $ _node_headBlockHash bestNode
-    say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
-    delegates :: Map (Id Delegate) Delegate <- runNoLoggingT $ runDb (Identity db) $ selectMap DelegateConstructor (Delegate_deletedField ==. False)
-    -- TODO: rights don't change very much, and the node is very slow at computing large ranges of rights.  build up a set of rights slowly and cache them.
-    let oops :: forall a m. MonadIO m => RpcError -> m ()
-        oops e = sayShow e
-    runExceptT $ flip catchError oops $ do
-        allBakingRights <- nodeRPC (RBakingRights (blockHashId headBlockHash) (Set.fromList $ Left . RawLevel . fromIntegral <$> levelRange))
-        -- Filter out baking rights that apply to levels in the future.
-        -- map is from delegate*level to priorotiy
-        let bakingRights :: AppendMap.AppendMap PublicKeyHash (Map RawLevel Priority) =
-              AppendMap.filter (not . null) $ Map.filterWithKey (\k _ -> k <= fromIntegral headLevel) <$> bakingRightsMap allBakingRights
-        ifor_ delegates $ \dId delegate -> do
-          let pkh = _delegate_publicKeyHash delegate
-          say $ "Updating delegate " <> toPublicKeyHashText pkh
-          accountStatus <- nodeRPC (RContract headId (_delegate_publicKeyHash delegate))
-          bakingRightsUtilized <- ifor (fromMaybe mempty $ bakingRights ^? ix pkh) $ \levelWithRight delegatePriority -> do
-            blockWithRights <- (nodeRPC (RBlock $ blockHashIdPred headBlockHash (fromIntegral headLevel - fromIntegral levelWithRight)))
-            let
-              -- The ID of the baker who baked this block
-              baker = blockWithRights ^. block_metadata . blockMetadata_baker
-            return $ if baker == pkh then Just True -- Our delegate baked this block so point for us!
-              else case bakingRights ^? ix baker . ix levelWithRight of
-                  Nothing -> Nothing -- Can't find this baker in the table of rights
-                  Just bakerPriority -> if bakerPriority < delegatePriority
-                    then Nothing -- The baker baked with higher priority so this block doesn't count either way.
-                    else Just False -- The baker baked with lower priority, so point against us.
-            -- return ()
-
-          let
-            calcBakingEfficiency (numBakedAcc, numOpportunitiesAcc) = \case
-              Nothing -> (numBakedAcc, numOpportunitiesAcc)
-              Just True -> (numBakedAcc + 1, numOpportunitiesAcc + 1)
-              Just False -> (numBakedAcc, numOpportunitiesAcc + 1)
-
-            (numBaked, numOpportunities) = foldl' calcBakingEfficiency (0, 0) bakingRightsUtilized
-
-          runNoLoggingT $ runDb (Identity db) $ do
-            delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . fmap toId <$> project AutoKeyField ((DelegateStats_delegateField ==. dId) `limitTo` 1)
-            case delegateStatsId of
-              Nothing -> insertAndNotify_ DelegateStats
-                { _delegateStats_delegate = dId
-                , _delegateStats_efficiency = BakeEfficiency numBaked numOpportunities
-                , _delegateStats_accountBalance = Just $ _account_balance accountStatus
-                , _delegateStats_accountSpendable = Just $ _account_spendable accountStatus
-                , _delegateStats_accountSetable = Just $ _accountDelegate_setable $ _account_delegate accountStatus
-                , _delegateStats_accountValue = _accountDelegate_value $ _account_delegate accountStatus
-                , _delegateStats_accountCounter = Just $ _account_counter accountStatus
-                }
-              Just dsId -> updateAndNotify dsId
-                [ DelegateStats_efficiencyField =. BakeEfficiency numBaked numOpportunities
-                , DelegateStats_accountBalanceField =. (Just $ _account_balance accountStatus)
-                , DelegateStats_accountSpendableField =. (Just $ _account_spendable accountStatus)
-                , DelegateStats_accountSetableField =. (Just $ _accountDelegate_setable $ _account_delegate accountStatus)
-                , DelegateStats_accountValueField =. (_accountDelegate_value $ _account_delegate accountStatus)
-                , DelegateStats_accountCounterField =. (Just $ _account_counter accountStatus)
-                ]
-
-    --       return ()
 
 
 timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
@@ -647,9 +414,9 @@ backend = do
     --   Left bad -> sayShow bad
 
     let appConfig = AppConfig emailFromAddress
-    addFinalizer =<< nodeWorker 30 appConfig httpMgr db
-    addFinalizer =<< clientWorker 10 appConfig httpMgr db
-    addFinalizer =<< delegateWorker 10 httpMgr db
+    addFinalizer =<< nodeWorker (seconds 30) appConfig httpMgr db
+    addFinalizer =<< clientWorker (seconds 10) appConfig httpMgr db
+    addFinalizer =<< delegateWorker (seconds 10) httpMgr db
 
     SnapServer.httpServe cfg (route
       [ ("", rootHandler staticHead)

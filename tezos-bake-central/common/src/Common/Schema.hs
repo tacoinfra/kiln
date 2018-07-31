@@ -21,36 +21,24 @@ module Common.Schema where
 import qualified Cases
 import Control.Lens.TH (makeLenses)
 import Control.Lens (views)
-import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as AppendMap
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
-import Data.Fixed (Micro)
-import Data.Function (fix)
-import Data.Functor.Identity (Identity)
-import Data.Int (Int32, Int64)
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence as Seq
-import Data.Set as Set
-import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
-import Data.Word (Word16, Word32, Word64, Word8)
+import Data.Word (Word16, Word32, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
-import Common (tshow)
 import Tezos.Json
 import Tezos.Types
 import Tezos.NodeRPC
-import Tezos.Operation
 
 
 sumFees :: PublicKeyHash -> Operation -> Tez
@@ -112,6 +100,7 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+mkNode :: ClientAddress -> Node
 mkNode addr = Node
     { _node_address = addr
     , _node_identity = Nothing -- TODO
