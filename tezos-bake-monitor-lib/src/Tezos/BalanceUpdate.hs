@@ -82,9 +82,10 @@ type Balance = Balance' (Sum Tez)
 
 instance Semigroup g => Semigroup (Balance' g) where
   Balance xs xf <> Balance ys yf = Balance (xs <> ys) (Map.unionWith (Map.unionWith (<>)) xf yf)
-instance Monoid g => Monoid (Balance' g) where
+instance (Semigroup g, Monoid g) => Monoid (Balance' g) where
   mempty = Balance mempty (Map.empty)
-instance Group g => Group (Balance' g) where
+  mappend = (<>)
+instance (Semigroup g, Group g) => Group (Balance' g) where
   invert (Balance xs xf) = Balance (invert xs) (fmap invert <$> xf)
 
 newtype Balances = Balances {unBalances :: Map ContractId Balance}
@@ -94,6 +95,7 @@ instance Semigroup Balances where
   Balances x <> Balances y = Balances $ Map.unionWith (<>) x y
 instance Monoid Balances where
   mempty = Balances $ Map.empty
+  mappend = (<>)
 instance Group Balances where
   invert = Balances . fmap invert . unBalances
 
