@@ -28,13 +28,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
+import Data.Version (Version)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
+
 import Tezos.Json
 import Tezos.NodeRPC
 import Tezos.Types
-
 
 sumFees :: PublicKeyHash -> Operation -> Tez
 sumFees delegate = getSum . views balanceUpdates getFee
@@ -323,6 +324,19 @@ data ErrorLogNodeOnFork = ErrorLogNodeOnFork
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeOnFork
 
+data UpgradeCheckError
+  = UpgradeCheckError_UpstreamUnreachable
+  | UpgradeCheckError_UpstreamMissing
+  | UpgradeCheckError_UpstreamUnparseable
+  deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
+
+data ErrorLogUpgradeNotice = ErrorLogUpgradeNotice
+  { _errorLogUpgradeNotice_log :: !(Id ErrorLog)
+  , _errorLogUpgradeNotice_error :: !(Maybe UpgradeCheckError)
+  , _errorLogUpgradeNotice_newVersion :: !(Maybe Version)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogUpgradeNotice
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -367,18 +381,21 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogInaccessibleEndpoint
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeOnFork
+  , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
   , ''TzScan
+  , ''UpgradeCheckError
   ]
 
 concat <$> traverse makeLenses
-  [ 'BakeEfficiency
-  , 'BakedEvent
+  [ 'BakedEvent
   , 'BakedEventOperation
+  , 'BakeEfficiency
+  , 'CachedProtocolConstants
   , 'Delegate
   , 'EndorseEvent
   , 'Error
@@ -392,7 +409,7 @@ concat <$> traverse makeLenses
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent
-  , 'CachedProtocolConstants
+  , 'TzScan
   , 'VeryBlockLike
   ]
 
@@ -416,4 +433,3 @@ instance BlockLike (Event SeenEvent) where
    fitness = event_detail . seenEvent_fitness
    level = event_detail . seenEvent_level
    timestamp = event_time
-

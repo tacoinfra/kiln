@@ -8,10 +8,10 @@ module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
-import Control.Monad.Reader (runReaderT)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (FromJSON, fromJSON)
 import qualified Data.Aeson as Aeson
@@ -35,11 +35,11 @@ import Say
 
 import Tezos.Types
 
-import Backend.CachedNodeRPC
 import Backend.BalanceTracking
+import Backend.CachedNodeRPC
 import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getErrorLogs)
+import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
                    mailServerConfigToView, ulookup)
@@ -170,6 +170,13 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           tzscan <- get $ fromId nid
           pure $ mempty { _bakeView_tzscan = single tzscan a }
 
+      handleUpgradeNotice = case fromJSON (_notifyMessage_value notifyMessage) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (specificLogId :: Id ErrorLogUpgradeNotice) ->
+          whenJust (_bakeViewSelector_upgrade aggVS) $ \a -> do
+            n <- getUpgradeNotice
+            pure $ mempty { _bakeView_upgrade = single n a }
+
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
@@ -181,6 +188,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
     "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
+    "ErrorLogUpgradeNotice" -> handleUpgradeNotice
     "TzScan" -> handleTzScan
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage

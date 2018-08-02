@@ -55,6 +55,7 @@ library
     , cryptohash
     , cryptonite
     , groups
+    , hashing
     , http-client
     , http-types
     , lens
@@ -81,8 +82,8 @@ executable tezos-lib-smoketest
   build-depends:
       base
     , containers
-    , http-client-tls
     , http-client
+    , http-client-tls
     , lens
     , mtl
     , terminal-progress-bar

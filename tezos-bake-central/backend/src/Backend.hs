@@ -9,6 +9,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
@@ -101,28 +102,27 @@ import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.Types
 
-import Backend.Supervisor
-import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client
-import Backend.Workers.Delegate
-import Backend.Workers.Node
-
+import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
-import Backend.RequestHandler
+import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
+import Backend.Supervisor
+import Backend.Upgrade (upgradeCheckWorker)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Backend.Workers.Cache (cacheWorker)
+import Backend.Workers.Client
+import Backend.Workers.Delegate
+import Backend.Workers.Node
 import Common (tshow)
 import qualified Common.Config as Config
 import Common.Schema
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Frontend (frontend)
-
-import Backend.CachedNodeRPC
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -204,19 +204,21 @@ backend = do
       httpMgr <- Http.newManager Https.tlsManagerSettings
       dataSrc <- blankNodeDataSource db chainId httpMgr
 
+      let appConfig = AppConfig emailFromAddress
+
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler emailFromAddress db)
+        (requestHandler emailFromAddress httpMgr db appConfig)
         (notifyHandler dataSrc)
         (viewSelectorHandler dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      let appConfig = AppConfig emailFromAddress
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< tzScanWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
+      addFinalizer =<< upgradeCheckWorker (60 * 60) appConfig httpMgr db
 
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)

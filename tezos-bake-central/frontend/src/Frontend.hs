@@ -43,6 +43,7 @@ import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
+import Data.Version (Version, showVersion)
 import qualified Form.Checks as Check
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
@@ -206,6 +207,13 @@ watchTzScan =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_tzscan = Just 1 }
 
+watchUpgradeNotice
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
+watchUpgradeNotice =
+  (fmap . fmap) (getSingle . _bakeView_upgrade) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_upgrade = Just 1 }
 
 
 headTag :: DomBuilder t m => m ()
@@ -245,12 +253,35 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
         , semuiTab (text "Options") UITab_Options currentTab
         ]
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
-  elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
-    UITab_Summary -> summaryTab
-    UITab_Nodes -> nodesTab
-    UITab_Options -> optionsTab
-    UITab_Client cid addr -> clientTab cid addr
-    UITab_Delegate pkh -> delegateTab pkh
+
+  divClass "ui bottom attached tab segment active" $ do
+    -- TODO: 'maybeDyn' is strict and we can't use it directly here for some reason. Figure out why.
+    let updatedWithInit d = do
+          pb <- getPostBuild
+          pure $ leftmost [updated d, tag (current d) pb]
+    upgradeNotice <- maybeDyn =<< holdDyn Nothing =<< updatedWithInit =<< watchUpgradeNotice
+
+    let upgradeRibbon color = elClass "a" ("ui " <> color <> " right ribbon label")
+    dyn_ $ ffor upgradeNotice $ \case
+      Nothing -> blank
+      Just d -> dyn_ $ ffor d $ \(log, upgrade) -> case upgrade of
+        Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+        Right v -> do
+          let
+            versionText = T.pack (showVersion v)
+            versionAnchor = "anchor-" <> T.filter (/='.') versionText
+          elAttr "a"
+            (  "class"=:"ui green right ribbon label"
+            <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
+            <> "target"=:"_blank") $
+              text $ "New version available: " <> versionText
+
+    widgetHold summaryTab $ ffor selection $ \case
+      UITab_Summary -> summaryTab
+      UITab_Nodes -> nodesTab
+      UITab_Options -> optionsTab
+      UITab_Client cid addr -> clientTab cid addr
+      UITab_Delegate pkh -> delegateTab pkh
   return ()
 
 
@@ -345,67 +376,81 @@ summaryTab = divClass "ui grid" $ do
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui grid" $ do
-  clients <- watchClientAddresses
-  nodes <- watchNodeAddresses
-  delegates <- watchDelegatePublicKeyHashes
-  divClass "four wide column" $ do
-    divClass "ui medium header" $ text "Notification Recipients"
-    notificatees <- watchNotificatees
+  divClass "row" primaryOptions
+  divClass "row" upgradeOptions
+  where
+    primaryOptions = do
+      clients <- watchClientAddresses
+      nodes <- watchNodeAddresses
+      delegates <- watchDelegatePublicKeyHashes
+      divClass "four wide column" $ do
+        divClass "ui medium header" $ text "Notification Recipients"
+        notificatees <- watchNotificatees
 
-    let
-      emailWidget email = do
-        dynText email
-        text " "
-        ev <- uiButton "mini compact orange" "Send test"
-        void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
+        let
+          emailWidget email = do
+            dynText email
+            text " "
+            ev <- uiButton "mini compact orange" "Send test"
+            void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
 
-    rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
-        addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
-        requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+        rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
+            addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
+            requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
-    divClass "ui medium header" $ text "SMTP Mail Server"
-    mailServer <- watchMailServer
-    dyn_ $ ffor mailServer $ \cfg -> do
-      let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
-      updatedForm <- mailServerForm form0
-      requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
+        divClass "ui medium header" $ text "SMTP Mail Server"
+        mailServer <- watchMailServer
+        dyn_ $ ffor mailServer $ \cfg -> do
+          let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
+          updatedForm <- mailServerForm form0
+          requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
 
-  divClass "four wide column" $ do
-    divClass "ui medium header" $ text "Monitored Clients"
-    elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
-        el "td" $ dynText dName
-        el "td" $ do
-          eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
-          requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
+      divClass "four wide column" $ do
+        divClass "ui medium header" $ text "Monitored Clients"
+        elAttr "table" ("class" =: "ui celled striped compact table") $ do
+          listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
+            el "td" $ dynText dName
+            el "td" $ do
+              eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
+              requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-      addE <- fmap Uri.render <$> urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
-      void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+          addE <- fmap Uri.render <$> urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+          void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
 
-    divClass "ui medium header" $ text "Delegates"
-    elAttr "table" ("class" =: "ui celled striped compact table") $ do
+        divClass "ui medium header" $ text "Delegates"
+        elAttr "table" ("class" =: "ui celled striped compact table") $ do
 
-      listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
-        el "td" $ publicKeyHashLink pkh
-        el "td" $ do
-          eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
-          requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
+          listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+            el "td" $ publicKeyHashLink pkh
+            el "td" $ do
+              eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
+              requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
-      addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-      void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
+          addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+          void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
 
-    divClass "ui medium header" $ text "Nodes"
-    elAttr "table" ("class" =: "ui celled striped compact table") $ do
-      listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
-        let dName = node
-        el "td" $ dynText dName
-        el "td" $ do
-          eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-          requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
+        divClass "ui medium header" $ text "Nodes"
+        elAttr "table" ("class" =: "ui celled striped compact table") $ do
+          listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
+            let dName = node
+            el "td" $ dynText dName
+            el "td" $ do
+              eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+              requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
 
-      addE <- fmap Uri.render <$> urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-      let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-      void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+          addE <- fmap Uri.render <$> urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+          let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
+          void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+
+    upgradeOptions = divClass "sixteen wide column" $ el "p" $ mdo
+      isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
+      checkUpgrade <- fmap (domEvent Click . fst) $ elDynAttr' "div"
+        (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
+        $ text "Check for New Version"
+      result <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ checkUpgrade
+      widgetHold_ blank $ ffor result $ \case
+        Left _ -> divClass "ui error message" $ text "We had trouble checking for upgrades"
+        Right v -> divClass "ui success message" $ text $ "A new version is available: " <> T.pack (showVersion v)
 
 mailServerForm
   :: ( DomBuilder t m
@@ -557,8 +602,6 @@ delegateTab pkh = do
               text " ("
               text $ tshow $ (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
               text "%)"
-
-
 
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> Text -> m ()
 clientTab cid addr = do

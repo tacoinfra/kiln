@@ -20,11 +20,15 @@ import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
 import Control.Lens.TH (makeLenses)
+import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.IO.Class
+import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor (($>))
+import Data.Functor.Identity (Identity (..))
+import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import qualified Data.Set as Set
@@ -33,27 +37,23 @@ import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime
 import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
+                                updateAndNotify)
+import Rhyolite.Concurrent (worker)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
 
-import Backend.ChainHealth (scanForkInfo)
-import Backend.Errors
-import Control.Monad (join, unless, void, when, (<=<))
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Data.Functor.Identity (Identity (..))
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
-import Rhyolite.Concurrent (worker)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
+import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
+import Backend.Errors
 import Backend.Schema
 import Backend.Workers
-import Data.List.NonEmpty (nonEmpty)
 
 data ClientWorkerContext = ClientWorkerContext
   { _clientWorkerContext_appConfig :: !AppConfig

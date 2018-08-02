@@ -2,3 +2,4 @@ packages:
   backend/
   common/
   frontend/
+  ../tezos-bake-central-lib

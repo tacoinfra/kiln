@@ -1,6 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Common.Config where
 
+import Data.Text (Text)
+
+changelogUrl :: Text
+changelogUrl = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/tree/develop/CHANGELOG.md"
+
 db :: FilePath
 db = "db"
 
