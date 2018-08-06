@@ -5,6 +5,7 @@
 module Tezos.Block where
 
 -- import Data.Attoparsec.ByteString
+import Control.Lens (Lens')
 import Control.Lens.TH (makeLenses)
 import Data.Sequence (Seq)
 import Data.Typeable
@@ -95,6 +96,29 @@ concat <$> traverse makeLenses
  , 'MaxOperationListLength --  "max_operation_list_length": {
  , 'MonitorBlock
  ]
+
+
+class BlockLike b where
+  -- chain :: Lens' b ChainId
+  hash :: Lens' b BlockHash
+  predecessor :: Lens' b BlockHash
+  level :: Lens' b RawLevel
+  fitness :: Lens' b Fitness
+  timestamp :: Lens' b UTCTime
+
+instance BlockLike Block where
+  hash = block_hash
+  predecessor = block_header . blockHeader_predecessor
+  level = block_header . blockHeader_level
+  fitness = block_header . blockHeader_fitness
+  timestamp = block_header . blockHeader_timestamp
+
+instance BlockLike MonitorBlock where
+  hash = monitorBlock_hash
+  predecessor = monitorBlock_hash
+  level = monitorBlock_level
+  fitness = monitorBlock_fitness
+  timestamp = monitorBlock_timestamp
 
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'

@@ -81,11 +81,12 @@ executable tezos-lib-smoketest
   hs-source-dirs:      src-bin
   build-depends:
     tezos-bake-monitor-lib,
-    mtl,
+    containers,
     http-client,
     http-client-tls,
-    text,
+    lens,
+    mtl,
     terminal-progress-bar,
-    containers,
+    text,
     base
   ghc-options: -Wall

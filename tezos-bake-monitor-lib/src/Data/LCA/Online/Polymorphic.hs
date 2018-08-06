@@ -85,8 +85,8 @@ infixl 6 <>
 --
 -- NB: we could ensure the complete tree invariant
 data Tree k a
-  = Bin a {-# UNPACK #-} !k a (Tree k a) (Tree k a)
-  | Tip {-# UNPACK #-} !k a
+  = Bin a  !k a (Tree k a) (Tree k a)
+  | Tip  !k a
   deriving (Show, Read)
 
 instance Foldable (Tree k) where
@@ -341,6 +341,7 @@ nearest x = maximumByMay (compare `on` lal x)
     lal y z = length $ lca z y
 
 -- restore sharing between paths by taking the part of branch not on trunk.
+-- TODO: i'm sure that this can be made O(log h) by retaining subtrees of the path above the lca
 graft :: (Monoid a, Eq k) => Path k a -> Path k a -> Path k a
 graft trunk branch = concatPaths common leaves
   where
@@ -353,7 +354,7 @@ concatPaths trunk = foldr (uncurry cons) trunk . toList
 -- | Provides a consistent 'View' for peeling off the bottom node of a path.
 data View k f a
   = Root
-  | Node {-# UNPACK #-} !k a (f k a)
+  | Node  !k a (f k a)
   deriving (Eq,Ord,Read,Show)
 
 instance Functor (f k) => Functor (View k f) where

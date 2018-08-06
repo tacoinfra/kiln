@@ -7,6 +7,8 @@
 
 module Backend.Config where
 
+import Control.Lens (view, Lens')
+import Control.Monad.Reader(asks)
 import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Network.Mail.Mime (Address)
 
@@ -18,7 +20,11 @@ newtype AppConfig = AppConfig {
   _appConfig_emailFromAddress :: Address
   }
 
-type HasAppConfig m = MonadReader AppConfig m
+class HasAppConfig a where
+  getAppConfig :: Lens' a AppConfig
 
-getAppConfig :: HasAppConfig m => m AppConfig
-getAppConfig = ask
+instance HasAppConfig AppConfig where
+  getAppConfig = id
+
+askAppConfig :: (HasAppConfig a, MonadReader a m) => m AppConfig
+askAppConfig = asks $ view getAppConfig

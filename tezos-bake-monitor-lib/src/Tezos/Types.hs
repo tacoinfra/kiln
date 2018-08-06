@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Tezos.Types
   ( module Tezos.Account
   , module Tezos.BalanceUpdate
@@ -14,6 +15,7 @@ module Tezos.Types
   , module Tezos.ProtocolConstants
   , module Tezos.PublicKeyHash
   , module Tezos.Tez
+  , module Tezos.Types
   ) where
 
 import Tezos.Account
@@ -59,3 +61,7 @@ import Tezos.ProtocolConstants
 import Tezos.PublicKeyHash
 import Tezos.PeriodSequence
 import Tezos.Tez
+
+
+betanetChain :: ChainId
+betanetChain = "NetXdQprcVkpaWU"

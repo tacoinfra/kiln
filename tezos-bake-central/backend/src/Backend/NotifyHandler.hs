@@ -29,7 +29,7 @@ import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Schema (Id, IdData)
-import Say (sayErr)
+import Say
 
 import Backend.BalanceTracking
 import Backend.Graphs

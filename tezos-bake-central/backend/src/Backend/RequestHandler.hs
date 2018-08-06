@@ -40,11 +40,11 @@ import Tezos.Types(Block)
 import Tezos.NodeRPC.Types (RpcError)
 import Tezos.NodeRPC (NodeRPCContext (..))
 
-import Backend.ChainHealth (obtainNode)
 import Backend.Schema
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
+import Backend.CachedNodeRPC(dataSourceNode)
 
 
 requestHandler
@@ -61,10 +61,7 @@ requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> do
-              let ctx = NodeRPCContext httpMgr addr
-              node' :: Either RpcError (Block, Node) <- runExceptT $ runReaderT obtainNode ctx
-              let node =  either (const (mkNode addr)) snd node'
-              insertAndNotify_ node
+              insertAndNotify_ (mkNode addr)
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
 
         PublicRequest_RemoveNode addr -> do

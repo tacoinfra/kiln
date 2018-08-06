@@ -45,7 +45,7 @@ nodeRPC :: forall m e a s.
   => NodeRPCRequest a -> m a
 nodeRPC = \case
   RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  RBlock hash -> nodeRPCImpl methodGet (blockIdToUrl hash)
+  RBlock blockHash -> nodeRPCImpl methodGet (blockIdToUrl blockHash)
   RBlocks chain (RawLevel len) heads -> byHead <$> nodeRPCImpl methodGet ("/chains/" <> chainIdToUrl chain <> "/blocks?length=" <> (T.pack $ show len) <> foldMap blk2param heads)
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)

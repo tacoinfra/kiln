@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -7,6 +8,8 @@
 
 module Backend.ViewSelectorHandler where
 
+import Control.Monad.Reader (runReaderT)
+import Control.Monad.Except (runExceptT)
 import Control.Lens (ifor, imap, itraverse, (<&>))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
@@ -32,6 +35,7 @@ import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id)
+import Say
 
 import Backend.BalanceTracking
 import Backend.Graphs
@@ -47,11 +51,14 @@ import Tezos.Tez
 import Tezos.Account
 import Tezos.NodeRPC.Types
 
+import Backend.CachedNodeRPC
+
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => Pool Postgresql
+  => NodeDataSource
+  -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
@@ -76,19 +83,36 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
       SELECT n.id
         , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
         , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
-        , n."fitness"
+        , n."fitness", n."lastHeartbeat"
       FROM "Node" n
       WHERE n.id IN ?selNodes AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
-          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness) <- rs
-          return (nid, First $ Just (Node addr ident headLevel headBlockHash peerCount (NetworkStat totalSent totalRecv currentInflow currentOutflow) fitness False))
+          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
+          return (nid, First $ Just (Node
+            { _node_address = addr
+            , _node_identity = ident
+            , _node_headLevel = headLevel
+            , _node_headBlockHash = headBlockHash
+            , _node_peerCount = peerCount
+            , _node_networkStat = (NetworkStat totalSent totalRecv currentInflow currentOutflow)
+            , _node_fitness = fitness
+            , _node_deleted = False
+            , _node_lastHeartbeat = lastHeartbeat
+            }))
     return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
     flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
 
-  delegateStats <- do
-    let inKeys = In $ Map.keys (_bakeViewSelector_delegateStats vs)
+  maybeCurrentHead <- runReaderT dataSourceHead nds
+
+  delegateStats <- whenJust maybeCurrentHead $ \currentHead -> do
+    let keys = Map.keys (_bakeViewSelector_delegateStats vs)
+    efficiencies <- flip runReaderT nds $ do
+      fmap Map.fromList $ for keys $ \delegate -> do
+        efficiency <- runExceptT $ calculateBakeEfficiency currentHead 5 delegate
+        return (delegate, either (const mempty) id efficiency)
+    let inKeys = In keys
     rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
       <- [queryQ|
           SELECT d."publicKeyHash"
@@ -111,11 +135,11 @@ viewSelectorHandler db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity d
         -> (PublicKeyHash, Maybe (BakeEfficiency, Account))
       toRsMap (publicKeyHash, dId, bakedBlocks, bakingRights, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, unDelegateStats publicKeyHash =<< delegateStats)
         where
-          efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
+          -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
           delegateStats :: Maybe DelegateStats
           delegateStats = DelegateStats
               <$> dId
-              <*> efficiency
+              <*> (Map.lookup publicKeyHash efficiencies)
               <*> pure accountBalance
               <*> pure accountSpendable
               <*> pure accountSetable

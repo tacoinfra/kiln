@@ -97,6 +97,7 @@ data Node = Node
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
   , _node_deleted :: !Bool
+  , _node_lastHeartbeat :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
@@ -110,6 +111,7 @@ mkNode addr = Node
     , _node_networkStat = NetworkStat 0 0 0 0
     , _node_fitness = Nothing
     , _node_deleted = False
+    , _node_lastHeartbeat = Nothing
     }
 
 
@@ -134,8 +136,8 @@ data BakedEvent = BakedEvent
 data SeenEvent = SeenEvent
   { _seenEvent_hash :: BlockHash
   -- , _seenEvent_chainId :: ChainId
-  -- , _seenEvent_fitness :: Fitness
-  , _seenEvent_level :: Word64
+  , _seenEvent_fitness :: Fitness
+  , _seenEvent_level :: !RawLevel
   , _seenEvent_predecessor :: BlockHash
   -- , _seenEvent_protocol :: Protocol
   , _seenEvent_timestamp :: UTCTime
@@ -147,6 +149,8 @@ data Event e = Event
   , _event_time :: UTCTime
   , _event_worker :: Text
   } deriving (Show, Eq, Ord, Typeable, Generic)
+
+-- instance BlockLike (Event BakedEvent) where
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
@@ -234,6 +238,15 @@ instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
   mappend = (<>)
 
+data VeryBlockLike = VeryBlockLike
+  { _veryBlockLike_hash :: BlockHash
+  , _veryBlockLike_predecessor :: BlockHash
+  , _veryBlockLike_fitness :: Fitness
+  , _veryBlockLike_level :: RawLevel
+  , _veryBlockLike_timestamp :: UTCTime
+  } deriving (Eq, Ord, Show, Typeable)
+
+
 data DelegateStats = DelegateStats
   { _delegateStats_delegate :: !(Id Delegate)
   , _delegateStats_efficiency :: !BakeEfficiency
@@ -294,7 +307,7 @@ instance HasId ErrorLogInaccessibleEndpoint
 
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
-  , _errorLogBakerNoHeartbeat_lastLevel :: !Word64
+  , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
   , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
   , _errorLogBakerNoHeartbeat_client :: !(Id Client)
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -352,8 +365,12 @@ data CachedBlock = CachedBlock
   , _cachedBlock_cyclePosition :: !RawLevel
   , _cachedBlock_hash :: !BlockHash
   , _cachedBlock_predecessor :: !BlockHash
+  , _cachedBlock_fitness :: !Fitness
+  , _cachedBlock_level :: !RawLevel
+  , _cachedBlock_timestamp :: !UTCTime
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId CachedBlock
+
 
 -- rights for block at level `level` for cycle `cycle`+`cycle.constants.preservedCycles`
 data CachedBlockRights = CachedBlockRights
@@ -372,6 +389,7 @@ data CycleHistory = CycleHistory
 instance HasId CycleHistory
 
 
+
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
 concat <$> traverse (deriveJSON Aeson.defaultOptions
       { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
@@ -380,8 +398,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
-  , ''ClientConfig
-  , ''ClientDaemonWorker
+  , ''ClientConfig , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
   , ''Delegate
@@ -419,4 +436,38 @@ concat <$> traverse makeLenses
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent
+  , 'CachedChainCycle
+  , 'CachedBlockRights
+  , 'CachedBlock
+  , 'CachedProtocolConstants
+  , 'VeryBlockLike
   ]
+
+instance BlockLike CachedBlock where
+  hash = cachedBlock_hash
+  predecessor = cachedBlock_predecessor
+  level = cachedBlock_level
+  fitness = cachedBlock_fitness
+  timestamp = cachedBlock_timestamp
+
+instance BlockLike VeryBlockLike where
+   hash = veryBlockLike_hash
+   predecessor = veryBlockLike_predecessor
+   fitness = veryBlockLike_fitness
+   level = veryBlockLike_level
+   timestamp = veryBlockLike_timestamp
+
+instance BlockLike (Event BakedEvent) where
+   hash = event_detail . bakedEvent_hash
+   predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
+   fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
+   level = event_detail . bakedEvent_signedHeader . blockHeader_level
+   timestamp = event_time
+
+instance BlockLike (Event SeenEvent) where
+   hash = event_detail . seenEvent_hash
+   predecessor = event_detail . seenEvent_predecessor
+   fitness = event_detail . seenEvent_fitness
+   level = event_detail . seenEvent_level
+   timestamp = event_time
+

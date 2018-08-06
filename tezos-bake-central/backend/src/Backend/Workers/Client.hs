@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE EmptyCase #-}
@@ -13,6 +14,7 @@
 
 module Backend.Workers.Client where
 
+import Control.Lens.TH
 import qualified Network.HTTP.Client as Http (Manager, newManager)
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
 import Common (tshow)
@@ -49,14 +51,25 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAn
 import Backend.Workers
 import Backend.Schema
 import Data.List.NonEmpty (nonEmpty)
+import Backend.CachedNodeRPC
+
+data ClientWorkerContext = ClientWorkerContext
+  { _clientWorkerContext_appConfig :: !AppConfig
+  , _clientWorkerContext_NodeDataSource :: !NodeDataSource
+  }
+makeLenses 'ClientWorkerContext
+instance HasAppConfig ClientWorkerContext where
+  getAppConfig = clientWorkerContext_appConfig
+instance HasNodeDataSource ClientWorkerContext where
+  nodeDataSource = clientWorkerContext_NodeDataSource
 
 clientWorker
   :: Int -- delay between checking for updates, in microseconds
   -> AppConfig
-  -> Http.Manager
+  -> NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-clientWorker delay appConfig httpMgr db = worker delay $ runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+clientWorker delay appCfg nds db = worker delay $ runNoLoggingT $ runDb (Identity db) $ flip runReaderT (ClientWorkerContext appCfg nds) $ do
   say "Update client cycle."
   now <- getTime
   let maxTime = Just (addUTCTime (- fromIntegral delay) now)
@@ -120,7 +133,7 @@ clientWorker delay appConfig httpMgr db = worker delay $ runNoLoggingT $ runDb (
                           report = ?reportJson
                         , config = ?clientConfigJson
                         |]
-        forkInfo <- scanForkInfo httpMgr now report bestNode
+        forkInfo <- scanForkInfo now report
         validateForkyBlocks sayShow forkInfo
 
         updateAndNotify cid [Client_updatedField =. Just now]
@@ -153,4 +166,3 @@ clientWorker delay appConfig httpMgr db = worker delay $ runNoLoggingT $ runDb (
         Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
 
     insertClientDelegates (Set.fromList $ concat clientDelegates)
-

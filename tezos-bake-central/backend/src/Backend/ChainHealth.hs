@@ -3,7 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Backend.ChainHealth (scanForkInfo, obtainNode) where
+module Backend.ChainHealth (scanForkInfo) where
 
 import Control.Monad (void)
 import Control.Lens (view, (^.))
@@ -24,6 +24,7 @@ import Tezos.Types
 import Common (tshow)
 import Common.Schema
 import Common.Verification
+import Backend.CachedNodeRPC
 
 -- problem:: many baked blocks do not appear on chain
 -- problem:: any parent of seen blocks do not appear on chain
@@ -36,79 +37,36 @@ import Common.Verification
 -- %2 ask the same node for head$(level' - level - 1)
 -- if %0 != %2; sulk
 
-scanForkInfo :: MonadIO m => Http.Manager -> UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo httpMgr now rpt node = do
-  let addr = _node_address node
-  let ctx = NodeRPCContext httpMgr addr
-  flip runReaderT ctx $ traverse (checkChainHealth now 30) $ catMaybes
-    [ fmap fromBaked $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
-    , fmap fromSeen $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
-    ]
-
-fromBaked :: Event BakedEvent -> ChainHealthBlock
-fromBaked e = ChainHealthBlock (_event_time e) (_bakedEvent_hash $ _event_detail e)
-
-fromSeen :: Event SeenEvent -> ChainHealthBlock
-fromSeen e = ChainHealthBlock (_event_time e) (_seenEvent_hash $ _event_detail e)
-
-data ChainHealthBlock = ChainHealthBlock
-  { _chainHealthBlock_time :: UTCTime
-  , _chainHealthBlock_blockHash :: BlockHash
-  }
 checkChainHealth
-  :: (Monad m , MonadIO m, MonadReader s m, HasNodeRPC s)
+  :: (Monad m , MonadIO m, MonadReader s m, HasNodeDataSource s, BlockLike b)
   => UTCTime
   -> Int -- ^ max unseen age, in seconds
-  -> ChainHealthBlock
+  -> b
   -> m ForkInfo
 checkChainHealth now delay seenBaked = do
-  addr <- asks (_nodeRPCContext_node . view nodeRPCContext)
-  status' <- runExceptT $ do
-    (headInfo, node) <- obtainNode
-    seen <- (nodeRPC (RBlock $ blockHashId $ _chainHealthBlock_blockHash seenBaked)) `catchError` \case
-      ForkStatus_BadNode (RpcError_UnexpectedStatus 404 _) -> 
-        let maxTime = addUTCTime (- fromIntegral delay) now
-        in if _chainHealthBlock_time seenBaked >= maxTime
-           then throwError ForkStatus_TooNew
-           else throwError ForkStatus_TooOld
-      bad -> throwError bad
-    let ancestorBlockHash = blockHashIdPred
-          (_block_hash headInfo)
-          (headInfo ^. block_header . blockHeader_level
-           - seen ^. block_header . blockHeader_level)
-    ancestor <- nodeRPC (RBlock ancestorBlockHash)
-    if (seen ^. block_header . blockHeader_predecessor)
-        == (ancestor ^. block_header . blockHeader_predecessor)
-      then return node -- ForkStatus_Good
+  seen <- runExceptT $ do
+    -- try really hard to get seenBaked into history
+    seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
+    -- look for the head to give the newly seen block a chance to become the head
+    head :: VeryBlockLike <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure =<< dataSourceHead
+    ancestor <- maybe (throwError $ ForkStatus_Forked) pure =<< branchPoint (head ^. hash) (seenBaked ^. hash)
+    -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}
+    if (seen ^. predecessor) == (ancestor ^. predecessor)
+      then return () -- ForkStatus_Good
       else throwError ForkStatus_Forked
-  let status = void $ status'
-  let node = either (const $ mkNode addr) id status'
-  return $ ForkInfo node status (_chainHealthBlock_time seenBaked) (_chainHealthBlock_blockHash seenBaked)
+  -- let node = either (const $ mkNode addr) id status'
+  return $ ForkInfo seen (seenBaked ^. timestamp) (seenBaked ^. hash)
 
-
--- Obtains a Node datastructure for the node specified by the environment, and a head block, if successful
--- TODO: This won't work in the typical case of node rpc on localhost with
--- monitor on a different host.  We'll leave it for now since it's "useful",
--- but this should probably be reported by the client rather than queried by
--- the monitor
-obtainNode ::
+scanForkInfo :: forall m r.
   ( MonadIO m
-  , MonadReader s m, HasNodeRPC s
-  , MonadError e m, AsRpcError e
-  ) => m (Block, Node)
-obtainNode = do
-  addr <- asks (_nodeRPCContext_node . view nodeRPCContext)
-  headInfo <- nodeRPC (RBlock headId)
-  connections <- nodeRPC RConnections
-  networkStat <- nodeRPC RNetworkStat
-  return (headInfo, Node
-    { _node_address = addr
-    , _node_identity = Nothing -- TODO
-    , _node_headLevel = Just $ headInfo ^. block_header . blockHeader_level
-    , _node_headBlockHash = Just $ headInfo ^. block_hash
-    , _node_peerCount = Just $ connections
-    , _node_networkStat = networkStat
-    , _node_fitness = Just $ headInfo ^. block_header . blockHeader_fitness
-    , _node_deleted = False
-    })
+  , MonadReader r m, HasNodeDataSource r
+  )
+  => UTCTime -> Report -> m [ForkInfo]
+scanForkInfo now rpt = do
+  let
+    check :: forall b. BlockLike b => b -> m ForkInfo
+    check b = checkChainHealth now 30 b
+  baked <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
+  seen <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
+  return $ catMaybes [baked, seen]
 

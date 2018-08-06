@@ -16,6 +16,7 @@ module Backend where
 import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
+import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
@@ -50,9 +51,10 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.Text.Encoding as T -- (decodeUtf8, encodeUtf8)
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
@@ -96,12 +98,12 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
-import Tezos.Base58Check (HashedValue(..))
+import Tezos.Base58Check (HashedValue(..), fromBase58)
 import Tezos.Types
 import Tezos.Lenses
 import Tezos.NodeRPC -- (HasNodeRPC, NodeRPCContext (..), nodeRPC, RpcError)
 
-
+import Backend.Supervisor
 import Backend.Workers.Node
 import Backend.Workers.Client
 import Backend.Workers.Delegate
@@ -159,64 +161,7 @@ onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
 
 
--- cacheOneBlock
---   ::( MonadLogger m
---     , MonadBaseControl IO m
---     , MonadIO m
---     , MonadError Text m
---     )
---   => NodeRPCContext
---   -> ChainId
---   -> Id CachedChainCycle
---   -> RawLevel
---   -> BlockHash
---   -> DbPersist Postgresql m (Id CachedBlock)
--- cacheOneBlock ctx chain chainCycleId cyclePosition blkHash = do
---   details <- nodeRPC $ RBlock $ blockHashId' chain blkHash
---   let baker = _blockMetadata_baker $ _block_metadata details
---   let endorsers = Json mempty -- TODO: this requres operations parsing
---   let blkPred = _blockHeader_predecessor $ _block_header details
---   let cb = CachedBlock chainCycleId baker endorsers cyclePosition blkHash blkPred
---   say $ T.concat
---     [ "\n\t"
---     , toBase58Text $ _cachedBlock_hash cb
---     , " -> "
---     , toBase58Text $ _cachedBlock_predecessor cb
---     , "(\\x"
---     , decodeUtf8 $ BS16.encode $ unHashedValue $ _cachedBlock_hash cb
---     , ")"
---     ]
---   toId <$> insert cb
 
-
-calculateBakeEfficiency
-  :: (MonadIO m, MonadReader s m, HasNodeRPC s, MonadError RpcError m)
-  => IORef (DMap NodeQuery Identity) -> ChainId -> BlockHash -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency cache chainId branch delegate = do
-  branchBlock <- nodeRPC $ RBlock $ blockHashId' chainId branch
-  let branchLevel = branchBlock ^. block_header . blockHeader_level
-
-  let levels = [branchLevel - 2..branchLevel]
-  rights <- fmap (fmap bakingRightsMap) $ for levels $ nodeQueryDataSourceCached cache . NodeQuery_BakingRights chainId branch
-  bakers <- for levels $ fmap fst . nodeQueryDataSourceCached cache . NodeQuery_Baker chainId branch
-
-  --let rightsInOrder = fmap (\lvl -> Map.findWithDefault mempty lvl rights) levels
-  pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  where
-    efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
-    efficiencyOfBlock rights baker = BakeEfficiency
-      { _bakeEfficiency_bakedBlocks = if baker == delegate then 1 else 0
-      , _bakeEfficiency_bakingRights = case (Map.lookup baker rights, Map.lookup delegate rights) of
-          (_, Nothing) -> 0
-          (Just them, Just us) -> if us <= them then 1 else 0
-          (Nothing, _) -> error "Very wrong"
-      }
-
-    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from delegate to
-    bakingRightsMap xs = Map.fromList
-      [ (delegate, prio)
-      | BakingRights _lvl delegate prio _ <- toList xs
-      ]
 
 
 -- doThing
@@ -358,15 +303,20 @@ backend = do
     (pure $
       fromMaybe (error "invalid URL") . uriToRouteEnv <$>
         (_opts_route =<< SnapServer.getOther cfg))
-    (getConfigFromFile (Aeson.decodeStrict . encodeUtf8) $ configPath Config.route)
+    (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
   blockExplorer :: Maybe URI <- liftA2 (<|>)
     (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
 
+  chainId :: ChainId <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
+    (pure $ _opts_chain =<< SnapServer.getOther cfg)
+    (getConfigFromFile (either (const Nothing) Just  . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
+
+
   staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
-    , injectPure Config.route . decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
+    , injectPure Config.route . T.decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
     , injectPure Config.blockExplorer . tshow <$> blockExplorer
     ]
 
@@ -379,51 +329,37 @@ backend = do
         migrateQueuedEmail tableInfo
         migrateSchema tableInfo
 
-    finalizers <- newTVarIO (return ())
-    let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
+    supervise $ \addFinalizer -> do
+      -- finalizers <- newTVarIO (return ())
+      -- let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
 
-    -- Start a thread to send queued emails
-    addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+      -- Start a thread to send queued emails
+      addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
-    httpMgr <- Http.newManager Https.tlsManagerSettings
+      httpMgr <- Http.newManager Https.tlsManagerSettings
+      dataSrc <- blankNodeDataSource chainId httpMgr
 
-    (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-      (requestHandler emailFromAddress httpMgr db)
-      (notifyHandler db)
-      (viewSelectorHandler db)
-      (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
-    addFinalizer wsFinalizer
+      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
+        (requestHandler emailFromAddress httpMgr db)
+        (notifyHandler db)
+        (viewSelectorHandler dataSrc db)
+        (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
+      addFinalizer wsFinalizer
 
-    -- TODO: move this to nodeWorker
-    let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
-    -- cache <- newIORef mempty
-    -- runReaderT (runExceptT @ _ $ nodeRPC $ RBlock headId) nodeCtx >>= \case
-    --   Right blockInfo -> do
-    --     let chain = _block_chainId blockInfo
-    --     void $ flip runReaderT nodeCtx $ runExceptT $ nodeRPC $ RMonitorHeads
-    --       (\case
-    --         Left e -> sayErr $ "Bad monitor block: " <> tshow e
-    --         Right monitorBlock -> do
-    --           let pkh = "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
-    --           eff <- flip runReaderT nodeCtx $ runExceptT $
-    --             calculateBakeEfficiency cache chain (_monitorBlock_hash monitorBlock) pkh
-    --           sayShow eff
-    --       )
-    --       --(either sayShow $ doThing chain db httpMgr "http://127.0.0.1:18731")
-    --       (DynamicParamChainId_ChainId chain)
-    --   Left bad -> sayShow bad
+      -- TODO: move this to nodeWorker
+      let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
 
-    let appConfig = AppConfig emailFromAddress
-    addFinalizer =<< nodeWorker (seconds 30) appConfig httpMgr db
-    addFinalizer =<< clientWorker (seconds 10) appConfig httpMgr db
-    addFinalizer =<< delegateWorker (seconds 10) httpMgr db
+      let appConfig = AppConfig emailFromAddress
+      addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig httpMgr db
+      addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db
+      addFinalizer =<< delegateWorker (seconds 10) httpMgr db
 
-    SnapServer.httpServe cfg (route
-      [ ("", rootHandler staticHead)
-      , ("/listen", handleListen)
-      , ("static", serveAssets "static" "static")
-      , ("", serveDirectory "frontend.jsexe")
-      ]) `finally` join (readTVarIO finalizers)
+      SnapServer.httpServe cfg (route
+        [ ("", rootHandler staticHead)
+        , ("/listen", handleListen)
+        , ("static", serveAssets "static" "static")
+        , ("", serveDirectory "frontend.jsexe")
+        ]) --  `finally` join (readTVarIO finalizers)
 
 rootHandler :: MonadSnap m => ByteString -> m ()
 rootHandler pageHead =
@@ -466,7 +402,7 @@ getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
 withGargoyleOrConnStr :: Either FilePath Text -> (Pool Postgresql -> IO a) -> IO a
 withGargoyleOrConnStr cfg f = case cfg of
   Left dbPath -> withDb dbPath f
-  Right connStr -> f =<< openDb (encodeUtf8 connStr)
+  Right connStr -> f =<< openDb (T.encodeUtf8 connStr)
 
 
 uriToRouteEnv :: URI -> Maybe RouteEnv
@@ -485,10 +421,11 @@ uriToRouteEnv uri = (,,)
     renderPieces pieces = "/" <> T.intercalate "/" (map (^. Uri.unRText) pieces)
 
 data Opts = Opts
-  { _opts_pgConnectionString :: Maybe Text
-  , _opts_route :: Maybe URI
-  , _opts_emailFromAddress :: Maybe Text
-  , _opts_blockExplorer :: Maybe URI
+  { _opts_pgConnectionString :: !(Maybe Text)
+  , _opts_route :: !(Maybe URI)
+  , _opts_emailFromAddress :: !(Maybe Text)
+  , _opts_blockExplorer :: !(Maybe URI)
+  , _opts_chain :: !(Maybe ChainId)
   }
 
 instance Semigroup Opts where
@@ -497,10 +434,11 @@ instance Semigroup Opts where
     , _opts_route = _opts_route b <|> _opts_route a
     , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
     , _opts_blockExplorer = _opts_blockExplorer b <|> _opts_blockExplorer a
+    , _opts_chain = _opts_chain b <|> _opts_chain a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -513,6 +451,8 @@ optsArgDescr =
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
   , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ mkRootUriOrError $ T.pack x }) $
       "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
+  , Option [] [Config.chain] (mkReqArg "ChainId" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
+      "Chain Id.  default:" <> T.unpack (toBase58Text betanetChain) <> " " <> configPath Config.blockExplorer <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
@@ -522,3 +462,5 @@ configPath = ("config" </>)
 
 mkRootUriOrError :: Text -> URI
 mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
+
+-- $(error "stop")

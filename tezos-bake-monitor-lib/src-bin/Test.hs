@@ -6,10 +6,10 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+import Control.Lens ((^.))
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except
-import Data.Foldable
 import qualified Data.Map as Map
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
@@ -50,8 +50,8 @@ onRPCError = \case
   RpcError_NonJSON clue bad ->          error $ ("\n" <>) $ (clue <> "\n" <> show bad)
 --     Right ok -> ok
 
--- accum :: Block -> StateT (CachedHistory Balances) (ReaderT NodeRPCContext IO) ()
-accum = accumHistory ((fmap . fmap) (, mempty) . bootstrapHistory 2000) (const ())-- getBalanceChanges
+accum :: Block -> StateT (CachedHistory Fitness) (ExceptT RpcError (ReaderT NodeRPCContext IO)) ()
+accum = void . accumHistory "NetXdQprcVkpaWU" 2000 (^. fitness)-- getBalanceChanges
 
 main :: IO ()
 main = do
@@ -60,15 +60,12 @@ main = do
   let ctx = NodeRPCContext httpMgr $ T.pack nodeAddr
   runTest ctx $ do
     headBlk <- (nodeRPC $ RBlock headId)
-    let headLvl = _blockHeader_level $ _block_header headBlk
-    let branch n = blockHashIdPred' (_block_chainId headBlk) (_block_hash headBlk) (headLvl - n)
-    let branchHistory = LCA.empty
 
     b <- flip execStateT emptyCache $ scanBranch headBlk 2000 2100 $ \blk -> do
       accum blk
       scanProgress headBlk blk
     let (xHash, xPath):_ = Map.toList ( _cachedHistory_blocks b )
-    let xLevel = 2000 + (fromIntegral $ length xPath)
+    let xLevel :: Int = 2000 + (fromIntegral $ length xPath)
     xBlk <- nodeRPC $ RBlock $ blockHashId' (_block_chainId headBlk) xHash
     liftIO $ print $ [toBase58Text xHash, T.pack $ show xLevel, T.pack $ show $ _blockHeader_level $ _block_header xBlk]
     -- let tfBaker5 = "tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r"

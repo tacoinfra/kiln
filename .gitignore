@@ -17,3 +17,5 @@ result-[0-9]*
 */result-[0-9]*
 frontendJs
 db
+*/dist-newstyle/*
+*/dist/*

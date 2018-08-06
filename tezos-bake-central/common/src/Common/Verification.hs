@@ -16,8 +16,7 @@ import Tezos.Types
 import Tezos.NodeRPC.Types
 
 data ForkInfo = ForkInfo
-  { _forkInfo_node :: Node
-  , _forkInfo_forkStatus :: Either ForkStatus ()
+  { _forkInfo_forkStatus :: Either ForkStatus ()
   , _forkInfo_time :: UTCTime
   , _forkInfo_hash :: BlockHash
   } deriving (Eq, Ord, Show)
@@ -54,8 +53,8 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   Left ForkStatus_Forked -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_Forked}
   _ -> Success ()
 
-showBadFork :: ForkInfo -> Error
-showBadFork (ForkInfo node status bakedTime bakedHash) = Error bakedTime $ T.concat
+showBadFork :: Node -> ForkInfo -> Error
+showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.concat
           [ "node: ", maybe "" toBase58Text $ _node_identity node
           , "@", _node_address node
           , " BAKER STATE:" , either showForkStatus (const "good") status

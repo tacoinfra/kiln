@@ -29,6 +29,7 @@ obelisk.project ./. ({ pkgs, ... }:
       groundhog = groundhog-src + /groundhog;
       groundhog-postgresql = groundhog-src + /groundhog-postgresql;
       groundhog-th = groundhog-src + /groundhog-th;
+      tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
 
       reflex-aeson-orphans = pkgs.fetchFromGitHub {
         owner = "reflex-frp";
@@ -57,7 +58,7 @@ obelisk.project ./. ({ pkgs, ... }:
       };
     };
     overrides = self: super: {
-      tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+      # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
 
       # fraxl = pkgs.haskell.lib.dontCheck (self.callCabal2nix "fraxl" (pkgs.fetchFromGitHub {
       #   owner = "ElvishJerricco";

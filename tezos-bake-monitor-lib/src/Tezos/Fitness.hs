@@ -12,15 +12,18 @@ import Data.Semigroup
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import Data.Function
+import Data.Foldable (toList)
 import Data.Sequence (Seq)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable
+import Text.Show (showListWith, showString)
 
 import Tezos.Base16ByteString
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
-  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
+  deriving (Eq, Typeable, Functor, Foldable, Traversable)
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
 -- almost certainly the *wrong* one for this particular FromJSON, which needs
@@ -65,5 +68,15 @@ toFitness xs = (FitnessF $ fmap Base16ByteString xs)
 unFitness :: (FitnessF (Base16ByteString a)) -> Seq a
 unFitness ((FitnessF xs)) = fmap unbase16ByteString xs
 
+instance Show Fitness where
+  showsPrec _ = showListWith (showString . T.unpack . T.decodeUtf8 . BS16.encode) . toList . unFitness
+
 instance Ord a => Ord (FitnessF a) where
   compare = (compare `on` length) <> (compare `on` unFitnessF)
+
+instance Ord a => Semigroup (FitnessF a) where
+  (<>) = max
+
+instance Ord a => Monoid (FitnessF a) where
+  mempty = FitnessF mempty
+  mappend = (<>)

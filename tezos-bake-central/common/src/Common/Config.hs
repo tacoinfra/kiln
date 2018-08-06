@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Common.Config where
 
 db :: FilePath
@@ -11,3 +12,7 @@ emailFromAddress = "email-from"
 
 blockExplorer :: FilePath
 blockExplorer = "block-explorer"
+
+chain :: FilePath
+chain = "chain-id"
+
