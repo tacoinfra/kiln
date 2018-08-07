@@ -274,6 +274,9 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 -- TODO: make this "configurable"
 minCachedBlockLevel = 1
 
+nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
+nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up", branch, current, i, n)
+
 nodeMonitor :: ChainId -> Http.Manager  -> NodeDataSource -> AppConfig -> Pool Postgresql -> ClientAddress -> Id Node -> RpcResponse MonitorBlock -> IO ()
 nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
   Left bad -> error "sulk"
@@ -285,14 +288,13 @@ nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
         newStateRsp
           :: Either RpcError CachedHistory'
           <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
-            accumHistory chainId minCachedBlockLevel blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
-            sayShow ("new block", nodeAddr, headBlockInfo)
+            acc <- accumHistory nodeMonitorBranchProgess chainId minCachedBlockLevel blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
+            sayShow ("new block", nodeAddr, headBlockInfo, acc)
         case newStateRsp of
           Left bad -> say "asdf" *> sayShow bad *> return (cache, False)
           Right good -> say "horray" *> return (good, newBlock)
 
       asdf <- readMVar cacheVar
-      sayShow ("lookout", fmap (fmap fst . LCA.toList) $ Map.lookup (headBlockInfo ^. hash) $ _cachedHistory_blocks asdf )
 
       when newBlock $ do
         say $ "new block from node at " <> nodeAddr

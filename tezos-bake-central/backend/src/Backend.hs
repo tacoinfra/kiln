@@ -346,9 +346,6 @@ backend = do
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      -- TODO: move this to nodeWorker
-      let nodeCtx = NodeRPCContext httpMgr "http://127.0.0.1:18731"
-
       let appConfig = AppConfig emailFromAddress
       addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig httpMgr db
       addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db

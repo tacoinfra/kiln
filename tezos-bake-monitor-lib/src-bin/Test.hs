@@ -26,20 +26,17 @@ import Tezos.History
 import qualified Data.LCA.Online.Polymorphic as LCA
 
 
-scanProgress :: MonadIO m => Block -> Block -> m ()
-scanProgress branch this = do
-  liftIO $ autoProgressBar (const "scan") (showProgress this) 80 
-      (Progress
-        (fromIntegral $ _blockHeader_level $ _block_header this)
-        (fromIntegral $ _blockHeader_level $ _block_header branch))
+scanProgress :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
+scanProgress _ currentHash i n = when (i `mod` 100 == 0) $ liftIO $ autoProgressBar (const "scan") (showProgress currentHash) 80
+  (Progress (fromIntegral i) (fromIntegral n))
 
-showProgress :: Block -> Progress -> String
+showProgress :: BlockHash -> Progress -> String
 showProgress blk (Progress x y) = T.unpack $ T.concat
   [ T.pack $ show x
   , "/"
   , T.pack $ show y
   , "@"
-  , toBase58Text (_block_hash blk)
+  , toBase58Text blk
   ]
 
 -- onRPCError :: (HasNodeRPC ctx, MonadReader ctx m, MonadIO m) => NodeRPCRequest a -> m a
@@ -51,7 +48,7 @@ onRPCError = \case
 --     Right ok -> ok
 
 accum :: Block -> StateT (CachedHistory Fitness) (ExceptT RpcError (ReaderT NodeRPCContext IO)) ()
-accum = void . accumHistory "NetXdQprcVkpaWU" 2000 (^. fitness)-- getBalanceChanges
+accum = void . accumHistory scanProgress "NetXdQprcVkpaWU" 1 (^. fitness)-- getBalanceChanges
 
 main :: IO ()
 main = do
@@ -61,9 +58,9 @@ main = do
   runTest ctx $ do
     headBlk <- (nodeRPC $ RBlock headId)
 
-    b <- flip execStateT emptyCache $ scanBranch headBlk 2000 2100 $ \blk -> do
+    b <- flip execStateT emptyCache $ scanBranch headBlk 50000 50001 $ \blk -> do
       accum blk
-      scanProgress headBlk blk
+      -- scanProgress headBlk blk
     let (xHash, xPath):_ = Map.toList ( _cachedHistory_blocks b )
     let xLevel :: Int = 2000 + (fromIntegral $ length xPath)
     xBlk <- nodeRPC $ RBlock $ blockHashId' (_block_chainId headBlk) xHash

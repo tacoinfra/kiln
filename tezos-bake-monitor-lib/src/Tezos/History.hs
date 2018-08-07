@@ -48,6 +48,8 @@ class HasCachedHistory s t a b | s -> a, t -> b where
 instance HasCachedHistory (CachedHistory a) (CachedHistory b) a b where
   cachedHistory = id
 
+
+type ProgressFn f = BlockHash -> BlockHash -> Int -> Int -> f ()
 -- add a block to cached history.  If there are multipe blocks between the
 -- added block and the deepest allowed root, the summary for those blocks will
 -- be mempty
@@ -59,8 +61,8 @@ accumHistory
   , MonadReader r m, HasNodeRPC r
   , MonadError e m, AsRpcError e
   )
-  => ChainId -> RawLevel -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
-accumHistory chainId minLevel f blk = do
+  => ProgressFn m -> ChainId -> RawLevel -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
+accumHistory progress chainId minLevel f blk = do
   let blkHash = (view hash blk)
   let predHash = (view predecessor blk)
   let chainIdParam = DynamicParamChainId_ChainId chainId
@@ -95,14 +97,15 @@ accumHistory chainId minLevel f blk = do
           -- scan insert the intermediate nodes
           let preds = Seq.reverse descendents -- [1,2,3,4]
           let blks = Seq.drop 1 $ preds -- [2,3,4]
-          for_ (Seq.zip blks preds) $ \(blkHash', predhash') -> do
-            -- log ("inserting",blkHash', predhash')
+          let newBranchLength = length blks
+          ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
+            progress blkHash blkHash' i newBranchLength
             cachedHistory %= accumHistoryImpl blkHash' predhash' mempty
           -- insert the top node
 
   cachedHistory %= accumHistoryImpl blkHash predHash (f blk)
   blkBranch <- gets $ (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
-  -- log ("after", fst <$> LCA.toList blkBranch)
+  -- log ("after", length $ LCA.toList blkBranch)
   return $ LCA.measure blkBranch
 
 accumHistoryImpl
