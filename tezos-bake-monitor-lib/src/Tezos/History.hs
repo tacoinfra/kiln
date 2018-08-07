@@ -64,37 +64,51 @@ accumHistory chainId minLevel f blk = do
   let blkHash = (view hash blk)
   let predHash = (view predecessor blk)
   let chainIdParam = DynamicParamChainId_ChainId chainId
+  -- let log x = liftIO $ print (blkHash, x)
+  -- log ("begin", predHash)
 
-  CachedHistory _branches blocks <- gets $ view cachedHistory
+  -- check to see if we already have history for the predecessor block
+  (gets $ Map.lookup predHash . _cachedHistory_blocks . view cachedHistory) >>= \case
+    -- we have the predecessor, nothing more to do.
+    Just _branch -> do
+      -- log "already have predecessor"
+      return ()
 
-  -- extend a branch to include the new block.
-  case Map.lookup predHash blocks of
-    Just _branch -> return () --
-    Nothing -> when (not $ view level blk > minLevel) $ do
-      -- we will now proceed to restore the missing history
+    -- we don't have the predecessor. If the requested block has a low
+    -- enough level, we can use it as a root, otherwise we need to restore a
+    -- full branch of blocks.
+    Nothing -> when (view level blk > minLevel) $ do
+      -- log "need predecessor"
+      -- we will now proceed to restore the missing history.  We ask a node for
+      -- enough block-hashes to reach from the new block to "the root" at
+      -- minLevel
       let levels = (view level blk) - minLevel
       result <- nodeRPC $ RBlocks chainIdParam levels $ Set.singleton blkHash
       case Map.lookup blkHash result of
         Nothing -> throwError $ (^. re asRpcError) $ RpcError_UnexpectedStatus 404 "node did not return a branch containing requested block"
-        Just descendents -> do
+        Just descendents -> do -- suposing something like {5:[4,3,2,1]}
           -- make sure we have a root node
-          let rootHash = Seq.index (blkHash <| descendents) (length descendents)
+          let rootHash = Seq.index (blkHash <| descendents) (length descendents) -- 1
+          -- log ("got branch", length descendents, "expect", levels, rootHash)
           rootBlk <- nodeRPC $ RBlock $ blockHashId' chainId rootHash
-          cachedHistory %= accumHistoryImpl blkHash predHash (f rootBlk)
+          cachedHistory %= accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
           -- scan insert the intermediate nodes
-          let preds = Seq.drop 1 $ Seq.reverse descendents
-          let blks = Seq.drop 1 $ preds |> blkHash
-          for_ (Seq.zipWith accumHistoryImpl blks preds) $ \accum -> do
-            cachedHistory %= accum mempty
+          let preds = Seq.reverse descendents -- [1,2,3,4]
+          let blks = Seq.drop 1 $ preds -- [2,3,4]
+          for_ (Seq.zip blks preds) $ \(blkHash', predhash') -> do
+            -- log ("inserting",blkHash', predhash')
+            cachedHistory %= accumHistoryImpl blkHash' predhash' mempty
           -- insert the top node
 
   cachedHistory %= accumHistoryImpl blkHash predHash (f blk)
-  gets $ LCA.measure . (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
+  blkBranch <- gets $ (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
+  -- log ("after", fst <$> LCA.toList blkBranch)
+  return $ LCA.measure blkBranch
 
 accumHistoryImpl
   :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
 accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistory_blocks c) of
-  Just _ -> c
+  Just _ -> c -- why dont we replace acc?  It'd have to be updated in every path that contains it, O(n log h) work.  this way we're only O(log n)
   Nothing -> CachedHistory
       { _cachedHistory_blocks = Map.insert blkHash newPath $ blocks
       , _cachedHistory_branches = Set.delete predHash . Set.insert blkHash $ branches

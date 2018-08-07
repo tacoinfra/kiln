@@ -115,7 +115,7 @@ instance BlockLike Block where
 
 instance BlockLike MonitorBlock where
   hash = monitorBlock_hash
-  predecessor = monitorBlock_hash
+  predecessor = monitorBlock_predecessor
   level = monitorBlock_level
   fitness = monitorBlock_fitness
   timestamp = monitorBlock_timestamp
