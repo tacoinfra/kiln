@@ -18,30 +18,40 @@
 
 module Backend.Schema where
 
+import Data.Maybe (fromJust)
 import Data.Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.Foldable (toList)
 import Data.Int (Int64)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Encoding as LT
 import Data.Typeable
 import Data.Word (Word64)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
+import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
+import Database.PostgreSQL.Simple.Types (PGArray(..))
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Data.Sequence as Seq
+import qualified Formatting as Fmt
 
 import Tezos.Types
 import Tezos.NodeRPC.Types
@@ -190,18 +200,32 @@ instance PersistField PublicKeyHash where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
 
+leftPad :: Int -> Text
+leftPad n = if T.length n' > 4 then error "too dang big" else n'
+  where
+    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex 10
+
+unArray :: Groundhog.Array a -> [a]
+unArray (Groundhog.Array a) = a
+
+-- prefix fitness arrays with length so that they naturally order correctly
+toDBFitness :: ToJSON a => FitnessF a -> [Text]
+toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . encode) $ x
+fromDBFitness :: FromJSON a => [Text] -> FitnessF a
+fromDBFitness = FitnessF . Seq.fromList . fmap ( fromJust . decode . LBS.fromStrict . T.encodeUtf8 ) . tail
+
 instance (ToJSON a, FromJSON a) => PrimitivePersistField (FitnessF a) where
-  toPrimitivePersistValue p (FitnessF x) = toPrimitivePersistValue p (Json x)
-  fromPrimitivePersistValue p = FitnessF . unJson . fromPrimitivePersistValue p
+  toPrimitivePersistValue p x = toPrimitivePersistValue p ( Groundhog.Array $ toDBFitness x)
+  fromPrimitivePersistValue p = fromDBFitness . unArray . fromPrimitivePersistValue p
 
 instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
   persistName _ = "Fitness"
-  toPersistValues = toPersistValues . Json . unFitnessF
-  fromPersistValues vs = (first $ FitnessF . unJson) <$> fromPersistValues vs
-  dbType p (FitnessF x) = dbType p (Json x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
+  toPersistValues = toPersistValues . Groundhog.Array . toDBFitness
+  fromPersistValues vs = (first $ fromDBFitness . unArray) <$> fromPersistValues vs
+  dbType p x = dbType p (Groundhog.Array $ toDBFitness x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
 
 instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
-  fromField a b = FitnessF . unJson <$> (fromField a b)
+  fromField a b = fromDBFitness . fromPGArray <$> (fromField a b)
 
 instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x

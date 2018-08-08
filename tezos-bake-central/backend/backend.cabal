@@ -32,6 +32,7 @@ library
     , either
     , filepath
     , frontend
+    , formatting
     , groundhog
     , groundhog-postgresql
     , groundhog-th
