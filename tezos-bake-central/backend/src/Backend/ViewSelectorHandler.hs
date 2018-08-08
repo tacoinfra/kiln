@@ -58,7 +58,7 @@ viewSelectorHandler
   => NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "VIEWSELECTOR::DONE") . (sayShow ("VIEWSELECTOR::START", vs) *>) . runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
@@ -104,14 +104,16 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
     flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
 
-  maybeCurrentHead <- runReaderT dataSourceHead nds
+  -- maybeCurrentHead <- runReaderT dataSourceHead nds
+  let maybeCurrentHead = Nothing
 
   delegateStats <- whenJust maybeCurrentHead $ \currentHead -> do
     let keys = Map.keys (_bakeViewSelector_delegateStats vs)
-    efficiencies <- flip runReaderT nds $ do
-      fmap Map.fromList $ for keys $ \delegate -> do
-        efficiency <- runExceptT $ calculateBakeEfficiency currentHead 5 delegate
-        return (delegate, either (const mempty) id efficiency)
+    let efficiencies = mempty
+    --efficiencies <- flip runReaderT nds $ do
+    --  fmap Map.fromList $ for keys $ \delegate -> do
+    --    efficiency <- runExceptT $ calculateBakeEfficiency currentHead 5 delegate
+    --    return (delegate, either (const mempty) id efficiency)
     let inKeys = In keys
     rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
       <- [queryQ|

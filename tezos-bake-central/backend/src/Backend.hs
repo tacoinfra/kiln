@@ -340,7 +340,7 @@ backend = do
       dataSrc <- blankNodeDataSource chainId httpMgr
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler emailFromAddress httpMgr db)
+        (requestHandler emailFromAddress db)
         (notifyHandler db)
         (viewSelectorHandler dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)

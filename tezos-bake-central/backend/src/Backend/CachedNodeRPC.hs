@@ -134,7 +134,8 @@ blankNodeDataSource chain mgr = do
   cache <- newEmptyMVar
   protoInfo <- newEmptyMVar
   forkIO $ do
-    readMVar protoInfo
+    -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
+    _ <- readMVar protoInfo
     putMVar hist emptyCache
     putMVar cache mempty
     say "Cache ready!"
