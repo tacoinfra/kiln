@@ -168,9 +168,11 @@ dataSourceHead
   => m (Maybe VeryBlockLike)
 dataSourceHead = do
   dsrc <- asks $ (^. nodeDataSource)
-  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
-  let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
-  pure $ fmap histToBlockLike $ (>>= LCA.uncons) $ maximumByMay (compare `on` LCA.measure) $ toList branches
+  protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
+  fmap join $ for protoInfo $ \_ -> do
+    history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+    let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
+    pure $ fmap histToBlockLike $ (>>= LCA.uncons) $ maximumByMay (compare `on` LCA.measure) $ toList branches
 
 -- | extrats the fittest known node from cache
 dataSourceNode ::
