@@ -33,14 +33,15 @@ data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
   -- a plausible alternative is to only keep the fittest n branches
   -- investigate: https://github.com/mikeizbicki/HLearn/blob/master/src/HLearn/Data/SpaceTree/CoverTree.hs
-  { _cachedHistory_branches :: Set BlockHash
-  , _cachedHistory_blocks :: Map BlockHash (LCA.Path BlockHash a)
+  { _cachedHistory_branches :: !(Set BlockHash)
+  , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
+  , _cachedHistory_minLevel :: !RawLevel
   } deriving (Show, Typeable)
 
 makeLenses 'CachedHistory
 
 emptyCache :: CachedHistory a
-emptyCache = CachedHistory Set.empty Map.empty
+emptyCache = CachedHistory Set.empty Map.empty 1
 
 class HasCachedHistory s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (CachedHistory a) (CachedHistory b)
@@ -61,8 +62,9 @@ accumHistory
   , MonadReader r m, HasNodeRPC r
   , MonadError e m, AsRpcError e
   )
-  => ProgressFn m -> ChainId -> RawLevel -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
-accumHistory progress chainId minLevel f blk = do
+  => ProgressFn m -> ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
+accumHistory progress chainId f blk = do
+  minLevel <- gets $ _cachedHistory_minLevel . view cachedHistory
   let blkHash = (view hash blk)
   let predHash = (view predecessor blk)
   let chainIdParam = DynamicParamChainId_ChainId chainId
@@ -103,10 +105,13 @@ accumHistory progress chainId minLevel f blk = do
             cachedHistory %= accumHistoryImpl blkHash' predhash' mempty
           -- insert the top node
 
-  cachedHistory %= accumHistoryImpl blkHash predHash (f blk)
-  blkBranch <- gets $ (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
-  -- log ("after", length $ LCA.toList blkBranch)
-  return $ LCA.measure blkBranch
+  if view level blk >= minLevel
+    then do
+      cachedHistory %= accumHistoryImpl blkHash predHash (f blk)
+      blkBranch <- gets $ (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
+      -- log ("after", length $ LCA.toList blkBranch)
+      return $ LCA.measure blkBranch
+    else return mempty
 
 accumHistoryImpl
   :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
@@ -115,6 +120,7 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
   Nothing -> CachedHistory
       { _cachedHistory_blocks = Map.insert blkHash newPath $ blocks
       , _cachedHistory_branches = Set.delete predHash . Set.insert blkHash $ branches
+      , _cachedHistory_minLevel = _cachedHistory_minLevel c
       }
     where
       blocks = _cachedHistory_blocks c

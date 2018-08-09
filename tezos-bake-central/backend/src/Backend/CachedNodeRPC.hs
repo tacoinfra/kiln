@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -7,6 +8,9 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+
+{-# OPTIONS_GHC -fmax-relevant-binds=20 #-}
+
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
@@ -26,6 +30,7 @@ import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Data.Function (on)
 import Data.Functor.Identity (Identity (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
 import Data.Map (Map)
 import Data.Maybe(catMaybes, listToMaybe)
 import Data.Semigroup
@@ -33,6 +38,7 @@ import Data.Sequence (Seq)
 import Data.Set(Set)
 import Data.Traversable (for)
 import Data.Typeable
+import Generics.Deriving.TH
 import Safe.Foldable (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
 import qualified Data.Dependent.Map as DMap
@@ -51,10 +57,11 @@ data NodeQuery a where
   -- parameters are stored on a genesis protocol block at lvl 1, in a format
   -- understood and commited at lvl 2,  that requires parsing the binary data
   -- on the dictated block.
-  NodeQuery_GenesisParameters   :: NodeQuery ProtoInfo
+  -- NodeQuery_GenesisParameters   :: NodeQuery ProtoInfo
   NodeQuery_BakingRights        :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_Baker               :: BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
   NodeQuery_Block               :: BlockHash -> NodeQuery Block
+
 
 data BranchData a = BranchData
   { _branchData_fitness :: !Fitness
@@ -160,19 +167,42 @@ histToBlockLike (h, BranchData f l t _, path) = VeryBlockLike h p f l t
       where
         p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons $ path
 
+updateNodeDataSource :: BlockLike b => NodeDataSource -> ClientAddress -> b -> IO ()
+updateNodeDataSource nds nodeAddr blk =
+  modifyMVar_ (_nodeDataSource_nodes nds) $ return . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
+
+-- Make sure that the protocol parameters have been loaded and the datasource initialzied.
+initParams :: Foldable f => NodeDataSource -> f ClientAddress -> IO Bool
+initParams nds theseNodes = do
+  needParams <- isEmptyMVar $ _nodeDataSource_parameters nds
+
+  let
+    chainId = _nodeDataSource_chain nds
+    step :: MonadIO m => ClientAddress -> m (Map ClientAddress ProtoInfo)
+    step someNode = do
+      let ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) someNode
+      runExceptT (runReaderT (nodeRPC $ RProtoConstants $ headId' chainId) ctx) >>= \case
+        Left (_ :: RpcError) -> pure mempty
+        Right params -> pure $ Map.singleton someNode params
+  onChainNodes :: Map ClientAddress ProtoInfo <- fold <$> traverse step (toList $ Set.fromList $ toList theseNodes)
+
+  when needParams $ case fmap fst $ uncons $ toList onChainNodes of
+      Just params -> do
+        void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
+      Nothing -> say "Still no params"
+
+  fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
 
 
 -- | extrats the fittest known branch from cache
 dataSourceHead
   :: ( MonadIO m , MonadReader s m, HasNodeDataSource s)
   => m (Maybe VeryBlockLike)
-dataSourceHead = do
+dataSourceHead = withCache Nothing $ \_ -> do
   dsrc <- asks $ (^. nodeDataSource)
-  protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
-  fmap join $ for protoInfo $ \_ -> do
-    history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
-    let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
-    pure $ fmap histToBlockLike $ (>>= LCA.uncons) $ maximumByMay (compare `on` LCA.measure) $ toList branches
+  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
+  pure $ fmap histToBlockLike $ (>>= LCA.uncons) $ maximumByMay (compare `on` LCA.measure) $ toList branches
 
 -- | extrats the fittest known node from cache
 dataSourceNode ::
@@ -185,12 +215,32 @@ dataSourceNode = do
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . fst) $ maximumByMay (on compare $ snd) $ catMaybes $ fmap sequence $ Map.toList nodes
 
--- Recontextualize a query for maximum cache friendliness, and also return the list of nodes that should know the answer.
-getKey :: CachedHistory' -> Maybe BlockHash -> NodeQuery a -> NodeQuery a -- , Set ClientAddress)
-getKey hist ctx = error "TODO"
+levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
+levelAncestor hist lvl ctx = ctxBlockHash
+  where
+    minLevel = _cachedHistory_minLevel hist
+    branch = Map.lookup ctx $ _cachedHistory_blocks hist
+    ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
 
-pickNode :: MVar (Map ClientAddress a) -> IO ClientAddress
-pickNode = error "TODO"
+-- Recontextualize a query for maximum cache friendliness, and also return the least block 
+getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
+getKey params hist = \case
+  NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> ctxBlockHash
+    -- for this case, we want the first block in the cycle that sits
+    -- $PRESERVED_CYCLES before the requested level, that is on the correct
+    -- branch.
+    where
+      minLevel = _cachedHistory_minLevel hist
+      branch = Map.lookup ctx $ _cachedHistory_blocks hist
+      branchLvl = minLevel + (fromIntegral $ length branch)
+      reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params
+      ctxCycle = max 0 (reqCycle - _protoInfo_preservedCycles params)
+      ctxLvl :: RawLevel = 1 + fromIntegral ctxCycle * _protoInfo_blocksPerCycle params
+      ctxBlockHash = levelAncestor hist ctxLvl ctx
+  NodeQuery_Baker ctx lvl -> (\ctx' -> (ctx', NodeQuery_Baker ctx' lvl)) <$> ctxBlockHash
+    where
+      ctxBlockHash = levelAncestor hist lvl ctx
+  NodeQuery_Block ctx -> pure $ (ctx, NodeQuery_Block ctx)
 
 nodeQueryDataSource ::
   ( MonadIO m
@@ -201,10 +251,12 @@ nodeQueryDataSource ::
   => NodeQuery a -> m a
 nodeQueryDataSource q' = do
   dsrc <- asks $ view nodeDataSource
+  protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters dsrc
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
-  sayShow ("time to query go!", Map.keys nodes)
+  sayShow ("time to query go!", Map.keys nodes, q')
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
-  let q = getKey history Nothing q
+
+  (qBranch, q) <- maybe (throwError $ (RpcError_HttpException "NOT ENOUGH HISTORY") ^. re asRpcError) pure $ getKey protoInfo history q'
 
   resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache ->
     case DMap.lookup q cache of
@@ -212,58 +264,47 @@ nodeQueryDataSource q' = do
         sayShow ("cache hit!")
         pure (cache, avar)
       Nothing -> do
-        sayShow ("cache miss!")
-        newVar <- liftIO $ newEmptyMVar
-        liftIO $ forkIO $ do
-          anyNode <- pickNode $ _nodeDataSource_nodes dsrc
-          let
-            ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
-            unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-            unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-          res <- (nodeQueryDataSourceImpl ctx unliftDataSrc q)
-          putMVar newVar res
-        pure (DMap.insert q (CacheResult newVar) cache, CacheResult newVar)
+        sayShow ("cache miss!", q', qBranch, q)
+        allNodes <- readMVar $ _nodeDataSource_nodes dsrc
+        sayShow ("all nodes:", allNodes)
+        (pickNode qBranch $ _nodeDataSource_nodes dsrc) >>= \case
+          Nothing -> do
+            newVar <- newMVar $ Left $ RpcError_HttpException "No suitable node"
+            pure (cache, CacheResult newVar)
+          Just anyNode -> do
+            let
+              ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
+            newVar <- liftIO $ newEmptyMVar
+            liftIO $ forkIO $ do
+              let
+                unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
+                unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
+              res <- (nodeQueryDataSourceImpl protoInfo ctx unliftDataSrc q)
+              putMVar newVar res
+            pure (DMap.insert q (CacheResult newVar) cache, CacheResult newVar)
 
   unpackCacheResult resultM
 
+pickNode :: BlockLike b => BlockHash -> MVar (Map ClientAddress (Maybe b)) -> IO (Maybe ClientAddress)
+pickNode branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
+
 nodeQueryDataSourceImpl ::
-  NodeRPCContext -> (forall a. NodeQuery a -> IO (Either RpcError a)) -> NodeQuery a -> IO (Either RpcError a)
-nodeQueryDataSourceImpl ctx self' q = runExceptT $ do
+  ProtoInfo -> NodeRPCContext -> (forall a. NodeQuery a -> IO (Either RpcError a)) -> NodeQuery a -> IO (Either RpcError a)
+nodeQueryDataSourceImpl proto ctx self' q = runExceptT $ do
   let 
     self :: NodeQuery b -> ExceptT RpcError IO b
     self = (>>= (either throwError pure)) . liftIO . self'
     nodeRPC' :: NodeRPCRequest b -> ExceptT RpcError IO b
     nodeRPC' q' = runReaderT (nodeRPC q') ctx
   case q of
-    NodeQuery_GenesisParameters -> do
-      currentHead <- nodeRPC' $ RBlock $ headId
-      let headLevel = currentHead ^. block_header . blockHeader_level
-      --TODO: if headLevel == 0 then error "error"
-      nodeRPC' $ RProtoConstants $ blockHashIdPred (_block_hash currentHead) (headLevel - 1)
+    -- NodeQuery_GenesisParameters -> do
+    --   currentHead <- nodeRPC' $ RBlock $ headId
+    --   let headLevel = currentHead ^. block_header . blockHeader_level
+    --   --TODO: if headLevel == 0 then error "error"
+    --   nodeRPC' $ RProtoConstants $ blockHashIdPred (_block_hash currentHead) (headLevel - 1)
 
-    NodeQuery_BakingRights branch targetLevel -> do
-      proto <- self $ NodeQuery_GenesisParameters
-      let
-        cycleForLevel n = Cycle $ unRawLevel $ n `div` _protoInfo_blocksPerCycle proto
-        cycleDeterminingRightsForLevel n = max 0 $ cycleForLevel n - _protoInfo_preservedCycles proto
-
-        cycleToQuery = Set.singleton $ Right $ cycleDeterminingRightsForLevel targetLevel
-
-      branchBlock <- nodeRPC' $ RBlock $ blockHashId branch
-      let
-        blockLevel = branchBlock ^. block_metadata . blockMetadata_level
-        cyclesAgo = blockLevel ^. level_cycle - cycleDeterminingRightsForLevel targetLevel
-        levelsAgo = RawLevel (unCycle cyclesAgo) * _protoInfo_blocksPerCycle proto - blockLevel ^. level_cyclePosition
-
-      if
-        | levelsAgo < 0 -> error "request for future stake"
-        | levelsAgo == 0 ->
-          nodeRPC' $ RBakingRights (blockHashId branch) cycleToQuery
-        | otherwise -> do
-          targetBlock <- nodeRPC' $ RBlock $ blockHashIdPred branch levelsAgo
-          self $ NodeQuery_BakingRights
-            (targetBlock ^. block_hash)
-            (targetLevel `div` _protoInfo_blocksPerCycle proto * _protoInfo_blocksPerCycle proto)
+    NodeQuery_BakingRights branch targetLevel ->
+      nodeRPC' $ RBakingRights (blockHashId branch) $ Set.singleton $ Left targetLevel
 
     NodeQuery_Baker branch rawLevel -> do
       branchBlock <- nodeRPC' $ RBlock $ blockHashId branch
@@ -272,6 +313,17 @@ nodeQueryDataSourceImpl ctx self' q = runExceptT $ do
       pure ( targetBlock ^. block_metadata . blockMetadata_baker
            , targetBlock ^. block_header . blockHeader_priority
            )
+
+withCache ::
+  ( MonadReader r m , HasNodeDataSource r
+  , MonadIO m
+  )
+  => a -> (ProtoInfo -> m a) -> m a
+withCache dft action = do
+  dsrc <- asks $ (^. nodeDataSource)
+  protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
+  maybe dft id <$> traverse action protoInfo
+
 
 calculateBakeEfficiency ::
   ( MonadIO m
@@ -289,8 +341,9 @@ calculateBakeEfficiency branch length delegate = do
 
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
   bakers <- for levels $ fmap fst . nodeQueryDataSource . NodeQuery_Baker branchHash
-  pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-
+  result <- pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
+  sayShow ("efficiency", delegate, result)
+  return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
     efficiencyOfBlock rights baker = BakeEfficiency
@@ -309,3 +362,5 @@ calculateBakeEfficiency branch length delegate = do
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
+deriveGShow ''NodeQuery
+deriving instance Show (NodeQuery a)

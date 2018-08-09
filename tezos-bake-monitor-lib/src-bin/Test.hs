@@ -48,7 +48,7 @@ onRPCError = \case
 --     Right ok -> ok
 
 accum :: Block -> StateT (CachedHistory Fitness) (ExceptT RpcError (ReaderT NodeRPCContext IO)) ()
-accum = void . accumHistory scanProgress "NetXdQprcVkpaWU" 1 (^. fitness)-- getBalanceChanges
+accum = void . accumHistory scanProgress "NetXdQprcVkpaWU" (^. fitness)-- getBalanceChanges
 
 main :: IO ()
 main = do

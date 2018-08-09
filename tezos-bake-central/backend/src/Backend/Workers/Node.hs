@@ -254,22 +254,6 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
---
--- TODO: uh.. also incorporate CachedBlock
--- bootstrapHistory' ::
---   ( MonadIO m
---   , MonadBaseControl IO m
---   , MonadReader a m, HasNodeRPC a
---   , MonadError e m, AsRpcError e
---   )
---   => Pool Postgresql -> ChainId -> MonitorBlock -> m [(BlockHash, BranchData CachedBlockInfo)]
--- bootstrapHistory' db chainId blk = do
---   blocks :: [CachedBlock] <- runNoLoggingT $ runDb (Identity db) $ do
---     select $ CondEmpty `orderBy` [Asc CachedBlock_levelField]
--- 
---   error "stop"
---   sayShow ("need history", blk)
---   ((fmap . fmap) (, mempty) . bootstrapHistory chainId 1) blk
 
 -- TODO: make this "configurable"
 minCachedBlockLevel = 1
@@ -281,6 +265,7 @@ nodeMonitor :: ChainId -> Http.Manager  -> NodeDataSource -> AppConfig -> Pool P
 nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
   Left bad -> error "sulk"
   Right headBlockInfo -> do
+      updateNodeDataSource nds nodeAddr headBlockInfo
       let cacheVar = _nodeDataSource_history nds
       let ctx = NodeRPCContext httpMgr nodeAddr
       newBlock <- modifyMVar cacheVar $ \cache -> do
@@ -288,11 +273,11 @@ nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
         newStateRsp
           :: Either RpcError CachedHistory'
           <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
-            acc <- accumHistory nodeMonitorBranchProgess chainId minCachedBlockLevel blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
+            acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
             sayShow ("new block", nodeAddr, headBlockInfo, acc)
         case newStateRsp of
-          Left bad -> say "asdf" *> sayShow bad *> return (cache, False)
-          Right good -> say "horray" *> return (good, newBlock)
+          Left bad -> sayShow bad *> return (cache, False)
+          Right good -> return (good, newBlock)
 
       asdf <- readMVar cacheVar
 
@@ -315,23 +300,6 @@ blockSummary blk = BranchData
   , _branchData_level = blk ^. level
   , _branchData_fitness = blk ^. fitness
   }
-
--- Make sure that the protocol parameters have been loaded and the datasource initialzied.
-initParams :: Foldable f => NodeDataSource -> f Text -> IO Bool
-initParams nds theseNodes = do
-  needParams <- isEmptyMVar $ _nodeDataSource_parameters nds
-  when needParams $ do
-    let chainId = _nodeDataSource_chain nds
-    foundParams :: Either ProtoInfo () <- runExceptT $ for_ theseNodes $ \someNode -> do
-      let ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) someNode
-      runExceptT (runReaderT (nodeRPC $ RProtoConstants $ headId' chainId) ctx) >>= \case
-        Left (_ :: RpcError) -> return ()
-        Right params -> throwError params
-    case foundParams of
-      Left params -> do
-        void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-      Right _ -> say "Still no params"
-  fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
 
 updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO ()
 updateNetworkStats httpMgr db nid before = flip runReaderT (NodeRPCContext httpMgr $ _node_address before) $ do
@@ -367,11 +335,11 @@ nodeWorker delay nds appConfig httpMgr db = supervise $ \addFinalizer -> do
     -- read the persistent list of nodes
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)
-    -- give them all a chance to 
+    -- give them all a chance to
     ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
-    --
+
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     initParams nds (Map.keys theseNodes)
 
@@ -389,7 +357,9 @@ nodeWorker delay nds appConfig httpMgr db = supervise $ \addFinalizer -> do
     for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
       runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
           killMonitor <- nodeRPC $ RMonitorHeads (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId) $ DynamicParamChainId_ChainId chainId
-          liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr killMonitor
-          liftIO $ addFinalizer killMonitor
+          let cleanup = killMonitor
+                *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
+          liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
+          liftIO $ addFinalizer cleanup
           say ("start monitor on " <> nodeAddr)
 

@@ -20,7 +20,7 @@ module Common.Schema where
 
 import qualified Cases
 import Control.Lens.TH (makeLenses)
-import Control.Lens (views)
+import Control.Lens (views, (^.))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.AppendMap (AppendMap)
@@ -239,12 +239,21 @@ instance Monoid BakeEfficiency where
   mappend = (<>)
 
 data VeryBlockLike = VeryBlockLike
-  { _veryBlockLike_hash :: BlockHash
-  , _veryBlockLike_predecessor :: BlockHash
-  , _veryBlockLike_fitness :: Fitness
-  , _veryBlockLike_level :: RawLevel
-  , _veryBlockLike_timestamp :: UTCTime
+  { _veryBlockLike_hash :: !BlockHash
+  , _veryBlockLike_predecessor :: !BlockHash
+  , _veryBlockLike_fitness :: !Fitness
+  , _veryBlockLike_level :: !RawLevel
+  , _veryBlockLike_timestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Typeable)
+
+mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
+mkVeryBlockLike blk = VeryBlockLike
+  { _veryBlockLike_hash = blk ^. hash
+  , _veryBlockLike_predecessor = blk ^. predecessor
+  , _veryBlockLike_fitness = blk ^. fitness
+  , _veryBlockLike_level = blk ^. level
+  , _veryBlockLike_timestamp = blk ^. timestamp
+  }
 
 
 data DelegateStats = DelegateStats

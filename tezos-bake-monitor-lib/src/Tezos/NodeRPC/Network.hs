@@ -30,6 +30,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 
 import Tezos.NodeRPC.Types
 import Tezos.Types
@@ -100,6 +101,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
   -- sayShow (node, method_, rpcSelector)
 
   let rpcUrl = node <> rpcSelector
+  liftIO $ T.putStrLn rpcUrl
 
   let rpcBoilerplate req = req
         { method = method_
@@ -122,7 +124,11 @@ nodeRPCImpl' decoder method_ rpcSelector = do
         case decoder body of
           Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
-      Status code phrase -> throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
+      Status code phrase -> do
+        liftIO $ print $ responseStatus result
+        liftIO $ LBS.putStrLn $ responseBody result
+
+        throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
 nodeRPCChunkedImpl :: forall m a s e.
   ( MonadIO m, FromJSON a

@@ -108,11 +108,10 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
 
   delegateStats <- whenJust maybeCurrentHead $ \currentHead -> do
     let keys = Map.keys (_bakeViewSelector_delegateStats vs)
-    let efficiencies = mempty
-    --efficiencies <- flip runReaderT nds $ do
-    --  fmap Map.fromList $ for keys $ \delegate -> do
-    --    efficiency <- runExceptT $ calculateBakeEfficiency currentHead 5 delegate
-    --    return (delegate, either (const mempty) id efficiency)
+    efficiencies <- flip runReaderT nds $ do
+      fmap Map.fromList $ for keys $ \delegate -> do
+        efficiency <- runExceptT $ withCache mempty $ const $ calculateBakeEfficiency currentHead 50 delegate
+        return (delegate, either (const mempty) id efficiency)
     let inKeys = In keys
     rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
       <- [queryQ|
