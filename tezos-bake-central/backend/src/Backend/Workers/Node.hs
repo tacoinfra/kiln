@@ -1,10 +1,7 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -13,16 +10,16 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Backend.Workers.Node where
 
-import Database.Groundhog.Core
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad.Except (ExceptT(..), MonadError, runExceptT, throwError, catchError)
-import Control.Monad.IO.Class(liftIO)
+import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.State
@@ -31,27 +28,28 @@ import Data.Bifunctor (first)
 import Data.Either.Combinators
 import Data.Foldable (for_)
 import Data.Functor.Identity (Identity (..))
+import qualified Data.LCA.Online.Polymorphic as LCA
+import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup((<>), Max(..))
-import Data.Text(Text)
-import Data.Traversable (for)
-import Data.Tuple(swap)
-import Database.Groundhog.Postgresql
-import Say (say, sayErr, sayShow)
-import qualified Data.LCA.Online.Polymorphic as LCA
-import qualified Data.Map as Map
+import Data.Semigroup (Max (..), (<>))
+import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Traversable (for)
+import Data.Tuple (swap)
+import Database.Groundhog.Core
+import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
+import Say (say, sayErr, sayShow)
 
 import Backend.CachedNodeRPC
 import Backend.Supervisor
 
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
+                                updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Schema (Id (..), Json (..))
@@ -59,10 +57,10 @@ import Rhyolite.Schema (Id (..), Json (..))
 import Tezos.NodeRPC
 import Tezos.Types
 
-import Common.Schema
+import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.Schema
-import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Common.Schema
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Schema
 import Rhyolite.Backend.Schema.Class
@@ -73,7 +71,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 
 -- cacheChainCycle :: b -> m (Id CachedChainCycle)
 -- cacheChainCycle = error "TODO"
--- 
+--
 -- cacheOneBlock
 --   ::( MonadLogger m
 --     , MonadBaseControl IO m
@@ -141,7 +139,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 --           let cycleInitHash :: BlockHash = _block_hash cycleInitBlock
 --           --sayShow cycleInitBlock
 --           -- we now have enough information to get our metadata in sync
--- 
+--
 --           (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Cycle) <- listToMaybe <$> [queryQ|
 --               SELECT ccc.id, cpc."preservedCycles"
 --               FROM "CachedChainCycle" ccc
@@ -167,7 +165,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 --                   protoId' <- insert proto'
 --                   return (toId protoId', proto')
 --                 Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
--- 
+--
 --               previousCycleHash <- fmap _block_hash . onRpcError <=< flip runReaderT ctx $ runExceptT $ nodeRPC $
 --                 RBlock (blockHashIdPred' chain cycleInitHash $ fromIntegral $ _cachedProtocolConstants_blocksPerCycle proto)
 --               -- protocol version data is now in sync
@@ -196,7 +194,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 --           -- sayShow ("haveAncestors:", maxGoodAncestor)
 --           -- let needAncestors = Seq.take (Seq.length ancestors - maxGoodAncestor) ancestors
 --           -- sayShow ("needAncestors:", Seq.length needAncestors, Seq.take 3 needAncestors)
--- 
+--
 --           let blocks = cacheOneBlock ctx chain chainCycleId
 --                 <$> ZipList [cyclePosition,cyclePosition-1..maxGoodAncestor+1]
 --                 <*> ZipList (blockHash : toList ancestors)
@@ -306,8 +304,8 @@ updateNetworkStats httpMgr db nid before = flip runReaderT (NodeRPCContext httpM
   let
     onErr :: forall m a. Functor m => ExceptT RpcError m a -> m (Maybe a)
     onErr = fmap rightToMaybe . runExceptT
-  connections <- onErr $ nodeRPC RConnections
-  networkStat <- onErr $ nodeRPC RNetworkStat
+  connections <- onErr $ nodeRPC rConnections
+  networkStat <- onErr $ nodeRPC rNetworkStat
   let
     after = before
       { _node_peerCount = connections -- intentionally not coalescing.
@@ -324,10 +322,9 @@ nodeWorker
   :: Int -- delay between checking for updates, in microseconds
   -> NodeDataSource
   -> AppConfig
-  -> Http.Manager
   -> Pool Postgresql
   -> IO (IO ())
-nodeWorker delay nds appConfig httpMgr db = supervise $ \addFinalizer -> do
+nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
   nodePool :: MVar (Map ClientAddress (IO ())) <- newMVar mempty
   worker delay $ do
     say "Update node cycle."
@@ -336,6 +333,7 @@ nodeWorker delay nds appConfig httpMgr db = supervise $ \addFinalizer -> do
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
+    let httpMgr = _nodeDataSource_httpMgr nds
     ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
@@ -353,13 +351,12 @@ nodeWorker delay nds appConfig httpMgr db = supervise $ \addFinalizer -> do
     let chainId = _nodeDataSource_chain nds
 
     let nodeError :: ClientAddress -> RpcError -> ExceptT RpcError IO ()
-        nodeError nodeAddr _ = ExceptT ( fmap Right ( runNoLoggingT ( runDb (Identity db) ( flip runReaderT appConfig ( reportInaccessibleEndpointError EndpointType_Node nodeAddr )))))
+        nodeError nodeAddr _ = ExceptT (fmap Right (runNoLoggingT (runDb (Identity db) (runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig))))
     for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
       runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
-          killMonitor <- nodeRPC $ RMonitorHeads (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId) $ DynamicParamChainId_ChainId chainId
+          killMonitor <- nodeRPC $ rMonitorHeads (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId) chainId
           let cleanup = killMonitor
                 *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
           liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
           liftIO $ addFinalizer cleanup
           say ("start monitor on " <> nodeAddr)
-

@@ -1,75 +1,101 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Network.Http.Client based request handler
-module Tezos.NodeRPC.Network where
+module Tezos.NodeRPC.Network (nodeRPC, HasNodeRPC (..), NodeRPCContext (..)) where
 
 import Control.Concurrent
 import Control.Exception
-import Data.Bifunctor
-import Data.Char (ord)
-import Data.Foldable
 import Control.Lens (Lens', uncons, unsnoc, view)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Reader
 import Data.Aeson
+import Data.Bifunctor
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as LBS8
+import Data.Char (ord)
+import Data.Foldable
+import qualified Data.Map as Map
 import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Data.Typeable
 import Network.HTTP.Client
 import Network.HTTP.Types.Header
-import Network.HTTP.Types.Method (Method, methodGet, methodPost)
-import Network.HTTP.Types.Status(Status(..))
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Map as Map
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import Network.HTTP.Types.Method (Method, methodGet)
+import Network.HTTP.Types.Status (Status (..))
 
+import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
 -- newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
 --   deriving (Functor, Applicative, Monad, MonadIO)
 
-nodeRPC :: forall m e a s.
-  ( MonadIO m
-  , MonadReader s m , HasNodeRPC s
-  , MonadError e m , AsRpcError e
-  )
-  => NodeRPCRequest a -> m a
-nodeRPC = \case
-  RComplete (BlockPrefix pfx) -> nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  RBlock blockHash -> nodeRPCImpl methodGet (blockIdToUrl blockHash)
-  RBlocks chain (RawLevel len) heads -> byHead <$> nodeRPCImpl methodGet ("/chains/" <> chainIdToUrl chain <> "/blocks?length=" <> (T.pack $ show len) <> foldMap blk2param heads)
+
+-- nodeRPC :: forall m e a s.
+--   ( MonadIO m
+--   , MonadReader s m , HasNodeRPC s
+--   , MonadError e m , AsRpcError e
+--   )
+--   => NodeRPCRequest a -> m a
+-- nodeRPC = unD
+
+newtype QueryNodeImpl a = QueryNodeImpl {
+  nodeRPC :: forall m e s. (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e) => m a
+  }
+
+instance QueryChain QueryNodeImpl where
+  rChain = QueryNodeImpl $ _block_chainId <$> nodeRPCImpl methodGet "/chains/main/blocks/head"
+
+instance QueryBlocks QueryNodeImpl where
+  type BlockType QueryNodeImpl = Block
+  --rComplete (BlockPrefix pfx) = QueryNodeImpl $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
+  rHead chainId = QueryNodeImpl $ nodeRPCImpl methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head"
+  rBlock chainId blockHash = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash
+  rBlockPred chainId blockHash (RawLevel levelsBack) = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "~" <> T.pack (show levelsBack)
+  rBlocks chainId (RawLevel len) heads = QueryNodeImpl $ byHead <$> nodeRPCImpl methodGet ("/chains/" <> toBase58Text chainId <> "/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads)
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
       byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
       blk2param :: BlockHash -> Text
       blk2param blkHash = "&head=" <> toBase58Text blkHash
-  RProtoConstants blk -> nodeRPCImpl methodGet (blockIdToUrl blk <> "/context/constants")
-  RContract block publicKey -> nodeRPCImpl methodGet (blockIdToUrl block <> "/context/contracts/" <> toPublicKeyHashText publicKey)
-  RConnections -> do
+
+instance QueryRights QueryNodeImpl where
+  rProtoConstants chainId blockHash = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
+  rContract chainId blockHash contractId = QueryNodeImpl $ nodeRPCImpl methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
+  rBakingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
+      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
+  rEndorsingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
+      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
+
+instance QueryNode QueryNodeImpl where
+  rConnections = QueryNodeImpl $ do
     vs :: [Value] <- nodeRPCImpl methodGet "/network/connections"
     return $ fromIntegral $ Prelude.length vs
-  RBakingRights block params -> nodeRPCImpl methodGet $ blockIdToUrl block <> "/helpers/baking_rights"
-      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
-  REndorsingRights block params -> nodeRPCImpl methodGet $ blockIdToUrl block <> "/helpers/endorsing_rights"
-      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
-  RNetworkStat -> nodeRPCImpl methodGet "/network/stat"
+  rNetworkStat = QueryNodeImpl $ nodeRPCImpl methodGet "/network/stat"
 
-  RMonitorHeads f chain -> nodeRPCChunkedImpl f methodGet ("/monitor/heads/" <> chainIdToUrl chain)
+instance MonitorHeads QueryNodeImpl where
+  rMonitorHeads f chainId = QueryNodeImpl $ nodeRPCChunkedImpl f methodGet ("/monitor/heads/" <> toBase58Text chainId)
 
-  where
-    dynamicParamRightsRangeToQueryArg = \case
-      Left (RawLevel x) -> "level=" <> (T.pack $ show x)
-      Right (Cycle x) -> "cycle=" <> (T.pack $ show x)
+
+chainBlockUrl :: ChainId -> BlockHash -> Text
+chainBlockUrl chainId blockHash = "/chains/" <> toBase58Text chainId <> "/blocks/" <> toBase58Text blockHash
+
+dynamicParamRightsRangeToQueryArg :: Either RawLevel Cycle -> Text
+dynamicParamRightsRangeToQueryArg = \case
+  Left (RawLevel x) -> "level=" <> T.pack (show x)
+  Right (Cycle x) -> "cycle=" <> T.pack (show x)
 
 data NodeRPCContext = NodeRPCContext
   { _nodeRPCContext_httpManager :: Manager
@@ -126,7 +152,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
           Right v -> return v
       Status code phrase -> do
         liftIO $ print $ responseStatus result
-        liftIO $ LBS.putStrLn $ responseBody result
+        liftIO $ LBS8.putStrLn $ responseBody result
 
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 

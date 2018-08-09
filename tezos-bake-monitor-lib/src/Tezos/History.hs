@@ -1,28 +1,29 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.History where
 
-import Control.Lens.TH
-import Control.Lens -- (Lens, view, (.=))
+import Control.Lens (Lens, ifor_, re, view, (%=), (^.))
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable
-import Data.Map(Map)
-import Data.Semigroup ((<>))
-import Data.Set(Set)
-import Data.Typeable
+import Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.Set as Set
+import Data.Semigroup ((<>))
+import Data.Sequence ((<|))
 import qualified Data.Sequence as Seq
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Typeable
 
 import qualified Data.LCA.Online.Polymorphic as LCA
 
@@ -65,14 +66,13 @@ accumHistory
   => ProgressFn m -> ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
 accumHistory progress chainId f blk = do
   minLevel <- gets $ _cachedHistory_minLevel . view cachedHistory
-  let blkHash = (view hash blk)
-  let predHash = (view predecessor blk)
-  let chainIdParam = DynamicParamChainId_ChainId chainId
+  let blkHash = view hash blk
+  let predHash = view predecessor blk
   -- let log x = liftIO $ print (blkHash, x)
   -- log ("begin", predHash)
 
   -- check to see if we already have history for the predecessor block
-  (gets $ Map.lookup predHash . _cachedHistory_blocks . view cachedHistory) >>= \case
+  gets (Map.lookup predHash . _cachedHistory_blocks . view cachedHistory) >>= \case
     -- we have the predecessor, nothing more to do.
     Just _branch -> do
       -- log "already have predecessor"
@@ -86,19 +86,19 @@ accumHistory progress chainId f blk = do
       -- we will now proceed to restore the missing history.  We ask a node for
       -- enough block-hashes to reach from the new block to "the root" at
       -- minLevel
-      let levels = (view level blk) - minLevel
-      result <- nodeRPC $ RBlocks chainIdParam levels $ Set.singleton blkHash
+      let levels = view level blk - minLevel
+      result <- nodeRPC $ rBlocks chainId levels $ Set.singleton blkHash
       case Map.lookup blkHash result of
         Nothing -> throwError $ (^. re asRpcError) $ RpcError_UnexpectedStatus 404 "node did not return a branch containing requested block"
         Just descendents -> do -- suposing something like {5:[4,3,2,1]}
           -- make sure we have a root node
           let rootHash = Seq.index (blkHash <| descendents) (length descendents) -- 1
           -- log ("got branch", length descendents, "expect", levels, rootHash)
-          rootBlk <- nodeRPC $ RBlock $ blockHashId' chainId rootHash
+          rootBlk <- nodeRPC $ rBlock chainId rootHash
           cachedHistory %= accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
           -- scan insert the intermediate nodes
           let preds = Seq.reverse descendents -- [1,2,3,4]
-          let blks = Seq.drop 1 $ preds -- [2,3,4]
+          let blks = Seq.drop 1 preds -- [2,3,4]
           let newBranchLength = length blks
           ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
             progress blkHash blkHash' i newBranchLength
@@ -138,7 +138,6 @@ scanBranch ::
   => Block -> RawLevel -> RawLevel -> (Block -> m a) -> m ()
 scanBranch branch start stop k = do
   let headLvl = _blockHeader_level $ _block_header branch
-  let branch' n = blockHashIdPred' (_block_chainId branch) (_block_hash branch) (headLvl - n)
   for_ [start .. stop] $ \n -> do
-    blk <- nodeRPC $ RBlock $ branch' n
+    blk <- nodeRPC $ rBlockPred (_block_chainId branch) (_block_hash branch) (headLvl - n)
     void $ k blk

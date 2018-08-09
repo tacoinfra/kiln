@@ -3,18 +3,19 @@
 
 module Tezos.BlockHeader where
 
-import Data.Aeson(ToJSON, FromJSON)
-import Data.Word
+import Control.Lens.TH (makeLenses)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.ByteString (ByteString)
 import Data.Time
 import Data.Typeable
-import Data.ByteString (ByteString)
+import Data.Word
 
 import Tezos.Base16ByteString
 import Tezos.Base58Check
 import Tezos.Fitness
+import Tezos.Json
 import Tezos.Level
 import Tezos.Signature
-import Tezos.Json
 
 -- TODO: split this into ShellHeader/AlphaProtoHeader/etc
 -- AKA: raw_block_header, "block_header.alpha.full_header"
@@ -39,3 +40,4 @@ newtype Priority = Priority { unPriority :: Word16 }
 
 
 concat <$> traverse deriveTezosJson [ ''BlockHeader ]
+concat <$> traverse makeLenses [ 'BlockHeader ]

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -8,11 +8,11 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Monad.Reader (runReaderT)
-import Control.Monad.Except (runExceptT)
 import Control.Lens (ifor, imap, itraverse, (<&>))
+import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
@@ -44,12 +44,12 @@ import Common (whenJust)
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
-import Tezos.Json (TezosWord64 (..))
-import Tezos.PublicKeyHash
 import Common.Schema
-import Tezos.Tez
 import Tezos.Account
+import Tezos.Json (TezosWord64 (..))
 import Tezos.NodeRPC.Types
+import Tezos.PublicKeyHash
+import Tezos.Tez
 
 import Backend.CachedNodeRPC
 
@@ -83,22 +83,22 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       SELECT n.id
         , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
         , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
-        , n."fitness", n."lastHeartbeat"
+        , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE n.id IN ?selNodes AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
           (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
-          return (nid, First $ Just (Node
+          return (nid, First $ Just Node
             { _node_address = addr
             , _node_identity = ident
             , _node_headLevel = headLevel
             , _node_headBlockHash = headBlockHash
             , _node_peerCount = peerCount
-            , _node_networkStat = (NetworkStat totalSent totalRecv currentInflow currentOutflow)
+            , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
             , _node_fitness = fitness
             , _node_deleted = False
             , _node_lastHeartbeat = lastHeartbeat
-            }))
+            })
     return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do

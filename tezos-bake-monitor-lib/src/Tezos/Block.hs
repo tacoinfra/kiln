@@ -1,6 +1,6 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.Block where
 
@@ -8,19 +8,19 @@ module Tezos.Block where
 import Control.Lens (Lens')
 import Control.Lens.TH (makeLenses)
 import Data.Sequence (Seq)
+import Data.Time
 import Data.Typeable
 import Data.Word
-import Data.Time
 
 import Tezos.BalanceUpdate
 import Tezos.Base58Check
 import Tezos.BlockHeader
+import Tezos.Fitness
 import Tezos.Json
 import Tezos.Level
 import Tezos.Operation
 import Tezos.PublicKeyHash
 import Tezos.TestChainStatus
-import Tezos.Fitness
 
 -- | "description": "All the information about a block.",
 data Block = Block
@@ -91,7 +91,6 @@ concat <$> traverse deriveTezosJson
 
 concat <$> traverse makeLenses
  [ 'Block
- , 'BlockHeader
  , 'BlockMetadata
  , 'MaxOperationListLength --  "max_operation_list_length": {
  , 'MonitorBlock

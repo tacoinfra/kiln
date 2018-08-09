@@ -1,13 +1,12 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.ChainHealth (scanForkInfo) where
 
-import Control.Monad (void)
 import Control.Lens (view, (^.))
-import Control.Monad.Except (MonadError, throwError, catchError, runExceptT)
+import Control.Monad (void)
+import Control.Monad.Except (MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.Function (on)
@@ -18,13 +17,13 @@ import qualified Network.HTTP.Client as Http
 import Safe (maximumByMay)
 import Say (say)
 
-import Tezos.NodeRPC
-import Tezos.Lenses
-import Tezos.Types
+import Backend.CachedNodeRPC
 import Common (tshow)
 import Common.Schema
 import Common.Verification
-import Backend.CachedNodeRPC
+import Tezos.Lenses
+import Tezos.NodeRPC
+import Tezos.Types
 
 -- problem:: many baked blocks do not appear on chain
 -- problem:: any parent of seen blocks do not appear on chain

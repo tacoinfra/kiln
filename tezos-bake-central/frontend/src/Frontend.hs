@@ -60,8 +60,8 @@ import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import qualified Text.URI as Uri
 
-import Tezos.Types
 import Tezos.NodeRPC.Types
+import Tezos.Types
 
 import Common (tshow)
 import Common.Api

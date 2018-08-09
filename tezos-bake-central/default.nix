@@ -15,8 +15,8 @@ obelisk.project ./. ({ pkgs, ... }:
     gargoyle-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "gargoyle";
-      rev = "80dfffb22aa399a08559db4191d6d9da8569386d";
-      sha256 = "17hhfm20k1d3p1alxgs7dm3nayivr362w3al38mz9v6rab3ywzjc";
+      rev = "72355581ef1f8663e2772b31b90dc074d32a93a1";
+      sha256 = "08w7aa5mb49ypqi8nhlrpd8jcm10h4ja9xsmb8b8mvcch6sk1ykf";
     };
     groundhog-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";

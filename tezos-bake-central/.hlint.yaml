@@ -54,6 +54,7 @@
 - ignore: {name: Use if}
 - ignore: {name: Use <$>}
 - ignore: {name: "Use ?~"}
+- ignore: {name: Use section}
 # - ignore: {name: Use const, within: SpecialModule} # Only within certain modules
 
 

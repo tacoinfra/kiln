@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -16,11 +15,10 @@ module Backend where
 import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
-import Control.Monad.Except (ExceptT(..), MonadError, runExceptT, throwError, catchError)
+import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
@@ -54,7 +52,7 @@ import qualified Data.Set as Set
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T -- (decodeUtf8, encodeUtf8)
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
@@ -98,15 +96,15 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
-import Tezos.Base58Check (HashedValue(..), fromBase58)
-import Tezos.Types
+import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Lenses
-import Tezos.NodeRPC -- (HasNodeRPC, NodeRPCContext (..), nodeRPC, RpcError)
+import Tezos.NodeRPC
+import Tezos.Types
 
 import Backend.Supervisor
-import Backend.Workers.Node
 import Backend.Workers.Client
 import Backend.Workers.Delegate
+import Backend.Workers.Node
 
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
@@ -123,7 +121,6 @@ import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Frontend (frontend)
 
 import Backend.CachedNodeRPC
-
 
 seconds :: Int -> Int
 seconds = (* 10^(6 :: Int))
@@ -207,7 +204,7 @@ onRpcError = either (throwError . tshow) pure
 --           let cycleInitHash :: BlockHash = _block_hash cycleInitBlock
 --           --sayShow cycleInitBlock
 --           -- we now have enough information to get our metadata in sync
--- 
+--
 --           (chainCycleId, preservedCycles) :: (Id CachedChainCycle, Cycle) <- listToMaybe <$> [queryQ|
 --               SELECT ccc.id, cpc."preservedCycles"
 --               FROM "CachedChainCycle" ccc
@@ -233,7 +230,7 @@ onRpcError = either (throwError . tshow) pure
 --                   protoId' <- insert proto'
 --                   return (toId protoId', proto')
 --                 Just (protoId', p, bpc, pc) -> return (protoId', CachedProtocolConstants p bpc pc)
--- 
+--
 --               previousCycleHash <- fmap _block_hash . onRpcError <=< flip runReaderT ctx $ runExceptT $ nodeRPC $
 --                 RBlock (blockHashIdPred' chain cycleInitHash $ fromIntegral $ _cachedProtocolConstants_blocksPerCycle proto)
 --               -- protocol version data is now in sync
@@ -262,7 +259,7 @@ onRpcError = either (throwError . tshow) pure
 --           -- sayShow ("haveAncestors:", maxGoodAncestor)
 --           -- let needAncestors = Seq.take (Seq.length ancestors - maxGoodAncestor) ancestors
 --           -- sayShow ("needAncestors:", Seq.length needAncestors, Seq.take 3 needAncestors)
--- 
+--
 --           let blocks = cacheOneBlock ctx chain chainCycleId
 --                 <$> ZipList [cyclePosition,cyclePosition-1..maxGoodAncestor+1]
 --                 <*> ZipList (blockHash : toList ancestors)
@@ -286,6 +283,7 @@ onRpcError = either (throwError . tshow) pure
 --               eRrights <- onRpcError =<< runReaderT (runExceptT $ nodeRPC $ REndorsingRights (blockHashId' chain blockHash) $ Set.singleton $ Right . Cycle . fromIntegral $ cycle + preservedCycles) ctx
 --               let cachedRights = CachedBlockRights chainCycleId (fromIntegral $ cycle + preservedCycles) (Json bRights) (Json eRrights)
 --               insertAndNotify_ cachedRights
+
 
 backend :: IO ()
 backend = do
@@ -312,7 +310,6 @@ backend = do
   chainId :: ChainId <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
     (getConfigFromFile (either (const Nothing) Just  . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
-
 
   staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
@@ -347,9 +344,9 @@ backend = do
       addFinalizer wsFinalizer
 
       let appConfig = AppConfig emailFromAddress
-      addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig httpMgr db
+      addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig db
       addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db
-      addFinalizer =<< delegateWorker (seconds 10) httpMgr db
+      addFinalizer =<< delegateWorker (seconds 10) dataSrc db
 
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)
