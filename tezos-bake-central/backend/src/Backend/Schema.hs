@@ -353,37 +353,15 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           type: constraint
           fields:
            - _cachedProtocolConstants_protocol
-  - entity: CachedChainCycle
+  - entity: GenericCacheEntry
     constructors:
-     - name: CachedChainCycle
+     - name: GenericCacheEntry
        uniques:
-        - name: _cachedchaincycle_uniqueness
+        - name: _genericCacheEntry_uniqueness
           type: constraint
           fields:
-           - _cachedChainCycle_hash
-  - entity: CachedBlock
-    constructors:
-     - name: CachedBlock
-       uniques:
-        - name: _cachedblock_uniqueness
-          type: constraint
-          fields:
-           - _cachedBlock_hash
-  - entity: CachedBlockRights
-    constructors:
-     - name: CachedBlockRights
-       uniques:
-        - name: _cachedblockrights_uniqueness
-          type: constraint
-          fields:
-           - _cachedBlockRights_cycle
-  - entity: CycleHistory
-    constructors:
-     - name: CycleHistory
-       uniques:
-        - name: _cyclehistory_uniqueness
-          type: constraint
-          fields: [_cycleHistory_ancestor, _cycleHistory_descendant]
+           - _genericCacheEntry_chainId
+           - _genericCacheEntry_key
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -401,9 +379,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
-  , (''CachedBlock, 'CachedBlockKey)
-  , (''CachedBlockRights, 'CachedBlockRightsKey)
-  , (''CachedChainCycle, 'CachedChainCycleKey)
   , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''CycleHistory, 'CycleHistoryKey)
+  , (''GenericCacheEntry, 'GenericCacheEntryKey)
   ]

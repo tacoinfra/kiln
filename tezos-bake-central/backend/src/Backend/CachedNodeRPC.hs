@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -9,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fmax-relevant-binds=20 #-}
 
@@ -40,13 +42,15 @@ import Data.Semigroup
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Time (UTCTime)
+import Data.Time (getCurrentTime, UTCTime)
 import Data.Traversable (for)
 import Data.Typeable
 import Generics.Deriving.TH
 import qualified Network.HTTP.Client as Http (Manager)
 import Safe.Foldable (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
+
+import Rhyolite.Request.TH (makeRequestForData)
 
 import Tezos.History
 import Tezos.Lenses
@@ -62,6 +66,7 @@ data NodeQuery a where
   NodeQuery_BakingRights        :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_Baker               :: BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
   NodeQuery_Block               :: BlockHash -> NodeQuery Block
+
 
 
 data BranchData a = BranchData
@@ -102,16 +107,23 @@ data CachedBlockInfo = CachedBlockInfo
 
 type CachedHistory' = (CachedHistory (BranchData CachedBlockInfo))
 
--- TODO: age in cache?
-newtype CachedResult a = CacheResult { unCacheResult :: MVar (Either ({- Map ClientAddress -} RpcError) a) }
+data CacheLine a = CacheLine
+  { _cacheLine_value :: !a
+  , _cacheLine_used :: !UTCTime
+  }
+newtype CachedResult a = CachedResult { unCacheResult :: MVar (Either ({- Map ClientAddress -} RpcError) (CacheLine a)) }
+
 unpackCacheResult
-  :: ( MonadIO m , MonadError e m, AsRpcError e)
+  :: forall m e a . ( MonadIO m , MonadError e m, AsRpcError e)
   => CachedResult a -> m a
-unpackCacheResult = (liftIO . readMVar . unCacheResult) >=> \case
-  Left bad -> do
-    sayShow ("cached error:", bad)
-    throwError $ (^. re asRpcError) {- $ maybe (RpcError_HttpException "no suitible node") snd $ listToMaybe $ Map.toList -} bad
-  Right a -> pure a
+unpackCacheResult (CachedResult var) = join $ liftIO $ modifyMVar var $ either onErr onSuccess
+  where
+    onErr :: RpcError -> IO (Either RpcError b, m a)
+    onErr bad = pure (Left bad, throwError (bad ^. re asRpcError))
+    onSuccess :: CacheLine a -> IO (Either RpcError (CacheLine a), m a)
+    onSuccess result = do
+      now <- getCurrentTime
+      return (Right result {_cacheLine_used = now}, return $ _cacheLine_value result)
 
 -- get lca between two blocks
 branchPoint ::
@@ -274,7 +286,7 @@ nodeQueryDataSource q' = do
         pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
           Nothing -> do
             newVar <- newMVar $ Left $ RpcError_HttpException "No suitable node"
-            pure (cache, CacheResult newVar)
+            pure (cache, CachedResult newVar)
           Just anyNode -> do
             let
               ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
@@ -283,9 +295,15 @@ nodeQueryDataSource q' = do
               let
                 unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
                 unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-              res <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
-              putMVar newVar res
-            pure (DMap.insert q (CacheResult newVar) cache, CacheResult newVar)
+              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
+              now <- getCurrentTime
+              let
+                mkResult v = CacheLine
+                  { _cacheLine_value = v
+                  , _cacheLine_used = now
+                  }
+              putMVar newVar $ mkResult <$> res'
+            pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
 
   unpackCacheResult resultM
 
@@ -306,11 +324,6 @@ nodeQueryDataSourceImpl chainId proto ctx self' q = runExceptT $ do
     nodeRPC' :: forall b. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryRights repr, QueryBlocks repr) => repr b) -> ExceptT RpcError IO b
     nodeRPC' q' = runReaderT (nodeRPC q') ctx
   case q of
-    -- NodeQuery_GenesisParameters -> do
-    --   currentHead <- nodeRPC' $ RBlock $ headId
-    --   let headLevel = currentHead ^. block_header . blockHeader_level
-    --   --TODO: if headLevel == 0 then error "error"
-    --   nodeRPC' $ RProtoConstants $ blockHashIdPred (_block_hash currentHead) (headLevel - 1)
 
     NodeQuery_BakingRights branch targetLevel ->
       nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
@@ -373,3 +386,5 @@ deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
 deriving instance Show (NodeQuery a)
+
+makeRequestForData ''NodeQuery

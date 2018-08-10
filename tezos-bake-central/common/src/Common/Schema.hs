@@ -351,52 +351,19 @@ data ErrorLog = ErrorLog
 instance HasId ErrorLog
 
 data CachedProtocolConstants = CachedProtocolConstants
-  { _cachedProtocolConstants_protocol :: !ProtocolHash
+  { _cachedProtocolConstants_chainId :: !ChainId
+  , _cachedProtocolConstants_protocol :: !ProtocolHash
   , _cachedProtocolConstants_blocksPerCycle :: !RawLevel
   , _cachedProtocolConstants_preservedCycles :: !Cycle
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId CachedProtocolConstants
 
--- |  a tag for rights
-data CachedChainCycle = CachedChainCycle
-  { _cachedChainCycle_chainId :: !ChainId
-  , _cachedChainCycle_constants :: !(Id CachedProtocolConstants)
-  , _cachedChainCycle_cycle :: !Cycle
-  , _cachedChainCycle_hash :: !BlockHash -- Hash of *first* block in cycle.
-  , _cachedChainCycle_predecessor :: !BlockHash -- Hash of first block in *previous* cycle.
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CachedChainCycle
-
-data CachedBlock = CachedBlock
-  { _cachedBlock_chain :: !(Id CachedChainCycle)
-  , _cachedBlock_baker :: !PublicKeyHash
-  , _cachedBlock_endorsers :: !(Json (Seq PublicKeyHash))
-  , _cachedBlock_cyclePosition :: !RawLevel
-  , _cachedBlock_hash :: !BlockHash
-  , _cachedBlock_predecessor :: !BlockHash
-  , _cachedBlock_fitness :: !Fitness
-  , _cachedBlock_level :: !RawLevel
-  , _cachedBlock_timestamp :: !UTCTime
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CachedBlock
-
-
--- rights for block at level `level` for cycle `cycle`+`cycle.constants.preservedCycles`
-data CachedBlockRights = CachedBlockRights
-  { _cachedBlockRights_cycle :: !(Id CachedChainCycle)
-  , _cachedBlockRights_forCycle :: !Word32
-  , _cachedBlockRights_bakers :: !(Json (Seq BakingRights))
-  , _cachedBlockRights_endorsers :: !(Json (Seq EndorsingRights))
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CachedBlockRights
-
-data CycleHistory = CycleHistory
-  { _cycleHistory_ancestor :: !(Id CachedChainCycle)
-  , _cycleHistory_descendant :: !(Id CachedChainCycle)
-  , _cycleHistory_distance :: !Word32
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CycleHistory
-
+data GenericCacheEntry = GenericCacheEntry
+  { _genericCacheEntry_chainId :: !ChainId
+  , _genericCacheEntry_key :: !(Json Aeson.Value)
+  , _genericCacheEntry_value :: !(Json Aeson.Value)
+  } deriving (Eq, Generic, Show, Typeable)
+instance HasId GenericCacheEntry
 
 
 -- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
@@ -445,19 +412,10 @@ concat <$> traverse makeLenses
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent
-  , 'CachedChainCycle
-  , 'CachedBlockRights
-  , 'CachedBlock
+  -- , 'CachedBlock
   , 'CachedProtocolConstants
   , 'VeryBlockLike
   ]
-
-instance BlockLike CachedBlock where
-  hash = cachedBlock_hash
-  predecessor = cachedBlock_predecessor
-  level = cachedBlock_level
-  fitness = cachedBlock_fitness
-  timestamp = cachedBlock_timestamp
 
 instance BlockLike VeryBlockLike where
    hash = veryBlockLike_hash

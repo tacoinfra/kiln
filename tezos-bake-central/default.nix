@@ -5,11 +5,12 @@ in
 obelisk.project ./. ({ pkgs, ... }:
   let
     reflex-platform = obelisk.reflex-platform;
+    # rhyolite-src = ../../../rhyolite;
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "173e9bcc7dad469ea9b4110243c829b0f1dd6d9c";
-      sha256 = "0khf21w0rap4isqdxaziby6rj79yrriig72qfnc051ayc9ql81nb";
+      rev = "4644ff2667774f2b5593a3dadd9a78379ca8301b";
+      sha256 = "0bag8aj6xp4rgcv6kblzwz92sbnidd8rmm68qgvsm7z0jg643g7c";
     };
 
     gargoyle-src = pkgs.fetchFromGitHub {

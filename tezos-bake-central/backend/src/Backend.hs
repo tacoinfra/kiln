@@ -102,6 +102,7 @@ import Tezos.NodeRPC
 import Tezos.Types
 
 import Backend.Supervisor
+import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client
 import Backend.Workers.Delegate
 import Backend.Workers.Node
@@ -344,6 +345,7 @@ backend = do
       addFinalizer wsFinalizer
 
       let appConfig = AppConfig emailFromAddress
+      addFinalizer =<< cacheWorker (seconds 30) dataSrc db
       addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig db
       addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db
       addFinalizer =<< delegateWorker (seconds 10) dataSrc db
