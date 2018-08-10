@@ -17,14 +17,15 @@ import Tezos.Types
 class QueryChain repr where
   rChain :: repr ChainId
 
-class QueryChain repr => QueryBlocks repr where -- tzscan
+class QueryBlock repr where -- tzscan
   type BlockType repr
   rHead :: ChainId -> repr (BlockType repr)
   rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
-  rBlockPred :: ChainId -> BlockHash -> RawLevel -> repr (BlockType repr)
-  rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
 
-class QueryChain repr => QueryRights repr where -- blockscale
+class QueryHistory repr where -- blockscale
+  rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
+  rBlockPred :: ChainId -> BlockHash -> RawLevel -> repr (BlockType repr)
+
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
   rContract :: ChainId -> BlockHash -> ContractId -> repr Account
 
@@ -38,13 +39,4 @@ class QueryNode repr where -- my node
   rNetworkStat :: repr NetworkStat
 
 class MonitorHeads repr where
-  rMonitorHeads :: (RpcResponse MonitorBlock -> IO ()) -> ChainId -> repr (IO ())
-
-
--- instance QueryBlocks NodeRPCRequest where
---   type BlockType NodeRPCRequest = Block
---   --rBlock bh =
-
--- instance QueryBlocks QueryGadt where
---   type BlockType QueryGadt = Block
---   rBlock bh = QueryGadt (nodeRPC (RBlock undefined))
+  rMonitorHeads :: ChainId -> (RpcResponse MonitorBlock -> IO ()) -> repr (IO ())

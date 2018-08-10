@@ -4,10 +4,6 @@
 
 module Backend.Workers.Delegate where
 
-import Backend.Schema
-import Backend.Workers
-import Common (tshow)
-import Common.Schema
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -37,6 +33,10 @@ import Tezos.NodeRPC
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Schema
+import Backend.Workers
+import Common (tshow)
+import Common.Schema
 
 delegateWorker
   :: MonadIO m

@@ -1,6 +1,6 @@
 name: tezos-bake-monitor-lib
 version: 0.1.0.0
-synopsis:  Shared types and code between tezos-bake-monitor and tezos-bake-central.
+synopsis: Shared types and code between tezos-bake-monitor and tezos-bake-central.
 -- description:
 license: BSD3
 license-file: LICENSE
@@ -32,6 +32,7 @@ library
     Tezos.NodeRPC
     Tezos.NodeRPC.Class
     Tezos.NodeRPC.Network
+    Tezos.NodeRPC.Sources
     Tezos.NodeRPC.Types
     Tezos.Operation
     Tezos.PeriodSequence
@@ -42,7 +43,6 @@ library
     Tezos.TestChainStatus
     Tezos.Tez
     Tezos.Types
-  other-extensions: TemplateHaskell, OverloadedStrings
   build-depends:
       aeson
     , async
@@ -58,12 +58,13 @@ library
     , groups
     , http-client
     , http-types
-    , lens-aeson
     , lens
+    , lens-aeson
     , memory
     , mtl
     , process
     , safe
+    , safe-exceptions
     , scientific
     , semigroups
     , template-haskell
