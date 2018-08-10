@@ -53,6 +53,30 @@ import Tezos.Tez
 
 import Backend.CachedNodeRPC
 
+import Tezos.NodeRPC (QueryNodeImpl (..), QueryChain, QueryBlocks, QueryRights)
+
+data NamedChain = NamedChain_Mainnet | NamedChain_Betanet | NamedChain_Alphanet | NamedChain_Zeronet
+  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
+
+data DataSource
+  = DataSourceType_PlainNode PlainNode
+  | DataSourceType_BlockscaleNode BlockscaleNode
+  | DataSourceType_TzScan TzScanNode
+  deriving (Eq, Ord, Generic, Typeable, Read, Show)
+
+newtype PlainNode = PlainNode ClientAddress
+
+newtype QPlainNode a = QPlainNode { queryPlainNode :: forall e m. (MonadIO m, Has Http.Manager m, MonadError e m , AsRpcError e) => m a }
+
+instance QueryChain QPlainNode where
+  type BlockType QPlainNode = Block
+  rChain = QPlainNode $ nodeRPC $ runReaderT rChain
+
+
+newtype BlockscaleNode = BlockscaleNode NamedChain
+newtype TzScanNode = TzScanNode NamedChain
+
+
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
   => NodeDataSource
@@ -138,13 +162,13 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
           -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
           delegateStats :: Maybe DelegateStats
           delegateStats = DelegateStats
-              <$> dId
-              <*> (Map.lookup publicKeyHash efficiencies)
-              <*> pure accountBalance
-              <*> pure accountSpendable
-              <*> pure accountSetable
-              <*> pure accountValue
-              <*> pure accountCounter
+            <$> dId
+            <*> Map.lookup publicKeyHash efficiencies
+            <*> pure accountBalance
+            <*> pure accountSpendable
+            <*> pure accountSetable
+            <*> pure accountValue
+            <*> pure accountCounter
     let rsMap = Map.fromList $ toRsMap <$> rs
     return $ Map.intersectionWith (,) (First <$> rsMap) (_bakeViewSelector_delegateStats vs)
 

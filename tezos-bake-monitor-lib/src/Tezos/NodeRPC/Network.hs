@@ -39,18 +39,6 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
--- newtype NodeRPCT m a = NodeRPCT (ReaderT NodeRPCContext m a)
---   deriving (Functor, Applicative, Monad, MonadIO)
-
-
--- nodeRPC :: forall m e a s.
---   ( MonadIO m
---   , MonadReader s m , HasNodeRPC s
---   , MonadError e m , AsRpcError e
---   )
---   => NodeRPCRequest a -> m a
--- nodeRPC = unD
-
 newtype QueryNodeImpl a = QueryNodeImpl {
   nodeRPC :: forall m e s. (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e) => m a
   }
