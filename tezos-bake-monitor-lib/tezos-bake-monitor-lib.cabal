@@ -54,7 +54,6 @@ library
     , containers
     , cryptohash
     , cryptonite
-    , data-has
     , groups
     , http-client
     , http-types

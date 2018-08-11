@@ -41,7 +41,7 @@ data DataSource
   deriving (Eq, Ord, Generic, Typeable, Show)
 
 newtype QDataSource t a = QDataSource
-  { queryPlainNode :: forall e m. (MonadIO m, MonadError e m, AsRpcError e) => Http.Manager -> t -> m a
+  { querySource :: forall e m. (MonadIO m, MonadError e m, AsRpcError e) => Http.Manager -> t -> m a
   } deriving (Functor)
 
 
