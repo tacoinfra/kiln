@@ -37,7 +37,7 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs)
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
-                   mailServerConfigToView)
+                   mailServerConfigToView, ulookup)
 import Common.Schema
 
 notifyHandler
@@ -91,7 +91,7 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
         Aeson.Success nid -> do
           node :: Maybe Node <- fmap listToMaybe $
             select $ AutoKeyField ==. fromId nid &&. Node_deletedField ==. False
-          let nodes = case Map.lookup nid (_bakeViewSelector_nodes aggVS) of
+          let nodes = case ulookup nid (_bakeViewSelector_nodes aggVS) of
                 Nothing -> mempty
                 Just a -> mempty
                   { _bakeView_nodes = Map.singleton nid (First node, a)

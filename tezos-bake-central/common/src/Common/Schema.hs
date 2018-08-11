@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -19,8 +19,8 @@
 module Common.Schema where
 
 import qualified Cases
-import Control.Lens.TH (makeLenses)
 import Control.Lens (views, (^.))
+import Control.Lens.TH (makeLenses)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.AppendMap (AppendMap)
@@ -37,8 +37,8 @@ import Data.Word (Word16, Word32, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 import Tezos.Json
-import Tezos.Types
 import Tezos.NodeRPC
+import Tezos.Types
 
 
 sumFees :: PublicKeyHash -> Operation -> Tez
@@ -101,19 +101,25 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+data TzScan = TzScan
+  { _tzScan_chainId :: !ChainId
+  , _tzScan_headLevel :: !(Maybe RawLevel)
+  , _tzScan_headBlockHash :: !(Maybe BlockHash)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId TzScan
+
 mkNode :: ClientAddress -> Node
 mkNode addr = Node
-    { _node_address = addr
-    , _node_identity = Nothing -- TODO
-    , _node_headLevel = Nothing
-    , _node_headBlockHash = Nothing
-    , _node_peerCount = Nothing
-    , _node_networkStat = NetworkStat 0 0 0 0
-    , _node_fitness = Nothing
-    , _node_deleted = False
-    , _node_lastHeartbeat = Nothing
-    }
-
+  { _node_address = addr
+  , _node_identity = Nothing -- TODO
+  , _node_headLevel = Nothing
+  , _node_headBlockHash = Nothing
+  , _node_peerCount = Nothing
+  , _node_networkStat = NetworkStat 0 0 0 0
+  , _node_fitness = Nothing
+  , _node_deleted = False
+  , _node_lastHeartbeat = Nothing
+  }
 
 data Parameters = Parameters
   { _parameters_node :: Id Node

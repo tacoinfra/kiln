@@ -18,16 +18,17 @@
 
 module Backend.Schema where
 
-import Data.Maybe (fromJust)
 import Data.Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Foldable (toList)
 import Data.Int (Int64)
+import Data.Maybe (fromJust)
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -44,22 +45,18 @@ import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
-import Database.PostgreSQL.Simple.Types (PGArray(..))
+import Database.PostgreSQL.Simple.Types (PGArray (..))
+import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
-import qualified Data.Sequence as Seq
-import qualified Formatting as Fmt
 
-import Tezos.Types
-import Tezos.NodeRPC.Types
-import Tezos.Base58Check
-  ( HashedValue(..)
-  , tryFromBase58
-  )
 import Common.Schema
+import Tezos.Base58Check (HashedValue (..), tryFromBase58)
+import Tezos.NodeRPC.Types
+import Tezos.Types
 --import Common.TezosBinary
 
 instance FromField Word64 where
@@ -221,11 +218,11 @@ instance (ToJSON a, FromJSON a) => PrimitivePersistField (FitnessF a) where
 instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
   persistName _ = "Fitness"
   toPersistValues = toPersistValues . Groundhog.Array . toDBFitness
-  fromPersistValues vs = (first $ fromDBFitness . unArray) <$> fromPersistValues vs
+  fromPersistValues vs = first (fromDBFitness . unArray) <$> fromPersistValues vs
   dbType p x = dbType p (Groundhog.Array $ toDBFitness x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
 
 instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
-  fromField a b = fromDBFitness . fromPGArray <$> (fromField a b)
+  fromField a b = fromDBFitness . fromPGArray <$> fromField a b
 
 instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x
@@ -282,6 +279,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - entity: TzScan
+    constructors:
+    - name: TzScan
+      uniques:
+        - name: _tzscan_uniqueness
+          type: constraint
+          fields: [_tzScan_chainId]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
@@ -393,6 +397,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''DelegateStats, 'DelegateStatsKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
+  , (''TzScan, 'TzScanKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)

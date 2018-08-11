@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -28,7 +29,7 @@ import Data.Functor.Identity (Identity (..))
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Max (..), (<>))
 import Data.Text (Text)
@@ -49,7 +50,9 @@ import Say (say, sayErr, sayShow)
 
 import Backend.CachedNodeRPC
 import Backend.Supervisor
+import Tezos.Block (TzScanBlock (..))
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (NamedChain (..), TzScanNode (..), querySource)
 import Tezos.Types
 
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
@@ -316,14 +319,34 @@ nodeWorker
   -> IO (IO ())
 nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
   nodePool :: MVar (Map ClientAddress (IO ())) <- newMVar mempty
+  let httpMgr = _nodeDataSource_httpMgr nds
   worker delay $ do
     say "Update node cycle."
+
+    tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
+      querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
+    case tzScanHeadBlock' of
+      Left e -> sayErr (T.pack $ show e)
+      Right b -> do
+        let tzScanHeadLevel = _tzScanBlock_level b
+            tzScanHeadBlockHash = _tzScanBlock_hash b
+        runNoLoggingT $ runDb (Identity db) $ do
+          updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
+            INSERT INTO "TzScan"
+              ("chainId", "headLevel", "headBlockHash")
+              VALUES (?betanetChain, ?tzScanHeadLevel, ?tzScanHeadBlockHash)
+            ON CONFLICT ("chainId") DO UPDATE SET
+              "headLevel" = ?tzScanHeadLevel,
+              "headBlockHash" = ?tzScanHeadBlockHash
+            RETURNING id
+          |]
+          for_ updatedRecord $ notifyEntityId NotificationType_Update
 
     -- read the persistent list of nodes
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
-    let httpMgr = _nodeDataSource_httpMgr nds
+
     ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
@@ -344,9 +367,9 @@ nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
         nodeError nodeAddr _ = ExceptT (fmap Right (runNoLoggingT (runDb (Identity db) (runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig))))
     for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
       runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
-          killMonitor <- nodeRPC $ rMonitorHeads chainId (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId)
-          let cleanup = killMonitor
-                *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
-          liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
-          liftIO $ addFinalizer cleanup
-          say ("start monitor on " <> nodeAddr)
+        killMonitor <- nodeRPC $ rMonitorHeads chainId (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId)
+        let cleanup = killMonitor
+              *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
+        liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
+        liftIO $ addFinalizer cleanup
+        say ("start monitor on " <> nodeAddr)

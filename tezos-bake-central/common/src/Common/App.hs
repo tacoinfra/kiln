@@ -38,14 +38,61 @@ import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
 
-
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
 restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
 
+data UniversalMap k a = UniversalMap
+  { _universalMap_universe :: !(Maybe a)
+  , _universalMap_only :: !(AppendMap k a)
+  } deriving (Eq, Ord, Show, Generic, Typeable, Functor, Traversable, Foldable)
+
+instance (Ord k, FromJSON k, FromJSON a) => FromJSON (UniversalMap k a)
+instance (Ord k, ToJSON k, ToJSON a) => ToJSON (UniversalMap k a)
+
+instance (Ord k, Semigroup a) => Semigroup (UniversalMap k a) where
+  a <> b = UniversalMap
+    { _universalMap_universe = _universalMap_universe a <> _universalMap_universe b
+    , _universalMap_only = _universalMap_only a <> _universalMap_only b
+    }
+
+instance (Ord k, Semigroup a) => Monoid (UniversalMap k a) where
+  mempty = UniversalMap Nothing mempty
+  mappend = (<>)
+
+instance Ord k => Align (UniversalMap k) where
+  nil = UniversalMap nil nil
+  alignWith f u v = UniversalMap
+    { _universalMap_universe = alignWith f (_universalMap_universe u) (_universalMap_universe v)
+    , _universalMap_only = alignWith f (_universalMap_only u) (_universalMap_only v)
+    }
+
+instance FunctorMaybe (UniversalMap k) where
+  fmapMaybe f a = UniversalMap
+    { _universalMap_universe = fmapMaybe f (_universalMap_universe a)
+    , _universalMap_only = fmapMaybe f (_universalMap_only a)
+    }
+
+
+universe :: (Ord k, Semigroup a) => a -> UniversalMap k a
+universe a = UniversalMap (Just a) mempty
+
+usingleton :: k -> a -> UniversalMap k a
+usingleton k a = UniversalMap Nothing (Map.singleton k a)
+
+uintersectionWith :: Ord k => (a -> b -> c) -> AppendMap k a -> UniversalMap k b -> AppendMap k c
+uintersectionWith f as bs = case _universalMap_universe bs of
+  Nothing -> Map.intersectionWith f as (_universalMap_only bs)
+  Just b -> fmap (flip f b) as -- Ignore the "only" keys since the universal key always wins
+
+ulookup :: Ord k => k -> UniversalMap k a -> Maybe a
+ulookup k m = case _universalMap_universe m of
+  Nothing -> Map.lookup k (_universalMap_only m)
+  Just a -> Just a -- Ignore the "only" keys since the universal key always wins
 
 data Bake = Bake
 
 type TimeWindow = ClosedInterval (WithInfinity UTCTime)
+
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_summary :: !(Maybe a)
@@ -53,7 +100,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_clients :: !(AppendMap (Id Client) a)
   , _bakeViewSelector_parameters :: !(Maybe a)
   , _bakeViewSelector_nodeAddresses :: !(Maybe a)
-  , _bakeViewSelector_nodes :: !(AppendMap (Id Node) a)
+  , _bakeViewSelector_nodes :: !(UniversalMap (Id Node) a)
   , _bakeViewSelector_delegates :: !(Maybe a)
   , _bakeViewSelector_delegateStats :: !(AppendMap PublicKeyHash a)
   , _bakeViewSelector_notificatees :: !(Maybe a)
@@ -120,7 +167,7 @@ cropBakeView vs v =
       delegates = case _bakeViewSelector_delegates vs of
         Nothing -> mempty
         Just _ -> _bakeView_delegates v
-      nodes = Map.intersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
+      nodes = uintersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
       delegateStats = Map.intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
       notificatees = case _bakeViewSelector_notificatees vs of
         Nothing -> mempty
