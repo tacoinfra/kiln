@@ -335,7 +335,7 @@ backend = do
       addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       httpMgr <- Http.newManager Https.tlsManagerSettings
-      dataSrc <- blankNodeDataSource chainId httpMgr
+      dataSrc <- blankNodeDataSource db chainId httpMgr
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler emailFromAddress db)
@@ -345,7 +345,7 @@ backend = do
       addFinalizer wsFinalizer
 
       let appConfig = AppConfig emailFromAddress
-      addFinalizer =<< cacheWorker (seconds 30) dataSrc db
+      addFinalizer =<< cacheWorker (seconds 30) dataSrc
       addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig db
       addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db
       addFinalizer =<< delegateWorker (seconds 10) dataSrc db

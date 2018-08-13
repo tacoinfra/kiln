@@ -17,6 +17,16 @@
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
+import Data.Pool (Pool)
+import Database.Groundhog.Postgresql
+import Data.Dependent.Map (DMap, DSum(..))
+import qualified Data.Text as T
+import Backend.Schema (stripOnly, Field(..))
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Control.Monad.Logger(runNoLoggingT)
+import Rhyolite.Request.Class
+import Rhyolite.Schema (HasId, Id(..), Json(..))
+import Data.Constraint(Dict(..))
 import Common.Schema
 import Control.Applicative
 import Control.Concurrent (forkIO)
@@ -146,9 +156,10 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_parameters :: !(MVar ProtoInfo)
   , _nodeDataSource_httpMgr :: !Http.Manager
+  , _nodeDataSource_pool :: !(Pool Postgresql)
   }
-blankNodeDataSource :: ChainId -> Http.Manager -> IO NodeDataSource
-blankNodeDataSource chain mgr = do
+blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> IO NodeDataSource
+blankNodeDataSource db chain mgr = do
   nodes <- newMVar mempty
   hist <- newEmptyMVar
   cache <- newEmptyMVar
@@ -166,6 +177,7 @@ blankNodeDataSource chain mgr = do
     , _nodeDataSource_chain = chain
     , _nodeDataSource_parameters = protoInfo
     , _nodeDataSource_httpMgr = mgr
+    , _nodeDataSource_pool = db
     }
 
 class HasNodeDataSource a where
@@ -269,7 +281,7 @@ nodeQueryDataSource q' = do
   dsrc <- asks $ view nodeDataSource
   protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters dsrc
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
-  sayShow ("time to query go!", Map.keys nodes, q')
+  -- sayShow ("time to query go!", Map.keys nodes, q')
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
 
   (qBranch, q) <- maybe (throwError $ (RpcError_HttpException "NOT ENOUGH HISTORY") ^. re asRpcError) pure $ getKey protoInfo history q'
@@ -277,33 +289,46 @@ nodeQueryDataSource q' = do
   resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache ->
     case DMap.lookup q cache of
       Just avar -> do
-        sayShow "cache hit!"
+        -- sayShow "cache hit!"
         pure (cache, avar)
       Nothing -> do
-        sayShow ("cache miss!", q', qBranch, q)
-        allNodes <- readMVar $ _nodeDataSource_nodes dsrc
-        sayShow ("all nodes:", allNodes)
-        pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
-          Nothing -> do
-            newVar <- newMVar $ Left $ RpcError_HttpException "No suitable node"
-            pure (cache, CachedResult newVar)
-          Just anyNode -> do
+        -- sayShow ("cache miss!", q', qBranch, q)
+        newVar <- liftIO newEmptyMVar
+        fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
+        case fromDB of
+          Just x -> do
+            -- sayShow ("found in db", q)
+            now <- getCurrentTime
             let
-              ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
-            newVar <- liftIO newEmptyMVar
-            liftIO $ forkIO $ do
-              let
-                unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-                unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
-              now <- getCurrentTime
-              let
-                mkResult v = CacheLine
-                  { _cacheLine_value = v
-                  , _cacheLine_used = now
-                  }
-              putMVar newVar $ mkResult <$> res'
+              mkResult v = CacheLine
+                { _cacheLine_value = v
+                , _cacheLine_used = now
+                }
+            putMVar newVar $ Right $ mkResult x
             pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
+          Nothing -> do
+            allNodes <- readMVar $ _nodeDataSource_nodes dsrc
+            -- sayShow ("all nodes:", allNodes)
+            pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
+              Nothing -> do
+                putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
+                pure (cache, CachedResult newVar)
+              Just anyNode -> do
+                let
+                  ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
+                liftIO $ forkIO $ do
+                  let
+                    unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
+                    unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
+                  res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
+                  now <- getCurrentTime
+                  let
+                    mkResult v = CacheLine
+                      { _cacheLine_value = v
+                      , _cacheLine_used = now
+                      }
+                  putMVar newVar $ mkResult <$> res'
+                pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
 
   unpackCacheResult resultM
 
@@ -381,6 +406,20 @@ calculateBakeEfficiency branch length delegate = do
       [ (delegate, prio)
       | BakingRights _lvl delegate prio _ <- toList xs
       ]
+
+tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> IO (Maybe a)
+tryFetchFromCache db q = do
+  let
+    qJson = Json $ requestToJSON q
+  resultM <- fmap listToMaybe $ runNoLoggingT $ runDb (Identity db) $ select $ GenericCacheEntry_keyField ==. qJson
+  case resultM of
+    Nothing -> return Nothing
+    Just result -> case requestResponseFromJSON q of
+      Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
+        Aeson.Success v -> return $ Just $ v
+        Aeson.Error bad -> do
+          sayErr $ T.pack $ show ("tryFetchFromCache failed to decode:", bad)
+          return Nothing
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
