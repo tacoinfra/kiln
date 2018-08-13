@@ -135,13 +135,12 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       toRsMap
         :: (PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)
         -> (PublicKeyHash, Maybe (BakeEfficiency, Account))
-      toRsMap (publicKeyHash, dId, bakedBlocks, bakingRights, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, unDelegateStats publicKeyHash =<< delegateStats)
+      toRsMap (publicKeyHash, dId, bakedBlocks, bakingRights, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, (,) <$> Map.lookup publicKeyHash efficiencies <*> (unDelegateStats publicKeyHash =<< delegateStats))
         where
           -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
           delegateStats :: Maybe DelegateStats
           delegateStats = DelegateStats
             <$> dId
-            <*> Map.lookup publicKeyHash efficiencies
             <*> pure accountBalance
             <*> pure accountSpendable
             <*> pure accountSetable

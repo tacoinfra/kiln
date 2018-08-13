@@ -122,8 +122,9 @@ mkNode addr = Node
   }
 
 data Parameters = Parameters
-  { _parameters_node :: Id Node
-  , _parameters_protoInfo :: ProtoInfo
+  { _parameters_protoInfo :: !ProtoInfo
+  , _parameters_chain :: !ChainId
+  , _parameters_headTimestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
 
@@ -264,7 +265,6 @@ mkVeryBlockLike blk = VeryBlockLike
 
 data DelegateStats = DelegateStats
   { _delegateStats_delegate :: !(Id Delegate)
-  , _delegateStats_efficiency :: !BakeEfficiency
   , _delegateStats_accountBalance :: !(Maybe Tez) -- "2052452947621"
   , _delegateStats_accountSpendable :: !(Maybe Bool) -- true
   , _delegateStats_accountSetable :: !(Maybe Bool)
@@ -274,10 +274,10 @@ data DelegateStats = DelegateStats
 instance HasId DelegateStats
 
 -- | convert the databasey DelegateStats to more jsoney (BakeEfficiency, Account)
-unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe (BakeEfficiency, Account)
+-- unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe (BakeEfficiency, Account)
+unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe Account
 unDelegateStats publicKeyHash stats =
-  let efficiency = _delegateStats_efficiency stats
-      accountDelegate =
+  let accountDelegate =
         AccountDelegate
           <$> _delegateStats_accountSetable stats
           <*> pure (_delegateStats_accountValue stats)
@@ -287,7 +287,7 @@ unDelegateStats publicKeyHash stats =
         <*> accountDelegate
         <*> pure Nothing -- TOOD: something?
         <*> _delegateStats_accountCounter stats
-  in ((efficiency,) <$> account)
+  in account
 
 data Notificatee = Notificatee
   { _notificatee_email :: Email

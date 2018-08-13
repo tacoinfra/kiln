@@ -10,11 +10,13 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+{-# OPTIONS_GHC -fmax-relevant-binds=32 #-}
+
 module Backend.Workers.Node where
 
 import Control.Applicative
 import Control.Concurrent.MVar
-import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Lens (view, ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -246,7 +248,10 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
--- TODO: make this "configurable"
+-- TODO: make this "configurable" implementation idea:  we could partition
+-- history into horizontal level regions (say, every 10k levels) and require
+-- each "slice" start on a boundary, and contain only the blocks within their
+-- assigned slice.
 minCachedBlockLevel = 1
 
 nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
@@ -256,6 +261,7 @@ nodeMonitor :: ChainId -> Http.Manager  -> NodeDataSource -> AppConfig -> Pool P
 nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
   Left bad -> error "sulk"
   Right headBlockInfo -> do
+      oldHead <- runReaderT dataSourceHead nds
       updateNodeDataSource nds nodeAddr headBlockInfo
       let cacheVar = _nodeDataSource_history nds
       let ctx = NodeRPCContext httpMgr nodeAddr
@@ -264,18 +270,37 @@ nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
         newStateRsp
           :: Either RpcError CachedHistory'
           <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
-            acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
+            acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
             sayShow ("new block", nodeAddr, headBlockInfo, acc)
         case newStateRsp of
           Left bad -> sayShow bad $> (cache, False)
           Right good -> return (good, newBlock)
 
-      asdf <- readMVar cacheVar
-
       when newBlock $ do
         say $ "new block from node at " <> nodeAddr
         say $ T.pack $ show headBlockInfo
       runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+        -- This isn't very nuanced: old, stale nodes, even if they are catching
+        -- up, will churn a lot here.  Maybe we could improve this to filter
+        -- out "new" blocks that are already on the branch of `oldHead`?
+        when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
+          let now = headBlockInfo ^. timestamp
+          have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
+            SELECT c."id"
+            FROM "Parameters" c
+            WHERE c."chainId" = ?chainId |]
+          case have of
+            Just entryId ->
+              updateAndNotify entryId
+                [Parameters_headTimestampField =. now]
+            Nothing -> do
+              params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
+              insertAndNotify_ Parameters
+                { _parameters_protoInfo = params
+                , _parameters_chain = chainId
+                , _parameters_headTimestamp = now
+                }
+
         clearInaccessibleEndpointError EndpointType_Node nodeAddr
         updateAndNotify nodeId
           [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
@@ -323,6 +348,7 @@ nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
   worker delay $ do
     say "Update node cycle."
 
+    {-
     tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
       querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
     case tzScanHeadBlock' of
@@ -341,7 +367,7 @@ nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
             RETURNING id
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
-
+    -}
     -- read the persistent list of nodes
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)

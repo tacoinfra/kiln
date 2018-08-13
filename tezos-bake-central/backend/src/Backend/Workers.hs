@@ -19,23 +19,6 @@ import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
                                 updateAndNotify)
 
--- I'm fairly sure this is not 100% correct, but I'm also not 100% sure what the correct thing is. Which block's protocol constants should be
--- inspected when determining the rewards for a block which is baked? I'm basically assuming that the constants are sufficiently constant for now.
-queryBestNode :: (Monad m, PersistBackend m, PostgresRaw m) => m (Maybe (Id Node, Node, ProtoInfo))
-queryBestNode = do
-  nodeIds :: Maybe (Id Node, Id Parameters) <- listToMaybe <$> [queryQ|
-    SELECT n.id, p.id
-      FROM "Node" n JOIN "Parameters" p ON n.id = p.node
-     WHERE n."headLevel" IS NOT NULL AND NOT n.deleted
-     ORDER BY n."headLevel" DESC
-     LIMIT 1 |]
-
-  for nodeIds $ \(nodeId, paramId) -> do
-    Just node <- get (fromId nodeId)
-    Just params <- get (fromId paramId)
-    return (nodeId, node, _parameters_protoInfo params)
-
-
 
 
 insertClientDelegates :: (Monad m, PersistBackend m, PostgresRaw m) => Set PublicKeyHash -> m ()

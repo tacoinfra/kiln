@@ -8,6 +8,8 @@ module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
+import Control.Monad.Reader (runReaderT)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -31,6 +33,9 @@ import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Schema (Id, IdData)
 import Say
 
+import Tezos.Types
+
+import Backend.CachedNodeRPC
 import Backend.BalanceTracking
 import Backend.Graphs
 import Backend.Schema
@@ -42,11 +47,12 @@ import Common.Schema
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => Pool Postgresql
+  => NodeDataSource
   -> NotifyMessage
   -> BakeViewSelector a
   -> m (BakeView a)
-notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
+notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeDataSource_pool nds) $ do
+  sayShow ("notified", notifyMessage)
   let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success cid -> do
@@ -79,9 +85,9 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
 
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success (nid :: Id Node) -> do -- TODO: This is probably WRONG. It should be Id Parameters.
+        Aeson.Success (nid :: Id Parameters) -> do -- TODO: This is probably WRONG. It should be Id Parameters.
           whenJust (_bakeViewSelector_parameters aggVS) $ \a -> do
-            params :: Maybe Parameters <- listToMaybe <$> select (Parameters_nodeField ==. nid)
+            params :: Maybe Parameters <- listToMaybe <$> select (AutoKeyField ==. fromId nid)
             pure $ mempty
               { _bakeView_parameters = single (_parameters_protoInfo <$> params) a
               }
@@ -113,6 +119,12 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
               { _bakeView_delegates = single (Set.singleton . _delegate_publicKeyHash <$> delegate) a
               }
 
+      -- calcEfficiency :: RawLevel -> PublicKeyHash -> m (Maybe BakeEfficiency)
+      calcEfficiency lvl pkh = flip runReaderT nds $ do
+        branch <- dataSourceHead
+        eff <- runExceptT $ traverse (\b -> calculateBakeEfficiency b lvl pkh) branch
+        either (const $ pure Nothing) pure eff
+
       handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (dsId :: Id DelegateStats) -> do
@@ -120,8 +132,9 @@ notifyHandler db notifyMessage aggVS = runNoLoggingT $ runDb (Identity db) $ do
           whenJust delegateStats $ \stats -> do
             delegate :: Delegate <- fmap (fromMaybe $ error "Bad Foreign Key Delegate->DelegateStats") $ get $ fromId $ _delegateStats_delegate stats
             let publicKeyHash = _delegate_publicKeyHash delegate
-            whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a ->
-              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ unDelegateStats publicKeyHash stats, a) }
+            whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a -> do
+              efficency <- calcEfficiency 10 publicKeyHash -- TODO this number should come from the ViewSelector
+              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ (,) <$> efficency <*> unDelegateStats publicKeyHash stats, a) }
 
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e

@@ -69,7 +69,6 @@ requestHandler emailFromAddr db = RequestHandler $ \req -> (say "doing RequestHa
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           let inIds = In nids
-          _ <- [executeQ| DELETE FROM "Parameters" where node in ?inIds |]
           for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
         PublicRequest_AddClient addr -> do

@@ -339,7 +339,7 @@ backend = do
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler emailFromAddress db)
-        (notifyHandler db)
+        (notifyHandler dataSrc)
         (viewSelectorHandler dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
@@ -347,8 +347,8 @@ backend = do
       let appConfig = AppConfig emailFromAddress
       addFinalizer =<< cacheWorker (seconds 30) dataSrc
       addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig db
-      addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc db
-      addFinalizer =<< delegateWorker (seconds 10) dataSrc db
+      addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc
+      addFinalizer =<< delegateWorker (seconds 10) dataSrc
 
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)

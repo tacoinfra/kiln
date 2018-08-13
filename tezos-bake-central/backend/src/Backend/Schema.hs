@@ -294,12 +294,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _parameters_uniqueness
             type: constraint
-            fields: [_parameters_node]
-        fields:
-          - name: _parameters_node
-            reference:
-              table: Node
-              onDelete: cascade
+            fields: [_parameters_chain]
   - embedded: ProtoInfo
   - entity: PendingReward
     constructors:
