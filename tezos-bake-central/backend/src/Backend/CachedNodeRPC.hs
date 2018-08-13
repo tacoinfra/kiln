@@ -294,41 +294,36 @@ nodeQueryDataSource q' = do
       Nothing -> do
         -- sayShow ("cache miss!", q', qBranch, q)
         newVar <- liftIO newEmptyMVar
-        fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
-        case fromDB of
-          Just x -> do
-            -- sayShow ("found in db", q)
-            now <- getCurrentTime
-            let
-              mkResult v = CacheLine
-                { _cacheLine_value = v
-                , _cacheLine_used = now
-                }
-            putMVar newVar $ Right $ mkResult x
-            pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
-          Nothing -> do
-            allNodes <- readMVar $ _nodeDataSource_nodes dsrc
-            -- sayShow ("all nodes:", allNodes)
-            pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
-              Nothing -> do
-                putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
-                pure (cache, CachedResult newVar)
-              Just anyNode -> do
-                let
-                  ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
-                liftIO $ forkIO $ do
+        let
+          mkResult now v = CacheLine
+            { _cacheLine_value = v
+            , _cacheLine_used = now
+            }
+        liftIO $ forkIO $ do
+          fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
+          case fromDB of
+            Just x -> do
+              -- sayShow ("found in db", q)
+              now <- getCurrentTime
+              putMVar newVar $ Right $ mkResult now x
+              -- pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
+            Nothing -> do
+              allNodes <- readMVar $ _nodeDataSource_nodes dsrc
+              -- sayShow ("all nodes:", allNodes)
+              pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
+                Nothing -> do
+                  putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
+                Just anyNode -> do
                   let
-                    unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-                    unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-                  res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
-                  now <- getCurrentTime
-                  let
-                    mkResult v = CacheLine
-                      { _cacheLine_value = v
-                      , _cacheLine_used = now
-                      }
-                  putMVar newVar $ mkResult <$> res'
-                pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
+                    ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
+                  do
+                    let
+                      unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
+                      unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
+                    res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
+                    now <- getCurrentTime
+                    putMVar newVar $ mkResult now <$> res'
+        pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
 
   unpackCacheResult resultM
 
