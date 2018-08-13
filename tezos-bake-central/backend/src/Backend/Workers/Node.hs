@@ -288,7 +288,7 @@ nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
           have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
             SELECT c."id"
             FROM "Parameters" c
-            WHERE c."chainId" = ?chainId |]
+            WHERE c."chain" = ?chainId |]
           case have of
             Just entryId ->
               updateAndNotify entryId

@@ -115,12 +115,10 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
         efficiency <- runExceptT $ withCache mempty $ const $ calculateBakeEfficiency currentHead 50 delegate
         return (delegate, either (const mempty) id efficiency)
     let inKeys = In keys
-    rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
+    rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
       <- [queryQ|
           SELECT d."publicKeyHash"
             ,ds."delegate"
-            ,ds."efficiency#bakedBlocks"
-            ,ds."efficiency#bakingRights"
             ,ds."accountBalance"
             ,ds."accountSpendable"
             ,ds."accountSetable"
@@ -133,9 +131,9 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
 
     let
       toRsMap
-        :: (PublicKeyHash, Maybe (Id Delegate), Maybe Word64, Maybe Word64, Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)
+        :: (PublicKeyHash, Maybe (Id Delegate), Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)
         -> (PublicKeyHash, Maybe (BakeEfficiency, Account))
-      toRsMap (publicKeyHash, dId, bakedBlocks, bakingRights, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, (,) <$> Map.lookup publicKeyHash efficiencies <*> (unDelegateStats publicKeyHash =<< delegateStats))
+      toRsMap (publicKeyHash, dId, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, (,) <$> Map.lookup publicKeyHash efficiencies <*> (unDelegateStats publicKeyHash =<< delegateStats))
         where
           -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
           delegateStats :: Maybe DelegateStats
