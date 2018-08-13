@@ -20,7 +20,7 @@ import qualified Data.AppendMap as AppendMap
 import Data.Bifunctor (first, second)
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
-import Data.Maybe (listToMaybe)
+import Data.Maybe (isJust, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
 import qualified Data.Set as Set
@@ -78,14 +78,16 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     rs <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
   nodes <- do
-    let selNodes = In $ Map.keys (_bakeViewSelector_nodes vs)
+    let
+      selNodesUniversal = isJust $ _universalMap_universe $ _bakeViewSelector_nodes vs
+      selNodes = In $ if selNodesUniversal then mempty else Map.keys $ _universalMap_only $ _bakeViewSelector_nodes vs
     rs <- [queryQ|
       SELECT n.id
         , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
         , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
-      WHERE n.id IN ?selNodes AND NOT n.deleted|]
+      WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
           (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (nid, First $ Just Node
@@ -99,7 +101,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
             , _node_deleted = False
             , _node_lastHeartbeat = lastHeartbeat
             })
-    return (Map.intersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
+    return (uintersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
     flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
@@ -138,13 +140,13 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
           -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
           delegateStats :: Maybe DelegateStats
           delegateStats = DelegateStats
-              <$> dId
-              <*> (Map.lookup publicKeyHash efficiencies)
-              <*> pure accountBalance
-              <*> pure accountSpendable
-              <*> pure accountSetable
-              <*> pure accountValue
-              <*> pure accountCounter
+            <$> dId
+            <*> Map.lookup publicKeyHash efficiencies
+            <*> pure accountBalance
+            <*> pure accountSpendable
+            <*> pure accountSetable
+            <*> pure accountValue
+            <*> pure accountCounter
     let rsMap = Map.fromList $ toRsMap <$> rs
     return $ Map.intersectionWith (,) (First <$> rsMap) (_bakeViewSelector_delegateStats vs)
 
@@ -167,7 +169,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       report <- getSummaryReport
       return $ single report a
   errors <- getErrorLogs $ _bakeViewSelector_errors vs
-  return $ BakeView
+  return BakeView
     { _bakeView_clients = clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
@@ -214,11 +216,14 @@ getErrorLogs intervalMap = do
             , t.type, t.address
           FROM "ErrorLog" el
           JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
+          LEFT JOIN "Node" n ON n.address = t.address
+          LEFT JOIN "Client" c ON c.address = t.address
           WHERE
-            ((?low IS NULL OR el.started >= ?low) AND
-            (?high IS NULL OR el.started <= ?high)) OR
-            ((?low IS NULL OR el.stopped >= ?low) AND
-            (?high IS NULL OR el.stopped <= ?high))
+            NOT n.deleted AND NOT c.deleted AND
+            (((?low IS NULL OR el.started >= ?low) AND
+             (?high IS NULL OR el.started <= ?high)) OR
+             ((?low IS NULL OR el.stopped >= ?low) AND
+             (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
           |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress) ->
             ( elId :: Id ErrorLog
@@ -242,11 +247,13 @@ getErrorLogs intervalMap = do
             , t."lastLevel", t."lastBlockHash", t.client
           FROM "ErrorLog" el
           JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
+          JOIN "Client" c ON c.id = t.client
           WHERE
-            ((?low IS NULL OR el.started >= ?low) AND
-            (?high IS NULL OR el.started <= ?high)) OR
-            ((?low IS NULL OR el.stopped >= ?low) AND
-            (?high IS NULL OR el.stopped <= ?high))
+            NOT c.deleted AND
+            (((?low IS NULL OR el.started >= ?low) AND
+             (?high IS NULL OR el.started <= ?high)) OR
+             ((?low IS NULL OR el.stopped >= ?low) AND
+             (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
           |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tLastLevel, tLastBlockHash, tClient) ->
             ( elId :: Id ErrorLog
@@ -271,11 +278,13 @@ getErrorLogs intervalMap = do
             , t."node", t."tooOld", t."bakedBlock", t."bakedBlockTime"
           FROM "ErrorLog" el
           JOIN "ErrorLogNodeOnFork" t ON t.log = el.id
+          JOIN "Node" n ON n.id = t.node
           WHERE
-            ((?low IS NULL OR el.started >= ?low) AND
-            (?high IS NULL OR el.started <= ?high)) OR
-            ((?low IS NULL OR el.stopped >= ?low) AND
-            (?high IS NULL OR el.stopped <= ?high))
+            NOT n.deleted AND
+            (((?low IS NULL OR el.started >= ?low) AND
+             (?high IS NULL OR el.started <= ?high)) OR
+             ((?low IS NULL OR el.stopped >= ?low) AND
+             (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
           |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tTooOld, tBakedBlock, tBakedBlockTime) ->
             ( elId :: Id ErrorLog
@@ -300,11 +309,13 @@ getErrorLogs intervalMap = do
             , t."publicKeyHash", t.client, t.worker
           FROM "ErrorLog" el
           JOIN "ErrorLogMultipleBakersForSameDelegate" t ON t.log = el.id
+          JOIN "Delegate" d ON d."publicKeyHash" = t."publicKeyHash"
           WHERE
-            ((?low IS NULL OR el.started >= ?low) AND
-            (?high IS NULL OR el.started <= ?high)) OR
-            ((?low IS NULL OR el.stopped >= ?low) AND
-            (?high IS NULL OR el.stopped <= ?high))
+            NOT d.deleted AND
+            (((?low IS NULL OR el.started >= ?low) AND
+             (?high IS NULL OR el.started <= ?high)) OR
+             ((?low IS NULL OR el.stopped >= ?low) AND
+             (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
           |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
             ( elId :: Id ErrorLog

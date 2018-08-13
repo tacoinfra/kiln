@@ -9,9 +9,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Backend.Workers.Node where
 
@@ -27,11 +24,12 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
 import Data.Either.Combinators
 import Data.Foldable (for_)
+import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (Max (..), (<>))
 import Data.Text (Text)
@@ -41,33 +39,28 @@ import Data.Tuple (swap)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
-import Say (say, sayErr, sayShow)
-
-import Backend.CachedNodeRPC
-import Backend.Supervisor
-
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
                                 updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Concurrent (worker)
-import Rhyolite.Schema (Id (..), Json (..))
+import Rhyolite.Schema (Id (..), IdData, Json (..))
+import Say (say, sayErr, sayShow)
 
+import Backend.CachedNodeRPC
+import Backend.Supervisor
+import Tezos.Block (TzScanBlock (..))
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (NamedChain (..), TzScanNode (..), querySource)
 import Tezos.Types
 
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.Schema
 import Common.Schema
-import Rhyolite.Backend.DB.PsqlSimple
-import Rhyolite.Backend.Schema
 import Rhyolite.Backend.Schema.Class
-import Rhyolite.Schema
 import Tezos.History
-
-import qualified Data.LCA.Online.Polymorphic as LCA
 
 -- cacheChainCycle :: b -> m (Id CachedChainCycle)
 -- cacheChainCycle = error "TODO"
@@ -274,7 +267,7 @@ nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
             acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo -- (bootstrapHistory' db chainId) blockSummary headBlockInfo
             sayShow ("new block", nodeAddr, headBlockInfo, acc)
         case newStateRsp of
-          Left bad -> sayShow bad *> return (cache, False)
+          Left bad -> sayShow bad $> (cache, False)
           Right good -> return (good, newBlock)
 
       asdf <- readMVar cacheVar
@@ -326,14 +319,34 @@ nodeWorker
   -> IO (IO ())
 nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
   nodePool :: MVar (Map ClientAddress (IO ())) <- newMVar mempty
+  let httpMgr = _nodeDataSource_httpMgr nds
   worker delay $ do
     say "Update node cycle."
+
+    tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
+      querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
+    case tzScanHeadBlock' of
+      Left e -> sayErr (T.pack $ show e)
+      Right b -> do
+        let tzScanHeadLevel = _tzScanBlock_level b
+            tzScanHeadBlockHash = _tzScanBlock_hash b
+        runNoLoggingT $ runDb (Identity db) $ do
+          updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
+            INSERT INTO "TzScan"
+              ("chainId", "headLevel", "headBlockHash")
+              VALUES (?betanetChain, ?tzScanHeadLevel, ?tzScanHeadBlockHash)
+            ON CONFLICT ("chainId") DO UPDATE SET
+              "headLevel" = ?tzScanHeadLevel,
+              "headBlockHash" = ?tzScanHeadBlockHash
+            RETURNING id
+          |]
+          for_ updatedRecord $ notifyEntityId NotificationType_Update
 
     -- read the persistent list of nodes
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
-    let httpMgr = _nodeDataSource_httpMgr nds
+
     ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
@@ -354,9 +367,9 @@ nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
         nodeError nodeAddr _ = ExceptT (fmap Right (runNoLoggingT (runDb (Identity db) (runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig))))
     for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
       runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
-          killMonitor <- nodeRPC $ rMonitorHeads (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId) chainId
-          let cleanup = killMonitor
-                *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
-          liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
-          liftIO $ addFinalizer cleanup
-          say ("start monitor on " <> nodeAddr)
+        killMonitor <- nodeRPC $ rMonitorHeads chainId (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId)
+        let cleanup = killMonitor
+              *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
+        liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
+        liftIO $ addFinalizer cleanup
+        say ("start monitor on " <> nodeAddr)

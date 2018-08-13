@@ -115,10 +115,10 @@ watchProtoInfo =
     { _bakeViewSelector_parameters = Just 1
     }
 
-watchNode :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Node) -> m (Dynamic t (AppendMap (Id Node) Node))
-watchNode cidDyn = do
-  theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
-    { _bakeViewSelector_nodes = Map.singleton cid 1
+watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (UniversalMap (Id Node) ()) -> m (Dynamic t (AppendMap (Id Node) Node))
+watchNodes nidsDyn = do
+  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
+    { _bakeViewSelector_nodes = fmap (const 1) nids
     }
   return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
 
@@ -207,37 +207,34 @@ headTag = do
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
+           | UITab_Nodes
            | UITab_Delegate PublicKeyHash
            | UITab_Client (Id Client) Text
-           | UITab_Node (Id Node)
            | UITab_Options
   deriving (Eq, Ord, Show)
 
 
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  nodeAddresses <- watchNodeAddresses
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
-  rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ do
-        summaryT <- semuiTab (text "Summary") UITab_Summary currentTab
-        nodeT <- fmap switch . hold never <=< dyn . ffor nodeAddresses $ \cs ->
-          fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab (text $ "N:" <> name) (UITab_Node cid) currentTab
-        clientT <- fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
+  rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
+        [ semuiTab (text "Summary") UITab_Summary currentTab
+        , semuiTab (text "Nodes") UITab_Nodes currentTab
+        , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
             semuiTab (text $ "B:" <> name) (UITab_Client cid name) currentTab
-        delegateT <- fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
+        , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
           fmap leftmost $ for (Set.toList ds) $ \pkh ->
             semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
-        optionsT <- semuiTab (text "Options") UITab_Options currentTab
-        return (leftmost [summaryT, delegateT, clientT, nodeT, optionsT])
+        , semuiTab (text "Options") UITab_Options currentTab
+        ]
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
   elAttr "div" ("class" =: "ui bottom attached tab segment active") . widgetHold summaryTab . ffor selection $ \case
     UITab_Summary -> summaryTab
+    UITab_Nodes -> nodesTab
     UITab_Options -> optionsTab
-    UITab_Node nid -> nodeTab nid
     UITab_Client cid addr -> clientTab cid addr
     UITab_Delegate pkh -> delegateTab pkh
   return ()
@@ -453,28 +450,28 @@ mailServerForm frm0 = do
     labeled = el "label" . text
 
 
-nodeTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Node -> m ()
-nodeTab nid = do
-  dNode <- watchNode $ pure nid
-  thisNode <- maybeDyn $ Map.lookup nid <$> dNode
-  dyn_ $ ffor thisNode $ \case
+nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
+nodesTab = do
+  let maybeSomething xs = if null xs then Nothing else Just xs
+  maybeNodesDyn <- maybeDyn . fmap maybeSomething =<< watchNodes (pure $ universe ())
+  dyn_ $ ffor maybeNodesDyn $ \case
     Nothing -> waitingForResponse
-    Just nodeDyn -> dyn_ $ ffor nodeDyn $ \node -> do
-      divClass "ui small header" . text $ "Node Statistics"
-      elAttr "div" ("class" =: "client-node") $ do
-        text $ "Node: " <> _node_address node
-      el "div" $ do
-        text "Head block level: "
-        maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
-      el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
-        Nothing -> "N/A"
-        Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-      el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
-      let stat = _node_networkStat node
-      el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
-      el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
-      el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
-      el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
+    Just nodesDyn -> dyn_ $ ffor nodesDyn $ \nodes -> divClass "ui three stackable cards" $ do
+      for_ nodes $ \node -> divClass "ui card" $ divClass "content" $ do
+        divClass "header" $ text $ _node_address node
+        divClass "description" $ do
+          el "div" $ do
+            text "Head block level: "
+            maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
+          el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
+            Nothing -> "N/A"
+            Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+          el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
+          let stat = _node_networkStat node
+          el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
+          el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
+          el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
+          el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)

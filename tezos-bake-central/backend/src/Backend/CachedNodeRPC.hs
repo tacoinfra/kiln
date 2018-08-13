@@ -336,17 +336,18 @@ pickNode :: BlockLike b => BlockHash -> MVar (Map ClientAddress (Maybe b)) -> IO
 pickNode branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
 
 nodeQueryDataSourceImpl
-  :: ChainId
+  :: forall a.
+     ChainId
   -> ProtoInfo
   -> NodeRPCContext
-  -> (forall a. NodeQuery a -> IO (Either RpcError a))
+  -> (forall b. NodeQuery b -> IO (Either RpcError b))
   -> NodeQuery a
   -> IO (Either RpcError a)
 nodeQueryDataSourceImpl chainId proto ctx self' q = runExceptT $ do
   let
     self :: NodeQuery b -> ExceptT RpcError IO b
     self = (>>= either throwError pure) . liftIO . self'
-    nodeRPC' :: forall b. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryRights repr, QueryBlocks repr) => repr b) -> ExceptT RpcError IO b
+    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (nodeRPC q') ctx
   case q of
 
