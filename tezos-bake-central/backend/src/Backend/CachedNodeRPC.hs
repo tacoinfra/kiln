@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -11,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fmax-relevant-binds=20 -Wall #-}
@@ -20,12 +20,11 @@ module Backend.CachedNodeRPC where
 
 import Prelude hiding (length)
 
-import Backend.Schema (Field (..))
-import Common.Schema
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
-import Control.Lens (Lens', TraversableWithIndex, (^.), re, uncons, view, _1, ifor)
+import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
+import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -41,7 +40,7 @@ import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup
 import Data.Sequence (Seq)
@@ -49,28 +48,32 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Data.Traversable (for)
-import Data.Typeable
+import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Request.Class
+import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
 import Safe.Foldable (maximumByMay)
 import Say (say, sayErr, sayShow)
-
-import Rhyolite.Request.TH (makeRequestForData)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.History
 import Tezos.NodeRPC
 import Tezos.Types
 
+import Backend.Common (timeout')
+import Backend.Schema (Field (..))
+import Common (tshow)
+import Common.Schema
+
 data NodeQuery a where
-  NodeQuery_BakingRights        :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_EndorsingRights     :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
-  NodeQuery_Account             :: BlockHash -> ContractId -> NodeQuery Account
-  NodeQuery_Block               :: BlockHash -> NodeQuery Block
-
-
+  NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
+  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
+  NodeQuery_Block           :: BlockHash -> NodeQuery Block
 
 data BranchData a = BranchData
   { _branchData_fitness :: !Fitness
@@ -100,7 +103,7 @@ instance Monoid (BranchData a) where
   mempty = BranchData
     { _branchData_fitness = toFitness mempty
     , _branchData_level = 0
-    , _branchData_timestamp = maybe (error "impossible") id $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
+    , _branchData_timestamp = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
     , _branchData_info = Nothing
     }
   mappend = (<>)
@@ -114,7 +117,7 @@ data CacheLine a = CacheLine
   { _cacheLine_value :: !a
   , _cacheLine_used :: !UTCTime
   }
-newtype CachedResult a = CachedResult { unCacheResult :: MVar (Either ({- Map ClientAddress -} RpcError) (CacheLine a)) }
+newtype CachedResult a = CachedResult { unCacheResult :: MVar (Either RpcError (CacheLine a)) }
 
 unpackCacheResult
   :: forall m e a . ( MonadIO m , MonadError e m, AsRpcError e)
@@ -144,24 +147,28 @@ branchPoint x y = do
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(MVar CachedHistory')
-  , _nodeDataSource_nodes :: !(MVar (Map ClientAddress (Maybe VeryBlockLike)))
+  , _nodeDataSource_nodes :: !(MVar (Map URI (Maybe VeryBlockLike)))
   , _nodeDataSource_cache :: !(MVar (DMap NodeQuery CachedResult)) -- we add elements to the cache to ind
   , _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_parameters :: !(MVar ProtoInfo)
   , _nodeDataSource_httpMgr :: !Http.Manager
   , _nodeDataSource_pool :: !(Pool Postgresql)
+  , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   }
+
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> IO NodeDataSource
 blankNodeDataSource db chain mgr = do
   nodes <- newMVar mempty
   hist <- newEmptyMVar
   cache <- newEmptyMVar
   protoInfo <- newEmptyMVar
+  latestHead <- newTVarIO Nothing
   _ <- forkIO $ do
     -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
     _ <- readMVar protoInfo
     putMVar hist emptyCache
     putMVar cache mempty
+
     say "Cache ready!"
   return NodeDataSource
     { _nodeDataSource_history = hist
@@ -171,6 +178,7 @@ blankNodeDataSource db chain mgr = do
     , _nodeDataSource_parameters = protoInfo
     , _nodeDataSource_httpMgr = mgr
     , _nodeDataSource_pool = db
+    , _nodeDataSource_latestHead = latestHead
     }
 
 class HasNodeDataSource a where
@@ -179,9 +187,21 @@ class HasNodeDataSource a where
 instance HasNodeDataSource NodeDataSource where
   nodeDataSource = id
 
-readTimeBetweenBlocks :: HasNodeDataSource nds => nds -> IO NominalDiffTime
-readTimeBetweenBlocks nds = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
-  <$> readMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
+calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
+
+-- | Blocks until a new head is seen or the time between blocks has elapsed.
+--
+-- NB: Blocks on 'NodeDataSource' parameters.
+waitForNewHead :: NodeDataSource -> IO ()
+waitForNewHead nds = do
+  timeLimit <- calcTimeBetweenBlocks <$> readMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  oldHead <- atomically $ readTVar (_nodeDataSource_latestHead nds)
+  maybeNewHead <- timeout' timeLimit $ atomically $ do
+    newHead <- readTVar (_nodeDataSource_latestHead nds)
+    when (oldHead == newHead) retry
+    pure newHead
+  say $ "******************************** Saw new head " <> tshow maybeNewHead
 
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
@@ -190,32 +210,32 @@ histToBlockLike (h, BranchData f l t _, path) = VeryBlockLike h p f l t
       where
         p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
-updateNodeDataSource :: BlockLike b => NodeDataSource -> ClientAddress -> b -> IO ()
+updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
 updateNodeDataSource nds nodeAddr blk =
   modifyMVar_ (_nodeDataSource_nodes nds) $ return . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
 
 -- Make sure that the protocol parameters have been loaded and the datasource initialzied.
-initParams :: Foldable f => NodeDataSource -> f ClientAddress -> IO Bool
+initParams :: Foldable f => NodeDataSource -> f URI -> IO Bool
 initParams nds theseNodes = do
   needParams <- isEmptyMVar $ _nodeDataSource_parameters nds
 
   let
     chainId = _nodeDataSource_chain nds
-    step :: MonadIO m => ClientAddress -> m (Map ClientAddress ProtoInfo)
+    step :: MonadIO m => URI -> m (Map URI ProtoInfo)
     step someNode = do
-      let ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) someNode
+      let ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)
       let protoConstantsAtHead = do
             headBlockHash <- _block_hash <$> nodeRPC (rHead chainId)
             nodeRPC $ rProtoConstants chainId headBlockHash
       runExceptT (runReaderT protoConstantsAtHead ctx) >>= \case
         Left (_ :: RpcError) -> pure mempty
         Right params -> pure $ Map.singleton someNode params
-  onChainNodes :: Map ClientAddress ProtoInfo <- fold <$> traverse step (toList $ Set.fromList $ toList theseNodes)
+  onChainNodes :: Map URI ProtoInfo <- fold <$> traverse step (toList $ Set.fromList $ toList theseNodes)
 
   when needParams $ case fmap fst $ uncons $ toList onChainNodes of
-      Just params -> do
-        void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-      Nothing -> say "Still no params"
+    Just params -> do
+      void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
+    Nothing -> say "Still no params"
 
   fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
 
@@ -239,7 +259,8 @@ dataSourceNode ::
 dataSourceNode = do
   dsrc <- asks (^. nodeDataSource)
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
-  pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . fst) $ maximumByMay (on compare snd) $ catMaybes $ fmap sequence $ Map.toList nodes
+  pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
+    maximumByMay (compare `on` snd) $ catMaybes $ fmap sequence $ Map.toList nodes
 
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash
@@ -309,7 +330,7 @@ nodeQueryDataSource q' = do
                   putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
                 Just anyNode -> do
                   let
-                    ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) anyNode
+                    ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
                   do
                     let
                       unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
@@ -322,7 +343,7 @@ nodeQueryDataSource q' = do
   unpackCacheResult resultM
 
 
-pickNode :: BlockLike b => BlockHash -> MVar (Map ClientAddress (Maybe b)) -> IO (Maybe ClientAddress)
+pickNode :: BlockLike b => BlockHash -> MVar (Map URI (Maybe b)) -> IO (Maybe URI)
 pickNode _branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
 
 nodeQueryDataSourceImpl
@@ -358,7 +379,7 @@ withCache ::
 withCache dft action = do
   dsrc <- asks (^. nodeDataSource)
   protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
-  maybe dft id <$> traverse action protoInfo
+  fromMaybe dft <$> traverse action protoInfo
 
 calculateDelegateStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f
@@ -376,7 +397,7 @@ calculateDelegateStats pkhs = do
         efficiency <- calculateBakeEfficiency currentHead lvl pkh
         account <- nodeQueryDataSource $ NodeQuery_Account (currentHead ^. hash) (Implicit pkh)
         return (efficiency, account)
-      return $ (result, a)
+      return (result, a)
 
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
@@ -391,7 +412,7 @@ ancestors (RawLevel n) branch = do
   hist <- liftIO . readMVar =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
-    Nothing -> throwError $ (RpcError_UnexpectedStatus 404 "NO BRANCH") ^. re asRpcError
+    Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
 calculateBakeEfficiency ::
   ( MonadIO m

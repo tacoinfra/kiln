@@ -34,6 +34,8 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAn
                                 updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Types
 
@@ -88,7 +90,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Baker at " <> maybe "?" _client_address client <> " has not seen a block for while!"
+        , _error_text = "Baker at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
         }]
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -108,7 +110,7 @@ clearNoBakerHeartbeatError cid = do
 
 reportInaccessibleEndpointError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => EndpointType -> ClientAddress -> m ()
+  => EndpointType -> URI -> m ()
 reportInaccessibleEndpointError endpointType addr = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
@@ -127,12 +129,12 @@ reportInaccessibleEndpointError endpointType addr = do
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Unable to connect to " <> typeName <> " at " <> addr
+        , _error_text = "Unable to connect to " <> typeName <> " at " <> Uri.render addr
         }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleEndpointError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> ClientAddress -> m ()
+  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> URI -> m ()
 clearInaccessibleEndpointError endpointType addr = do
   lids :: [Id ErrorLogInaccessibleEndpoint] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()

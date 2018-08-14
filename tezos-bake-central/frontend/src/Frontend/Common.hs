@@ -11,11 +11,14 @@ module Frontend.Common where
 import Control.Lens ((%~))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
+import qualified Data.ByteString.Base16 as BS16
+import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Reflex.Dom.Core
@@ -32,6 +35,7 @@ import Common.URI (appendPaths, mkRootUri)
 data Cfg = Cfg
   { _cfg_blockExplorerUrl :: !(Maybe Uri.URI)
   , _cfg_checkForUpgrade :: !Bool
+  , _cfg_chainId :: !ChainId
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
@@ -77,7 +81,6 @@ elDynAttrWithModifyConfig' f elementTag attrs child = do
   notReadyUntil =<< getPostBuild
   pure result
 
-
 -- | Like 'elDynAttr'' but configures "prevent default" on the given event.
 elDynAttrWithPreventDefaultEvent'
   :: forall en t m a. (DomBuilder t m, PostBuild t m)
@@ -90,12 +93,10 @@ elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
   (\elCfg -> elCfg & elementConfig_eventSpec %~
     addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const preventDefault))
 
-
 validateUri :: Validator.Validator t m Uri.URI
 validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
-
 
 blockExplorerLink :: (MonadReader Cfg m, DomBuilder t m) => Text -> m a -> m a
 blockExplorerLink path f = do
@@ -113,6 +114,9 @@ blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
 publicKeyHashLink :: (MonadReader Cfg m, DomBuilder t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh
+
+fitnessText :: Fitness -> Text
+fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode) . unFitness
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)

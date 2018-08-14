@@ -104,7 +104,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
-import Backend.Common (worker')
+import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
@@ -142,8 +142,6 @@ addNode node = do
     _ -> insertAndNotify node
 
 
-
-
 timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
 timeit note errback action = do
   !now <- liftIO getCurrentTime
@@ -151,7 +149,6 @@ timeit note errback action = do
   !later <- liftIO getCurrentTime
   sayShow (note, diffUTCTime later now)
   return result
-
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -190,11 +187,13 @@ backend = do
     (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
+  let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
-    , injectPure Config.route . T.decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
+    , injectPure Config.route . encodeViaJson <$> routeEnv
     , injectPure Config.blockExplorer . tshow <$> blockExplorer
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
+    , Just $ injectPure Config.chain $ toBase58Text chainId
     ]
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
@@ -208,7 +207,7 @@ backend = do
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< worker' (pure 10) $ const $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+      addFinalizer <=< workerWithDelay (pure 10) $ const $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       httpMgr <- Http.newManager Https.tlsManagerSettings
       dataSrc <- blankNodeDataSource db chainId httpMgr
@@ -342,6 +341,8 @@ optsArgDescr =
   , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
+  , Option [] [Config.chain] (mkReqArg "CHAIN" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
+      "Chain ID to monitor. If blank, use contents of '" <> configPath Config.chain <> "'. If also blank, default to '" <> T.unpack (toBase58Text betanetChain) <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var

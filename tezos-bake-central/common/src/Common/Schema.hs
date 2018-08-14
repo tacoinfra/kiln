@@ -32,10 +32,18 @@ import Data.Version (Version)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Json
 import Tezos.NodeRPC
 import Tezos.Types
+
+instance Aeson.ToJSON Uri.URI where
+  toJSON = Aeson.toJSON . Uri.render
+  toEncoding = Aeson.toEncoding . Uri.render
+instance Aeson.FromJSON Uri.URI where
+  parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
 sumFees :: PublicKeyHash -> Operation -> Tez
 sumFees delegate = getSum . views balanceUpdates getFee
@@ -62,7 +70,7 @@ knownProtocols =
   ]
 
 data Client = Client
-  { _client_address :: !ClientAddress
+  { _client_address :: !URI
   , _client_updated :: !(Maybe UTCTime)
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -85,7 +93,7 @@ data ClientInfo = ClientInfo
 instance HasId ClientInfo
 
 data Node = Node
-  { _node_address :: !ClientAddress
+  { _node_address :: !URI
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
@@ -102,10 +110,11 @@ data TzScan = TzScan
   , _tzScan_headLevel :: !RawLevel
   , _tzScan_headBlockHash :: !BlockHash
   , _tzScan_fitness :: !Fitness
+  , _tzScan_updated :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId TzScan
 
-mkNode :: ClientAddress -> Node
+mkNode :: URI -> Node
 mkNode addr = Node
   { _node_address = addr
   , _node_identity = Nothing -- TODO
@@ -153,8 +162,6 @@ data Event e = Event
   , _event_time :: UTCTime
   , _event_worker :: Text
   } deriving (Show, Eq, Ord, Typeable, Generic)
-
--- instance BlockLike (Event BakedEvent) where
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
@@ -263,8 +270,6 @@ mkVeryBlockLike blk = VeryBlockLike
   , _veryBlockLike_timestamp = blk ^. timestamp
   }
 
-
-
 data Notificatee = Notificatee
   { _notificatee_email :: Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -292,7 +297,7 @@ data EndpointType = EndpointType_Node | EndpointType_Client
 data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
   { _errorLogInaccessibleEndpoint_log :: !(Id ErrorLog)
   , _errorLogInaccessibleEndpoint_type :: !EndpointType
-  , _errorLogInaccessibleEndpoint_address :: !ClientAddress
+  , _errorLogInaccessibleEndpoint_address :: !URI
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleEndpoint
 
@@ -369,7 +374,8 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
-  , ''ClientConfig , ''ClientDaemonWorker
+  , ''ClientConfig
+  , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
   , ''Delegate

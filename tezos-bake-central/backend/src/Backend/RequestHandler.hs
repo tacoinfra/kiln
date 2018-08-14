@@ -63,13 +63,11 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
     ApiRequest_Public r ->
       case r of
         PublicRequest_AddNode addr nodeIdent -> do
-          sayShow ("addNode:", addr)
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> do
               insertAndNotify_ (mkNode addr)
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
-          sayShow ("addNode - OK?")
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)

@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Common.Verification where
 
@@ -9,11 +9,12 @@ import Control.Lens.TH (makePrisms)
 import Data.Either.Validation
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time
+import Data.Time (UTCTime)
+import qualified Text.URI as Uri
 
 import Common.Schema
-import Tezos.Types
 import Tezos.NodeRPC.Types
+import Tezos.Types
 
 data ForkInfo = ForkInfo
   { _forkInfo_forkStatus :: Either ForkStatus ()
@@ -56,7 +57,7 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
 showBadFork :: Node -> ForkInfo -> Error
 showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.concat
           [ "node: ", maybe "" toBase58Text $ _node_identity node
-          , "@", _node_address node
+          , "@", Uri.render $ _node_address node
           , " BAKER STATE:" , either showForkStatus (const "good") status
           , " for block:", toBase58Text bakedHash
           , " @ ",  T.pack $ show bakedTime

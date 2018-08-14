@@ -19,7 +19,6 @@ library
 
   build-depends:
       base
-    , tezos-bake-monitor-lib
     , base16-bytestring
     , bytestring
     , common
@@ -39,6 +38,7 @@ library
     , rhyolite-frontend
     , semantic-reflex
     , text
+    , tezos-bake-monitor-lib
     , these
     , time
 

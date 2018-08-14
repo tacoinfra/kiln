@@ -32,6 +32,7 @@ import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
+import Text.URI (URI)
 
 import Tezos.Types
 
@@ -113,10 +114,10 @@ data BakeViewSelector a = BakeViewSelector
   } deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
-  { _bakeView_clientAddresses :: !(AppendMap (Id Client) (First (Maybe ClientAddress), a))
+  { _bakeView_clientAddresses :: !(AppendMap (Id Client) (First (Maybe URI), a))
   , _bakeView_clients :: !(AppendMap (Id Client) (First (Maybe ClientInfo), a))
   , _bakeView_parameters :: !(Single ProtoInfo a)
-  , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe ClientAddress), a))
+  , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe URI), a))
   , _bakeView_tzscan :: !(Single TzScan a)
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
   , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)

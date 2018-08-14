@@ -2,8 +2,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -19,6 +21,9 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http
 import Network.HTTP.Types.Method (methodGet)
+import Text.URI (URI)
+import qualified Text.URI as Uri
+import qualified Text.URI.QQ as Uri
 
 import Tezos.Base58Check (toBase58Text)
 import Tezos.Block (Block, TzScanBlock (..))
@@ -95,29 +100,33 @@ instance QueryHistory (QDataSource BlockscaleNode) where
   rEndorsingRights chainId blockHash places = runNodeRpcBlockscale $ rEndorsingRights chainId blockHash places
 
 runNodeRpcBlockscale :: forall a. QueryNodeImpl a -> QDataSource BlockscaleNode a
-runNodeRpcBlockscale q = QDataSource $ \httpMgr (BlockscaleNode chain) -> runReaderT (nodeRPC q) (NodeRPCContext httpMgr $ addrOf chain)
-  where
-    addrOf chain = case chain of
-      NamedChain_Zeronet -> "https://rpczero.tzbeta.net"
-      NamedChain_Alphanet -> "https://rpcalpha.tzbeta.net"
-      NamedChain_Betanet -> "https://rpc.tzbeta.net"
+runNodeRpcBlockscale q = QDataSource $ \httpMgr (BlockscaleNode chain) ->
+  runReaderT (nodeRPC q) (NodeRPCContext httpMgr $ Uri.render $ blockscaleNodeUri chain)
+
+blockscaleNodeUri :: NamedChain -> URI
+blockscaleNodeUri = \case
+  NamedChain_Zeronet  -> [Uri.uri|https://rpczero.tzbeta.net|]
+  NamedChain_Alphanet -> [Uri.uri|https://rpcalpha.tzbeta.net|]
+  NamedChain_Betanet  -> [Uri.uri|https://rpc.tzbeta.net|]
 
 
 -- TZSCAN --
 newtype TzScanNode = TzScanNode NamedChain deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance QueryChain (QDataSource TzScanNode) where
-  rChain = _tzScanBlock_network <$> runNodeRpcTzScan "/head"
+  rChain = _tzScanBlock_network <$> runNodeRpcTzScan "/v2/head"
 
 instance QueryBlock (QDataSource TzScanNode) where
   type BlockType (QDataSource TzScanNode) = TzScanBlock
-  rHead _chainId = runNodeRpcTzScan "/head"
-  rBlock _chainId blockHash = runNodeRpcTzScan $ "/block/" <> toBase58Text blockHash
+  rHead _chainId = runNodeRpcTzScan "/v2/head"
+  rBlock _chainId blockHash = runNodeRpcTzScan $ "/v2/block/" <> toBase58Text blockHash
 
 runNodeRpcTzScan :: forall a. FromJSON a => Text -> QDataSource TzScanNode a
-runNodeRpcTzScan q = QDataSource $ \httpMgr (TzScanNode chain) -> runReaderT (nodeRPCImpl methodGet q) (NodeRPCContext httpMgr $ addrOf chain)
-  where
-    addrOf chain = case chain of
-      NamedChain_Zeronet -> "https://zeronet-api.tzscan.io/v2"
-      NamedChain_Alphanet -> "https://alphanet-api.tzscan.io/v2"
-      NamedChain_Betanet -> "https://api.tzscan.io/v2"
+runNodeRpcTzScan q = QDataSource $ \httpMgr (TzScanNode chain) ->
+  runReaderT (nodeRPCImpl methodGet q) (NodeRPCContext httpMgr $ Uri.render $ tzScanUri chain)
+
+tzScanUri :: NamedChain -> URI
+tzScanUri = \case
+  NamedChain_Zeronet  -> [Uri.uri|https://zeronet-api.tzscan.io|]
+  NamedChain_Alphanet -> [Uri.uri|https://alphanet-api.tzscan.io|]
+  NamedChain_Betanet  -> [Uri.uri|https://api.tzscan.io|]
