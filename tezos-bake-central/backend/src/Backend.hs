@@ -108,6 +108,7 @@ import Backend.Workers.Delegate
 import Backend.Workers.Node
 
 import Backend.ChainHealth (scanForkInfo)
+import Backend.Common (worker')
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
@@ -122,9 +123,6 @@ import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Frontend (frontend)
 
 import Backend.CachedNodeRPC
-
-seconds :: Int -> Int
-seconds = (* 10^(6 :: Int))
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -327,12 +325,9 @@ backend = do
         migrateQueuedEmail tableInfo
         migrateSchema tableInfo
 
-    supervise $ \addFinalizer -> do
-      -- finalizers <- newTVarIO (return ())
-      -- let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
-
+    withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< worker (seconds 10) $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+      addFinalizer <=< worker' (pure 10) $ const $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       httpMgr <- Http.newManager Https.tlsManagerSettings
       dataSrc <- blankNodeDataSource db chainId httpMgr
@@ -345,17 +340,18 @@ backend = do
       addFinalizer wsFinalizer
 
       let appConfig = AppConfig emailFromAddress
-      addFinalizer =<< cacheWorker (seconds 30) dataSrc
-      addFinalizer =<< nodeWorker (seconds 30) dataSrc appConfig db
-      addFinalizer =<< clientWorker (seconds 10) appConfig dataSrc
-      addFinalizer =<< delegateWorker (seconds 10) dataSrc
+      addFinalizer =<< cacheWorker 30 dataSrc
+      addFinalizer =<< nodeWorker 10 dataSrc appConfig db
+      addFinalizer =<< tzScanWorker dataSrc appConfig db
+      addFinalizer =<< clientWorker appConfig dataSrc
+      addFinalizer =<< delegateWorker dataSrc
 
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)
         , ("/listen", handleListen)
         , ("static", serveAssets "static" "static")
         , ("", serveDirectory "frontend.jsexe")
-        ]) --  `finally` join (readTVarIO finalizers)
+        ])
 
 rootHandler :: MonadSnap m => ByteString -> m ()
 rootHandler pageHead =
@@ -458,5 +454,3 @@ configPath = ("config" </>)
 
 mkRootUriOrError :: Text -> URI
 mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
-
--- $(error "stop")

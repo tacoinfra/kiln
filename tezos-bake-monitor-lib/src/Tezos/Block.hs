@@ -1,11 +1,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.Block where
 
+import Control.Applicative ((<|>))
 import Control.Lens (Lens')
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
@@ -14,7 +16,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time
@@ -92,7 +93,6 @@ data MonitorBlock = MonitorBlock
   -- , _monitorBlock_protocolData :: Base16ByteString ??? -- Certainly NOT a blockheader...
   } deriving (Eq, Ord, Show, Typeable)
 
-
 data TzScanBlock = TzScanBlock
   { _tzScanBlock_hash :: !BlockHash
   , _tzScanBlock_predecessorHash :: !BlockHash
@@ -109,17 +109,18 @@ data TzScanBlock = TzScanBlock
   , _tzScanBlock_nbOperations :: !Word64
   , _tzScanBlock_priority :: !Int
   , _tzScanBlock_level :: !RawLevel
-  , _tzScanBlock_commitedNonceHash :: !(Maybe NonceHash)
+  , _tzScanBlock_commitedNonceHash :: !TzScanNonceHash
   , _tzScanBlock_pow_nonce :: !(Base16ByteString ByteString)
   , _tzScanBlock_proto :: !Word8
-  , _tzScanBlock_data :: !Operation
+  --, _tzScanBlock_data :: !Operation -- TODO: Not sure how to parse this
   , _tzScanBlock_signature :: !(Maybe Signature)
   -- , _tzScanBlock_volume :: !Integer -- TODO: unkown type
   , _tzScanBlock_fees :: !Tez
   -- , _tzScanBlock_distanceLevel :: !Integer -- TODO: unknown type
-  }
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 newtype TzScanFitness = TzScanFitness Fitness
+  deriving (Eq, Ord, Show, Generic, Typeable)
 instance FromJSON TzScanFitness where
   parseJSON = Aeson.withText "block fitness string" $ \txt -> TzScanFitness <$>
     Aeson.parseJSON (Aeson.Array $ Vector.fromList $ Aeson.String <$> T.splitOn " " txt)
@@ -127,15 +128,20 @@ instance ToJSON TzScanFitness where
   toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . unbase16ByteString <$> xs
   toEncoding (TzScanFitness (FitnessF xs)) = Aeson.toEncoding $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . unbase16ByteString <$> xs
 
-
-data TzScanProtocol = TzScanProtocol
-  { _tzScanProtocol_name :: !Text
-  , _tzScanProtocol_hash :: !ProtocolHash
-  }
+newtype TzScanProtocol = TzScanProtocol
+  { -- _tzScanProtocol_name :: !Text -- TODO: What even is this?
+  _tzScanProtocol_hash :: ProtocolHash
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 newtype TzScanBaker = TzScanBaker
   { _tzScanBaker_tz :: PublicKeyHash
-  }
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+newtype TzScanNonceHash = TzScanNonceHash (Maybe NonceHash)
+  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON)
+instance FromJSON TzScanNonceHash where
+  parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
+
 
 concat <$> traverse deriveTezosJson
   [ ''Block

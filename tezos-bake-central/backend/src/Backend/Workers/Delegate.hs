@@ -33,7 +33,8 @@ import Tezos.Contract (ContractId (..))
 import Tezos.NodeRPC
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceNode, dataSourceHead)
+import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceHead, dataSourceNode, readTimeBetweenBlocks)
+import Backend.Common (worker')
 import Backend.Schema
 import Backend.Workers
 import Common (tshow)
@@ -41,10 +42,9 @@ import Common.Schema
 
 delegateWorker
   :: MonadIO m
-  => Int -- Microseconds
-  -> NodeDataSource
+  => NodeDataSource
   -> m (IO ())
-delegateWorker delay nds = worker delay $ do
+delegateWorker nds = worker' (readTimeBetweenBlocks nds) $ \_ -> do
   protoInfo <- readMVar $ _nodeDataSource_parameters nds
   let chainId = _nodeDataSource_chain nds
       httpMgr = _nodeDataSource_httpMgr nds

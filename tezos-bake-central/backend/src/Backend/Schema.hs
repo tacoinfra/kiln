@@ -221,6 +221,8 @@ instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
   fromPersistValues vs = first (fromDBFitness . unArray) <$> fromPersistValues vs
   dbType p x = dbType p (Groundhog.Array $ toDBFitness x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
 
+instance (ToJSON a, Typeable a) => ToField (FitnessF a) where
+  toField v = toField $ PGArray $ toDBFitness v
 instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
   fromField a b = fromDBFitness . fromPGArray <$> fromField a b
 

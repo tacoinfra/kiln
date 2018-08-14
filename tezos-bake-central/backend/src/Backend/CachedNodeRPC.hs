@@ -17,16 +17,7 @@
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
-import Data.Pool (Pool)
-import Database.Groundhog.Postgresql
-import Data.Dependent.Map (DMap, DSum(..))
-import qualified Data.Text as T
-import Backend.Schema (stripOnly, Field(..))
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
-import Control.Monad.Logger(runNoLoggingT)
-import Rhyolite.Request.Class
-import Rhyolite.Schema (HasId, Id(..), Json(..))
-import Data.Constraint(Dict(..))
+import Backend.Schema (Field (..), stripOnly)
 import Common.Schema
 import Control.Applicative
 import Control.Concurrent (forkIO)
@@ -34,9 +25,12 @@ import Control.Concurrent.MVar
 import Control.Lens
 import Control.Monad.Except
 import Control.Monad.IO.Class
+import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
 import Data.AppendMap (AppendMap)
+import Data.Constraint (Dict (..))
+import Data.Dependent.Map (DMap, DSum (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Foldable (fold, foldl', for_, toList, traverse_)
@@ -48,15 +42,21 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, listToMaybe)
+import Data.Pool (Pool)
 import Data.Semigroup
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Time (getCurrentTime, UTCTime)
+import qualified Data.Text as T
+import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Data.Traversable (for)
 import Data.Typeable
+import Database.Groundhog.Postgresql
 import Generics.Deriving.TH
 import qualified Network.HTTP.Client as Http (Manager)
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Request.Class
+import Rhyolite.Schema (HasId, Id (..), Json (..))
 import Safe.Foldable (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
 
@@ -170,7 +170,7 @@ blankNodeDataSource db chain mgr = do
     putMVar hist emptyCache
     putMVar cache mempty
     say "Cache ready!"
-  return $ NodeDataSource
+  return NodeDataSource
     { _nodeDataSource_history = hist
     , _nodeDataSource_nodes = nodes
     , _nodeDataSource_cache = cache
@@ -185,6 +185,11 @@ class HasNodeDataSource a where
 
 instance HasNodeDataSource NodeDataSource where
   nodeDataSource = id
+
+readTimeBetweenBlocks :: HasNodeDataSource nds => nds -> IO NominalDiffTime
+readTimeBetweenBlocks nds = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
+  <$> readMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
 histToBlockLike :: (BlockHash, BranchData CachedBlockInfo, LCA.Path BlockHash (BranchData CachedBlockInfo)) -> VeryBlockLike
@@ -237,11 +242,11 @@ dataSourceNode ::
   ( MonadIO m
   , MonadReader s m, HasNodeDataSource s
   )
-  => m (Maybe (NodeRPCContext))
+  => m (Maybe NodeRPCContext)
 dataSourceNode = do
-  dsrc <- asks $ (^. nodeDataSource)
+  dsrc <- asks (^. nodeDataSource)
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
-  pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . fst) $ maximumByMay (on compare $ snd) $ catMaybes $ fmap sequence $ Map.toList nodes
+  pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . fst) $ maximumByMay (on compare snd) $ catMaybes $ fmap sequence $ Map.toList nodes
 
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash
@@ -260,7 +265,7 @@ getKey params hist = \case
     where
       minLevel = _cachedHistory_minLevel hist
       branch = Map.lookup ctx $ _cachedHistory_blocks hist
-      branchLvl = minLevel + (fromIntegral $ length branch)
+      branchLvl = minLevel + fromIntegral (length branch)
       reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params
       ctxCycle = max 0 (reqCycle - _protoInfo_preservedCycles params)
       ctxLvl :: RawLevel = 1 + fromIntegral ctxCycle * _protoInfo_blocksPerCycle params
@@ -268,7 +273,7 @@ getKey params hist = \case
   NodeQuery_Baker ctx lvl -> (\ctx' -> (ctx', NodeQuery_Baker ctx' lvl)) <$> ctxBlockHash
     where
       ctxBlockHash = levelAncestor hist lvl ctx
-  NodeQuery_Block ctx -> pure $ (ctx, NodeQuery_Block ctx)
+  NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
 
 nodeQueryDataSource ::
   ( MonadIO m
@@ -284,7 +289,7 @@ nodeQueryDataSource q' = do
   -- sayShow ("time to query go!", Map.keys nodes, q')
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
 
-  (qBranch, q) <- maybe (throwError $ (RpcError_HttpException "NOT ENOUGH HISTORY") ^. re asRpcError) pure $ getKey protoInfo history q'
+  (qBranch, q) <- maybe (throwError $ RpcError_HttpException "NOT ENOUGH HISTORY" ^. re asRpcError) pure $ getKey protoInfo history q'
 
   resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache ->
     case DMap.lookup q cache of
@@ -363,7 +368,7 @@ withCache ::
   )
   => a -> (ProtoInfo -> m a) -> m a
 withCache dft action = do
-  dsrc <- asks $ (^. nodeDataSource)
+  dsrc <- asks (^. nodeDataSource)
   protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
   maybe dft id <$> traverse action protoInfo
 
@@ -412,7 +417,7 @@ tryFetchFromCache db q = do
     Nothing -> return Nothing
     Just result -> case requestResponseFromJSON q of
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-        Aeson.Success v -> return $ Just $ v
+        Aeson.Success v -> return $ Just v
         Aeson.Error bad -> do
           sayErr $ T.pack $ show ("tryFetchFromCache failed to decode:", bad)
           return Nothing

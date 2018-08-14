@@ -5,28 +5,28 @@
 module Tezos.Json where
 
 import Control.Applicative ((<|>))
-import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON, Value, encode, camelTo2)
+import Data.Aeson (FromJSON, ToJSON, Value, camelTo2, encode, parseJSON, toEncoding, toJSON)
 import Data.Bits (Bits)
 import Data.List (uncons)
-import Data.Proxy (Proxy (..))
 import Data.Map (Map)
+import Data.Proxy (Proxy (..))
 import Data.Scientific (Scientific)
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
+import qualified Data.Aeson.TH as Aeson
+import qualified Data.Aeson.Types as Aeson
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Map as Map
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable, typeRep)
 import Data.Vector (Vector)
 import Data.Word (Word64)
 import Language.Haskell.TH
 import Text.Read (readMaybe)
-import qualified Data.Aeson.TH as Aeson
-import qualified Data.Aeson.Types as Aeson
-import qualified Data.HashMap.Strict as HashMap
-import qualified Data.Map as Map
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.ByteString.Lazy as LBS
 
 
 parseAsString :: forall a. (Read a, Typeable a) => Aeson.Value -> Aeson.Parser a
@@ -48,13 +48,13 @@ tezosJsonOptions = tezosJsonOptionsKind "kind"
 
 tezosJsonOptionsKind :: String -> Aeson.Options
 tezosJsonOptionsKind tagFieldName = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = tail . camelTo2 '_' . dropWhile ('_' /=) . tail
-      , Aeson.constructorTagModifier =
-          \ctor -> camelTo2 '_' $ maybe ctor snd $ uncons $ dropWhile ('_' /=) ctor
-      , Aeson.sumEncoding = Aeson.defaultTaggedObject
-        { Aeson.tagFieldName = tagFieldName
-        }
-      }
+  { Aeson.fieldLabelModifier = tail . camelTo2 '_' . dropWhile ('_' /=) . tail
+  , Aeson.constructorTagModifier =
+      \ctor -> camelTo2 '_' $ maybe ctor snd $ uncons $ dropWhile ('_' /=) ctor
+  , Aeson.sumEncoding = Aeson.defaultTaggedObject
+    { Aeson.tagFieldName = tagFieldName
+    }
+  }
 
 data JsonValue
   = JsonObject !(Map Text JsonValue)

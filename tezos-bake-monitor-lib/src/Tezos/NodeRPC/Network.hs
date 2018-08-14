@@ -126,10 +126,10 @@ nodeRPCImpl' decoder method_ rpcSelector = do
         { method = method_
         , requestBody = if method_ == methodGet then "" else "{}"
         , requestHeaders =
-          [ (hContentType, "application/json")
-          , (hUserAgent, "tezos-bake-monitor")
-          , (hAccept, "*/*")
-          ]
+          [(hContentType, "application/json") | method_ /= methodGet]
+          ++ [ (hUserAgent, "tezos-bake-monitor")
+             , (hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
+             ]
         }
   let
     request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
@@ -188,10 +188,10 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
         { method = method_
         , requestBody = if method_ == methodGet then "" else "{}"
         , requestHeaders =
-          [ (hContentType, "application/json")
-          , (hUserAgent, "tezos-bake-monitor")
-          , (hAccept, "*/*")
-          ]
+          [(hContentType, "application/json") | method_ /= methodGet]
+          ++ [ (hUserAgent, "tezos-bake-monitor")
+             , (hAccept, "*/*")
+             ]
         }
   let request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
   liftIO (try @IO @HttpException $ responseOpen request mgr) >>= \case

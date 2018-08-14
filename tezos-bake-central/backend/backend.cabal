@@ -76,6 +76,7 @@ library
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
+    Backend.Common
     Backend.Config
     Backend.Errors
     Backend.Graphs

@@ -15,8 +15,9 @@
 module Backend.Workers.Node where
 
 import Control.Applicative
+import Control.Concurrent
 import Control.Concurrent.MVar
-import Control.Lens (view, ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Lens (ifor, ifor_, ix, to, view, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -25,7 +26,7 @@ import Control.Monad.State
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
 import Data.Either.Combinators
-import Data.Foldable (for_)
+import Data.Foldable (for_, toList)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.LCA.Online.Polymorphic as LCA
@@ -33,36 +34,38 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (Max (..), (<>))
+import Data.Semigroup (Max (..), Sum (..), (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time (NominalDiffTime)
 import Data.Traversable (for)
 import Data.Tuple (swap)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
-import qualified Network.HTTP.Client as Http (Manager)
+import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
                                 updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Concurrent (worker)
+import Rhyolite.Backend.Schema.Class
+import Rhyolite.Concurrent (supervise, worker)
 import Rhyolite.Schema (Id (..), IdData, Json (..))
 import Say (say, sayErr, sayShow)
 
-import Backend.CachedNodeRPC
-import Backend.Supervisor
 import Tezos.Block (TzScanBlock (..))
+import Tezos.History
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (NamedChain (..), TzScanNode (..), querySource)
 import Tezos.Types
 
+import Backend.CachedNodeRPC
+import Backend.Common (worker')
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.Schema
+import Backend.Supervisor
 import Common.Schema
-import Rhyolite.Backend.Schema.Class
-import Tezos.History
 
 -- cacheChainCycle :: b -> m (Id CachedChainCycle)
 -- cacheChainCycle = error "TODO"
@@ -337,37 +340,17 @@ updateNetworkStats httpMgr db nid before = flip runReaderT (NodeRPCContext httpM
       ]
 
 nodeWorker
-  :: Int -- delay between checking for updates, in microseconds
+  :: NominalDiffTime -- delay between checking for updates, in microseconds
   -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
+nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map ClientAddress (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  worker delay $ do
+  worker' (pure delay) $ const $ do
     say "Update node cycle."
 
-    {-
-    tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
-      querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
-    case tzScanHeadBlock' of
-      Left e -> sayErr (T.pack $ show e)
-      Right b -> do
-        let tzScanHeadLevel = _tzScanBlock_level b
-            tzScanHeadBlockHash = _tzScanBlock_hash b
-        runNoLoggingT $ runDb (Identity db) $ do
-          updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
-            INSERT INTO "TzScan"
-              ("chainId", "headLevel", "headBlockHash")
-              VALUES (?betanetChain, ?tzScanHeadLevel, ?tzScanHeadBlockHash)
-            ON CONFLICT ("chainId") DO UPDATE SET
-              "headLevel" = ?tzScanHeadLevel,
-              "headBlockHash" = ?tzScanHeadBlockHash
-            RETURNING id
-          |]
-          for_ updatedRecord $ notifyEntityId NotificationType_Update
-    -}
     -- read the persistent list of nodes
     theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
       selectMap NodeConstructor (Node_deletedField ==. False)
@@ -398,4 +381,35 @@ nodeWorker delay nds appConfig db = supervise $ \addFinalizer -> do
               *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
         liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
         liftIO $ addFinalizer cleanup
-        say ("start monitor on " <> nodeAddr)
+        say $ "start monitor on " <> nodeAddr
+
+tzScanWorker
+  :: NodeDataSource
+  -> AppConfig
+  -> Pool Postgresql
+  -> IO (IO ())
+tzScanWorker nds appConfig db = worker' (readTimeBetweenBlocks nds) $ const doUpdate
+  where
+    httpMgr = _nodeDataSource_httpMgr nds
+    doUpdate = do
+      tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
+        querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
+      case tzScanHeadBlock' of
+        Left e -> sayErr (T.pack $ show e)
+        Right b -> do
+          let
+            level = _tzScanBlock_level b
+            hash = _tzScanBlock_hash b
+            TzScanFitness fitness = _tzScanBlock_fitness b
+          runNoLoggingT $ runDb (Identity db) $ do
+            updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
+              INSERT INTO "TzScan"
+                ("chainId", "headLevel", "headBlockHash", fitness)
+                VALUES (?betanetChain, ?level, ?hash, ?fitness)
+              ON CONFLICT ("chainId") DO UPDATE SET
+                "headLevel" = ?level,
+                "headBlockHash" = ?hash,
+                fitness = ?fitness
+              RETURNING id
+            |]
+            for_ updatedRecord $ notifyEntityId NotificationType_Update

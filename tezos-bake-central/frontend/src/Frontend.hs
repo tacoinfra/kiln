@@ -12,6 +12,7 @@
 
 module Frontend where
 
+import Control.Applicative (liftA2)
 import Control.Lens ((<&>), _1, _2)
 import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
@@ -192,6 +193,13 @@ watchErrors intervals = do
     }
   pure $ ffor theView $ \v ->
     ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
+
+watchTzScan :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TzScan))
+watchTzScan =
+  (fmap . fmap) (getSingle . _bakeView_tzscan) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_tzscan = Just 1 }
+
 
 
 headTag :: DomBuilder t m => m ()
@@ -450,28 +458,50 @@ mailServerForm frm0 = do
     labeled = el "label" . text
 
 
+data NodeTile
+  = NodeTile_PlainNode (Id Node) Node
+  | NodeTile_TzScan TzScan
+  | NodeTile_Foundation
+  deriving (Eq, Ord, Show)
+
 nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTab = do
-  let maybeSomething xs = if null xs then Nothing else Just xs
-  maybeNodesDyn <- maybeDyn . fmap maybeSomething =<< watchNodes (pure $ universe ())
-  dyn_ $ ffor maybeNodesDyn $ \case
+  tzscanDyn <- watchTzScan
+  nodesDyn <- watchNodes $ pure $ universe ()
+  let
+    zipNodeTiles tzscan nodes =
+      (case tzscan of
+        Nothing -> id
+        Just v -> (NodeTile_TzScan v :)
+      ) -- if available, prepend the tzscan node to the list
+      (uncurry NodeTile_PlainNode <$> Map.toList nodes)
+  maybeTilesDyn <- maybeDyn $ nonEmpty <$> zipDynWith zipNodeTiles tzscanDyn nodesDyn
+  dyn_ $ ffor maybeTilesDyn $ \case
     Nothing -> waitingForResponse
-    Just nodesDyn -> dyn_ $ ffor nodesDyn $ \nodes -> divClass "ui three stackable cards" $ do
-      for_ nodes $ \node -> divClass "ui card" $ divClass "content" $ do
-        divClass "header" $ text $ _node_address node
-        divClass "description" $ do
-          el "div" $ do
-            text "Head block level: "
-            maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ _node_headLevel node)
-          el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
-            Nothing -> "N/A"
-            Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-          el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
-          let stat = _node_networkStat node
-          el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
-          el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
-          el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
-          el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
+    Just tilesDyn -> dyn_ $ ffor tilesDyn $ \tiles ->
+      divClass "ui three stackable cards" $ do
+      for_ tiles $ divClass "ui card" . divClass "content" . \case
+        NodeTile_TzScan tzscan -> do
+          divClass "ui center align header" $
+            blockHashLinkAs (_tzScan_headBlockHash tzscan) $ text $ tshow $ unRawLevel $ _tzScan_headLevel tzscan
+          divClass "description" $ text "tzscan.io"
+        NodeTile_Foundation -> text "foundation"
+        NodeTile_PlainNode _ node -> do
+          divClass "ui center align header" $
+            maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" (tshow . unRawLevel) $ _node_headLevel node)
+          divClass "description" $ do
+            text $ _node_address node
+            --el "div" $ do
+            --maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ unRawLevel $ _node_headLevel node)
+            el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
+              Nothing -> "N/A"
+              Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
+            el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
+            let stat = _node_networkStat node
+            el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
+            el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
+            el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
+            el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)

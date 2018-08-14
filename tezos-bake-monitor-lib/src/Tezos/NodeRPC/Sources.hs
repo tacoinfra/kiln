@@ -118,6 +118,6 @@ runNodeRpcTzScan :: forall a. FromJSON a => Text -> QDataSource TzScanNode a
 runNodeRpcTzScan q = QDataSource $ \httpMgr (TzScanNode chain) -> runReaderT (nodeRPCImpl methodGet q) (NodeRPCContext httpMgr $ addrOf chain)
   where
     addrOf chain = case chain of
-      NamedChain_Zeronet -> "http://zeronet-api.tzscan.io/v2"
-      NamedChain_Alphanet -> "http://alphanet-api.tzscan.io/v2"
-      NamedChain_Betanet -> "http://api.tzscan.io/v2"
+      NamedChain_Zeronet -> "https://zeronet-api.tzscan.io/v2"
+      NamedChain_Alphanet -> "https://alphanet-api.tzscan.io/v2"
+      NamedChain_Betanet -> "https://api.tzscan.io/v2"

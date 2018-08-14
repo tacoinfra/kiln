@@ -28,12 +28,11 @@ import qualified Data.AppendMap as AppendMap
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
-import Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 import Tezos.Json
@@ -103,8 +102,9 @@ instance HasId Node
 
 data TzScan = TzScan
   { _tzScan_chainId :: !ChainId
-  , _tzScan_headLevel :: !(Maybe RawLevel)
-  , _tzScan_headBlockHash :: !(Maybe BlockHash)
+  , _tzScan_headLevel :: !RawLevel
+  , _tzScan_headBlockHash :: !BlockHash
+  , _tzScan_fitness :: !Fitness
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId TzScan
 
@@ -398,6 +398,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
+  , ''TzScan
   ]
 
 concat <$> traverse makeLenses

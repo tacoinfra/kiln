@@ -178,6 +178,12 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       Map.singleton logId (First (Just (errorLog, toView specificLog)))
                   }
 
+      handleTzScan = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id TzScan) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success nid -> whenJust (_bakeViewSelector_tzscan aggVS) $ \a -> do
+          tzscan <- get $ fromId nid
+          pure $ mempty { _bakeView_tzscan = single tzscan a }
+
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
@@ -190,6 +196,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
     "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
+    "TzScan" -> handleTzScan
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty
