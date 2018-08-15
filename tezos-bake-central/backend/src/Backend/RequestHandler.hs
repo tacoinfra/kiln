@@ -12,7 +12,9 @@
 module Backend.RequestHandler where
 
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_)
 import Data.Functor (void)
@@ -34,37 +36,39 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyE
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
-import Backend.ChainHealth (obtainNode)
-import Backend.NodeRPC (NodeRPCContext (..), runNodeRPCT)
+import Tezos.Types(Block)
+import Tezos.NodeRPC.Types (RpcError)
+import Tezos.NodeRPC (NodeRPCContext (..))
+
 import Backend.Schema
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
+import Backend.CachedNodeRPC(dataSourceNode)
 
+import Say
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
   => Address
-  -> Http.Manager
   -> Pool Postgresql
   -> RequestHandler Bake m
-requestHandler emailFromAddr httpMgr db = RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $
+requestHandler emailFromAddr db = RequestHandler $ \req -> (say "doing RequestHandler things" *>) $ runNoLoggingT $ runDb (Identity db) $
   case req of
     ApiRequest_Public r ->
       case r of
         PublicRequest_AddNode addr nodeIdent -> do
+          sayShow ("addNode:", addr)
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> do
-              let ctx = NodeRPCContext httpMgr addr
-              (_, node) <- runNodeRPCT ctx obtainNode
-              insertAndNotify_ node
+              insertAndNotify_ (mkNode addr)
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
+          sayShow ("addNode - OK?")
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           let inIds = In nids
-          _ <- [executeQ| DELETE FROM "Parameters" where node in ?inIds |]
           for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
         PublicRequest_AddClient addr -> do

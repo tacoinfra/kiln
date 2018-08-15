@@ -8,6 +8,7 @@
 
 module Backend.Errors where
 
+import Control.Monad.Reader(MonadReader)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Foldable (for_)
 import Data.Functor (void)
@@ -30,11 +31,12 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAn
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id)
 
-import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Tezos.Types
+
+import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Schema
 import Common.Schema
-import Common.TaggedHash (BlockHash)
-import Common.Verification (ForkInfoF (..), ForkStatusF (..), showBadFork)
+import Common.Verification (ForkInfo (..), ForkStatus (..), showBadFork)
 
 mailFor :: Address -> Text -> [Error] -> Mail
 mailFor fromAddr toAddr errs =
@@ -43,16 +45,19 @@ mailFor fromAddr toAddr errs =
     body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
   in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
 
-queueAllEmails :: (PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig m) => [Error] -> m ()
+queueAllEmails ::
+  ( PersistBackend m, PostgresLargeObject m, MonadIO m
+  , MonadReader a m, HasAppConfig a) => [Error] -> m ()
 queueAllEmails message = do
   ns <- select CondEmpty
-  fromAddr <- _appConfig_emailFromAddress <$> getAppConfig
+  fromAddr <- _appConfig_emailFromAddress <$> askAppConfig
   for_ ns $ \n ->
     queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
 
 
 reportNoBakerHeartbeatError
-  :: (Monad m, PersistBackend m, PostgresRaw m, PostgresLargeObject m, MonadIO m, HasAppConfig m)
+  :: (Monad m, PersistBackend m, PostgresRaw m, PostgresLargeObject m, MonadIO m
+     , MonadReader a m, HasAppConfig a)
   => Id Client -> SeenEvent -> m ()
 reportNoBakerHeartbeatError cid eventDetail = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
@@ -98,7 +103,7 @@ clearNoBakerHeartbeatError cid = do
   for_ lids $ notifyEntityId NotificationType_Update
 
 reportInaccessibleEndpointError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig m)
+  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => EndpointType -> ClientAddress -> m ()
 reportInaccessibleEndpointError endpointType addr = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
@@ -134,7 +139,7 @@ clearInaccessibleEndpointError endpointType addr = do
 
 
 reportNodeOnForkError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig m)
+  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> Bool -> BlockHash -> UTCTime -> m ()
 reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeOnFork) <- listToMaybe <$> [queryQ|
@@ -151,7 +156,7 @@ reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
       node <- get $ fromId nodeId
       for_ node $ \n ->
         queueAllEmails
-          [showBadFork $ ForkInfo n (if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
+          [showBadFork n $ ForkInfo (Left $ if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId

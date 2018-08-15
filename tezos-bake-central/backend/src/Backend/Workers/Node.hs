@@ -1,0 +1,248 @@
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+{-# OPTIONS_GHC -fmax-relevant-binds=32 #-}
+
+module Backend.Workers.Node where
+
+import Control.Applicative
+import Control.Concurrent
+import Control.Concurrent.MVar
+import Control.Lens (ifor, ifor_, ix, to, view, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Logger (MonadLogger, runNoLoggingT)
+import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.State
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Bifunctor (first)
+import Data.Either.Combinators
+import Data.Foldable (for_, toList)
+import Data.Functor (($>))
+import Data.Functor.Identity (Identity (..))
+import qualified Data.LCA.Online.Polymorphic as LCA
+import qualified Data.Map as Map
+import Data.Map.Strict (Map)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Pool (Pool)
+import Data.Semigroup (Max (..), Sum (..), (<>))
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time (NominalDiffTime)
+import Data.Traversable (for)
+import Data.Tuple (swap)
+import Database.Groundhog.Core
+import Database.Groundhog.Postgresql
+import qualified Network.HTTP.Client as Http
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
+                                updateAndNotify)
+import Rhyolite.Backend.Schema (fromId, toId)
+import Rhyolite.Backend.Schema.Class
+import Rhyolite.Concurrent (supervise, worker)
+import Rhyolite.Schema (Id (..), IdData, Json (..))
+import Say (say, sayErr, sayShow)
+
+import Tezos.Block (TzScanBlock (..))
+import Tezos.History
+import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (NamedChain (..), TzScanNode (..), querySource)
+import Tezos.Types
+
+import Backend.CachedNodeRPC
+import Backend.Common (worker')
+import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Backend.Errors
+import Backend.Schema
+import Backend.Supervisor
+import Common.Schema
+
+
+selectIds
+  :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.
+     ( ProjectionDb t (PhantomDb m)
+     , ProjectionRestriction t (RestrictionHolder v c), DefaultKeyId v
+     , Projection t v, EntityConstr v c
+     , HasSelectOptions a (PhantomDb m) (RestrictionHolder v c)
+     , PersistBackend m, Ord (IdData v), AutoKey v ~ DefaultKey v)
+  => t -- ^ Constructor
+  -> a -- ^ Select options
+  -> m [(Id v, v)]
+selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
+
+-- We assume that the implicit nodeaddr is the same one we just learned the new
+-- branch from, so we insist that we bootstrap from it (rather than using a
+-- pool of nodes)
+
+-- TODO: make this "configurable" implementation idea:  we could partition
+-- history into horizontal level regions (say, every 10k levels) and require
+-- each "slice" start on a boundary, and contain only the blocks within their
+-- assigned slice.
+minCachedBlockLevel = 1
+
+nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
+nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up", branch, current, i, n)
+
+nodeMonitor :: ChainId -> Http.Manager  -> NodeDataSource -> AppConfig -> Pool Postgresql -> ClientAddress -> Id Node -> RpcResponse MonitorBlock -> IO ()
+nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId = \case
+  Left bad -> error "sulk"
+  Right headBlockInfo -> do
+      oldHead <- runReaderT dataSourceHead nds
+      updateNodeDataSource nds nodeAddr headBlockInfo
+      let cacheVar = _nodeDataSource_history nds
+      let ctx = NodeRPCContext httpMgr nodeAddr
+      newBlock <- modifyMVar cacheVar $ \cache -> do
+        let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
+        newStateRsp
+          :: Either RpcError CachedHistory'
+          <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
+            acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
+            sayShow ("new block", nodeAddr, headBlockInfo, acc)
+        case newStateRsp of
+          Left bad -> sayShow bad $> (cache, False)
+          Right good -> return (good, newBlock)
+
+      when newBlock $ do
+        say $ "new block from node at " <> nodeAddr
+        say $ T.pack $ show headBlockInfo
+      runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+        -- This isn't very nuanced: old, stale nodes, even if they are catching
+        -- up, will churn a lot here.  Maybe we could improve this to filter
+        -- out "new" blocks that are already on the branch of `oldHead`?
+        when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
+          let now = headBlockInfo ^. timestamp
+          have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
+            SELECT c."id"
+            FROM "Parameters" c
+            WHERE c."chain" = ?chainId |]
+          case have of
+            Just entryId ->
+              updateAndNotify entryId
+                [Parameters_headTimestampField =. now]
+            Nothing -> do
+              params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
+              insertAndNotify_ Parameters
+                { _parameters_protoInfo = params
+                , _parameters_chain = chainId
+                , _parameters_headTimestamp = now
+                }
+
+        clearInaccessibleEndpointError EndpointType_Node nodeAddr
+        updateAndNotify nodeId
+          [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
+          , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
+          , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
+          , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
+          ]
+
+blockSummary :: BlockLike b => b -> BranchData a
+blockSummary blk = BranchData
+  { _branchData_info = Nothing
+  , _branchData_timestamp = blk ^. timestamp
+  , _branchData_level = blk ^. level
+  , _branchData_fitness = blk ^. fitness
+  }
+
+updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO ()
+updateNetworkStats httpMgr db nid before = flip runReaderT (NodeRPCContext httpMgr $ _node_address before) $ do
+  let
+    onErr :: forall m a. Functor m => ExceptT RpcError m a -> m (Maybe a)
+    onErr = fmap rightToMaybe . runExceptT
+  connections <- onErr $ nodeRPC rConnections
+  networkStat <- onErr $ nodeRPC rNetworkStat
+  let
+    after = before
+      { _node_peerCount = connections -- intentionally not coalescing.
+      , _node_networkStat = fromMaybe (_node_networkStat before) networkStat
+      }
+
+  when (before /= after) $ runNoLoggingT $ runDb (Identity db) $ do
+    updateAndNotify nid
+      [ Node_peerCountField =. _node_peerCount after
+      , Node_networkStatField =. _node_networkStat after
+      ]
+
+nodeWorker
+  :: NominalDiffTime -- delay between checking for updates, in microseconds
+  -> NodeDataSource
+  -> AppConfig
+  -> Pool Postgresql
+  -> IO (IO ())
+nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
+  nodePool :: MVar (Map ClientAddress (IO ())) <- newMVar mempty
+  let httpMgr = _nodeDataSource_httpMgr nds
+  worker' (pure delay) $ const $ do
+    say "Update node cycle."
+
+    -- read the persistent list of nodes
+    theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
+      selectMap NodeConstructor (Node_deletedField ==. False)
+    -- give them all a chance to
+
+    ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
+
+    let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
+
+    -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
+    initParams nds (Map.keys theseNodes)
+
+    thoseNodes <- readMVar nodePool
+    let newNodes = theseNodes `Map.difference` thoseNodes
+    let staleNodes = thoseNodes `Map.difference` theseNodes
+    sayShow ("new nodes", Map.keys newNodes, "deleted nodes", Map.keys staleNodes)
+
+    ifor_ staleNodes $ \nodeAddr killMonitor -> say ("stop monitor on " <> nodeAddr) *> killMonitor
+
+    let chainId = _nodeDataSource_chain nds
+
+    let nodeError :: ClientAddress -> RpcError -> ExceptT RpcError IO ()
+        nodeError nodeAddr _ = ExceptT (fmap Right (runNoLoggingT (runDb (Identity db) (runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig))))
+    for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
+      runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr nodeAddr) $ do
+        killMonitor <- nodeRPC $ rMonitorHeads chainId (nodeMonitor chainId httpMgr nds appConfig db nodeAddr nodeId)
+        let cleanup = killMonitor
+              *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
+        liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
+        liftIO $ addFinalizer cleanup
+        say $ "start monitor on " <> nodeAddr
+
+tzScanWorker
+  :: NodeDataSource
+  -> AppConfig
+  -> Pool Postgresql
+  -> IO (IO ())
+tzScanWorker nds appConfig db = worker' (readTimeBetweenBlocks nds) $ const doUpdate
+  where
+    httpMgr = _nodeDataSource_httpMgr nds
+    doUpdate = do
+      tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
+        querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
+      case tzScanHeadBlock' of
+        Left e -> sayErr (T.pack $ show e)
+        Right b -> do
+          let
+            level = _tzScanBlock_level b
+            hash = _tzScanBlock_hash b
+            TzScanFitness fitness = _tzScanBlock_fitness b
+          runNoLoggingT $ runDb (Identity db) $ do
+            updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
+              INSERT INTO "TzScan"
+                ("chainId", "headLevel", "headBlockHash", fitness)
+                VALUES (?betanetChain, ?level, ?hash, ?fitness)
+              ON CONFLICT ("chainId") DO UPDATE SET
+                "headLevel" = ?level,
+                "headBlockHash" = ?hash,
+                fitness = ?fitness
+              RETURNING id
+            |]
+            for_ updatedRecord $ notifyEntityId NotificationType_Update

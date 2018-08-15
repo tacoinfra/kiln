@@ -14,21 +14,26 @@ library
   build-depends:
       aeson
     , base
-    , bytestring
     , base16-bytestring
+    , bytestring
     , Chart
     , Chart-diagrams
     , clientsession
     , colour
     , common
     , containers
+    , constraints
     , data-default
+    , dependent-map
+    , dependent-sum-template
     , diagrams-core
     , diagrams-lib
     , diagrams-svg
     , either
     , filepath
+    , formatting
     , frontend
+    , generic-deriving
     , groundhog
     , groundhog-postgresql
     , groundhog-th
@@ -62,6 +67,7 @@ library
     , stm
     , svg-builder
     , text
+    , tezos-bake-monitor-lib
     , time
 
   exposed-modules:
@@ -69,15 +75,20 @@ library
 
   other-modules:
     Backend.BalanceTracking
+    Backend.CachedNodeRPC
     Backend.ChainHealth
+    Backend.Common
     Backend.Config
     Backend.Errors
     Backend.Graphs
-    Backend.NodeRPC
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
     Backend.ViewSelectorHandler
+    Backend.Workers
+    Backend.Workers.Client
+    Backend.Workers.Delegate
+    Backend.Workers.Node
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 

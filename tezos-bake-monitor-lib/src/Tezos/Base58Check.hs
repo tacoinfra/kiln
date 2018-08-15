@@ -1,6 +1,5 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -10,19 +9,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Common.TaggedHash where
+module Tezos.Base58Check where
 
 import Control.Monad
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Semigroup
+#endif
 import Data.Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
-import Data.Monoid
+-- import Data.Monoid
 import Data.String
 import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
-import GHC.Generics
 #if defined(ghcjs_HOST_OS)
 import qualified "hashing" Crypto.Hash as CryptoHash
 import qualified Data.ByteString.Base16 as BS16
@@ -31,8 +32,6 @@ import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
 import qualified Data.ByteArray as BA
 #endif
 
-
-import Common.TezosBinary
 
 -- see ~/tezos/src/lib_crypto/base58.ml
 type BlockHash = HashedValue 'HashType_BlockHash ByteString
@@ -54,6 +53,9 @@ type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature ByteString
 type GenericSignature = HashedValue 'HashType_GenericSignature ByteString
 type ChainId = HashedValue 'HashType_ChainId ByteString
 type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash ByteString
+type P256PublicKey = HashedValue 'HashType_P256PublicKey ByteString
+type P256Signature = HashedValue 'HashType_P256Signature ByteString
+
 
 
 
@@ -62,9 +64,11 @@ type ContractHash = HashedValue 'HashType_ContractHash ByteString
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/nonce_hash.ml
 type NonceHash = HashedValue 'HashType_NonceHash ByteString
+type CycleNonce = NonceHash -- called both, depending on where you're asking...
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/blinded_public_key_hash.ml
 type BlindedPublicKeyHash = HashedValue 'HashType_BlindedPublicKeyHash ByteString
+
 
 data HashType
   = HashType_BlockHash
@@ -89,7 +93,9 @@ data HashType
   | HashType_NonceHash
   | HashType_BlindedPublicKeyHash
   | HashType_P256PublicKeyHash
-  deriving (Eq, Ord, Show, Typeable, Generic, Enum)
+  | HashType_P256Signature
+  | HashType_P256PublicKey
+  deriving (Eq, Ord, Show, Typeable, Enum)
 
 newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
   deriving (Eq, Ord)
@@ -103,10 +109,10 @@ instance IsBase58Hash tag => FromJSON (HashedValue tag ByteString) where
     hexesText <- parseJSON x
     either (fail . show) pure $ fromBase58 $ T.encodeUtf8 hexesText
 
-instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
-  parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize (Proxy :: Proxy t)
-  encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x
-                               | otherwise = error "base58 tagged object wrong length"
+-- instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
+--   parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize (Proxy :: Proxy t)
+--   encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x
+--                                | otherwise = error "base58 tagged object wrong length"
 
 class IsBase58Hash (t :: HashType) where
   hashSize :: f t -> Int
@@ -137,7 +143,7 @@ data HashBase58Error
   | HashBase58Error_InvalidPrefix BS.ByteString BS.ByteString
   | HashBase58Error_WrongLength Int Int
   | HashBase58Error_BadChecksum BS.ByteString BS.ByteString BS.ByteString
-  deriving (Eq, Ord, Show, Generic, Typeable)
+  deriving (Eq, Ord, Show, Typeable)
 
 
 data TryDecodeBase58 a where
@@ -263,7 +269,7 @@ instance IsBase58Hash 'HashType_Secp256k1Signature where
   hashSize _ = 64
 
 instance IsBase58Hash 'HashType_ContractHash where
-  prefix _ =  "\003\099\029"
+  prefix _ =  "\002\090\121"
   hashSize _ = 20
 
 instance IsBase58Hash 'HashType_NonceHash where
@@ -277,3 +283,11 @@ instance IsBase58Hash 'HashType_BlindedPublicKeyHash where
 instance IsBase58Hash 'HashType_P256PublicKeyHash where
   prefix _ = "\006\161\164"
   hashSize _ = 20
+
+instance IsBase58Hash 'HashType_P256Signature where
+  prefix _ = "\054\240\044\052"
+  hashSize _ = 64
+
+instance IsBase58Hash 'HashType_P256PublicKey where
+  prefix _ = "\003\178\139\127" 
+  hashSize _ = 33

@@ -1,56 +1,70 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Common.Verification where
 
+import Control.Lens (Prism')
+import Control.Lens.TH (makePrisms)
 import Data.Either.Validation
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time
 
 import Common.Schema
-import Common.TaggedHash (BlockHash, toBase58Text)
+import Tezos.Types
+import Tezos.NodeRPC.Types
 
-data ForkInfoF e = ForkInfo
-  { _forkInfo_node :: Node
-  , _forkInfo_forkStatus :: ForkStatusF e
+data ForkInfo = ForkInfo
+  { _forkInfo_forkStatus :: Either ForkStatus ()
   , _forkInfo_time :: UTCTime
   , _forkInfo_hash :: BlockHash
   } deriving (Eq, Ord, Show)
 
-data ForkStatusF e
-  = ForkStatus_Good
-  | ForkStatus_TooNew
+data ForkStatus
+  = ForkStatus_TooNew
   | ForkStatus_TooOld
   | ForkStatus_Forked
-  | ForkStatus_BadNode e
+  | ForkStatus_BadNode RpcError
   deriving (Eq, Ord, Show)
 
-showForkStatus :: ForkStatusF e -> Text
+makePrisms ''ForkStatus
+
+instance AsRpcError ForkStatus where
+  asRpcError = _ForkStatus_BadNode
+
+class AsForkStatus e where
+  asForkStatus :: Prism' e ForkStatus
+
+instance AsForkStatus ForkStatus where
+  asForkStatus = id
+
+showForkStatus :: ForkStatus -> Text
 showForkStatus = T.pack . \case
-  ForkStatus_Good -> "good"
+  -- ForkStatus_Good -> "good"
   ForkStatus_TooNew -> "new"
   ForkStatus_TooOld -> "block not in chain"
   ForkStatus_Forked -> "forked"
   ForkStatus_BadNode _ -> "no response from node"
 
-onBadForkState :: (ForkInfoF () -> a) -> ForkInfoF e -> Validation a ()
+onBadForkState :: (ForkInfo -> a) -> ForkInfo -> Validation a ()
 onBadForkState k fi = case _forkInfo_forkStatus fi of
-  ForkStatus_TooOld -> Failure $ k fi {_forkInfo_forkStatus = ForkStatus_TooOld}
-  ForkStatus_Forked -> Failure $ k fi {_forkInfo_forkStatus = ForkStatus_Forked}
+  Left ForkStatus_TooOld -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_TooOld}
+  Left ForkStatus_Forked -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_Forked}
   _ -> Success ()
 
-showBadFork :: ForkInfoF e -> Error
-showBadFork (ForkInfo node status bakedTime bakedHash) = Error bakedTime $ T.concat
+showBadFork :: Node -> ForkInfo -> Error
+showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.concat
           [ "node: ", maybe "" toBase58Text $ _node_identity node
           , "@", _node_address node
-          , " BAKER STATE:" , showForkStatus status
+          , " BAKER STATE:" , either showForkStatus (const "good") status
           , " for block:", toBase58Text bakedHash
           , " @ ",  T.pack $ show bakedTime
           , "\n"
           ]
 
-validateForkyBlocks :: Applicative f => ([ForkInfoF ()] -> f ()) -> [ForkInfoF e] -> f ()
+validateForkyBlocks :: Applicative f => ([ForkInfo] -> f ()) -> [ForkInfo] -> f ()
 validateForkyBlocks f xs = case traverse (onBadForkState pure) xs of
   Success _ -> f []
   Failure bad -> f bad
+

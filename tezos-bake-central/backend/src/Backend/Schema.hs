@@ -2,11 +2,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -16,36 +18,46 @@
 
 module Backend.Schema where
 
+import Data.Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.Foldable (toList)
 import Data.Int (Int64)
+import Data.Maybe (fromJust)
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
-import Data.Text.Encoding as T
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Encoding as LT
+import Data.Typeable
 import Data.Word (Word64)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql ()
+import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
+import Database.PostgreSQL.Simple.Types (PGArray (..))
+import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
 
-import Common.Base16ByteString
-import Common.Fitness
-import Common.Json (TezosWord64 (..))
-import Common.PublicKeyHash
 import Common.Schema
-import Common.TaggedHash
-import Common.Tez
-import Common.TezosBinary
+import Tezos.Base58Check (HashedValue (..), tryFromBase58)
+import Tezos.NodeRPC.Types
+import Tezos.Types
+--import Common.TezosBinary
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -68,8 +80,8 @@ instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
 
-instance ToField Tez where
-  toField (Tez n) = toField n
+deriving instance ToField Tez
+deriving instance FromField Tez
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -90,20 +102,18 @@ instance PrimitivePersistField PeriodSequence where
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
-instance FromField Tez where
-  fromField f b = Tez <$> fromField f b -- is this sign-correct?
-
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
-instance NeverNull (Json BlockInfo)
+-- instance NeverNull (Json BlockInfo)
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
-instance NeverNull TezosWord64
+instance NeverNull RawLevel
 instance NeverNull Tez
+instance NeverNull TezosWord64
 
-unsafeParseBinary :: TezosBinary a => ByteString -> a
-unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
+-- unsafeParseBinary :: TezosBinary a => ByteString -> a
+-- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
 
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
@@ -114,11 +124,11 @@ getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
 getId = get . fromId
 
 
-instance TezosBinary a => PersistField (Base16ByteString a) where
-  persistName _ = "Base16ByteString"
-  toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
-  fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
-  dbType p x = dbType p (encodeBinary x)
+-- instance TezosBinary a => PersistField (Base16ByteString a) where
+--   persistName _ = "Base16ByteString"
+--   toPersistValues = primToPersistValue . encodeBinary . unbase16ByteString
+--   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
+--   dbType p x = dbType p (encodeBinary x)
 
 instance FromField (HashedValue t ByteString) where
   fromField f b = HashedValue . fromBinary <$> fromField f b
@@ -133,13 +143,26 @@ instance PrimitivePersistField a => PersistField (HashedValue t a) where
   fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
   dbType p (HashedValue x) = dbType p x
 
+deriving instance ToField TezosWord64
+deriving instance FromField TezosWord64
 
-instance FromField TezosWord64 where
-  fromField f b = TezosWord64 <$> fromField f b
+deriving instance ToField RawLevel
+deriving instance FromField RawLevel
+
+deriving instance ToField Cycle
+deriving instance FromField Cycle
 
 instance PrimitivePersistField TezosWord64 where
   toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField RawLevel where
+  toPrimitivePersistValue x (RawLevel v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = RawLevel $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField Cycle where
+  toPrimitivePersistValue x (Cycle v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = Cycle $ fromPrimitivePersistValue x v
 
 instance PrimitivePersistField (HashedValue t ByteString) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x v
@@ -148,8 +171,21 @@ instance PrimitivePersistField (HashedValue t ByteString) where
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
   toPersistValues = primToPersistValue . unTezosWord64
-  fromPersistValues = (fmap.first) TezosWord64 . primFromPersistValue
+  fromPersistValues = (fmap . first) TezosWord64 . primFromPersistValue
   dbType p (TezosWord64 x) = dbType p x
+
+instance PersistField RawLevel where
+  persistName _ = "RawLevel"
+  toPersistValues (RawLevel x) = primToPersistValue x
+  fromPersistValues = (fmap . first) RawLevel . primFromPersistValue
+  dbType p (RawLevel x) = dbType p x
+
+instance PersistField Cycle where
+  persistName _ = "Cycle"
+  toPersistValues (Cycle x) = primToPersistValue x
+  fromPersistValues = (fmap . first) Cycle . primFromPersistValue
+  dbType p (Cycle x) = dbType p x
+
 
 instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"
@@ -160,6 +196,35 @@ instance PersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
+
+leftPad :: Int -> Text
+leftPad n = if T.length n' > 4 then error "too dang big" else n'
+  where
+    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex 10
+
+unArray :: Groundhog.Array a -> [a]
+unArray (Groundhog.Array a) = a
+
+-- prefix fitness arrays with length so that they naturally order correctly
+toDBFitness :: ToJSON a => FitnessF a -> [Text]
+toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . encode) $ x
+fromDBFitness :: FromJSON a => [Text] -> FitnessF a
+fromDBFitness = FitnessF . Seq.fromList . fmap ( fromJust . decode . LBS.fromStrict . T.encodeUtf8 ) . tail
+
+instance (ToJSON a, FromJSON a) => PrimitivePersistField (FitnessF a) where
+  toPrimitivePersistValue p x = toPrimitivePersistValue p ( Groundhog.Array $ toDBFitness x)
+  fromPrimitivePersistValue p = fromDBFitness . unArray . fromPrimitivePersistValue p
+
+instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
+  persistName _ = "Fitness"
+  toPersistValues = toPersistValues . Groundhog.Array . toDBFitness
+  fromPersistValues vs = first (fromDBFitness . unArray) <$> fromPersistValues vs
+  dbType p x = dbType p (Groundhog.Array $ toDBFitness x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
+
+instance (ToJSON a, Typeable a) => ToField (FitnessF a) where
+  toField v = toField $ PGArray $ toDBFitness v
+instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
+  fromField a b = fromDBFitness . fromPGArray <$> fromField a b
 
 instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x
@@ -216,6 +281,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - entity: TzScan
+    constructors:
+    - name: TzScan
+      uniques:
+        - name: _tzscan_uniqueness
+          type: constraint
+          fields: [_tzScan_chainId]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
@@ -224,12 +296,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _parameters_uniqueness
             type: constraint
-            fields: [_parameters_node]
-        fields:
-          - name: _parameters_node
-            reference:
-              table: Node
-              onDelete: cascade
+            fields: [_parameters_chain]
   - embedded: ProtoInfo
   - entity: PendingReward
     constructors:
@@ -245,13 +312,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _delegate_uniqueness
             type: constraint
             fields: [_delegate_publicKeyHash]
-  - entity: DelegateStats
-    constructors:
-      - name: DelegateStats
-        uniques:
-          - name: _delegateStats_uniqueness
-            type: constraint
-            fields: [_delegateStats_delegate]
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -287,39 +347,24 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           type: constraint
           fields:
            - _cachedProtocolConstants_protocol
-  - entity: CachedChainCycle
+  - entity: GenericCacheEntry
     constructors:
-     - name: CachedChainCycle
+     - name: GenericCacheEntry
        uniques:
-        - name: _cachedchaincycle_uniqueness
+        - name: _genericCacheEntry_uniqueness
           type: constraint
           fields:
-           - _cachedChainCycle_hash
-  - entity: CachedBlock
-    constructors:
-     - name: CachedBlock
-       uniques:
-        - name: _cachedblock_uniqueness
-          type: constraint
-          fields:
-           - _cachedBlock_hash
-  - entity: CachedBlockRights
-    constructors:
-     - name: CachedBlockRights
-       uniques:
-        - name: _cachedblockrights_uniqueness
-          type: constraint
-          fields:
-           - _cachedBlockRights_cycle
+           - _genericCacheEntry_chainId
+           - _genericCacheEntry_key
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Delegate, 'DelegateKey)
-  , (''DelegateStats, 'DelegateStatsKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
+  , (''TzScan, 'TzScanKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
@@ -328,8 +373,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
-  , (''CachedBlock, 'CachedBlockKey)
-  , (''CachedBlockRights, 'CachedBlockRightsKey)
-  , (''CachedChainCycle, 'CachedChainCycleKey)
   , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
+  , (''GenericCacheEntry, 'GenericCacheEntryKey)
   ]

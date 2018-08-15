@@ -17,10 +17,10 @@ import Rhyolite.Request.Class (Request)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 
+import Tezos.Types
+
 import Common.App (Bake, MailServerView)
 import Common.Schema (ClientAddress)
-import Common.TaggedHash
-import Common.PublicKeyHash
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where

@@ -1,21 +1,21 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Common.PublicKeyHash where
+module Tezos.PublicKeyHash where
 
-import Control.Monad
 import Data.Aeson
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Semigroup
+#endif
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
-import Data.Semigroup
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import GHC.Word
 
-import Common.TaggedHash
-import Common.TezosBinary
+import Tezos.Base58Check
 
 
 data PublicKeyHash
@@ -66,14 +66,14 @@ instance Show PublicKeyHash where
 instance IsString PublicKeyHash where
   fromString x = either (error . show) id $ tryFromBase58 publicKeyHashConstructorDecoders $ fromString x
 
-instance TezosBinary PublicKeyHash where
-  parseBinary = parseTagged 0 "ed25519" PublicKeyHash_Ed25519
-        `mplus` parseTagged 1 "secp256k1" PublicKeyHash_Secp256k1
-        `mplus` parseTagged 2 "p246" PublicKeyHash_P256
-
-  encodeBinary (PublicKeyHash_Ed25519 x) = encodeBinary (0 :: Word8) <> encodeBinary x
-  encodeBinary (PublicKeyHash_Secp256k1 x) = encodeBinary (1 :: Word8) <> encodeBinary x
-  encodeBinary (PublicKeyHash_P256 x) = encodeBinary (2 :: Word8) <> encodeBinary x
+-- instance TezosBinary PublicKeyHash where
+--   parseBinary = parseTagged 0 "ed25519" PublicKeyHash_Ed25519
+--         `mplus` parseTagged 1 "secp256k1" PublicKeyHash_Secp256k1
+--         `mplus` parseTagged 2 "p246" PublicKeyHash_P256
+-- 
+--   encodeBinary (PublicKeyHash_Ed25519 x) = encodeBinary (0 :: Word8) <> encodeBinary x
+--   encodeBinary (PublicKeyHash_Secp256k1 x) = encodeBinary (1 :: Word8) <> encodeBinary x
+--   encodeBinary (PublicKeyHash_P256 x) = encodeBinary (2 :: Word8) <> encodeBinary x
 
 
 -- TODO: bitrotted since RPC proposal; can i still get this info?

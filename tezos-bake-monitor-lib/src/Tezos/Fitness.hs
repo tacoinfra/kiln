@@ -1,28 +1,29 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Common.Fitness where
+module Tezos.Fitness where
 
 import Data.Aeson
-import Data.Attoparsec.ByteString ((<?>))
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Semigroup
+#endif
+-- import Data.Attoparsec.ByteString ((<?>))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import Data.Function
-import Data.Semigroup
+import Data.Foldable (toList)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable
-import GHC.Generics
-import Rhyolite.Schema (Json (..))
+import Text.Show (showListWith, showString)
 
-import Common.Base16ByteString
-import Common.TezosBinary
+import Tezos.Base16ByteString
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
-  deriving (Eq, Show, Generic, Typeable, Functor, Foldable, Traversable)
+  deriving (Eq, Typeable, Functor, Foldable, Traversable)
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
 -- almost certainly the *wrong* one for this particular FromJSON, which needs
@@ -51,21 +52,31 @@ instance ToJSON (FitnessF (Base16ByteString BS.ByteString)) where
 --   parseBinary = FitnessF <$> parseBinary
 --   encodeBinary = encodeBinary . unFitnessF
 
-instance TezosBinary (FitnessF (Base16ByteString BS.ByteString)) where
-  parseBinary = (<?> "Fitness") $ do
-    xs <- parserRecursiveLengthPrefixed parseLengthPrefixedByteString
-    return $ FitnessF $ Seq.fromList $ fmap Base16ByteString xs
+-- instance TezosBinary (FitnessF (Base16ByteString BS.ByteString)) where
+--   parseBinary = (<?> "Fitness") $ do
+--     xs <- parserRecursiveLengthPrefixed parseLengthPrefixedByteString
+--     return $ FitnessF $ Seq.fromList $ fmap Base16ByteString xs
+-- 
+--   encodeBinary (FitnessF xs) = encodeLengthPrefixedByteString $ foldMap (encodeLengthPrefixedByteString . unbase16ByteString) xs
 
-  encodeBinary (FitnessF xs) = encodeLengthPrefixedByteString $ foldMap (encodeLengthPrefixedByteString . unbase16ByteString) xs
-
-type Fitness' a = Json (FitnessF (Base16ByteString a))
+type Fitness' a = FitnessF (Base16ByteString a)
 type Fitness = Fitness' BS.ByteString
 
 toFitness :: Seq a -> Fitness' a
-toFitness xs = Json (FitnessF $ fmap Base16ByteString xs)
+toFitness xs = (FitnessF $ fmap Base16ByteString xs)
 
-unFitness :: Json (FitnessF (Base16ByteString a)) -> Seq a
-unFitness (Json (FitnessF xs)) = fmap unbase16ByteString xs
+unFitness :: (FitnessF (Base16ByteString a)) -> Seq a
+unFitness ((FitnessF xs)) = fmap unbase16ByteString xs
+
+instance Show Fitness where
+  showsPrec _ = showListWith (showString . T.unpack . T.decodeUtf8 . BS16.encode) . toList . unFitness
 
 instance Ord a => Ord (FitnessF a) where
   compare = (compare `on` length) <> (compare `on` unFitnessF)
+
+instance Ord a => Semigroup (FitnessF a) where
+  (<>) = max
+
+instance Ord a => Monoid (FitnessF a) where
+  mempty = FitnessF mempty
+  mappend = (<>)

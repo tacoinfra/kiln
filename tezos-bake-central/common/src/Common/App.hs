@@ -32,19 +32,68 @@ import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, Single, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 
+import Tezos.Types
+
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.PublicKeyHash (PublicKeyHash)
 import Common.Schema
-
+import Common
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
 restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
 
+data UniversalMap k a = UniversalMap
+  { _universalMap_universe :: !(Maybe a)
+  , _universalMap_only :: !(AppendMap k a)
+  } deriving (Eq, Ord, Show, Generic, Typeable, Functor, Traversable, Foldable)
+
+instance (Ord k, FromJSON k, FromJSON a) => FromJSON (UniversalMap k a)
+instance (Ord k, ToJSON k, ToJSON a) => ToJSON (UniversalMap k a)
+
+instance (Ord k, Semigroup a) => Semigroup (UniversalMap k a) where
+  a <> b = UniversalMap
+    { _universalMap_universe = _universalMap_universe a <> _universalMap_universe b
+    , _universalMap_only = _universalMap_only a <> _universalMap_only b
+    }
+
+instance (Ord k, Semigroup a) => Monoid (UniversalMap k a) where
+  mempty = UniversalMap Nothing mempty
+  mappend = (<>)
+
+instance Ord k => Align (UniversalMap k) where
+  nil = UniversalMap nil nil
+  alignWith f u v = UniversalMap
+    { _universalMap_universe = alignWith f (_universalMap_universe u) (_universalMap_universe v)
+    , _universalMap_only = alignWith f (_universalMap_only u) (_universalMap_only v)
+    }
+
+instance FunctorMaybe (UniversalMap k) where
+  fmapMaybe f a = UniversalMap
+    { _universalMap_universe = fmapMaybe f (_universalMap_universe a)
+    , _universalMap_only = fmapMaybe f (_universalMap_only a)
+    }
+
+
+universe :: (Ord k, Semigroup a) => a -> UniversalMap k a
+universe a = UniversalMap (Just a) mempty
+
+usingleton :: k -> a -> UniversalMap k a
+usingleton k a = UniversalMap Nothing (Map.singleton k a)
+
+uintersectionWith :: Ord k => (a -> b -> c) -> AppendMap k a -> UniversalMap k b -> AppendMap k c
+uintersectionWith f as bs = case _universalMap_universe bs of
+  Nothing -> Map.intersectionWith f as (_universalMap_only bs)
+  Just b -> fmap (flip f b) as -- Ignore the "only" keys since the universal key always wins
+
+ulookup :: Ord k => k -> UniversalMap k a -> Maybe a
+ulookup k m = case _universalMap_universe m of
+  Nothing -> Map.lookup k (_universalMap_only m)
+  Just a -> Just a -- Ignore the "only" keys since the universal key always wins
 
 data Bake = Bake
 
 type TimeWindow = ClosedInterval (WithInfinity UTCTime)
+
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_summary :: !(Maybe a)
@@ -52,9 +101,10 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_clients :: !(AppendMap (Id Client) a)
   , _bakeViewSelector_parameters :: !(Maybe a)
   , _bakeViewSelector_nodeAddresses :: !(Maybe a)
-  , _bakeViewSelector_nodes :: !(AppendMap (Id Node) a)
+  , _bakeViewSelector_tzscan :: !(Maybe a)
+  , _bakeViewSelector_nodes :: !(UniversalMap (Id Node) a)
   , _bakeViewSelector_delegates :: !(Maybe a)
-  , _bakeViewSelector_delegateStats :: !(AppendMap PublicKeyHash a)
+  , _bakeViewSelector_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) a)
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
   , _bakeViewSelector_errors :: !(AppendIntervalMap TimeWindow a)
@@ -65,9 +115,10 @@ data BakeView a = BakeView
   , _bakeView_clients :: !(AppendMap (Id Client) (First (Maybe ClientInfo), a))
   , _bakeView_parameters :: !(Single ProtoInfo a)
   , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe ClientAddress), a))
+  , _bakeView_tzscan :: !(Single TzScan a)
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
   , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)
-  , _bakeView_delegateStats :: !(AppendMap PublicKeyHash (First (Maybe (BakeEfficiency, Account)), a))
+  , _bakeView_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) (First (Maybe (BakeEfficiency, Account)), a))
   , _bakeView_notificatees :: !(AppendMap (Id Notificatee) (First (Maybe Email), a))
   , _bakeView_mailServer :: !(Single MailServerView a)
   , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
@@ -119,7 +170,10 @@ cropBakeView vs v =
       delegates = case _bakeViewSelector_delegates vs of
         Nothing -> mempty
         Just _ -> _bakeView_delegates v
-      nodes = Map.intersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
+      tzscan = case _bakeViewSelector_tzscan vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_tzscan v
+      nodes = uintersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
       delegateStats = Map.intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
       notificatees = case _bakeViewSelector_notificatees vs of
         Nothing -> mempty
@@ -140,6 +194,7 @@ cropBakeView vs v =
       , _bakeView_clients = clients
       , _bakeView_parameters = parameters
       , _bakeView_nodeAddresses = nodeAddresses
+      , _bakeView_tzscan = tzscan
       , _bakeView_nodes = nodes
       , _bakeView_delegates = delegates
       , _bakeView_delegateStats = delegateStats
@@ -153,15 +208,16 @@ cropBakeView vs v =
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil nil nil nil nil nil nil nil nil nil nil
+  nil = BakeViewSelector nil nil nil nil nil nil nil nil nil nil nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clientAddresses = alignWith f (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
     , _bakeViewSelector_summary = alignWith f (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
     , _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
+    , _bakeViewSelector_tzscan = alignWith f (_bakeViewSelector_tzscan u) (_bakeViewSelector_tzscan v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
     , _bakeViewSelector_delegates = alignWith f (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
-    , _bakeViewSelector_delegateStats = alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
+    , _bakeViewSelector_delegateStats =  alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
     , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = alignWith f (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
@@ -174,6 +230,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
+    , _bakeViewSelector_tzscan = fmapMaybe f $ _bakeViewSelector_tzscan a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
     , _bakeViewSelector_delegates = fmapMaybe f $ _bakeViewSelector_delegates a
     , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
@@ -188,6 +245,7 @@ instance FunctorMaybe BakeView where
     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
     , _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
+    , _bakeView_tzscan = fmapMaybe f $ _bakeView_tzscan a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
     , _bakeView_delegates = fmapMaybe f ( _bakeView_delegates a )
     , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
@@ -230,6 +288,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     { _bakeView_clientAddresses = mempty
     , _bakeView_clients = mempty
     , _bakeView_parameters = mempty
+    , _bakeView_tzscan = mempty
     , _bakeView_nodes = mempty
     , _bakeView_delegates = mempty
     , _bakeView_delegateStats = mempty
@@ -249,6 +308,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     { _bakeView_clientAddresses = _bakeView_clientAddresses u <> _bakeView_clientAddresses v
     , _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
+    , _bakeView_tzscan = _bakeView_tzscan u <> _bakeView_tzscan v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
     , _bakeView_delegates = _bakeView_delegates u <> _bakeView_delegates v
     , _bakeView_delegateStats = _bakeView_delegateStats u <> _bakeView_delegateStats v

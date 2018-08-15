@@ -1,24 +1,21 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Common.Tez where
+module Tezos.Tez where
 
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON)
-import Data.Attoparsec.ByteString
+-- import Data.Attoparsec.ByteString
 import Data.Fixed (E6, Fixed, Micro, resolution)
 import Data.Int (Int64)
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
-import GHC.Generics (Generic)
 import GHC.Word (Word64)
 
-import Common.Json (parseIntegralAsString)
-import Common.TezosBinary
+import Tezos.Json (parseIntegralAsString)
 
 newtype Tez = Tez { getTez :: Micro }
-  deriving (Eq, Ord, Show, Generic, Typeable, Enum, Fractional, Num, Real, RealFrac)
+  deriving (Eq, Ord, Show, Typeable, Enum, Fractional, Num, Real, RealFrac)
 
 getMicroTez :: Tez -> Int64
 getMicroTez
@@ -45,6 +42,6 @@ instance FromJSON Tez where
   parseJSON x = microTez <$> parseIntegralAsString @Word64 x
 
 
-instance TezosBinary Tez where
-  parseBinary = microTez <$> (parseBinary :: Parser Int64)
-  encodeBinary = encodeBinary . getMicroTez
+-- instance TezosBinary Tez where
+--   parseBinary = microTez <$> (parseBinary :: Parser Int64)
+--   encodeBinary = encodeBinary . getMicroTez

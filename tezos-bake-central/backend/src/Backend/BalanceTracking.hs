@@ -14,10 +14,11 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Schema
 
+import Tezos.Json (TezosWord64 (..))
+import Tezos.PublicKeyHash
+
 import Backend.Schema ()
-import Common.Json (TezosWord64 (..))
 import Common.Schema
-import Common.PublicKeyHash
 
 -- NB: This eventually needs to change, we can't really be getting an unbounded amount of information. Our viewselector needs to become more specific.
 getAllRewards :: (PostgresRaw m, PersistBackend m) => a -> m (AppendMap PublicKeyHash (First (AppendMap Word64 Micro), a))

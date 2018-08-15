@@ -1,10 +1,14 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-module Backend.ChainHealth (scanForkInfo, obtainNode) where
+module Backend.ChainHealth (scanForkInfo) where
 
-import Control.Lens ((^.))
+import Control.Lens (view, (^.))
+import Control.Monad (void)
+import Control.Monad.Except (MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.Function (on)
 import Data.Maybe
 import Data.Semigroup ((<>))
@@ -13,15 +17,13 @@ import qualified Network.HTTP.Client as Http
 import Safe (maximumByMay)
 import Say (say)
 
-import Backend.NodeRPC
+import Backend.CachedNodeRPC
 import Common (tshow)
-import Common.Json (TezosWord64 (..))
 import Common.Schema
-import Common.TaggedHash
 import Common.Verification
-
-type ForkInfo = ForkInfoF RpcError
-
+import Tezos.Lenses
+import Tezos.NodeRPC
+import Tezos.Types
 
 -- problem:: many baked blocks do not appear on chain
 -- problem:: any parent of seen blocks do not appear on chain
@@ -34,96 +36,36 @@ type ForkInfo = ForkInfoF RpcError
 -- %2 ask the same node for head$(level' - level - 1)
 -- if %0 != %2; sulk
 
-scanForkInfo :: MonadIO m => Http.Manager -> UTCTime -> Report -> Node -> m [ForkInfo]
-scanForkInfo httpMgr now rpt node = do
-  let addr = _node_address node
-  let ctx = NodeRPCContext httpMgr addr
-  runNodeRPCT ctx . mapM (checkChainHealth now 30) $ catMaybes
-    [ fmap fromBaked $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
-    , fmap fromSeen $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
-    ]
-
-fromBaked :: Event BakedEvent -> ChainHealthBlock
-fromBaked e = ChainHealthBlock (_event_time e) (_bakedEvent_hash $ _event_detail e)
-
-fromSeen :: Event SeenEvent -> ChainHealthBlock
-fromSeen e = ChainHealthBlock (_event_time e) (_seenEvent_hash $ _event_detail e)
-
-data ChainHealthBlock = ChainHealthBlock
-  { _chainHealthBlock_time :: UTCTime
-  , _chainHealthBlock_blockHash :: BlockHash
-  }
 checkChainHealth
-  :: ( Monad m , MonadTezosNode m, MonadIO m )
+  :: (Monad m , MonadIO m, MonadReader s m, HasNodeDataSource s, BlockLike b)
   => UTCTime
   -> Int -- ^ max unseen age, in seconds
-  -> ChainHealthBlock
+  -> b
   -> m ForkInfo
 checkChainHealth now delay seenBaked = do
-    (mHeadBlockInfo, node) <- obtainNode
-    status <- case mHeadBlockInfo of
-      Left bad -> return $ ForkStatus_BadNode bad
-      Right headInfo ->
-        nodeRPC (RBlock $ blockHashId $ _chainHealthBlock_blockHash seenBaked) >>= \case
-          Left (RpcError_UnexpectedStatus 404 _) -> do
-            let maxTime = addUTCTime (- fromIntegral delay) now
-            return $ if _chainHealthBlock_time seenBaked >= maxTime
-              then ForkStatus_TooNew
-              else ForkStatus_TooOld
-          Left bad -> do
-            return $ ForkStatus_BadNode bad
-          Right seen -> do
-            let ancestorBlockHash = blockHashIdPred (_blockInfo_hash headInfo)
-                                                    (unTezosWord64 (headInfo ^. blockInfo_header . blockInfoHeader_level
-                                                     - seen ^. blockInfo_header . blockInfoHeader_level))
-            nodeRPC (RBlock ancestorBlockHash) >>= \case
-              Left bad -> do
-                say "no ancestor"
-                return $ ForkStatus_BadNode bad
-              Right ancestor -> do
-                return $ if
-                    (seen ^. blockInfo_header . blockInfoHeader_predecessor) ==
-                    (ancestor ^. blockInfo_header . blockInfoHeader_predecessor)
-                  then ForkStatus_Good
-                  else ForkStatus_Forked
-    return $ ForkInfo node status (_chainHealthBlock_time seenBaked) (_chainHealthBlock_blockHash seenBaked)
+  seen <- runExceptT $ do
+    -- try really hard to get seenBaked into history
+    seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
+    -- look for the head to give the newly seen block a chance to become the head
+    head :: VeryBlockLike <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure =<< dataSourceHead
+    ancestor <- maybe (throwError $ ForkStatus_Forked) pure =<< branchPoint (head ^. hash) (seenBaked ^. hash)
+    -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}
+    if (seen ^. predecessor) == (ancestor ^. predecessor)
+      then return () -- ForkStatus_Good
+      else throwError ForkStatus_Forked
+  -- let node = either (const $ mkNode addr) id status'
+  return $ ForkInfo seen (seenBaked ^. timestamp) (seenBaked ^. hash)
 
--- Obtains a Node datastructure for the node specified by the environment, and a head block, if successful
--- TODO: This won't work in the typical case of node rpc on localhost with
--- monitor on a different host.  We'll leave it for now since it's "useful",
--- but this should probably be reported by the client rather than queried by
--- the monitor
-obtainNode :: (MonadIO m, MonadTezosNode m) => m (RpcResponse BlockInfo, Node)
-obtainNode = do
-  addr <- nodeAddress
-  (info, level, headHash, fitness) <- nodeRPC (RBlock headId) >>= \case
-    Left bad -> do
-      say "Couldn't get head block."
-      return (Left bad, Nothing, Nothing, Nothing)
-    Right headInfo -> do
-      return
-        ( Right headInfo
-        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_level
-        , Just $ headInfo ^. blockInfo_hash
-        , Just $ headInfo ^. blockInfo_header . blockInfoHeader_fitness
-        )
-  connections <- nodeRPC RConnections >>= \case
-    Left bad -> do
-      say $ "Couldn't get connection information for node " <> tshow addr <> ": " <> tshow bad
-      return Nothing
-    Right n -> return (Just n)
-  networkStat <- nodeRPC RNetworkStat >>= \case
-    Left bad -> do
-      say $ "Couldn't get network status information for node " <> tshow addr <> ": " <> tshow bad
-      return (NetworkStat 0 0 0 0)
-    Right ns -> return ns
-  return (info, Node
-    { _node_address = addr
-    , _node_identity = Nothing -- TODO
-    , _node_headLevel = unTezosWord64 <$> level
-    , _node_headBlockHash = headHash
-    , _node_peerCount = connections
-    , _node_networkStat = networkStat
-    , _node_fitness = fitness
-    , _node_deleted = False
-    })
+scanForkInfo :: forall m r.
+  ( MonadIO m
+  , MonadReader r m, HasNodeDataSource r
+  )
+  => UTCTime -> Report -> m [ForkInfo]
+scanForkInfo now rpt = do
+  let
+    check :: forall b. BlockLike b => b -> m ForkInfo
+    check b = checkChainHealth now 30 b
+  baked <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
+  seen <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
+  return $ catMaybes [baked, seen]
+

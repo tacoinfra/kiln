@@ -19,6 +19,7 @@ library
 
   build-depends:
       base
+    , tezos-bake-monitor-lib
     , base16-bytestring
     , bytestring
     , common

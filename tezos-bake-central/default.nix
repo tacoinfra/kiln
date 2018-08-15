@@ -5,19 +5,19 @@ in
 obelisk.project ./. ({ pkgs, ... }:
   let
     reflex-platform = obelisk.reflex-platform;
-
+    # rhyolite-src = ../../../rhyolite;
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "173e9bcc7dad469ea9b4110243c829b0f1dd6d9c";
-      sha256 = "0khf21w0rap4isqdxaziby6rj79yrriig72qfnc051ayc9ql81nb";
+      rev = "4644ff2667774f2b5593a3dadd9a78379ca8301b";
+      sha256 = "0bag8aj6xp4rgcv6kblzwz92sbnidd8rmm68qgvsm7z0jg643g7c";
     };
 
     gargoyle-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "gargoyle";
-      rev = "80dfffb22aa399a08559db4191d6d9da8569386d";
-      sha256 = "17hhfm20k1d3p1alxgs7dm3nayivr362w3al38mz9v6rab3ywzjc";
+      rev = "72355581ef1f8663e2772b31b90dc074d32a93a1";
+      sha256 = "08w7aa5mb49ypqi8nhlrpd8jcm10h4ja9xsmb8b8mvcch6sk1ykf";
     };
     groundhog-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
@@ -51,7 +51,8 @@ obelisk.project ./. ({ pkgs, ... }:
       rhyolite-frontend = rhyolite-src + /frontend;
     };
     overrides = self: super: {
-      # tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
+      tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (
+        self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {});
 
       gargoyle = (self.callCabal2nix "gargoyle" (gargoyle-src + /gargoyle) {});
       gargoyle-postgresql = (self.callCabal2nix "gargoyle-postgresql" (gargoyle-src + /gargoyle-postgresql) {});
@@ -81,7 +82,8 @@ obelisk.project ./. ({ pkgs, ... }:
         sha256 = "0s07f9sdn98h88kxkv8jr455a559c43c8ybdyvbv5c94ipbz7pjj";
       }) { websockets = self.websockets-obsidian; };
 
-      # Needed?
+      terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
+
       heist = pkgs.haskell.lib.doJailbreak super.heist; # allow heist to use newer version of aeson
     };
 })
