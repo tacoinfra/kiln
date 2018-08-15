@@ -312,13 +312,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _delegate_uniqueness
             type: constraint
             fields: [_delegate_publicKeyHash]
-  - entity: DelegateStats
-    constructors:
-      - name: DelegateStats
-        uniques:
-          - name: _delegateStats_uniqueness
-            type: constraint
-            fields: [_delegateStats_delegate]
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -369,7 +362,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Delegate, 'DelegateKey)
-  , (''DelegateStats, 'DelegateStatsKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
   , (''TzScan, 'TzScanKey)

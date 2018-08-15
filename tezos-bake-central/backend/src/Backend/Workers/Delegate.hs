@@ -66,34 +66,13 @@ delegateWorker nds = worker' (readTimeBetweenBlocks nds) $ \_ -> do
       ifor_ delegates $ \dId delegate -> do
         let pkh = _delegate_publicKeyHash delegate
         say $ "Updating delegate " <> toPublicKeyHashText pkh
-        accountStatus <- nodeRPC $ rContract chainId headBlockHash (Implicit $ _delegate_publicKeyHash delegate)
-
-        let
-          calcBakingEfficiency (numBakedAcc, numOpportunitiesAcc) = \case
-            Nothing -> (numBakedAcc, numOpportunitiesAcc)
-            Just True -> (numBakedAcc + 1, numOpportunitiesAcc + 1)
-            Just False -> (numBakedAcc, numOpportunitiesAcc + 1)
-
-        let
-          numBaked = -1
-          numOpportunities = -1
-        runNoLoggingT $ runDb (Identity db) $ do
-          delegateStatsId :: Maybe (Id DelegateStats) <- listToMaybe . fmap toId <$> project AutoKeyField ((DelegateStats_delegateField ==. dId) `limitTo` 1)
-          case delegateStatsId of
-            Nothing -> insertAndNotify_ DelegateStats
-              { _delegateStats_delegate = dId
-              , _delegateStats_accountBalance = Just $ _account_balance accountStatus
-              , _delegateStats_accountSpendable = Just $ _account_spendable accountStatus
-              , _delegateStats_accountSetable = Just $ _accountDelegate_setable $ _account_delegate accountStatus
-              , _delegateStats_accountValue = _accountDelegate_value $ _account_delegate accountStatus
-              , _delegateStats_accountCounter = Just $ _account_counter accountStatus
-              }
-            Just dsId -> updateAndNotify dsId
-              [ DelegateStats_accountBalanceField =. Just (_account_balance accountStatus)
-              , DelegateStats_accountSpendableField =. Just (_account_spendable accountStatus)
-              , DelegateStats_accountSetableField =. Just (_accountDelegate_setable $ _account_delegate accountStatus)
-              , DelegateStats_accountValueField =. _accountDelegate_value (_account_delegate accountStatus)
-              , DelegateStats_accountCounterField =. Just (_account_counter accountStatus)
-              ]
-
-    --       return ()
+        -- accountStatus <- nodeRPC $ rContract chainId headBlockHash (Implicit $ _delegate_publicKeyHash delegate)
+        -- TODO:
+        --   get upcoming rights (for next N cycles)
+        --   compute expected deposits obligations
+        --   get current account balance
+        --   get frozen deposits
+        --   CHECK: spendable balance > (deposits due - frozen rewards)
+        --   get delegate grace perioud
+        --   CHECK: upcoming rights are before grace period expires
+        return ()

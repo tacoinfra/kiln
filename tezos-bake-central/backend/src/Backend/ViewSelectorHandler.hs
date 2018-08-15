@@ -8,7 +8,7 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Lens (ifor, imap, itraverse, (<&>))
+import Control.Lens (ifor, imap, itraverse, (<&>), (^.))
 import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
@@ -23,6 +23,7 @@ import Data.Functor.Identity (Identity (..))
 import Data.Maybe (isJust, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
+import qualified Data.Monoid
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Traversable (for)
@@ -45,11 +46,9 @@ import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
-import Tezos.Account
+import Tezos.Types
 import Tezos.Json (TezosWord64 (..))
 import Tezos.NodeRPC.Types
-import Tezos.PublicKeyHash
-import Tezos.Tez
 
 import Backend.CachedNodeRPC
 
@@ -110,44 +109,10 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
 
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
-  delegateStats <- whenJust maybeCurrentHead $ \currentHead -> do
+  delegateStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
     let keys = Map.keys (_bakeViewSelector_delegateStats vs)
-    efficiencies <- flip runReaderT nds $ do
-      fmap Map.fromList $ for keys $ \delegate -> do
-        efficiency <- runExceptT $ withCache mempty $ const $ calculateBakeEfficiency currentHead 50 delegate
-        return (delegate, either (const mempty) id efficiency)
-    let inKeys = In keys
-    rs :: [(PublicKeyHash, Maybe (Id Delegate), Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)]
-      <- [queryQ|
-          SELECT d."publicKeyHash"
-            ,ds."delegate"
-            ,ds."accountBalance"
-            ,ds."accountSpendable"
-            ,ds."accountSetable"
-            ,ds."accountValue"
-            ,ds."accountCounter"
-          FROM "Delegate" d
-          LEFT OUTER JOIN "DelegateStats" ds
-            ON d."id" = ds."delegate"
-          WHERE d."publicKeyHash" IN ?inKeys AND NOT d.deleted|]
-
-    let
-      toRsMap
-        :: (PublicKeyHash, Maybe (Id Delegate), Maybe Tez, Maybe Bool, Maybe Bool, Maybe PublicKeyHash, Maybe TezosWord64)
-        -> (PublicKeyHash, Maybe (BakeEfficiency, Account))
-      toRsMap (publicKeyHash, dId, accountBalance, accountSpendable, accountSetable, accountValue, accountCounter) = (publicKeyHash, (,) <$> Map.lookup publicKeyHash efficiencies <*> (unDelegateStats publicKeyHash =<< delegateStats))
-        where
-          -- efficiency = BakeEfficiency <$> bakedBlocks <*> bakingRights
-          delegateStats :: Maybe DelegateStats
-          delegateStats = DelegateStats
-            <$> dId
-            <*> pure accountBalance
-            <*> pure accountSpendable
-            <*> pure accountSetable
-            <*> pure accountValue
-            <*> pure accountCounter
-    let rsMap = Map.fromList $ toRsMap <$> rs
-    return $ Map.intersectionWith (,) (First <$> rsMap) (_bakeViewSelector_delegateStats vs)
+    flip runReaderT nds $ withCache mempty $ \_protoInfo -> do
+      calculateDelegateStats (_bakeViewSelector_delegateStats vs)
 
   notificatees <- whenJust (_bakeViewSelector_notificatees vs) $ \a -> do
     rs <- selectMap' NotificateeConstructor CondEmpty

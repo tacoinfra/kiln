@@ -23,10 +23,6 @@ import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
-import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as AppendMap
-import Data.Map (Map)
-import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -230,12 +226,16 @@ data Delegate = Delegate
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Delegate
 
-bakingRightsMap :: Foldable f => f BakingRights -> AppendMap PublicKeyHash (Map RawLevel Priority) -- map from delegate to
-bakingRightsMap = foldMap $ \(BakingRights lvl delegate prio _) -> AppendMap.singleton delegate (Map.singleton lvl prio)
-
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
   , _bakeEfficiency_bakingRights :: !Word64
+  -- TODO:
+  -- , _bakeEfficiency_endorsedBlocks :: !Word64
+  -- , _bakeEfficiency_endorsingRights :: !Word64
+  -- , _bakeEfficiency_endorsedSlots :: !Word64
+  -- , _bakeEfficiency_endorsingSlotRights :: !Word64
+  -- , _bakeEfficiency_branch :: !BlockHash
+  -- , _bakeEfficiency_range :: !RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance Semigroup BakeEfficiency where
@@ -263,31 +263,6 @@ mkVeryBlockLike blk = VeryBlockLike
   }
 
 
-data DelegateStats = DelegateStats
-  { _delegateStats_delegate :: !(Id Delegate)
-  , _delegateStats_accountBalance :: !(Maybe Tez) -- "2052452947621"
-  , _delegateStats_accountSpendable :: !(Maybe Bool) -- true
-  , _delegateStats_accountSetable :: !(Maybe Bool)
-  , _delegateStats_accountValue :: !(Maybe PublicKeyHash)
-  , _delegateStats_accountCounter :: !(Maybe TezosWord64) -- 1540
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId DelegateStats
-
--- | convert the databasey DelegateStats to more jsoney (BakeEfficiency, Account)
--- unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe (BakeEfficiency, Account)
-unDelegateStats :: PublicKeyHash -> DelegateStats -> Maybe Account
-unDelegateStats publicKeyHash stats =
-  let accountDelegate =
-        AccountDelegate
-          <$> _delegateStats_accountSetable stats
-          <*> pure (_delegateStats_accountValue stats)
-      account = Account publicKeyHash
-        <$> _delegateStats_accountBalance stats
-        <*> _delegateStats_accountSpendable stats
-        <*> accountDelegate
-        <*> pure Nothing -- TOOD: something?
-        <*> _delegateStats_accountCounter stats
-  in account
 
 data Notificatee = Notificatee
   { _notificatee_email :: Email
@@ -384,7 +359,6 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ClientInfo
   , ''ClientWorker
   , ''Delegate
-  , ''DelegateStats
   , ''EndorseEvent
   , ''EndpointType
   , ''ErrorEvent
@@ -406,7 +380,6 @@ concat <$> traverse makeLenses
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Delegate
-  , 'DelegateStats
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
@@ -419,7 +392,6 @@ concat <$> traverse makeLenses
   , 'MailServerConfig
   , 'Report
   , 'SeenEvent
-  -- , 'CachedBlock
   , 'CachedProtocolConstants
   , 'VeryBlockLike
   ]

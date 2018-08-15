@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -12,28 +13,27 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -fmax-relevant-binds=20 #-}
+{-# OPTIONS_GHC -fmax-relevant-binds=20 -Wall #-}
 
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
-import Backend.Schema (Field (..), stripOnly)
+import Prelude hiding (length)
+
+import Backend.Schema (Field (..))
 import Common.Schema
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
-import Control.Lens
+import Control.Lens (Lens', TraversableWithIndex, (^.), re, uncons, view, _1, ifor)
 import Control.Monad.Except
-import Control.Monad.IO.Class
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
-import Data.AppendMap (AppendMap)
 import Data.Constraint (Dict (..))
-import Data.Dependent.Map (DMap, DSum (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Foldable (fold, foldl', for_, toList, traverse_)
+import Data.Foldable (fold, toList)
 import Data.Function (on)
 import Data.Functor.Identity (Identity (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
@@ -45,36 +45,29 @@ import Data.Maybe (catMaybes, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup
 import Data.Sequence (Seq)
-import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Data.Traversable (for)
 import Data.Typeable
 import Database.Groundhog.Postgresql
-import Generics.Deriving.TH
 import qualified Network.HTTP.Client as Http (Manager)
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Request.Class
-import Rhyolite.Schema (HasId, Id (..), Json (..))
-import Safe.Foldable (maximumByMay, maximumMay)
+import Rhyolite.Schema (Json (..))
+import Safe.Foldable (maximumByMay)
 import Say (say, sayErr, sayShow)
 
 import Rhyolite.Request.TH (makeRequestForData)
 
 import Tezos.History
-import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.Types
 
 data NodeQuery a where
-  -- TODO: the "real" cache key should be a blockHash at lvl 2, the actual
-  -- parameters are stored on a genesis protocol block at lvl 1, in a format
-  -- understood and commited at lvl 2,  that requires parsing the binary data
-  -- on the dictated block.
-  -- NodeQuery_GenesisParameters   :: NodeQuery ProtoInfo
   NodeQuery_BakingRights        :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_Baker               :: BlockHash -> RawLevel -> NodeQuery (PublicKeyHash, Priority)
+  NodeQuery_EndorsingRights     :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
+  NodeQuery_Account             :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block               :: BlockHash -> NodeQuery Block
 
 
@@ -164,7 +157,7 @@ blankNodeDataSource db chain mgr = do
   hist <- newEmptyMVar
   cache <- newEmptyMVar
   protoInfo <- newEmptyMVar
-  forkIO $ do
+  _ <- forkIO $ do
     -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
     _ <- readMVar protoInfo
     putMVar hist emptyCache
@@ -255,25 +248,25 @@ levelAncestor hist lvl ctx = ctxBlockHash
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
     ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
 
--- Recontextualize a query for maximum cache friendliness, and also return the least block
-getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
-getKey params hist = \case
-  NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> ctxBlockHash
+
+rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
+rightsContext params hist ctx lvl = ctxBlockHash
     -- for this case, we want the first block in the cycle that sits
     -- $PRESERVED_CYCLES before the requested level, that is on the correct
     -- branch.
     where
-      minLevel = _cachedHistory_minLevel hist
-      branch = Map.lookup ctx $ _cachedHistory_blocks hist
-      branchLvl = minLevel + fromIntegral (length branch)
       reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params
       ctxCycle = max 0 (reqCycle - _protoInfo_preservedCycles params)
       ctxLvl :: RawLevel = 1 + fromIntegral ctxCycle * _protoInfo_blocksPerCycle params
       ctxBlockHash = levelAncestor hist ctxLvl ctx
-  NodeQuery_Baker ctx lvl -> (\ctx' -> (ctx', NodeQuery_Baker ctx' lvl)) <$> ctxBlockHash
-    where
-      ctxBlockHash = levelAncestor hist lvl ctx
+
+-- Recontextualize a query for maximum cache friendliness, and also return the least block
+getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
+getKey params hist = \case
+  NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
+  NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
+  NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
 
 nodeQueryDataSource ::
   ( MonadIO m
@@ -285,8 +278,6 @@ nodeQueryDataSource ::
 nodeQueryDataSource q' = do
   dsrc <- asks $ view nodeDataSource
   protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters dsrc
-  nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
-  -- sayShow ("time to query go!", Map.keys nodes, q')
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
 
   (qBranch, q) <- maybe (throwError $ RpcError_HttpException "NOT ENOUGH HISTORY" ^. re asRpcError) pure $ getKey protoInfo history q'
@@ -304,16 +295,14 @@ nodeQueryDataSource q' = do
             { _cacheLine_value = v
             , _cacheLine_used = now
             }
-        liftIO $ forkIO $ do
+        _ <- liftIO $ forkIO $ do
           fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
           case fromDB of
             Just x -> do
               -- sayShow ("found in db", q)
               now <- getCurrentTime
               putMVar newVar $ Right $ mkResult now x
-              -- pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
             Nothing -> do
-              allNodes <- readMVar $ _nodeDataSource_nodes dsrc
               -- sayShow ("all nodes:", allNodes)
               pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
                 Nothing -> do
@@ -332,8 +321,9 @@ nodeQueryDataSource q' = do
 
   unpackCacheResult resultM
 
+
 pickNode :: BlockLike b => BlockHash -> MVar (Map ClientAddress (Maybe b)) -> IO (Maybe ClientAddress)
-pickNode branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
+pickNode _branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
 
 nodeQueryDataSourceImpl
   :: forall a.
@@ -343,24 +333,22 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either RpcError b))
   -> NodeQuery a
   -> IO (Either RpcError a)
-nodeQueryDataSourceImpl chainId proto ctx self' q = runExceptT $ do
+nodeQueryDataSourceImpl chainId _proto ctx _self q = runExceptT $ do
   let
-    self :: NodeQuery b -> ExceptT RpcError IO b
-    self = (>>= either throwError pure) . liftIO . self'
+    -- self :: NodeQuery b -> ExceptT RpcError IO b
+    -- self = (>>= either throwError pure) . liftIO . self'
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (nodeRPC q') ctx
   case q of
 
     NodeQuery_BakingRights branch targetLevel ->
       nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
+    NodeQuery_EndorsingRights branch targetLevel ->
+      nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
+    NodeQuery_Account branch contractId ->
+      nodeRPC' $ rContract chainId branch contractId
 
-    NodeQuery_Baker branch rawLevel -> do
-      branchBlock <- nodeRPC' $ rBlock chainId branch
-      let levelsAgo = branchBlock ^. block_header . blockHeader_level - rawLevel
-      targetBlock <- nodeRPC' $ rBlockPred chainId branch levelsAgo
-      pure ( targetBlock ^. block_metadata . blockMetadata_baker
-           , targetBlock ^. block_header . blockHeader_priority
-           )
+    NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
 
 withCache ::
   ( MonadReader r m , HasNodeDataSource r
@@ -372,6 +360,38 @@ withCache dft action = do
   protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
   maybe dft id <$> traverse action protoInfo
 
+calculateDelegateStats ::
+  ( TraversableWithIndex (PublicKeyHash, RawLevel) f
+  , MonadReader r m, HasNodeDataSource r
+  , MonadIO m
+  )
+  => f a
+  -> m (f (First (Maybe (BakeEfficiency, Account)), a))
+calculateDelegateStats pkhs = do
+  dataSourceHead >>= \case
+    -- I think i should probably just ask for a `forall b. f b` to pass on the no heads case
+    Nothing -> return $ fmap (First Nothing,) pkhs
+    Just currentHead -> ifor pkhs $ \(pkh, lvl) a -> do
+      result <- fmap (First . either (const Nothing) Just) $ runExceptT $ do
+        efficiency <- calculateBakeEfficiency currentHead lvl pkh
+        account <- nodeQueryDataSource $ NodeQuery_Account (currentHead ^. hash) (Implicit pkh)
+        return (efficiency, account)
+      return $ (result, a)
+
+-- produce (up to) n ancestor hashes (including the block itself)
+ancestors ::
+  ( MonadIO m
+  , MonadReader s m , HasNodeDataSource s
+  , MonadError RpcError m
+  )
+  => RawLevel -> BlockHash -> m [BlockHash]
+ancestors (RawLevel n) branch = do
+  -- it's a bit redundant, but how else can we be "sure" that we have the branch path
+  _ <- nodeQueryDataSource $ NodeQuery_Block branch
+  hist <- liftIO . readMVar =<< asks (_nodeDataSource_history . view nodeDataSource)
+  case Map.lookup branch (_cachedHistory_blocks hist) of
+    Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
+    Nothing -> throwError $ (RpcError_UnexpectedStatus 404 "NO BRANCH") ^. re asRpcError
 
 calculateBakeEfficiency ::
   ( MonadIO m
@@ -381,16 +401,18 @@ calculateBakeEfficiency ::
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
 calculateBakeEfficiency branch length delegate = do
-  sayShow ("bake efficiency requested", branch ^. hash, length, delegate)
+  sayShow (T.pack "bake efficiency requested", branch ^. hash, length, delegate)
+
   let
     branchLevel = branch ^. level
     branchHash = branch ^. hash
     levels = [branchLevel - length..branchLevel]
+  branchHashes <- ancestors length branchHash
 
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
-  bakers <- for levels $ fmap fst . nodeQueryDataSource . NodeQuery_Baker branchHash
+  bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
   result <- pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  sayShow ("efficiency", delegate, result)
+  sayShow (T.pack "efficiency", delegate, result)
   return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
@@ -399,13 +421,13 @@ calculateBakeEfficiency branch length delegate = do
       , _bakeEfficiency_bakingRights = case (Map.lookup baker rights, Map.lookup delegate rights) of
           (_, Nothing) -> 0
           (Just them, Just us) -> if us <= them then 1 else 0
-          (Nothing, _) -> error "Very wrong"
+          (Nothing, _) -> 0 -- error "Very wrong"
       }
 
     bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from delegate to
     bakingRightsMap xs = Map.fromList
-      [ (delegate, prio)
-      | BakingRights _lvl delegate prio _ <- toList xs
+      [ (d, prio)
+      | BakingRights _lvl d prio _ <- toList xs
       ]
 
 tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> IO (Maybe a)
@@ -419,7 +441,7 @@ tryFetchFromCache db q = do
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
         Aeson.Success v -> return $ Just v
         Aeson.Error bad -> do
-          sayErr $ T.pack $ show ("tryFetchFromCache failed to decode:", bad)
+          sayErr $ T.pack $ show (T.pack "tryFetchFromCache failed to decode:", bad)
           return Nothing
 
 deriveGEq ''NodeQuery

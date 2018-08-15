@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -144,10 +145,15 @@ watchDelegatePublicKeyHashes = do
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
+  let levels :: RawLevel = 30
   theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
-    { _bakeViewSelector_delegateStats = Map.fromSet (const 1) ds
+    { _bakeViewSelector_delegateStats = Map.mapKeys (,levels) $ Map.fromSet (const 1) ds
     }
-  return $ ffor theView $ Map.mapMaybe (\(First r, _) -> r) . _bakeView_delegateStats
+  return $ ffor theView $
+      Map.mapKeys fst
+    . Map.mapMaybeWithKey (\(pkh, lvl) x -> if lvl == levels then Just x else Nothing)
+    . Map.mapMaybe (\(First r, _) -> r)
+    . _bakeView_delegateStats
 
 watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
 watchClientAddresses = do

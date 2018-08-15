@@ -85,11 +85,14 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
 
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success (nid :: Id Parameters) -> do -- TODO: This is probably WRONG. It should be Id Parameters.
+        Aeson.Success (nid :: Id Parameters) -> do
+          delegateStatsView <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
+            calculateDelegateStats (_bakeViewSelector_delegateStats aggVS)
           whenJust (_bakeViewSelector_parameters aggVS) $ \a -> do
             params :: Maybe Parameters <- listToMaybe <$> select (AutoKeyField ==. fromId nid)
             pure $ mempty
               { _bakeView_parameters = single (_parameters_protoInfo <$> params) a
+              , _bakeView_delegateStats = delegateStatsView
               }
 
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
@@ -118,23 +121,6 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
             pure $ mempty
               { _bakeView_delegates = single (Set.singleton . _delegate_publicKeyHash <$> delegate) a
               }
-
-      -- calcEfficiency :: RawLevel -> PublicKeyHash -> m (Maybe BakeEfficiency)
-      calcEfficiency lvl pkh = flip runReaderT nds $ do
-        branch <- dataSourceHead
-        eff <- runExceptT $ traverse (\b -> calculateBakeEfficiency b lvl pkh) branch
-        either (const $ pure Nothing) pure eff
-
-      handleDelegateStats = case fromJSON (_notifyMessage_value notifyMessage) of
-        Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success (dsId :: Id DelegateStats) -> do
-          delegateStats :: Maybe DelegateStats <- get $ fromId dsId
-          whenJust delegateStats $ \stats -> do
-            delegate :: Delegate <- fmap (fromMaybe $ error "Bad Foreign Key Delegate->DelegateStats") $ get $ fromId $ _delegateStats_delegate stats
-            let publicKeyHash = _delegate_publicKeyHash delegate
-            whenJust (Map.lookup publicKeyHash (_bakeViewSelector_delegateStats aggVS)) $ \a -> do
-              efficency <- calcEfficiency 10 publicKeyHash -- TODO this number should come from the ViewSelector
-              return $ mempty { _bakeView_delegateStats = Map.singleton publicKeyHash (First $ (,) <$> efficency <*> unDelegateStats publicKeyHash stats, a) }
 
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
@@ -189,7 +175,6 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "Parameters" -> handleParameters
     "Node" -> handleNode
     "Delegate" -> handleDelegate
-    "DelegateStats" -> handleDelegateStats
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
     "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint

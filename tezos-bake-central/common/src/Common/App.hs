@@ -37,6 +37,7 @@ import Tezos.Types
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
+import Common
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
 restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
@@ -103,7 +104,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_tzscan :: !(Maybe a)
   , _bakeViewSelector_nodes :: !(UniversalMap (Id Node) a)
   , _bakeViewSelector_delegates :: !(Maybe a)
-  , _bakeViewSelector_delegateStats :: !(AppendMap PublicKeyHash a)
+  , _bakeViewSelector_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) a)
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
   , _bakeViewSelector_errors :: !(AppendIntervalMap TimeWindow a)
@@ -117,7 +118,7 @@ data BakeView a = BakeView
   , _bakeView_tzscan :: !(Single TzScan a)
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
   , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)
-  , _bakeView_delegateStats :: !(AppendMap PublicKeyHash (First (Maybe (BakeEfficiency, Account)), a))
+  , _bakeView_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) (First (Maybe (BakeEfficiency, Account)), a))
   , _bakeView_notificatees :: !(AppendMap (Id Notificatee) (First (Maybe Email), a))
   , _bakeView_mailServer :: !(Single MailServerView a)
   , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
@@ -216,7 +217,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_tzscan = alignWith f (_bakeViewSelector_tzscan u) (_bakeViewSelector_tzscan v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
     , _bakeViewSelector_delegates = alignWith f (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
-    , _bakeViewSelector_delegateStats = alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
+    , _bakeViewSelector_delegateStats =  alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
     , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = alignWith f (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
