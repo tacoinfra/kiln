@@ -248,8 +248,9 @@ instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
     where
       status = HashMap.singleton "status" (toJSON $ _operationResult_status x)
       errors = foldMap (HashMap.singleton "errors" . toJSON) $ _operationResult_errors x
-      content = case toJSON (_operationResult_content x) of
-          Object x' -> x'
+      content = case toJSON <$> _operationResult_content x of
+          Nothing -> mempty
+          Just (Object x') -> x'
           _ -> error ("ToJSON did not produce an object for:" <> (show $ typeRep $ (Proxy :: Proxy a)))
 
   -- toEncoding :: forall a. (ToJSON a, Typeable a) => OperationResult a -> Value
