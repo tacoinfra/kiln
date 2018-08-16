@@ -56,6 +56,7 @@ library
     , reflex-dom-core
     , resource-pool
     , rhyolite-backend
+    , rhyolite-backend-db
     , rhyolite-backend-snap
     , rhyolite-common
     , safe
@@ -74,7 +75,9 @@ library
     Backend
 
   other-modules:
+    Paths_backend
     Backend.BalanceTracking
+    -- Backend.Blake2b
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
@@ -84,10 +87,12 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Supervisor
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.Workers
+    Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Delegate
     Backend.Workers.Node

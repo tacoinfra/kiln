@@ -37,7 +37,9 @@ library
     , scientific
     , text
     , these
+    , monoidal-containers
     , time
+    , rhyolite-datastructures
 
   exposed-modules:
     Common

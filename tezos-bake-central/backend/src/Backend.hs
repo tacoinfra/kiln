@@ -70,10 +70,9 @@ import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
 import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
-import Rhyolite.Backend (withDb)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap, withDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail

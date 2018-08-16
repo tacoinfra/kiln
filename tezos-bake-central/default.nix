@@ -4,13 +4,28 @@ let
 in
 obelisk.project ./. ({ pkgs, ... }:
   let
-    reflex-platform = obelisk.reflex-platform;
+    # reflex-src = ../../../reflex;
+    reflex-src = pkgs.fetchFromGitHub {
+      owner = "reflex-frp";
+      # repo = "reflex";
+      repo = "danbornside";
+      rev = "7ab5470aa19bc56db8c488571996330b4ab62e24";
+      sha256 = "14k5ffxc9f0xqf39gl1mf0algzmajq0qhya059y751k2qbv0d0jv";
+    };
+
+    reflex-dom-src = pkgs.fetchFromGitHub {
+      owner = "reflex-frp";
+      repo = "reflex-dom";
+      rev = "f02da6c7e071153d8fad989297690f97c80e851f";
+      sha256 = "1hxkc2jwf7wxvrk5nq8w3y3xb48v5vxl35ykr57dhnrq00v8g6p9";
+    };
+
     # rhyolite-src = ../../../rhyolite;
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "4644ff2667774f2b5593a3dadd9a78379ca8301b";
-      sha256 = "0bag8aj6xp4rgcv6kblzwz92sbnidd8rmm68qgvsm7z0jg643g7c";
+      rev = "074dcb9748ec1c1aadcc061becf13e8885752a2c";
+      sha256 = "1q32fmqqk6zzyl1jnbirylqf18nr9x3am372nq977cz6rp6431w5";
     };
 
     gargoyle-src = pkgs.fetchFromGitHub {
@@ -25,17 +40,31 @@ obelisk.project ./. ({ pkgs, ... }:
       rev = "c2f18be45e3233f6268c8468eb0732dd6b2e8009";
       sha256 = "1r9i78bsnm6idbvp87gjklnr10g7c83nsbnrffkyrn1wmd7zzqdn";
     };
+    universe-src = pkgs.fetchFromGitHub {
+      owner = "obsidiansystems";
+      repo = "universe";
+      rev = "c3575f15dba30b4fd3d1097e2caa7428bd967e5d";
+      sha256 = "0nryry4nqhfhdv577hi9wrk9rrjq5xwcf880ixdkq1jb5yrfm641";
+    };
+    # monoidal-containers-src = ../../../monoidal-containers;
+    monoidal-containers = pkgs.fetchFromGitHub {
+      owner = "danbornside";
+      repo = "monoidal-containers";
+      rev = "f9bbf89b0f59ebcccbf116beefb26ce6d416cc69";
+      sha256 = "1pbhprjsg5yh9483hgspy32smv9mbrkh16zdgmpw0qm9vmlw95cx";
+    };
   in {
     packages = {
       groundhog = groundhog-src + /groundhog;
       groundhog-postgresql = groundhog-src + /groundhog-postgresql;
       groundhog-th = groundhog-src + /groundhog-th;
 
+      # reflex-aeson-orphans = ../../../reflex-aeson-orphans;
       reflex-aeson-orphans = pkgs.fetchFromGitHub {
         owner = "reflex-frp";
         repo = "reflex-aeson-orphans";
-        rev = "064163c69725d6dc82e76f2b7c5cbf3543405e02";
-        sha256 = "1gdpmw1323gwn4sfgd8ilbjj5pswnxq1h0h31babnnsif51d3yh2";
+        rev = "a0e376563ddaf440a9fdc803c6cc62713d1a4c3a";
+        sha256 = "0d8d63yhbqc77sglwna3wp7j05hmhq0mlyri2bl9prchw3hbb2gr";
       };
 
       reflex-dom-forms = pkgs.fetchFromGitHub {
@@ -46,9 +75,21 @@ obelisk.project ./. ({ pkgs, ... }:
       };
 
       # rhyolite-backend needs a custom dependency injection
+      rhyolite-aeson-orphans = rhyolite-src + /aeson-orphans;
+      rhyolite-backend-db = rhyolite-src + /backend-db;
       rhyolite-backend-snap = rhyolite-src + /backend-snap;
       rhyolite-common = rhyolite-src + /common;
+      rhyolite-datastructures = rhyolite-src + /datastructures;
       rhyolite-frontend = rhyolite-src + /frontend;
+
+      constraints-extras = pkgs.fetchFromGitHub {
+        owner = "obsidiansystems";
+        repo = "constraints-extras";
+        rev =  "abd1bab0738463657fc6303e606015a97b01c8a0";
+        sha256 = "0lpc3cy8a7h62zgqf214g5bf68dg8clwgh1fs8hada5af4ppxf0l";
+      };
+
+
     };
     overrides = self: super: {
       tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (
@@ -82,7 +123,14 @@ obelisk.project ./. ({ pkgs, ... }:
         sha256 = "0s07f9sdn98h88kxkv8jr455a559c43c8ybdyvbv5c94ipbz7pjj";
       }) { websockets = self.websockets-obsidian; };
 
+      monoidal-containers = self.callCabal2nix "monoidal-containers" ( monoidal-containers-src ) {};
+
+      universe-template = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "universe-template" (universe-src + /template) {});
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
+
+      reflex          = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "reflex"          reflex-src { }));
+      reflex-dom-core = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "reflex-dom-core" (reflex-dom-src + /reflex-dom-core) {}));
+      reflex-dom      = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "reflex-dom"      (reflex-dom-src + /reflex-dom) { }));
 
       heist = pkgs.haskell.lib.doJailbreak super.heist; # allow heist to use newer version of aeson
     };

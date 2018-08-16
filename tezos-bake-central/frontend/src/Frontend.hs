@@ -15,7 +15,7 @@ module Frontend where
 
 import Control.Applicative (liftA2)
 import Control.Lens ((<&>), _1, _2)
-import Control.Monad (when, (<=<))
+import Control.Monad (when, (<=<), join)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, runReaderT)
@@ -34,7 +34,7 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
 import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (comparing)
-import Data.Semigroup (First (..), (<>))
+import Data.Semigroup (First (..), Option(..), (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -55,7 +55,6 @@ import Reflex.Dom.Form.Widgets (formItem, validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.App (getSingle)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
@@ -114,7 +113,7 @@ frontend =
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
-  (fmap . fmap) (getSingle . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
+  (fmap . fmap) (join . getSingle . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_parameters = Just 1
     }
 
@@ -142,7 +141,7 @@ watchClient cidDyn = do
 
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
-  (fmap.fmap) (fromMaybe mempty . getSingle . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
+  (fmap.fmap) (foldMap (getSemiSet . fst) . getOption . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
@@ -175,18 +174,18 @@ watchSummary = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summary v
+  improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summary v
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
 watchSummaryGraph = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_summary = Just 1
     }
-  improvingMaybe $ ffor theView $ \v -> getSingle $ _bakeView_summaryGraph v
+  improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
-  (fmap . fmap) (getSingle . _bakeView_mailServer) $
+  (fmap . fmap) (join . getSingle . _bakeView_mailServer) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = Just 1 }
 
@@ -203,7 +202,7 @@ watchErrors intervals = do
 
 watchTzScan :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TzScan))
 watchTzScan =
-  (fmap . fmap) (getSingle . _bakeView_tzscan) $
+  (fmap . fmap) (join . getSingle . _bakeView_tzscan) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_tzscan = Just 1 }
 
@@ -211,7 +210,7 @@ watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
 watchUpgradeNotice =
-  (fmap . fmap) (getSingle . _bakeView_upgrade) $
+  (fmap . fmap) (join . getSingle . _bakeView_upgrade) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = Just 1 }
 
@@ -234,6 +233,11 @@ data UITab = UITab_Summary
            | UITab_Client (Id Client) Text
            | UITab_Options
   deriving (Eq, Ord, Show)
+--
+-- TODO: 'maybeDyn' is strict and we can't use it directly here for some reason. Figure out why.
+updatedWithInit d = do
+      pb <- getPostBuild
+      pure $ leftmost [updated d, tag (current d) pb]
 
 
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
@@ -255,10 +259,6 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
 
   divClass "ui bottom attached tab segment active" $ do
-    -- TODO: 'maybeDyn' is strict and we can't use it directly here for some reason. Figure out why.
-    let updatedWithInit d = do
-          pb <- getPostBuild
-          pure $ leftmost [updated d, tag (current d) pb]
     upgradeNotice <- maybeDyn =<< holdDyn Nothing =<< updatedWithInit =<< watchUpgradeNotice
 
     let upgradeRibbon color = elClass "a" ("ui " <> color <> " right ribbon label")
@@ -526,7 +526,7 @@ nodesTab = do
         Just v -> (NodeTile_TzScan v :)
       ) -- if available, prepend the tzscan node to the list
       (uncurry NodeTile_PlainNode <$> Map.toList nodes)
-  maybeTilesDyn <- maybeDyn $ nonEmpty <$> zipDynWith zipNodeTiles tzscanDyn nodesDyn
+  maybeTilesDyn <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit) $ nonEmpty <$> zipDynWith zipNodeTiles tzscanDyn nodesDyn
   dyn_ $ ffor maybeTilesDyn $ \case
     Nothing -> waitingForResponse
     Just tilesDyn -> dyn_ $ ffor tilesDyn $ \tiles ->
@@ -562,7 +562,7 @@ delegateTab pkh = do
   delegates <- watchDelegateStats $ pure $ Set.singleton pkh
   dparameters <- watchProtoInfo
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisDelegate <- maybeDyn $ Map.lookup pkh <$> delegates
+  thisDelegate <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ Map.lookup pkh <$> delegates
   dyn_ $ ffor thisDelegate $ \case
     Nothing -> waitingForResponse
     Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -11,13 +12,14 @@
 
 module Common.App where
 
+import Data.Bifunctor
 import Control.Lens (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as Map
 import Data.Fixed (Micro)
-import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Semigroup (First (..), Semigroup, (<>), Option(..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -30,7 +32,7 @@ import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
-import Rhyolite.App (HasView, Single, View, ViewSelector)
+import Rhyolite.App (HasView, View, ViewSelector) -- that Single is not so good eh.
 import Rhyolite.Schema (Email, Id)
 
 import Tezos.Types
@@ -39,6 +41,8 @@ import Common
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
+import qualified Rhyolite.SemiMap as Rhyolite
+import qualified Data.Map.Monoidal as MonoidalMap
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
 restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
@@ -74,6 +78,34 @@ instance FunctorMaybe (UniversalMap k) where
     , _universalMap_only = fmapMaybe f (_universalMap_only a)
     }
 
+newtype Single t a = Single { unSingle :: Maybe (t, a) }
+  deriving (Eq, Ord, Show, Foldable, Traversable, Functor, Generic, Typeable)
+
+instance Semigroup a => Semigroup (Single t a) where
+  (<>) (Single Nothing) y = y
+  (<>) x (Single Nothing) = x
+  (<>) (Single (Just (t, a))) (Single (Just (_t, a'))) = Single $ Just (t, a <> a')
+
+instance Bifunctor Single where
+  bimap f g (Single x) = Single $ fmap (bimap f g) x
+
+instance Semigroup a => Monoid (Single t a) where
+  mempty = Single Nothing
+  mappend = (<>)
+
+instance FunctorMaybe (Single t) where
+  fmapMaybe f (Single (Just (t, x))) | Just y <- f x = Single (Just (t, y))
+  fmapMaybe _ _ = Single Nothing
+
+instance (FromJSON t, FromJSON a) => FromJSON (Single t a)
+instance (ToJSON t, ToJSON a) => ToJSON (Single t a)
+
+single :: t -> a -> Single t a
+single t a = Single $ Just (t, a)
+
+getSingle :: Single t a -> Maybe t
+getSingle = fmap fst . unSingle
+
 
 universe :: (Ord k, Semigroup a) => a -> UniversalMap k a
 universe a = UniversalMap (Just a) mempty
@@ -95,6 +127,26 @@ data Bake = Bake
 
 type TimeWindow = ClosedInterval (WithInfinity UTCTime)
 
+newtype SemiSet k = SemiSet { unSemiSet :: Rhyolite.SemiSet k }
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, FromJSON, ToJSON, Semigroup, Monoid)
+
+fromListSemiSet :: Ord k => [k] -> SemiSet k
+fromListSemiSet = completeSemiSet . Set.fromList
+
+completeSemiSet :: Set k -> SemiSet k
+completeSemiSet = SemiSet . Rhyolite.SemiMap_Complete . MonoidalMap.fromSet (const ())
+
+deleteSemiMap :: k -> SemiSet k
+deleteSemiMap = SemiSet .  Rhyolite.SemiMap_Partial . flip MonoidalMap.singleton (First $ Nothing)
+
+insertSemiMap :: k -> SemiSet k
+insertSemiMap = SemiSet .  Rhyolite.SemiMap_Partial . flip MonoidalMap.singleton (First $ Just ())
+
+getSemiSet = Rhyolite.knownKeysSet . unSemiSet
+
+instance Foldable SemiSet where
+  foldMap f = foldMap f . Rhyolite.knownKeysSet . unSemiSet
+  length = length . Rhyolite.knownKeysSet . unSemiSet
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_summary :: !(Maybe a)
@@ -115,20 +167,20 @@ data BakeViewSelector a = BakeViewSelector
 data BakeView a = BakeView
   { _bakeView_clientAddresses :: !(AppendMap (Id Client) (First (Maybe ClientAddress), a))
   , _bakeView_clients :: !(AppendMap (Id Client) (First (Maybe ClientInfo), a))
-  , _bakeView_parameters :: !(Single ProtoInfo a)
+  , _bakeView_parameters :: !(Single (Maybe ProtoInfo) a)
   , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe ClientAddress), a))
-  , _bakeView_tzscan :: !(Single TzScan a)
+  , _bakeView_tzscan :: !(Single (Maybe TzScan) a)
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
-  , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)
+  , _bakeView_delegates :: !(Option ((SemiSet PublicKeyHash), a))
   , _bakeView_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) (First (Maybe (BakeEfficiency, Account)), a))
   , _bakeView_notificatees :: !(AppendMap (Id Notificatee) (First (Maybe Email), a))
-  , _bakeView_mailServer :: !(Single MailServerView a)
-  , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
-  , _bakeView_summaryGraph :: !(Single (Micro, Text) a)
+  , _bakeView_mailServer :: !(Single (Maybe MailServerView) a)
+  , _bakeView_summary :: !(Single (Maybe (Report, Int)) a) -- The Int is the number of bakers we've yet to get a report from.
+  , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
   , _bakeView_graphs :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
   , _bakeView_errors :: !(AppendIntervalMap TimeWindow (Set (Id ErrorLog), a))
   , _bakeView_errorsById :: !(AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))))
-  , _bakeView_upgrade :: !(Single (ErrorLog, Either UpgradeCheckError Version) a)
+  , _bakeView_upgrade :: !(Single (Maybe (ErrorLog, Either UpgradeCheckError Version)) a)
   } deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
 
@@ -249,6 +301,8 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
     }
 
+deriving instance FunctorMaybe Option
+
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
@@ -256,7 +310,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_tzscan = fmapMaybe f $ _bakeView_tzscan a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
-    , _bakeView_delegates = fmapMaybe f $ _bakeView_delegates a
+    , _bakeView_delegates = fmapMaybe (traverse f) $ _bakeView_delegates a
     , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a

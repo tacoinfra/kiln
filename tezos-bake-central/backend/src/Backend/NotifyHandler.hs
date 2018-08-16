@@ -25,7 +25,7 @@ import Data.Semigroup (First (..), Semigroup, (<>))
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, Postgresql, get, select, (&&.),
                                       (==.))
-import Rhyolite.App (single)
+-- import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
@@ -42,7 +42,7 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
 import Common (tshow, whenJust)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
-                   mailServerConfigToView, ulookup)
+                   mailServerConfigToView, ulookup, single, deleteSemiMap, insertSemiMap, SemiSet)
 import Common.Schema
 
 notifyHandler
@@ -116,10 +116,15 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (dId :: Id Delegate) -> do
           whenJust (_bakeViewSelector_delegates aggVS) $ \a -> do
-            delegate :: Maybe Delegate <- fmap listToMaybe $
-              select $ AutoKeyField ==. fromId dId &&. Delegate_deletedField ==. False
+            delegate :: Maybe Delegate <- get $ fromId dId
+            let
+              f :: Delegate -> SemiSet PublicKeyHash
+              f d = if _delegate_deleted d then deleteSemiMap pkh else insertSemiMap pkh
+                where
+                  pkh = _delegate_publicKeyHash d
+            let pkh :: SemiSet PublicKeyHash = foldMap f $ delegate
             pure $ mempty
-              { _bakeView_delegates = single (Set.singleton . _delegate_publicKeyHash <$> delegate) a
+              { _bakeView_delegates = pure (pkh, a)
               }
 
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of

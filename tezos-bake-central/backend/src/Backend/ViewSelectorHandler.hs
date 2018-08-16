@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -23,7 +24,7 @@ import Data.Functor.Identity (Identity (..))
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.Monoid
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Semigroup (Option(..), First (..), Semigroup, (<>))
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Traversable (for)
@@ -31,7 +32,7 @@ import Data.Version (Version)
 import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
-import Rhyolite.App (single)
+-- import Rhyolite.App (single)
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
@@ -61,7 +62,7 @@ viewSelectorHandler
   => NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSelectorHandler END") . (say "************ viewSelectorHandler START" *>) . runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
@@ -109,7 +110,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     return (uintersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
-    flip single a . Just . Set.fromList <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
+    pure . (,a) . fromListSemiSet <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
 
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
