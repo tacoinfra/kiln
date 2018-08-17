@@ -138,6 +138,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   upgrade <- case _bakeViewSelector_upgrade vs of
     Nothing -> return mempty
     Just a -> flip single a <$> getUpgradeNotice
+
   return BakeView
     { _bakeView_clients = clients
     , _bakeView_clientAddresses = clientAddresses
