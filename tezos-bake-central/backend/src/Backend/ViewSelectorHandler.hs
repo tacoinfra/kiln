@@ -309,17 +309,17 @@ getUpgradeNotice
   => m (Maybe (ErrorLog, Either UpgradeCheckError Version))
 getUpgradeNotice = do
   row <- listToMaybe <$> [queryQ|
-      SELECT
-          el.started AT TIME ZONE 'UTC'
-        , el.stopped AT TIME ZONE 'UTC'
-        , el."lastSeen" AT TIME ZONE 'UTC'
-        , el."noticeSentAt" AT TIME ZONE 'UTC'
-        , t.error, t."newVersion"
-      FROM "ErrorLog" el
-      JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
-      WHERE el.stopped IS NULL
-      ORDER BY el.started DESC
-      LIMIT 1|]
+    SELECT
+        el.started AT TIME ZONE 'UTC'
+      , el.stopped AT TIME ZONE 'UTC'
+      , el."lastSeen" AT TIME ZONE 'UTC'
+      , el."noticeSentAt" AT TIME ZONE 'UTC'
+      , t.error, t."newVersion"
+    FROM "ErrorLog" el
+    JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
+    WHERE el.stopped IS NULL
+    ORDER BY el.started DESC
+    LIMIT 1|]
   pure $ row <&> \(elStarted, elStopped, elLastSeen, elNoticeSentAt, tError, tNewVersion) ->
     (ErrorLog
       { _errorLog_started = elStarted

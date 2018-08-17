@@ -18,7 +18,7 @@ import Control.Lens ((<&>), _1, _2)
 import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
 import Data.Bifunctor
@@ -77,10 +77,10 @@ import Common.URI (mkRootUri)
 import Frontend.Common
 
 urlInputRow
-  :: (MonadRhyoliteFrontendWidget Bake t m
-    , Eq a
-    , Show a
-    )
+  :: ( MonadRhyoliteFrontendWidget Bake t m
+     , Eq a
+     , Show a
+     )
   => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t a)
 urlInputRow validator label info placeholder = el "tr" $ do
   (tdEl, address) <- el' "td" $ formItem
@@ -108,7 +108,14 @@ frontend =
           Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
           Right rootUrl -> rootUrl
 
-      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
+      checkForUpgrade <-
+        fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
+          liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
+
+      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
+        { _cfg_blockExplorerUrl = blockExplorerUrl
+        , _cfg_checkForUpgrade = checkForUpgrade
+        }
   )
 
 
@@ -255,34 +262,30 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
       currentTab <- fmap demux (holdDyn UITab_Summary selection)
 
   divClass "ui bottom attached tab segment active" $ do
-    -- TODO: 'maybeDyn' is strict and we can't use it directly here for some reason. Figure out why.
-    let updatedWithInit d = do
-          pb <- getPostBuild
-          pure $ leftmost [updated d, tag (current d) pb]
-    upgradeNotice <- maybeDyn =<< holdDyn Nothing =<< updatedWithInit =<< watchUpgradeNotice
+    divClass "ui one column grid" $ do
+      upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+      dyn_ $ ffor upgradeNotice $ \case
+        Nothing -> blank
+        Just (log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
+          case upgrade of
+            Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+            Right v -> do
+              let
+                versionText = T.pack (showVersion v)
+                versionAnchor = "anchor-" <> T.filter (/='.') versionText
+              elAttr "a"
+                (  "class"=:"ui green right ribbon label"
+                <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
+                <> "target"=:"_blank") $
+                  text $ "New version available: " <> versionText
 
-    let upgradeRibbon color = elClass "a" ("ui " <> color <> " right ribbon label")
-    dyn_ $ ffor upgradeNotice $ \case
-      Nothing -> blank
-      Just d -> dyn_ $ ffor d $ \(log, upgrade) -> case upgrade of
-        Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-        Right v -> do
-          let
-            versionText = T.pack (showVersion v)
-            versionAnchor = "anchor-" <> T.filter (/='.') versionText
-          elAttr "a"
-            (  "class"=:"ui green right ribbon label"
-            <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-            <> "target"=:"_blank") $
-              text $ "New version available: " <> versionText
-
-    widgetHold summaryTab $ ffor selection $ \case
-      UITab_Summary -> summaryTab
-      UITab_Nodes -> nodesTab
-      UITab_Options -> optionsTab
-      UITab_Client cid addr -> clientTab cid addr
-      UITab_Delegate pkh -> delegateTab pkh
-  return ()
+      divClass "column" $
+        widgetHold_ summaryTab $ ffor selection $ \case
+          UITab_Summary -> summaryTab
+          UITab_Nodes -> nodesTab
+          UITab_Options -> optionsTab
+          UITab_Client cid addr -> clientTab cid addr
+          UITab_Delegate pkh -> delegateTab pkh
 
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
@@ -377,7 +380,9 @@ summaryTab = divClass "ui grid" $ do
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui grid" $ do
   divClass "row" primaryOptions
-  divClass "row" upgradeOptions
+
+  enableUpgradeCheck <- asks _cfg_checkForUpgrade
+  when enableUpgradeCheck $ divClass "row" upgradeOptions
   where
     primaryOptions = do
       clients <- watchClientAddresses
