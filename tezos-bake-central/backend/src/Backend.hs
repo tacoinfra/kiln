@@ -9,6 +9,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
@@ -101,28 +102,27 @@ import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.Types
 
-import Backend.Supervisor
-import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client
-import Backend.Workers.Delegate
-import Backend.Workers.Node
-
+import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
-import Backend.RequestHandler
+import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
+import Backend.Supervisor
+import Backend.Upgrade (upgradeCheckWorker)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Backend.Workers.Cache (cacheWorker)
+import Backend.Workers.Client
+import Backend.Workers.Delegate
+import Backend.Workers.Node
 import Common (tshow)
 import qualified Common.Config as Config
 import Common.Schema
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Frontend (frontend)
-
-import Backend.CachedNodeRPC
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -163,29 +163,38 @@ backend = do
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
-  emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
+  !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
       (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  routeEnv :: Maybe RouteEnv <- liftA2 (<|>)
+  !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
     (pure $
       fromMaybe (error "invalid URL") . uriToRouteEnv <$>
         (_opts_route =<< SnapServer.getOther cfg))
     (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
-  blockExplorer :: Maybe URI <- liftA2 (<|>)
+  !(blockExplorer :: Maybe URI) <- liftA2 (<|>)
     (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
 
-  chainId :: ChainId <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
+  !(chainId :: ChainId) <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
-    (getConfigFromFile (either (const Nothing) Just  . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
+    (getConfigFromFile (either (const Nothing) Just . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
 
-  staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
+  !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
+    (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
+
+  !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
+    (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
+    (getConfigFromFile Just $ configPath Config.upgradeBranch)
+
+  !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
     , injectPure Config.route . T.decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
     , injectPure Config.blockExplorer . tshow <$> blockExplorer
+    , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
     ]
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
@@ -204,19 +213,25 @@ backend = do
       httpMgr <- Http.newManager Https.tlsManagerSettings
       dataSrc <- blankNodeDataSource db chainId httpMgr
 
+      let appConfig = AppConfig emailFromAddress
+
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler emailFromAddress db)
+        (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
         (notifyHandler dataSrc)
         (viewSelectorHandler dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      let appConfig = AppConfig emailFromAddress
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< tzScanWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
+
+      if checkForUpgrade then
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
+      else
+        runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)
@@ -290,6 +305,8 @@ data Opts = Opts
   , _opts_emailFromAddress :: !(Maybe Text)
   , _opts_blockExplorer :: !(Maybe URI)
   , _opts_chain :: !(Maybe ChainId)
+  , _opts_checkForUpgrade :: !(Maybe Bool)
+  , _opts_upgradeBranch :: !(Maybe Text)
   }
 
 instance Semigroup Opts where
@@ -299,10 +316,12 @@ instance Semigroup Opts where
     , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
     , _opts_blockExplorer = _opts_blockExplorer b <|> _opts_blockExplorer a
     , _opts_chain = _opts_chain b <|> _opts_chain a
+    , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
+    , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -317,6 +336,12 @@ optsArgDescr =
       "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
   , Option [] [Config.chain] (mkReqArg "ChainId" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
       "Chain Id.  default:" <> T.unpack (toBase58Text betanetChain) <> " " <> configPath Config.blockExplorer <> "'."
+  , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
+      "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
+      "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
+  , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
+      "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
+      "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var

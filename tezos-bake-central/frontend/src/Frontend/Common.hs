@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -8,12 +9,15 @@
 module Frontend.Common where
 
 import Control.Lens ((%~))
+import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
@@ -25,7 +29,10 @@ import Common (tshow)
 import Common.URI (appendPaths, mkRootUri)
 
 
-newtype Cfg = Cfg { _cfg_blockExplorerUrl :: Maybe Uri.URI }
+data Cfg = Cfg
+  { _cfg_blockExplorerUrl :: !(Maybe Uri.URI)
+  , _cfg_checkForUpgrade :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
 tez :: Tez -> Text
@@ -106,3 +113,15 @@ blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
 publicKeyHashLink :: (MonadReader Cfg m, DomBuilder t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh
+
+-- | Terrible hack.
+updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
+updatedWithInit d = do
+  pb <- getPostBuild
+  pure $ leftmost [updated d, tag (current d) pb]
+
+-- | Lazier version of 'maybeDyn'. Very hacky.
+maybeDynLazy
+  :: (PostBuild t m, MonadHold t m, MonadFix m)
+  => Dynamic t (Maybe a) -> m (Dynamic t (Maybe (Dynamic t a)))
+maybeDynLazy d = maybeDyn =<< holdDyn Nothing =<< updatedWithInit d

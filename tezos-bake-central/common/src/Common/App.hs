@@ -24,6 +24,7 @@ import Data.Text (Text)
 import Data.These (These (That, This), mergeThese, these)
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
+import Data.Version (Version)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
@@ -34,10 +35,10 @@ import Rhyolite.Schema (Email, Id)
 
 import Tezos.Types
 
+import Common
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
-import Common
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
 restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
@@ -108,6 +109,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_notificatees :: !(Maybe a)
   , _bakeViewSelector_mailServer :: !(Maybe a)
   , _bakeViewSelector_errors :: !(AppendIntervalMap TimeWindow a)
+  , _bakeViewSelector_upgrade :: Maybe a
   } deriving (Show, Eq, Ord, Functor, Generic, Typeable, Traversable, Foldable)
 
 data BakeView a = BakeView
@@ -126,6 +128,7 @@ data BakeView a = BakeView
   , _bakeView_graphs :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
   , _bakeView_errors :: !(AppendIntervalMap TimeWindow (Set (Id ErrorLog), a))
   , _bakeView_errorsById :: !(AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))))
+  , _bakeView_upgrade :: !(Single (ErrorLog, Either UpgradeCheckError Version) a)
   } deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
 
 
@@ -189,6 +192,9 @@ cropBakeView vs v =
         Nothing -> mempty
         Just _ -> _bakeView_summaryGraph v
       errors = AppendIMap.intersectionWith const (_bakeView_errors v) (_bakeViewSelector_errors vs)
+      upgrade = case _bakeViewSelector_upgrade vs of
+        Nothing -> mempty
+        Just _ -> _bakeView_upgrade v
   in BakeView
       { _bakeView_clientAddresses = clientAddresses
       , _bakeView_clients = clients
@@ -205,10 +211,11 @@ cropBakeView vs v =
       , _bakeView_summary = summary
       , _bakeView_errors = errors
       , _bakeView_errorsById = restrictKeys (_bakeView_errorsById v) (foldMap fst $ AppendIMap.elems errors)
+      , _bakeView_upgrade = upgrade
       }
 
 instance Align BakeViewSelector where
-  nil = BakeViewSelector nil nil nil nil nil nil nil nil nil nil nil nil
+  nil = BakeViewSelector nil nil nil nil nil nil nil nil nil nil nil nil nil
   alignWith f u v = BakeViewSelector
     { _bakeViewSelector_clientAddresses = alignWith f (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
     , _bakeViewSelector_summary = alignWith f (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
@@ -222,6 +229,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = alignWith f (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = alignWith f (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
+    , _bakeViewSelector_upgrade = alignWith f (_bakeViewSelector_upgrade u) (_bakeViewSelector_upgrade v)
     }
 
 instance FunctorMaybe BakeViewSelector where
@@ -238,6 +246,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
+    , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
     }
 
 instance FunctorMaybe BakeView where
@@ -247,18 +256,19 @@ instance FunctorMaybe BakeView where
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_tzscan = fmapMaybe f $ _bakeView_tzscan a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
-    , _bakeView_delegates = fmapMaybe f ( _bakeView_delegates a )
+    , _bakeView_delegates = fmapMaybe f $ _bakeView_delegates a
     , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_graphs = fmapMaybeSnd f $ _bakeView_graphs a
-    , _bakeView_summaryGraph = fmapMaybe f (_bakeView_summaryGraph a)
-    , _bakeView_summary = fmapMaybe f (_bakeView_summary a)
+    , _bakeView_summaryGraph = fmapMaybe f $ _bakeView_summaryGraph a
+    , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = fmapMaybeSnd f (_bakeView_nodeAddresses a)
     , _bakeView_errors = errors
     , _bakeView_errorsById =
         -- Crop the 'ErrorLog's to only those with the IDs referenced in the cropped set of errors.
         restrictKeys (_bakeView_errorsById a) (foldMap fst $ AppendIMap.elems errors)
+    , _bakeView_upgrade = fmapMaybe f $ _bakeView_upgrade a
     }
     where
       errors = fmapMaybeSnd f (_bakeView_errors a)
@@ -300,6 +310,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_nodeAddresses = mempty
     , _bakeView_errors = mempty
     , _bakeView_errorsById = mempty
+    , _bakeView_upgrade = mempty
     }
   mappend u v = u <> v
 
@@ -320,6 +331,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_errorsById = _bakeView_errorsById u <> _bakeView_errorsById v
+    , _bakeView_upgrade = _bakeView_upgrade u <> _bakeView_upgrade v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

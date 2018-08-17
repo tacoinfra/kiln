@@ -1,4 +1,6 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -8,8 +10,9 @@
 
 module Backend.Errors where
 
-import Control.Monad.Reader(MonadReader)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Reader (MonadReader)
+import Data.Either.Combinators (leftToMaybe, rightToMaybe)
 import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.Maybe (listToMaybe)
@@ -18,6 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Data.Time (UTCTime)
+import Data.Version (Version)
 import Database.Groundhog
 import Database.Groundhog.Core (PersistEntity)
 import Database.Groundhog.Postgresql (PersistBackend)
@@ -171,6 +175,44 @@ clearNodeOnForkError nodeId = do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeOnFork" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notifyEntityId NotificationType_Update
+
+reportUpgradeNotice
+  :: (PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig r, MonadReader r m)
+  => Either UpgradeCheckError Version -> m ()
+reportUpgradeNotice errorOrNewVersion = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogUpgradeNotice) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
+     WHERE el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Nothing -> do
+      insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
+      now <- getTime
+      queueAllEmails [Error
+        { _error_time = now
+        , _error_text = case errorOrNewVersion of
+            Left _ -> "We were not able to contact the upgrade check endpoint. If this issue persists please check for an upgrade manually."
+            Right _ -> "We found a newer version of the monitor. Please consider upgrading."
+        }]
+
+    Just (logId, specificLogId) -> do
+      updateErrorLogBy logId specificLogId
+        [ ErrorLogUpgradeNotice_errorField =. leftToMaybe errorOrNewVersion
+        , ErrorLogUpgradeNotice_newVersionField =. rightToMaybe errorOrNewVersion
+        ]
+
+clearUpgradeNotice :: (Monad m, PostgresRaw m, PersistBackend m) => m ()
+clearUpgradeNotice = do
+  lids :: [Id ErrorLogUpgradeNotice] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogUpgradeNotice" t
+    WHERE t.log = el.id AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notifyEntityId NotificationType_Update
 

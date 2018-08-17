@@ -27,7 +27,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Foldable (toList)
 import Data.Int (Int64)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -35,6 +35,8 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
 import Data.Typeable
+import Data.Version (Version)
+import qualified Data.Version as Version
 import Data.Word (Word64)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic
@@ -53,11 +55,12 @@ import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
 
-import Common.Schema
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
 import Tezos.NodeRPC.Types
 import Tezos.Types
---import Common.TezosBinary
+
+import Backend.Version (parseVersion)
+import Common.Schema
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -82,6 +85,18 @@ instance PrimitivePersistField Tez where
 
 deriving instance ToField Tez
 deriving instance FromField Tez
+
+instance ToField Version where
+  toField v = toField (Version.showVersion v)
+
+instance FromField Version where
+  fromField f b = parseVersionOrError <$> fromField f b
+
+instance ToField UpgradeCheckError where
+  toField v = toField (show v)
+
+instance FromField UpgradeCheckError where
+  fromField f b = read <$> fromField f b
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -111,6 +126,7 @@ instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
 instance NeverNull Tez
 instance NeverNull TezosWord64
+instance NeverNull Version
 
 -- unsafeParseBinary :: TezosBinary a => ByteString -> a
 -- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -123,6 +139,9 @@ type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, Per
 getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
 getId = get . fromId
 
+
+parseVersionOrError :: Text -> Version
+parseVersionOrError = fromMaybe (error "Invalid version") . parseVersion
 
 -- instance TezosBinary a => PersistField (Base16ByteString a) where
 --   persistName _ = "Base16ByteString"
@@ -185,6 +204,16 @@ instance PersistField Cycle where
   toPersistValues (Cycle x) = primToPersistValue x
   fromPersistValues = (fmap . first) Cycle . primFromPersistValue
   dbType p (Cycle x) = dbType p x
+
+instance PrimitivePersistField Version where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (Version.showVersion v)
+  fromPrimitivePersistValue x v = parseVersionOrError $ fromPrimitivePersistValue x v
+
+instance PersistField Version where
+  persistName _ = "Version"
+  toPersistValues x = primToPersistValue (Version.showVersion x)
+  fromPersistValues = fmap (first parseVersionOrError) . primFromPersistValue
+  dbType p x = dbType p ("" :: String)
 
 
 instance PersistField PublicKeyHash where
@@ -334,11 +363,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_password
   - primitive: EndpointType
   - primitive: ClientWorker
+  - primitive: UpgradeCheckError
   - entity: ErrorLog
+  - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleEndpoint
   - entity: ErrorLogMultipleBakersForSameDelegate
-  - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogNodeOnFork
+  - entity: ErrorLogUpgradeNotice
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -359,20 +390,21 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
-  [ (''Client, 'ClientKey)
+  [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
+  , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Delegate, 'DelegateKey)
+  , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
+  , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
+  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
+  , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
+  , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)
+  , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
-  , (''TzScan, 'TzScanKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
-  , (''ErrorLog, 'ErrorLogKey)
-  , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
-  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
-  , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
-  , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
-  , (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''GenericCacheEntry, 'GenericCacheEntryKey)
+  , (''TzScan, 'TzScanKey)
   ]

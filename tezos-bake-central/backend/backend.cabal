@@ -84,6 +84,8 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Upgrade
+    Backend.Version
     Backend.ViewSelectorHandler
     Backend.Workers
     Backend.Workers.Client
@@ -91,14 +93,14 @@ library
     Backend.Workers.Node
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+               -DREAL_BOY
 
 executable backend
   hs-source-dirs: src-bin
-  main-is: main.hs
+  main-is: Main.hs
 
   build-depends:
       base
     , backend
 
   ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
-

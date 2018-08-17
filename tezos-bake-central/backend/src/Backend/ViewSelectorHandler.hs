@@ -21,12 +21,13 @@ import Data.Bifunctor (first, second)
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (isJust, listToMaybe)
+import qualified Data.Monoid
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
-import qualified Data.Monoid
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Traversable (for)
+import Data.Version (Version)
 import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
@@ -38,7 +39,15 @@ import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id)
 import Say
 
+import Tezos.Account
+import Tezos.Json (TezosWord64 (..))
+import Tezos.NodeRPC.Types
+import Tezos.PublicKeyHash
+import Tezos.Tez
+import Tezos.Types
+
 import Backend.BalanceTracking
+import Backend.CachedNodeRPC
 import Backend.Graphs
 import Backend.Schema
 import Common (whenJust)
@@ -46,11 +55,6 @@ import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
-import Tezos.Types
-import Tezos.Json (TezosWord64 (..))
-import Tezos.NodeRPC.Types
-
-import Backend.CachedNodeRPC
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
@@ -129,10 +133,11 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     _ -> return mempty
   summary <- case _bakeViewSelector_summary vs of
     Nothing -> return mempty
-    Just a -> do
-      report <- getSummaryReport
-      return $ single report a
+    Just a -> flip single a <$> getSummaryReport
   errors <- getErrorLogs $ _bakeViewSelector_errors vs
+  upgrade <- case _bakeViewSelector_upgrade vs of
+    Nothing -> return mempty
+    Just a -> flip single a <$> getUpgradeNotice
   return BakeView
     { _bakeView_clients = clients
     , _bakeView_clientAddresses = clientAddresses
@@ -149,10 +154,11 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     , _bakeView_delegates = delegates
     , _bakeView_errors = first AppendMap.keysSet <$> errors
     , _bakeView_errorsById = fold $ fst <$> errors
+    , _bakeView_upgrade = upgrade
     }
 
 getErrorLogs
-  :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m, Show a)
+  :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m)
   => AppendIntervalMap TimeWindow a
   -> m (AppendIntervalMap TimeWindow
       (AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))), a))
@@ -297,3 +303,33 @@ getErrorLogs intervalMap = do
         ]
 
     leftBiasedUnions = AppendMap.unionsWith const
+
+getUpgradeNotice
+  :: (Monad m, PostgresRaw m, MonadIO m)
+  => m (Maybe (ErrorLog, Either UpgradeCheckError Version))
+getUpgradeNotice = do
+  row <- listToMaybe <$> [queryQ|
+    SELECT
+        el.started AT TIME ZONE 'UTC'
+      , el.stopped AT TIME ZONE 'UTC'
+      , el."lastSeen" AT TIME ZONE 'UTC'
+      , el."noticeSentAt" AT TIME ZONE 'UTC'
+      , t.error, t."newVersion"
+    FROM "ErrorLog" el
+    JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
+    WHERE el.stopped IS NULL
+    ORDER BY el.started DESC
+    LIMIT 1|]
+  pure $ row <&> \(elStarted, elStopped, elLastSeen, elNoticeSentAt, tError, tNewVersion) ->
+    (ErrorLog
+      { _errorLog_started = elStarted
+      , _errorLog_stopped = elStopped
+      , _errorLog_lastSeen = elLastSeen
+      , _errorLog_noticeSentAt = elNoticeSentAt
+      }
+    , case tError of
+        Just e -> Left e
+        Nothing -> case tNewVersion of
+          Just tNewVersion -> Right tNewVersion
+          Nothing -> error "Bad upgrade notice record"
+    )

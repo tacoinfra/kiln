@@ -11,8 +11,8 @@
 
 module Backend.RequestHandler where
 
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Except (runExceptT)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -23,6 +23,7 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
+import Data.Text (Text)
 import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
@@ -35,26 +36,30 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
+import Say
 
-import Tezos.Types(Block)
-import Tezos.NodeRPC.Types (RpcError)
 import Tezos.NodeRPC (NodeRPCContext (..))
+import Tezos.NodeRPC.Types (RpcError)
+import Tezos.Types (Block)
 
+import Backend.CachedNodeRPC (dataSourceNode)
+import Backend.Config (AppConfig)
 import Backend.Schema
+import Backend.Upgrade (checkForUpgrade)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
-import Backend.CachedNodeRPC(dataSourceNode)
-
-import Say
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
-  => Address
+  => Text
+  -> Address
+  -> Http.Manager
   -> Pool Postgresql
+  -> AppConfig
   -> RequestHandler Bake m
-requestHandler emailFromAddr db = RequestHandler $ \req -> (say "doing RequestHandler things" *>) $ runNoLoggingT $ runDb (Identity db) $
-  case req of
+requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
+  RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $ case req of
     ApiRequest_Public r ->
       case r of
         PublicRequest_AddNode addr nodeIdent -> do
@@ -139,6 +144,9 @@ requestHandler emailFromAddr db = RequestHandler $ \req -> (say "doing RequestHa
               , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
               , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
               ]
+
+        PublicRequest_CheckForUpgrade ->
+          checkForUpgrade upgradeBranch httpMgr appConfig id
 
     ApiRequest_Private key r ->
       case r of
