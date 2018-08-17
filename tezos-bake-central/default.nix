@@ -6,9 +6,8 @@ obelisk.project ./. ({ pkgs, ... }:
   let
     # reflex-src = ../../../reflex;
     reflex-src = pkgs.fetchFromGitHub {
-      owner = "reflex-frp";
-      # repo = "reflex";
-      repo = "danbornside";
+      owner = "danbornside";
+      repo = "reflex";
       rev = "7ab5470aa19bc56db8c488571996330b4ab62e24";
       sha256 = "14k5ffxc9f0xqf39gl1mf0algzmajq0qhya059y751k2qbv0d0jv";
     };
@@ -47,7 +46,7 @@ obelisk.project ./. ({ pkgs, ... }:
       sha256 = "0nryry4nqhfhdv577hi9wrk9rrjq5xwcf880ixdkq1jb5yrfm641";
     };
     # monoidal-containers-src = ../../../monoidal-containers;
-    monoidal-containers = pkgs.fetchFromGitHub {
+    monoidal-containers-src = pkgs.fetchFromGitHub {
       owner = "danbornside";
       repo = "monoidal-containers";
       rev = "f9bbf89b0f59ebcccbf116beefb26ce6d416cc69";
