@@ -588,6 +588,7 @@ nodesTab = divClass "ui stackable grid" $ do
                   nodeDataTable
                     [ (text "Block hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
                     , (text "Block fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
+                    , (text "Block baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
                     ]
               NodeTile_PlainNode _ node -> do
                 headBlockLevelHeader (text $ uriHostPortPath $ _node_address node) $
@@ -597,6 +598,7 @@ nodesTab = divClass "ui stackable grid" $ do
                   nodeDataTable
                     [ (text "Block hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
                     , (text "Block fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
+                    , (text "Block baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
                     , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
                     , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
                     , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")

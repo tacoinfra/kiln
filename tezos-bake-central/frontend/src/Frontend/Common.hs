@@ -10,6 +10,7 @@ module Frontend.Common where
 
 import Control.Lens ((%~))
 import Control.Monad.Fix (MonadFix)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Foldable (toList)
@@ -19,6 +20,7 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Time as Time
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Reflex.Dom.Core
@@ -41,6 +43,12 @@ data Cfg = Cfg
 
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
+
+localTimestamp :: (DomBuilder t m, MonadIO m) => Time.UTCTime -> m ()
+localTimestamp timestamp = do
+  tz <- liftIO Time.getCurrentTimeZone
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
+    Time.utcToZonedTime tz timestamp
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())

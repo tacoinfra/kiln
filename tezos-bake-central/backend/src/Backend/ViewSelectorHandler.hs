@@ -88,18 +88,19 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
       selNodes = In $ if selNodesUniversal then mempty else Map.keys $ _universalMap_only $ _bakeViewSelector_nodes vs
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
-        , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
+        , n.address, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
-          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
+          (nid, addr, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (nid, First $ Just Node
             { _node_address = addr
             , _node_identity = ident
             , _node_headLevel = headLevel
             , _node_headBlockHash = headBlockHash
+            , _node_headBlockBakedAt = headBlockBakedAt
             , _node_peerCount = peerCount
             , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
             , _node_fitness = fitness

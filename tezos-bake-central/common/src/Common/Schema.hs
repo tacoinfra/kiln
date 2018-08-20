@@ -101,6 +101,7 @@ data Node = Node
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
+  , _node_headBlockBakedAt :: !(Maybe UTCTime)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
@@ -142,6 +143,7 @@ mkNode addr = Node
   , _node_identity = Nothing -- TODO
   , _node_headLevel = Nothing
   , _node_headBlockHash = Nothing
+  , _node_headBlockBakedAt = Nothing
   , _node_peerCount = Nothing
   , _node_networkStat = NetworkStat 0 0 0 0
   , _node_fitness = Nothing

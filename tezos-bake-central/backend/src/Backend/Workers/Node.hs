@@ -149,6 +149,7 @@ nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId = \case
       updateAndNotify nodeId
         [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
         , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
+        , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
         , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
         , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
         ]
