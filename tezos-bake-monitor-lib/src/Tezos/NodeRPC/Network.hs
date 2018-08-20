@@ -119,7 +119,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
   node <- asks (_nodeRPCContext_node . view nodeRPCContext)
   -- sayShow (node, method_, rpcSelector)
 
-  let rpcUrl = node <> rpcSelector
+  let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
   liftIO $ T.putStrLn rpcUrl
 
   let rpcBoilerplate req = req

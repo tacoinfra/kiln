@@ -32,7 +32,7 @@ import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, mapMaybe, maybeToList)
 import Data.Ord (comparing)
 import Data.Semigroup (First (..), (<>))
 import Data.Set (Set)
@@ -65,6 +65,7 @@ import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -196,11 +197,11 @@ watchErrors intervals = do
   pure $ ffor theView $ \v ->
     ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
 
-watchTzScan :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TzScan))
-watchTzScan =
-  (fmap . fmap) (getSingle . _bakeView_tzscan) $
+watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
+watchPublicNodeHeads =
+  (fmap . fmap) (Set.fromList . mapMaybe (getFirst . fst) . Map.elems . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_tzscan = Just 1 }
+      { _bakeViewSelector_publicNodeHeads = Just 1 }
 
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
@@ -546,8 +547,7 @@ mailServerForm frm0 = do
 
 data NodeTile
   = NodeTile_PlainNode (Id Node) Node
-  | NodeTile_TzScan TzScan
-  | NodeTile_Foundation
+  | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
 nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
@@ -565,30 +565,30 @@ nodesTab = divClass "ui stackable grid" $ do
 
   where
     nodeTilesWidget = do
-      tzscanDyn <- watchTzScan
+      publicNodesDyn <- watchPublicNodeHeads
       nodesDyn <- watchNodes $ pure $ universe ()
       let
-        zipNodeTiles tzscan nodes =
-          (case tzscan of
-            Nothing -> id
-            Just v -> (NodeTile_TzScan v :)
-          ) -- if available, prepend the tzscan node to the list
+        zipNodeTiles publicNodes nodes =
+          (NodeTile_PublicNode <$> toList publicNodes) <>
           (uncurry NodeTile_PlainNode <$> Map.toAscList nodes)
-      maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles tzscanDyn nodesDyn
+      maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
         Just tilesDyn -> divClass "ui stackable cards" $ void $ do
           listWithKey (BaseMap.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn $ \case
-              NodeTile_TzScan tzscan -> do
-                headBlockLevelHeader (text "tzscan.io") $
-                  Just (_tzScan_headBlockHash tzscan, _tzScan_headLevel tzscan)
+              NodeTile_PublicNode node -> do
+                let nodeTitle = text $ case unJson $ _publicNodeHead_source node of
+                      DataSource_TzScan (TzScanNode chain) -> "tzscan (" <> showChain (Chain_Named chain) <> ")"
+                      DataSource_BlockscaleNode (BlockscaleNode chain) -> "Foundation Nodes (" <> showChain (Chain_Named chain) <> ")"
+                      DataSource_PlainNode (PlainNode url) -> url
+                headBlockLevelHeader nodeTitle $
+                  Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node)
                 divClass "description" $ do
                   nodeDataTable
-                    [ (text "Block hash:", blockHashLink $ _tzScan_headBlockHash tzscan)
-                    , (text "Block fitness:", text $ fitnessText $ _tzScan_fitness tzscan)
+                    [ (text "Block hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
+                    , (text "Block fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
                     ]
-              NodeTile_Foundation -> text "foundation"
               NodeTile_PlainNode _ node -> do
                 headBlockLevelHeader (text $ uriHostPortPath $ _node_address node) $
                   liftA2 (,) (_node_headBlockHash node) (_node_headLevel node)

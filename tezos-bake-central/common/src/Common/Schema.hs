@@ -23,9 +23,11 @@ import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
+import Data.Either.Combinators (rightToMaybe)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
 import Data.Version (Version)
@@ -35,8 +37,10 @@ import Rhyolite.Schema (Email, HasId, Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.Base58Check (fromBase58)
 import Tezos.Json
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (DataSource, NamedChain (..))
 import Tezos.Types
 
 instance Aeson.ToJSON Uri.URI where
@@ -105,14 +109,32 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-data TzScan = TzScan
-  { _tzScan_chainId :: !ChainId
-  , _tzScan_headLevel :: !RawLevel
-  , _tzScan_headBlockHash :: !BlockHash
-  , _tzScan_fitness :: !Fitness
-  , _tzScan_updated :: !UTCTime
+data Chain = Chain_Named NamedChain | Chain_Id ChainId
+  deriving (Eq, Ord, Show, Typeable, Generic)
+
+showChain :: Chain -> Text
+showChain (Chain_Named n) = case n of
+  NamedChain_Zeronet -> "zeronet"
+  NamedChain_Alphanet -> "alphanet"
+  NamedChain_Betanet -> "betanet"
+showChain (Chain_Id i) = toBase58Text i
+
+parseChain :: Text -> Maybe Chain
+parseChain x = case T.toLower x of
+  "zeronet" -> Just $ Chain_Named NamedChain_Zeronet
+  "alphanet" -> Just $ Chain_Named NamedChain_Alphanet
+  "betanet" -> Just $ Chain_Named NamedChain_Betanet
+  other -> Chain_Id <$> rightToMaybe (fromBase58 $ T.encodeUtf8 other)
+
+data PublicNodeHead = PublicNodeHead
+  { _publicNodeHead_source :: !(Json DataSource)
+  , _publicNodeHead_headLevel :: !RawLevel
+  , _publicNodeHead_headBlockHash :: !BlockHash
+  , _publicNodeHead_headBlockFitness :: !Fitness
+  , _publicNodeHead_headBlockBakedAt :: !UTCTime
+  , _publicNodeHead_updated :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId TzScan
+instance HasId PublicNodeHead
 
 mkNode :: URI -> Node
 mkNode addr = Node
@@ -374,6 +396,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
+  , ''Chain
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
@@ -390,10 +413,10 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
+  , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
-  , ''TzScan
   , ''UpgradeCheckError
   ]
 
@@ -413,9 +436,9 @@ concat <$> traverse makeLenses
   , 'ErrorLogNodeOnFork
   , 'Event
   , 'MailServerConfig
+  , 'PublicNodeHead
   , 'Report
   , 'SeenEvent
-  , 'TzScan
   , 'VeryBlockLike
   ]
 

@@ -103,7 +103,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_clients :: !(AppendMap (Id Client) a)
   , _bakeViewSelector_parameters :: !(Maybe a)
   , _bakeViewSelector_nodeAddresses :: !(Maybe a)
-  , _bakeViewSelector_tzscan :: !(Maybe a)
+  , _bakeViewSelector_publicNodeHeads :: !(Maybe a)
   , _bakeViewSelector_nodes :: !(UniversalMap (Id Node) a)
   , _bakeViewSelector_delegates :: !(Maybe a)
   , _bakeViewSelector_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) a)
@@ -118,7 +118,7 @@ data BakeView a = BakeView
   , _bakeView_clients :: !(AppendMap (Id Client) (First (Maybe ClientInfo), a))
   , _bakeView_parameters :: !(Single ProtoInfo a)
   , _bakeView_nodeAddresses :: !(AppendMap (Id Node) (First (Maybe URI), a))
-  , _bakeView_tzscan :: !(Single TzScan a)
+  , _bakeView_publicNodeHeads :: !(AppendMap (Id PublicNodeHead) (First (Maybe PublicNodeHead), a))
   , _bakeView_nodes :: !(AppendMap (Id Node) (First (Maybe Node), a))
   , _bakeView_delegates :: !(Single (Set PublicKeyHash) a)
   , _bakeView_delegateStats :: !(AppendMap (PublicKeyHash, RawLevel) (First (Maybe (BakeEfficiency, Account)), a))
@@ -174,9 +174,9 @@ cropBakeView vs v =
       delegates = case _bakeViewSelector_delegates vs of
         Nothing -> mempty
         Just _ -> _bakeView_delegates v
-      tzscan = case _bakeViewSelector_tzscan vs of
+      tzscan = case _bakeViewSelector_publicNodeHeads vs of
         Nothing -> mempty
-        Just _ -> _bakeView_tzscan v
+        Just _ -> _bakeView_publicNodeHeads v
       nodes = uintersectionWith const (_bakeView_nodes v) (_bakeViewSelector_nodes vs)
       delegateStats = Map.intersectionWith const (_bakeView_delegateStats v) (_bakeViewSelector_delegateStats vs)
       notificatees = case _bakeViewSelector_notificatees vs of
@@ -201,7 +201,7 @@ cropBakeView vs v =
       , _bakeView_clients = clients
       , _bakeView_parameters = parameters
       , _bakeView_nodeAddresses = nodeAddresses
-      , _bakeView_tzscan = tzscan
+      , _bakeView_publicNodeHeads = tzscan
       , _bakeView_nodes = nodes
       , _bakeView_delegates = delegates
       , _bakeView_delegateStats = delegateStats
@@ -222,7 +222,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_summary = alignWith f (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
     , _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
-    , _bakeViewSelector_tzscan = alignWith f (_bakeViewSelector_tzscan u) (_bakeViewSelector_tzscan v)
+    , _bakeViewSelector_publicNodeHeads = alignWith f (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
     , _bakeViewSelector_delegates = alignWith f (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
     , _bakeViewSelector_delegateStats =  alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
@@ -239,7 +239,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
-    , _bakeViewSelector_tzscan = fmapMaybe f $ _bakeViewSelector_tzscan a
+    , _bakeViewSelector_publicNodeHeads = fmapMaybe f $ _bakeViewSelector_publicNodeHeads a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
     , _bakeViewSelector_delegates = fmapMaybe f $ _bakeViewSelector_delegates a
     , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
@@ -255,7 +255,7 @@ instance FunctorMaybe BakeView where
     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
     , _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
-    , _bakeView_tzscan = fmapMaybe f $ _bakeView_tzscan a
+    , _bakeView_publicNodeHeads = fmapMaybeSnd f $ _bakeView_publicNodeHeads a
     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
     , _bakeView_delegates = fmapMaybe f $ _bakeView_delegates a
     , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
@@ -299,7 +299,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     { _bakeView_clientAddresses = mempty
     , _bakeView_clients = mempty
     , _bakeView_parameters = mempty
-    , _bakeView_tzscan = mempty
+    , _bakeView_publicNodeHeads = mempty
     , _bakeView_nodes = mempty
     , _bakeView_delegates = mempty
     , _bakeView_delegateStats = mempty
@@ -320,7 +320,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     { _bakeView_clientAddresses = _bakeView_clientAddresses u <> _bakeView_clientAddresses v
     , _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
-    , _bakeView_tzscan = _bakeView_tzscan u <> _bakeView_tzscan v
+    , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
     , _bakeView_delegates = _bakeView_delegates u <> _bakeView_delegates v
     , _bakeView_delegateStats = _bakeView_delegateStats u <> _bakeView_delegateStats v

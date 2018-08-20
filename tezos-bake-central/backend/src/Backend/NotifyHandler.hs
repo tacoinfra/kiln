@@ -164,18 +164,18 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       Map.singleton logId (First (Just (errorLog, toView specificLog)))
                   }
 
-      handleTzScan = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id TzScan) of
-        Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenJust (_bakeViewSelector_tzscan aggVS) $ \a -> do
-          tzscan <- get $ fromId nid
-          pure $ mempty { _bakeView_tzscan = single tzscan a }
-
       handleUpgradeNotice = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (specificLogId :: Id ErrorLogUpgradeNotice) ->
           whenJust (_bakeViewSelector_upgrade aggVS) $ \a -> do
             n <- getUpgradeNotice
             pure $ mempty { _bakeView_upgrade = single n a }
+
+      handlePublicNodeHead = case fromJSON (_notifyMessage_value notifyMessage) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (nid :: Id PublicNodeHead) -> whenJust (_bakeViewSelector_publicNodeHeads aggVS) $ \a -> do
+          node <- get $ fromId nid
+          pure $ mempty { _bakeView_publicNodeHeads = Map.singleton nid (First node, a) }
 
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
@@ -189,7 +189,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
     "ErrorLogUpgradeNotice" -> handleUpgradeNotice
-    "TzScan" -> handleTzScan
+    "PublicNodeHead" -> handlePublicNodeHead
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty

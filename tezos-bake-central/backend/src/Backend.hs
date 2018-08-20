@@ -223,7 +223,7 @@ backend = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< tzScanWorker dataSrc appConfig db
+      addFinalizer =<< publicNodesWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
 

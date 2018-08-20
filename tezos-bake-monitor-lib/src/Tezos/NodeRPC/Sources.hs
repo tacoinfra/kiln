@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,7 +15,7 @@ module Tezos.NodeRPC.Sources where
 import Control.Monad.Except (MonadError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (runReaderT)
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
@@ -33,17 +34,21 @@ import Tezos.NodeRPC.Network (NodeRPCContext (..), QueryNodeImpl (nodeRPC), node
 import Tezos.NodeRPC.Types (AsRpcError)
 
 data NamedChain
-    = --NamedChain_Mainnet
-      NamedChain_Betanet
-    | NamedChain_Alphanet
-    | NamedChain_Zeronet
+  = --NamedChain_Mainnet
+    NamedChain_Betanet
+  | NamedChain_Alphanet
+  | NamedChain_Zeronet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
+instance FromJSON NamedChain
+instance ToJSON NamedChain
 
 data DataSource
-  = DataSourceType_PlainNode PlainNode
-  | DataSourceType_BlockscaleNode BlockscaleNode
-  | DataSourceType_TzScan TzScanNode
+  = DataSource_PlainNode PlainNode
+  | DataSource_BlockscaleNode BlockscaleNode
+  | DataSource_TzScan TzScanNode
   deriving (Eq, Ord, Generic, Typeable, Show)
+instance FromJSON DataSource
+instance ToJSON DataSource
 
 newtype QDataSource t a = QDataSource
   { querySource :: forall e m. (MonadIO m, MonadError e m, AsRpcError e) => Http.Manager -> t -> m a
@@ -51,7 +56,8 @@ newtype QDataSource t a = QDataSource
 
 
 -- PLAIN NODE --
-newtype PlainNode = PlainNode Text deriving (Eq, Ord, Show, Generic, Typeable)
+newtype PlainNode = PlainNode Text
+  deriving (Eq, Ord, Show, Generic, Typeable, FromJSON, ToJSON)
 
 instance QueryChain (QDataSource PlainNode) where
   rChain = runNodeRpcPlain rChain
@@ -81,7 +87,8 @@ runNodeRpcPlain q = QDataSource $ \httpMgr (PlainNode addr) -> runReaderT (nodeR
 
 
 -- BLOCKSCALE (FOUNDATION) NODE --
-newtype BlockscaleNode = BlockscaleNode NamedChain deriving (Eq, Ord, Show, Generic, Typeable)
+newtype BlockscaleNode = BlockscaleNode NamedChain
+  deriving (Eq, Ord, Show, Generic, Typeable, FromJSON, ToJSON)
 
 instance QueryChain (QDataSource BlockscaleNode) where
   rChain = runNodeRpcBlockscale rChain
@@ -111,7 +118,8 @@ blockscaleNodeUri = \case
 
 
 -- TZSCAN --
-newtype TzScanNode = TzScanNode NamedChain deriving (Eq, Ord, Show, Generic, Typeable)
+newtype TzScanNode = TzScanNode NamedChain
+  deriving (Eq, Ord, Show, Generic, Typeable, FromJSON, ToJSON)
 
 instance QueryChain (QDataSource TzScanNode) where
   rChain = _tzScanBlock_network <$> runNodeRpcTzScan "/v2/head"

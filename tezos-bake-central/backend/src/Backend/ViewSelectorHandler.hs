@@ -80,8 +80,8 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   nodeAddresses <- whenJust (_bakeViewSelector_nodeAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
-  tzscan <- whenJust (_bakeViewSelector_tzscan vs) $ \a ->
-    flip single a . listToMaybe <$> select ((TzScan_chainIdField ==. _nodeDataSource_chain nds) `limitTo` 1)
+  publicNodeHeads <- whenJust (_bakeViewSelector_publicNodeHeads vs) $ \a ->
+    fmap (\v -> (First $ Just v, a)) <$> selectMap' PublicNodeHeadConstructor CondEmpty
   nodes <- do
     let
       selNodesUniversal = isJust $ _universalMap_universe $ _bakeViewSelector_nodes vs
@@ -143,7 +143,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     { _bakeView_clients = clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
-    , _bakeView_tzscan = tzscan
+    , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_delegateStats = delegateStats

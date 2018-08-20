@@ -24,7 +24,7 @@ import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.State (execStateT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
+import Data.Bifunctor (first, second)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Foldable (for_, toList)
 import Data.Functor (($>))
@@ -55,10 +55,10 @@ import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Block (TzScanBlock (..))
 import Tezos.History (CachedHistory (..), accumHistory)
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (NamedChain (..), TzScanNode (..), querySource)
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), QDataSource,
+                              TzScanNode (..), querySource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -67,6 +67,7 @@ import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.Schema
 import Backend.Supervisor
+import Common (tshow)
 import Common.Schema
 
 selectIds
@@ -227,38 +228,53 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
         liftIO $ addFinalizer cleanup
         say $ "start monitor on " <> Uri.render nodeAddr
 
-tzScanWorker
+publicNodesWorker
   :: NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-tzScanWorker nds appConfig db = worker' $ doUpdate *> waitForNewHead nds
+publicNodesWorker nds appConfig db =
+  (*>)
+    <$> workerForSource (DataSource_BlockscaleNode $ BlockscaleNode NamedChain_Betanet)
+    <*> workerForSource (DataSource_TzScan $ TzScanNode NamedChain_Betanet)
+
   where
-    httpMgr = _nodeDataSource_httpMgr nds
-    doUpdate = do
-      tzScanHeadBlock' :: Either RpcError TzScanBlock <- runExceptT $
-        querySource (rHead betanetChain) httpMgr (TzScanNode NamedChain_Betanet)
-      case tzScanHeadBlock' of
-        Left e -> sayErr (T.pack $ show e)
-        Right b -> do
-          atomically $ updateLatestHead nds b
-          let
-            bLevel = b ^. level
-            bHash = b ^. hash
-            TzScanFitness bFitness = _tzScanBlock_fitness b
-          runNoLoggingT $ runDb (Identity db) $ do
-            updatedRecord :: Maybe (Id TzScan) <- listToMaybe . stripOnly <$> [queryQ|
-              INSERT INTO "TzScan"
-                ("chainId", "headLevel", "headBlockHash", fitness, updated)
-                VALUES (?betanetChain, ?bLevel, ?bHash, ?bFitness, NOW())
-              ON CONFLICT ("chainId") DO UPDATE SET
-                "headLevel" = ?bLevel,
-                "headBlockHash" = ?bHash,
-                fitness = ?bFitness,
-                updated = NOW()
-              RETURNING id
-            |]
-            for_ updatedRecord $ notifyEntityId NotificationType_Update
+    workerForSource source = worker' $ updatePublicNodeInDb source *> waitForNewHead nds
+
+    getHeadFromSource :: DataSource -> IO (Either RpcError VeryBlockLike)
+    getHeadFromSource = \case
+      DataSource_TzScan node -> second mkVeryBlockLike <$> getHeadFromNode node
+      DataSource_BlockscaleNode node -> second mkVeryBlockLike <$> getHeadFromNode node
+      DataSource_PlainNode node -> second mkVeryBlockLike <$> getHeadFromNode node
+
+    getHeadFromNode :: QueryBlock (QDataSource node) => node -> IO (Either RpcError (BlockType (QDataSource node)))
+    getHeadFromNode = runExceptT . querySource (rHead betanetChain) (_nodeDataSource_httpMgr nds)
+
+    updatePublicNodeInDb :: DataSource -> IO ()
+    updatePublicNodeInDb source = getHeadFromSource source >>= \case
+      Left e -> sayErr (tshow e)
+      Right b -> do
+        atomically $ updateLatestHead nds b
+        let
+          sourceJson = Json source
+          bLevel = b ^. level
+          bHash = b ^. hash
+          bFitness = b ^. fitness
+          bBakedAt = b ^. timestamp
+        runNoLoggingT $ runDb (Identity db) $ do
+          updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
+            INSERT INTO "PublicNodeHead"
+              ("source", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
+              VALUES (?sourceJson, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
+            ON CONFLICT ("source") DO UPDATE SET
+              "headLevel" = ?bLevel,
+              "headBlockHash" = ?bHash,
+              "headBlockFitness" = ?bFitness,
+              "headBlockBakedAt" = ?bBakedAt,
+              updated = NOW()
+            RETURNING id
+          |]
+          for_ updatedRecord $ notifyEntityId NotificationType_Update
 
 updateLatestHead :: (BlockLike blk) => NodeDataSource -> blk -> STM ()
 updateLatestHead nds blk = do

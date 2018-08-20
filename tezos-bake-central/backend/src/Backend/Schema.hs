@@ -27,6 +27,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Foldable (toList)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
@@ -104,13 +105,13 @@ instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (Tez x) = dbType p x
+  dbType p x = dbType p (getTez x)
 
 instance PersistField PeriodSequence where
   persistName _ = "PeriodSequence"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (PeriodSequence x) = dbType p (Json x)
+  dbType p x = dbType p (error "dbType for PeriodSequence forced" :: Json (NonEmpty TezosWord64))
 
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
@@ -118,6 +119,22 @@ instance PrimitivePersistField PeriodSequence where
 
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
+
+instance PersistField Chain where
+  persistName _ = "Chain"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField Chain where
+  toPrimitivePersistValue p = toPrimitivePersistValue p . showChain
+  fromPrimitivePersistValue p = fromMaybe (error "Invalid chain reference") . parseChain . fromPrimitivePersistValue p
+
+instance ToField Chain where
+  toField = toField . showChain
+instance FromField Chain where
+  fromField f b = maybe (fail "Invalid chain reference") pure . parseChain =<< fromField f b
+
 
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
@@ -129,6 +146,7 @@ instance NeverNull RawLevel
 instance NeverNull Tez
 instance NeverNull TezosWord64
 instance NeverNull Version
+instance NeverNull Chain
 
 -- unsafeParseBinary :: TezosBinary a => ByteString -> a
 -- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -267,7 +285,7 @@ instance PrimitivePersistField PublicKeyHash where
 
 instance PersistField URI where
   persistName _ = "URI"
-  toPersistValues = toPersistValues . Uri.render
+  toPersistValues = primToPersistValue
   fromPersistValues vs = first (fromMaybe (error "Invalid URI") . Uri.mkURI) <$> fromPersistValues vs
   dbType p x = dbType p ("" :: Text)
 
@@ -324,13 +342,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
-  - entity: TzScan
+  - entity: PublicNodeHead
     constructors:
-    - name: TzScan
+    - name: PublicNodeHead
       uniques:
-        - name: _tzscan_uniqueness
+        - name: _publicnodehead_uniqueness
           type: constraint
-          fields: [_tzScan_chainId]
+          fields: [_publicNodeHead_source]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
@@ -420,5 +438,5 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
-  , (''TzScan, 'TzScanKey)
+  , (''PublicNodeHead, 'PublicNodeHeadKey)
   ]

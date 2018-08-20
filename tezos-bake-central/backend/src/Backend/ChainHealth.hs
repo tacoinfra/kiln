@@ -68,4 +68,3 @@ scanForkInfo now rpt = do
   baked <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
   seen <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
   return $ catMaybes [baked, seen]
-
