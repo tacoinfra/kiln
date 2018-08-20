@@ -9,14 +9,13 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
 import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
+import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO, throwString)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
@@ -100,6 +99,7 @@ import qualified Text.URI.Lens as Uri
 import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), NamedChain (..), blockscaleNodeUri, querySource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -175,9 +175,9 @@ backend = do
     (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
 
-  !(chainId :: ChainId) <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
+  !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
-    (getConfigFromFile (either (const Nothing) Just . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
+    (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
     (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
@@ -186,6 +186,18 @@ backend = do
   !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
     (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
+
+
+  httpMgr <- Http.newManager Https.tlsManagerSettings
+
+  chainId <- case chain of
+    Right chainId -> pure chainId
+    Left chainName -> runExceptT (querySource rChain httpMgr (BlockscaleNode chainName)) >>= \case
+      Left (e :: RpcError) -> throwString $
+        "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
+      Right chainId -> pure chainId
+
+  say $ "Monitoring chain " <> toBase58Text chainId
 
   let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
@@ -205,12 +217,17 @@ backend = do
         migrateQueuedEmail tableInfo
         migrateSchema tableInfo
 
+    dataSrc <- blankNodeDataSource db chainId httpMgr
+
+    -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
+    case chain of
+      Left namedChain -> void $ initParams dataSrc [blockscaleNodeUri namedChain]
+      _ -> pure ()
+
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< workerWithDelay (pure 10) $ const $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
-
-      httpMgr <- Http.newManager Https.tlsManagerSettings
-      dataSrc <- blankNodeDataSource db chainId httpMgr
+      addFinalizer <=< workerWithDelay (pure 10) $ const $
+        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
@@ -223,7 +240,12 @@ backend = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< publicNodesWorker dataSrc appConfig db
+
+      case chain of
+        Left chainName -> do
+          addFinalizer =<< publicNodesWorker dataSrc chainName appConfig db
+        _ -> pure ()
+
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
 
@@ -303,7 +325,7 @@ data Opts = Opts
   , _opts_route :: !(Maybe URI)
   , _opts_emailFromAddress :: !(Maybe Text)
   , _opts_blockExplorer :: !(Maybe URI)
-  , _opts_chain :: !(Maybe ChainId)
+  , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
   }
@@ -333,16 +355,15 @@ optsArgDescr =
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
   , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ mkRootUriOrError $ T.pack x }) $
       "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
-  , Option [] [Config.chain] (mkReqArg "ChainId" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
-      "Chain Id.  default:" <> T.unpack (toBase58Text betanetChain) <> " " <> configPath Config.blockExplorer <> "'."
   , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
   , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
-  , Option [] [Config.chain] (mkReqArg "CHAIN" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
-      "Chain ID to monitor. If blank, use contents of '" <> configPath Config.chain <> "'. If also blank, default to '" <> T.unpack (toBase58Text betanetChain) <> "'."
+  , Option [] [Config.chain] (mkReqArg "CHAIN" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+      "Name of a chain (betanet, alphanet, zeronet) or a chain ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var

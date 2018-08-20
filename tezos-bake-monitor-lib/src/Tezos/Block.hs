@@ -107,7 +107,7 @@ data TzScanBlock = TzScanBlock
   -- , _tzScanBlock_testNetwork_ :: !Text
   -- , _tzScanBlock_testNetworkExpiration" :: !Text
   , _tzScanBlock_baker :: !TzScanBaker
-  , _tzScanBlock_nbOperations :: !Word64
+  , _tzScanBlock_nbOperations :: !(Maybe Word64)
   , _tzScanBlock_priority :: !Int
   , _tzScanBlock_level :: !RawLevel
   , _tzScanBlock_commitedNonceHash :: !TzScanNonceHash

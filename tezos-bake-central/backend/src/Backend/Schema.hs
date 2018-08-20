@@ -120,22 +120,6 @@ instance PrimitivePersistField PeriodSequence where
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
-instance PersistField Chain where
-  persistName _ = "Chain"
-  toPersistValues = primToPersistValue
-  fromPersistValues = primFromPersistValue
-  dbType p x = dbType p ("" :: Text)
-
-instance PrimitivePersistField Chain where
-  toPrimitivePersistValue p = toPrimitivePersistValue p . showChain
-  fromPrimitivePersistValue p = fromMaybe (error "Invalid chain reference") . parseChain . fromPrimitivePersistValue p
-
-instance ToField Chain where
-  toField = toField . showChain
-instance FromField Chain where
-  fromField f b = maybe (fail "Invalid chain reference") pure . parseChain =<< fromField f b
-
-
 instance NeverNull (HashedValue a ByteString)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
@@ -146,7 +130,6 @@ instance NeverNull RawLevel
 instance NeverNull Tez
 instance NeverNull TezosWord64
 instance NeverNull Version
-instance NeverNull Chain
 
 -- unsafeParseBinary :: TezosBinary a => ByteString -> a
 -- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"

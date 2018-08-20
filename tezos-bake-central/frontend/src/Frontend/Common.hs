@@ -28,6 +28,7 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
+import Tezos.NodeRPC.Sources (NamedChain)
 import Tezos.Types
 
 import Common (tshow)
@@ -37,7 +38,7 @@ import Common.URI (appendPaths, mkRootUri)
 data Cfg = Cfg
   { _cfg_blockExplorerUrl :: !(Maybe Uri.URI)
   , _cfg_checkForUpgrade :: !Bool
-  , _cfg_chainId :: !ChainId
+  , _cfg_chain :: !(Either NamedChain ChainId)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
@@ -49,7 +50,6 @@ localTimestamp timestamp = do
   tz <- liftIO Time.getCurrentTimeZone
   text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
     Time.utcToZonedTime tz timestamp
-
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $

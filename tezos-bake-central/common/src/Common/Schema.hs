@@ -8,6 +8,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -21,9 +22,9 @@ module Common.Schema where
 import qualified Cases
 import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
+import Control.Monad.Except (MonadError, runExcept, throwError)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
-import Data.Either.Combinators (rightToMaybe)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -42,6 +43,8 @@ import Tezos.Json
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (DataSource, NamedChain (..))
 import Tezos.Types
+
+import Common (tshow)
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -110,22 +113,26 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-data Chain = Chain_Named NamedChain | Chain_Id ChainId
-  deriving (Eq, Ord, Show, Typeable, Generic)
+showChain :: Either NamedChain ChainId -> Text
+showChain = \case
+  Left n -> case n of
+    NamedChain_Zeronet -> "zeronet"
+    NamedChain_Alphanet -> "alphanet"
+    NamedChain_Betanet -> "betanet"
+  Right i -> toBase58Text i
 
-showChain :: Chain -> Text
-showChain (Chain_Named n) = case n of
-  NamedChain_Zeronet -> "zeronet"
-  NamedChain_Alphanet -> "alphanet"
-  NamedChain_Betanet -> "betanet"
-showChain (Chain_Id i) = toBase58Text i
-
-parseChain :: Text -> Maybe Chain
+parseChain :: MonadError Text m => Text -> m (Either NamedChain ChainId)
 parseChain x = case T.toLower x of
-  "zeronet" -> Just $ Chain_Named NamedChain_Zeronet
-  "alphanet" -> Just $ Chain_Named NamedChain_Alphanet
-  "betanet" -> Just $ Chain_Named NamedChain_Betanet
-  other -> Chain_Id <$> rightToMaybe (fromBase58 $ T.encodeUtf8 other)
+  "zeronet" -> pure $ Left NamedChain_Zeronet
+  "alphanet" -> pure $ Left NamedChain_Alphanet
+  "betanet" -> pure $ Left NamedChain_Betanet
+  _ -> either (throwError . tshow) (pure . Right) (fromBase58 $ T.encodeUtf8 x)
+
+parseChainOrError :: Text -> Either NamedChain ChainId
+parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
+  Left (e :: Text) -> error $ T.unpack $ "Invalid chain '" <> x <> "': " <> e
+  Right v -> v
+
 
 data PublicNodeHead = PublicNodeHead
   { _publicNodeHead_source :: !(Json DataSource)
@@ -398,7 +405,6 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
-  , ''Chain
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo

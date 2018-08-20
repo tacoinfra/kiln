@@ -5,6 +5,9 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 
+import Tezos.NodeRPC.Sources (NamedChain (..))
+import Tezos.Types (ChainId)
+
 changelogUrl :: Text
 changelogUrl = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/tree/develop/CHANGELOG.md"
 
@@ -21,7 +24,10 @@ blockExplorer :: FilePath
 blockExplorer = "block-explorer"
 
 chain :: FilePath
-chain = "chain-id"
+chain = "chain"
+
+defaultChain :: Either NamedChain ChainId
+defaultChain = Left NamedChain_Betanet
 
 checkForUpgrade :: FilePath
 checkForUpgrade = "check-for-upgrade"

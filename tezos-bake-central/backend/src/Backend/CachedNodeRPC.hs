@@ -66,7 +66,6 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema (Field (..))
-import Common (tshow)
 import Common.Schema
 
 data NodeQuery a where
@@ -168,8 +167,8 @@ blankNodeDataSource db chain mgr = do
     _ <- readMVar protoInfo
     putMVar hist emptyCache
     putMVar cache mempty
-
     say "Cache ready!"
+
   return NodeDataSource
     { _nodeDataSource_history = hist
     , _nodeDataSource_nodes = nodes
@@ -195,13 +194,13 @@ calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBe
 -- NB: Blocks on 'NodeDataSource' parameters.
 waitForNewHead :: NodeDataSource -> IO ()
 waitForNewHead nds = do
-  timeLimit <- calcTimeBetweenBlocks <$> readMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  -- TODO: This shouldn't be necessary once we have a way to know the parameters better. Foundation nodes should give us params.
+  timeLimit <- maybe 60 calcTimeBetweenBlocks <$> tryReadMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   oldHead <- atomically $ readTVar (_nodeDataSource_latestHead nds)
-  maybeNewHead <- timeout' timeLimit $ atomically $ do
+  void $ timeout' timeLimit $ atomically $ do
     newHead <- readTVar (_nodeDataSource_latestHead nds)
     when (oldHead == newHead) retry
     pure newHead
-  say $ "******************************** Saw new head " <> tshow maybeNewHead
 
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike

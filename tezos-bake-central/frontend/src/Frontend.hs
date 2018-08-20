@@ -65,7 +65,8 @@ import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), PlainNode (..),
+                              TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -99,13 +100,13 @@ frontend = (headTag,) $ void $ do
     fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
       liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
 
-  chainId :: ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
-    maybe (error "No chain ID given") (fromString . T.unpack . T.strip) r
+  chain :: Either NamedChain ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
+    maybe (error "No chain provided") (parseChainOrError . T.strip) r
 
   runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
     { _cfg_blockExplorerUrl = blockExplorerUrl
     , _cfg_checkForUpgrade = checkForUpgrade
-    , _cfg_chainId = chainId
+    , _cfg_chain = chain
     }
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
@@ -384,10 +385,10 @@ optionsTab = divClass "ui two column grid" $ do
     divClass "ui basic segment" notificationOptions
   where
     currentChain = do
-      chainId <- asks _cfg_chainId
+      chain <- asks _cfg_chain
       elClass "h3" "ui header" $ do
-        text $ "Network: " <> toBase58Text chainId
-        when (chainId == betanetChain) $ text " (betanet)"
+        text "Network: "
+        el "em" $ text $ showChain chain
       el "p" $ el "em" $ do
         text "You can monitor a different network by setting the "
         el "code" $ text $ T.pack Config.chain
@@ -564,6 +565,7 @@ nodesTab = divClass "ui stackable grid" $ do
         liveErrorsWidget nonEmptyAlertsDyn
 
   where
+    nodeTilesWidget :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
     nodeTilesWidget = do
       publicNodesDyn <- watchPublicNodeHeads
       nodesDyn <- watchNodes $ pure $ universe ()
@@ -579,16 +581,16 @@ nodesTab = divClass "ui stackable grid" $ do
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn $ \case
               NodeTile_PublicNode node -> do
                 let nodeTitle = text $ case unJson $ _publicNodeHead_source node of
-                      DataSource_TzScan (TzScanNode chain) -> "tzscan (" <> showChain (Chain_Named chain) <> ")"
-                      DataSource_BlockscaleNode (BlockscaleNode chain) -> "Foundation Nodes (" <> showChain (Chain_Named chain) <> ")"
+                      DataSource_TzScan (TzScanNode chain) -> "tzscan (" <> showChain (Left chain) <> ")"
+                      DataSource_BlockscaleNode (BlockscaleNode chain) -> "Foundation Nodes (" <> showChain (Left chain) <> ")"
                       DataSource_PlainNode (PlainNode url) -> url
                 headBlockLevelHeader nodeTitle $
                   Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node)
                 divClass "description" $ do
                   nodeDataTable
-                    [ (text "Block hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
-                    , (text "Block fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
-                    , (text "Block baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
+                    [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
+                    , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
+                    , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
                     ]
               NodeTile_PlainNode _ node -> do
                 headBlockLevelHeader (text $ uriHostPortPath $ _node_address node) $
@@ -596,9 +598,9 @@ nodesTab = divClass "ui stackable grid" $ do
                 divClass "description" $ do
                   let stat = _node_networkStat node
                   nodeDataTable
-                    [ (text "Block hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
-                    , (text "Block fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
-                    , (text "Block baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
+                    [ (text "Block Hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
+                    , (text "Block Fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
+                    , (text "Block Baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
                     , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
                     , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
                     , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")

@@ -231,13 +231,14 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
 
 publicNodesWorker
   :: NodeDataSource
+  -> NamedChain
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-publicNodesWorker nds appConfig db =
+publicNodesWorker nds namedChain appConfig db =
   (*>)
-    <$> workerForSource (DataSource_BlockscaleNode $ BlockscaleNode NamedChain_Betanet)
-    <*> workerForSource (DataSource_TzScan $ TzScanNode NamedChain_Betanet)
+    <$> workerForSource (DataSource_BlockscaleNode $ BlockscaleNode namedChain)
+    <*> workerForSource (DataSource_TzScan $ TzScanNode namedChain)
 
   where
     workerForSource source = worker' $ updatePublicNodeInDb source *> waitForNewHead nds
@@ -249,7 +250,7 @@ publicNodesWorker nds appConfig db =
       DataSource_PlainNode node -> second mkVeryBlockLike <$> getHeadFromNode node
 
     getHeadFromNode :: QueryBlock (QDataSource node) => node -> IO (Either RpcError (BlockType (QDataSource node)))
-    getHeadFromNode = runExceptT . querySource (rHead betanetChain) (_nodeDataSource_httpMgr nds)
+    getHeadFromNode = runExceptT . querySource (rHead $ _nodeDataSource_chain nds) (_nodeDataSource_httpMgr nds)
 
     updatePublicNodeInDb :: DataSource -> IO ()
     updatePublicNodeInDb source = getHeadFromSource source >>= \case
