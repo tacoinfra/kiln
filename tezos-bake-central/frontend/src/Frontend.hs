@@ -62,6 +62,7 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
+import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -307,7 +308,7 @@ summaryTab = divClass "ui grid" $ do
 
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
-    dyn . ffor mGraph $ \case
+    dyn_ . ffor mGraph $ \case
       Nothing -> blank
       Just (total, graphText) -> do
         setInnerHTML (_element_raw graphEl) graphText
@@ -335,10 +336,10 @@ summaryTab = divClass "ui grid" $ do
 
 liveErrorsWidget
   :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
-  => Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView))))
+  => Dynamic t (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))
   -> m ()
 liveErrorsWidget errors = do
-  dyn_ $ ffor errors $ traverse_ $ traverse_ $ traverse_ $ \(log, specificLog) -> do
+  dyn_ $ ffor errors $ traverse_ $ traverse_ $ \(log, specificLog) -> do
     let header txt = divClass "header" $ text $ case _errorLog_stopped log of
           Just _ -> "Resolved: " <> txt
           Nothing -> txt
@@ -363,10 +364,10 @@ liveErrorsWidget errors = do
           header "Multiple bakers for same delegate" -- TODO Fill this out
 
       el "p" $ do
-        text $ "First seen: " <> tshow (_errorLog_started log) <> " | "
+        text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
         case _errorLog_stopped log of
-          Nothing -> text $ "Last seen: " <> tshow (_errorLog_lastSeen log)
-          Just stopped -> text $ "Stopped: " <> tshow stopped
+          Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+          Just stopped -> text "Stopped: " *> localTimestamp stopped
 
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
@@ -551,22 +552,30 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
+errorsByNode :: AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)) -> AppendMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
+errorsByNode xs = Map.fromList [(k, (el, t)) | Just (el, t) <- Map.elems xs, let Just k = nodeKeyForErrorLogView t]
+  where
+    nodeKeyForErrorLogView = \case
+      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint eid EndpointType_Node url) -> Just $ Right url
+      _ -> Nothing
+
+nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTab = divClass "ui stackable grid" $ do
-  alertsDyn <- maybeDynLazy . fmap maybeSomething =<<
-    watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
+  let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+  alertsDyn <- maybeDynLazy . fmap (maybeSomething <=< AppendIMap.lookup alertWindow) =<<
+    watchErrors (pure $ Set.singleton alertWindow)
 
   dyn_ $ ffor alertsDyn $ \case
-    Nothing -> divClass "column" nodeTilesWidget
+    Nothing -> divClass "column" $ nodeTilesWidget (constDyn Map.empty)
     Just nonEmptyAlertsDyn -> do
-      divClass "ten wide column" nodeTilesWidget
+      divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn
       divClass "six wide column" $ do
         elClass "h3" "ui header" $ text "Alerts"
         liveErrorsWidget nonEmptyAlertsDyn
 
   where
-    nodeTilesWidget :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
-    nodeTilesWidget = do
+    nodeTilesWidget :: Dynamic t (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView))) -> m ()
+    nodeTilesWidget alerts = do
       publicNodesDyn <- watchPublicNodeHeads
       nodesDyn <- watchNodes $ pure $ universe ()
       let
@@ -574,27 +583,47 @@ nodesTab = divClass "ui stackable grid" $ do
           (NodeTile_PublicNode <$> toList publicNodes) <>
           (uncurry NodeTile_PlainNode <$> Map.toAscList nodes)
       maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
+
+      maxLevelOnPublicNodes <- holdUniqDyn $
+        maximumMay . map _publicNodeHead_headLevel . Set.toList <$> publicNodesDyn
+
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
         Just tilesDyn -> divClass "ui stackable cards" $ void $ do
           listWithKey (BaseMap.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
-            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn $ \case
+            uniqDyn <- holdUniqDyn vDyn
+            divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
+
               NodeTile_PublicNode node -> do
                 let nodeTitle = text $ case unJson $ _publicNodeHead_source node of
                       DataSource_TzScan (TzScanNode chain) -> "tzscan (" <> showChain (Left chain) <> ")"
                       DataSource_BlockscaleNode (BlockscaleNode chain) -> "Foundation Nodes (" <> showChain (Left chain) <> ")"
                       DataSource_PlainNode (PlainNode url) -> url
-                headBlockLevelHeader nodeTitle $
-                  Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node)
+                headBlockLevelHeader
+                  nodeTitle
+                  (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
+                  (pure Nothing)
                 divClass "description" $ do
                   nodeDataTable
                     [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
                     , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
                     , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
                     ]
+
               NodeTile_PlainNode _ node -> do
-                headBlockLevelHeader (text $ uriHostPortPath $ _node_address node) $
-                  liftA2 (,) (_node_headBlockHash node) (_node_headLevel node)
+                fallingBehindBy <- case _node_headLevel node of
+                  Nothing -> pure (pure Nothing)
+                  Just nodeLevel -> do
+                    let calcBehindBy maxLevel = if behindBy >= 5 then Just behindBy else Nothing
+                          where behindBy = maxLevel - nodeLevel
+
+                    holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
+
+                headBlockLevelHeader
+                  (text $ uriHostPortPath $ _node_address node)
+                  (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
+                  fallingBehindBy
+
                 divClass "description" $ do
                   let stat = _node_networkStat node
                   nodeDataTable
@@ -608,15 +637,30 @@ nodesTab = divClass "ui stackable grid" $ do
                     , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                     ]
 
-    headBlockLevelHeader title blockHashAndLevel =
+                  hasAlert <- holdUniqDyn $ Map.lookup (Right $ _node_address node) . errorsByNode <$> alerts
+                  dyn_ $ ffor hasAlert $ \case
+                    Nothing -> blank
+                    Just (_, e) -> case e of
+                      ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
+                      _ -> blank
+
+    headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
+    headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
       elClass "h3" "ui center aligned header" $ do
         title
         elAttr "div" ("class"=:"sub header"<>"style"=:"padding-top:1em") $ do
           case blockHashAndLevel of
             Nothing -> text "Connecting..."
-            Just (blockHash, blockLevel) ->
-              blockHashLinkAs blockHash $ text $ tshow $ unRawLevel blockLevel
-          divClass "sub header" $ text "Head Block Level"
+            Just (blockHash, blockLevel) -> dyn_ $ ffor blocksBehindDyn $ \blocksBehind -> do
+              let styled = if isJust blocksBehind then errorStyle else id
+              styled $ blockHashLinkAs blockHash $ text $ tshow $ unRawLevel blockLevel
+          divClass "sub header" $ do
+            text "Head Block Level"
+            dyn_ $ ffor blocksBehindDyn $ traverse_ $ \numBehind ->
+              elAttr "div" ("style"=:"padding-top:0.4em") $ errorStyle $
+                text $ tshow (unRawLevel numBehind) <> " Blocks Behind"
+      where
+        errorStyle = elAttr "span" ("style"=:"color:red;font-weight:bold")
 
     nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
       for_ rows $ \(heading, value) -> el "tr" $ do

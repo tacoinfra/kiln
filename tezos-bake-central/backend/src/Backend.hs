@@ -187,7 +187,6 @@ backend = do
     (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
-
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
   chainId <- case chain of
