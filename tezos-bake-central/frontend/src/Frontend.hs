@@ -639,10 +639,11 @@ nodesTab = divClass "ui stackable grid" $ do
 
                   hasAlert <- holdUniqDyn $ Map.lookup (Right $ _node_address node) . errorsByNode <$> alerts
                   dyn_ $ ffor hasAlert $ \case
-                    Nothing -> blank
-                    Just (_, e) -> case e of
+                    Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
                       ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
                       _ -> blank
+                    _ -> blank
+
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
     headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =

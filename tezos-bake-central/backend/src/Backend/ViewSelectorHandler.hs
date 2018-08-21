@@ -192,7 +192,7 @@ getErrorLogs intervalMap = do
           LEFT JOIN "Node" n ON n.address = t.address
           LEFT JOIN "Client" c ON c.address = t.address
           WHERE
-            NOT n.deleted AND NOT c.deleted AND
+            COALESCE(NOT n.deleted, TRUE) AND COALESCE(NOT c.deleted, TRUE) AND
             (((?low IS NULL OR el.started >= ?low) AND
              (?high IS NULL OR el.started <= ?high)) OR
              ((?low IS NULL OR el.stopped >= ?low) AND
