@@ -33,7 +33,7 @@ import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
 import Data.Maybe (fromMaybe, isJust, mapMaybe, maybeToList)
-import Data.Ord (comparing)
+import Data.Ord (Down (..), comparing)
 import Data.Semigroup (First (..), (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -338,8 +338,8 @@ liveErrorsWidget
   :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
   => Dynamic t (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))
   -> m ()
-liveErrorsWidget errors = do
-  dyn_ $ ffor errors $ traverse_ $ traverse_ $ \(log, specificLog) -> do
+liveErrorsWidget errors = void $
+  listWithKey (errorsByTime Down <$> errors) $ \_ vDyn -> dyn_ $ ffor vDyn $ \(log, specificLog) -> do
     let header txt = divClass "header" $ text $ case _errorLog_stopped log of
           Just _ -> "Resolved: " <> txt
           Nothing -> txt
@@ -369,6 +369,11 @@ liveErrorsWidget errors = do
           Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
           Just stopped -> text "Stopped: " *> localTimestamp stopped
 
+  where
+    errorsByTime direction errors = BaseMap.fromList
+      [ (direction (_errorLog_started el, _errorLog_lastSeen el, elId), (el, t))
+      | (elId, Just (el, t)) <- Map.toList errors
+      ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui two column grid" $ do
