@@ -172,10 +172,6 @@ backend = do
         (_opts_route =<< SnapServer.getOther cfg))
     (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
-  !(blockExplorer :: Maybe URI) <- liftA2 (<|>)
-    (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
-    (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
-
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
@@ -203,7 +199,6 @@ backend = do
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
     , injectPure Config.route . encodeViaJson <$> routeEnv
-    , injectPure Config.blockExplorer . tshow <$> blockExplorer
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
     , Just $ injectPure Config.chain $ toBase58Text chainId
     ]
@@ -323,7 +318,6 @@ data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
   , _opts_emailFromAddress :: !(Maybe Text)
-  , _opts_blockExplorer :: !(Maybe URI)
   , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
@@ -334,14 +328,13 @@ instance Semigroup Opts where
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
     , _opts_route = _opts_route b <|> _opts_route a
     , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
-    , _opts_blockExplorer = _opts_blockExplorer b <|> _opts_blockExplorer a
     , _opts_chain = _opts_chain b <|> _opts_chain a
     , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
     , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -352,8 +345,6 @@ optsArgDescr =
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
   , Option [] [Config.emailFromAddress] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ mkRootUriOrError $ T.pack x }) $
-      "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
   , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."

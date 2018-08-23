@@ -131,10 +131,16 @@ instance QueryBlock (QDataSource TzScanNode) where
 
 runNodeRpcTzScan :: forall a. FromJSON a => Text -> QDataSource TzScanNode a
 runNodeRpcTzScan q = QDataSource $ \httpMgr (TzScanNode chain) ->
-  runReaderT (nodeRPCImpl methodGet q) (NodeRPCContext httpMgr $ Uri.render $ tzScanUri chain)
+  runReaderT (nodeRPCImpl methodGet q) (NodeRPCContext httpMgr $ Uri.render $ tzScanApiUri chain)
 
-tzScanUri :: NamedChain -> URI
-tzScanUri = \case
+tzScanApiUri :: NamedChain -> URI
+tzScanApiUri = \case
   NamedChain_Zeronet  -> [Uri.uri|https://zeronet-api.tzscan.io|]
   NamedChain_Alphanet -> [Uri.uri|https://alphanet-api.tzscan.io|]
   NamedChain_Betanet  -> [Uri.uri|https://api.tzscan.io|]
+
+tzScanUri :: NamedChain -> URI
+tzScanUri = \case
+  NamedChain_Zeronet  -> [Uri.uri|https://zeronet.tzscan.io|]
+  NamedChain_Alphanet -> [Uri.uri|https://alphanet.tzscan.io|]
+  NamedChain_Betanet  -> [Uri.uri|https://tzscan.io|]

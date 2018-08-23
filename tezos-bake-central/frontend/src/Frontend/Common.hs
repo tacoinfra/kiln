@@ -28,7 +28,7 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (NamedChain)
+import Tezos.NodeRPC.Sources (NamedChain, tzScanUri)
 import Tezos.Types
 
 import Common (tshow)
@@ -36,8 +36,7 @@ import Common.URI (appendPaths, mkRootUri)
 
 
 data Cfg = Cfg
-  { _cfg_blockExplorerUrl :: !(Maybe Uri.URI)
-  , _cfg_checkForUpgrade :: !Bool
+  { _cfg_checkForUpgrade :: !Bool
   , _cfg_chain :: !(Either NamedChain ChainId)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
@@ -108,10 +107,11 @@ validateUri = Validator.Validator mkRootUri setUrlType
 
 blockExplorerLink :: (MonadReader Cfg m, DomBuilder t m) => Text -> m a -> m a
 blockExplorerLink path f = do
-  urlCfg <- asks _cfg_blockExplorerUrl
-  case urlCfg of
-    Nothing -> f
-    Just url -> elAttr "a" ("href"=:maybe "" Uri.render (url `appendPaths` [path]) <> "target"=:"_blank") f
+  chain <- asks _cfg_chain
+  case chain of
+    Right _chainId -> f
+    Left namedChain ->
+      elAttr "a" ("href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
 
 blockHashLink :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m ()
 blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)

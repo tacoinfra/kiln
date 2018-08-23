@@ -92,11 +92,6 @@ frontend = (headTag,) $ void $ do
       return $ let (host, port) = T.breakOn ":" hostWithPort
                 in (T.unpack protocol, T.unpack host, T.unpack port)
 
-  blockExplorerUrl <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) $ fmap $ \url ->
-    case mkRootUri url of
-      Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
-      Right rootUrl -> rootUrl
-
   checkForUpgrade <-
     fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
       liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
@@ -105,8 +100,7 @@ frontend = (headTag,) $ void $ do
     maybe (error "No chain provided") (parseChainOrError . T.strip) r
 
   runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
-    { _cfg_blockExplorerUrl = blockExplorerUrl
-    , _cfg_checkForUpgrade = checkForUpgrade
+    { _cfg_checkForUpgrade = checkForUpgrade
     , _cfg_chain = chain
     }
 

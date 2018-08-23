@@ -20,9 +20,6 @@ route = "route"
 emailFromAddress :: FilePath
 emailFromAddress = "email-from"
 
-blockExplorer :: FilePath
-blockExplorer = "block-explorer"
-
 chain :: FilePath
 chain = "chain"
 
