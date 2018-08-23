@@ -3,6 +3,7 @@
 module Backend.Common where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Fixed (Fixed (..))
@@ -25,10 +26,13 @@ workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ())
 workerWithDelay getDelay f = worker' $ do
   delay <- getDelay
   f delay
-  threadDelay (fromIntegral $ nominalDiffTimeToMicroseconds delay)
+  threadDelay' delay
 
 worker' :: MonadIO m => IO () -> m (IO ())
-worker' f = return . killThread <=< liftIO $ forkIO $ supervise $ void $ forever f
+worker' f = return . cancel <=< liftIO $ async $ supervise $ void $ forever f
+
+threadDelay' :: MonadIO m => NominalDiffTime -> m ()
+threadDelay' delay = liftIO $ threadDelay (fromIntegral $ nominalDiffTimeToMicroseconds delay)
 
 timeout' :: MonadIO m => NominalDiffTime -> IO a -> m (Maybe a)
 timeout' timeLimit f = liftIO $ timeout (fromIntegral $ nominalDiffTimeToMicroseconds timeLimit) f

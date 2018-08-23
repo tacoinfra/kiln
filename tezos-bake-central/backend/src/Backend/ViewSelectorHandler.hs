@@ -154,7 +154,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     , _bakeView_summary = summary
     , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
-    , _bakeView_errors = first AppendMap.keysSet <$> errors
+    , _bakeView_errors = first (SemiSet_All . AppendMap.keysSet) <$> errors
     , _bakeView_errorsById = fold $ fst <$> errors
     , _bakeView_upgrade = upgrade
     }

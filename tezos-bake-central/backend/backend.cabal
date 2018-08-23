@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , async
     , base
     , base16-bytestring
     , bytestring

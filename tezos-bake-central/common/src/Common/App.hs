@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -92,6 +93,27 @@ ulookup k m = case _universalMap_universe m of
   Nothing -> Map.lookup k (_universalMap_only m)
   Just a -> Just a -- Ignore the "only" keys since the universal key always wins
 
+data SemiSet a
+  = SemiSet_All (Set a)
+  | SemiSet_Patch (Set a) (Set a)
+  deriving (Ord, Eq, Generic, Typeable, Show)
+instance (Ord a, FromJSON a) => FromJSON (SemiSet a)
+instance (Ord a, ToJSON a) => ToJSON (SemiSet a)
+instance (Ord a) => Semigroup (SemiSet a) where
+  SemiSet_All as <> _ = SemiSet_All as
+  SemiSet_Patch adds removals <> SemiSet_All bs = SemiSet_All $ (adds <> bs) `Set.difference` removals
+  SemiSet_Patch adds1 removals1 <> SemiSet_Patch adds2 removals2 = SemiSet_Patch (adds1 <> adds2) (removals1 <> removals2)
+
+instance (Ord a) => Monoid (SemiSet a) where
+  mempty = SemiSet_Patch mempty mempty
+  mappend = (<>)
+
+-- | Given a full starting set, apply a SemiSet to it.
+semisetToSet :: Ord a => Set a -> SemiSet a -> Set a
+semisetToSet full = \case
+  SemiSet_All new -> new
+  SemiSet_Patch adds removals -> (full <> adds) `Set.difference` removals
+
 data Bake = Bake
 
 type TimeWindow = ClosedInterval (WithInfinity UTCTime)
@@ -127,7 +149,7 @@ data BakeView a = BakeView
   , _bakeView_summary :: !(Single (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_summaryGraph :: !(Single (Micro, Text) a)
   , _bakeView_graphs :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
-  , _bakeView_errors :: !(AppendIntervalMap TimeWindow (Set (Id ErrorLog), a))
+  , _bakeView_errors :: !(AppendIntervalMap TimeWindow (SemiSet (Id ErrorLog), a))
   , _bakeView_errorsById :: !(AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))))
   , _bakeView_upgrade :: !(Single (ErrorLog, Either UpgradeCheckError Version) a)
   } deriving (Show, Eq, Functor, Generic, Typeable, Traversable, Foldable)
@@ -211,7 +233,7 @@ cropBakeView vs v =
       , _bakeView_summaryGraph = summaryGraph
       , _bakeView_summary = summary
       , _bakeView_errors = errors
-      , _bakeView_errorsById = restrictKeys (_bakeView_errorsById v) (foldMap fst $ AppendIMap.elems errors)
+      , _bakeView_errorsById = restrictKeys (_bakeView_errorsById v) (foldMap (semisetToSet mempty . fst) $ AppendIMap.elems errors)
       , _bakeView_upgrade = upgrade
       }
 
@@ -268,7 +290,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_errors = errors
     , _bakeView_errorsById =
         -- Crop the 'ErrorLog's to only those with the IDs referenced in the cropped set of errors.
-        restrictKeys (_bakeView_errorsById a) (foldMap fst $ AppendIMap.elems errors)
+        restrictKeys (_bakeView_errorsById a) (foldMap (semisetToSet mempty . fst) $ AppendIMap.elems errors)
     , _bakeView_upgrade = fmapMaybe f $ _bakeView_upgrade a
     }
     where

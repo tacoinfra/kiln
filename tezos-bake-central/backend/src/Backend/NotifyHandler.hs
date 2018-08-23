@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
@@ -41,7 +42,7 @@ import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
 import Common (tshow, whenJust)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), SemiSet (..), TimeWindow,
                    mailServerConfigToView, ulookup)
 import Common.Schema
 
@@ -159,7 +160,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
               pure $ if null relevantIntervals
                 then mempty :: BakeView a
                 else mempty
-                  { _bakeView_errors = (,) (Set.singleton logId) <$> relevantIntervals
+                  { _bakeView_errors = (SemiSet_Patch (Set.singleton logId) mempty, ) <$> relevantIntervals
                   , _bakeView_errorsById =
                       Map.singleton logId (First (Just (errorLog, toView specificLog)))
                   }

@@ -14,10 +14,11 @@
 
 module Backend.Workers.Node where
 
+import Control.Concurrent.Async (async, cancel)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (STM, atomically, readTVar, writeTVar)
 import Control.Lens (ifor, ifor_, ix, to, view, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad (when)
+import Control.Monad (when, (<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
@@ -66,7 +67,7 @@ import Backend.Common (worker', workerWithDelay)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Backend.Errors
 import Backend.Schema
-import Backend.Supervisor
+import Backend.Supervisor (withTermination)
 import Common (tshow)
 import Common.Schema
 
@@ -96,63 +97,61 @@ minCachedBlockLevel = 1
 nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
 nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up", branch, current, i, n)
 
-nodeMonitor :: ChainId -> Http.Manager -> NodeDataSource -> AppConfig -> URI -> Id Node -> RpcResponse MonitorBlock -> IO ()
-nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId = \case
-  Left bad -> error "sulk"
-  Right headBlockInfo -> do
-    oldHead <- runReaderT dataSourceHead nds
-    updateNodeDataSource nds nodeAddr headBlockInfo
-    let cacheVar = _nodeDataSource_history nds
-    let ctx = NodeRPCContext httpMgr (Uri.render nodeAddr)
-    newBlock <- modifyMVar cacheVar $ \cache -> do
-      let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-      newStateRsp
-        :: Either RpcError CachedHistory'
-        <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
-          acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-          sayShow ("new block", nodeAddr, headBlockInfo, acc)
-      case newStateRsp of
-        Left bad -> sayShow bad $> (cache, False)
-        Right good -> return (good, newBlock)
+nodeMonitor :: ChainId -> Http.Manager -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
+nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId headBlockInfo = do
+  oldHead <- runReaderT dataSourceHead nds
+  updateNodeDataSource nds nodeAddr headBlockInfo
+  let cacheVar = _nodeDataSource_history nds
+  let ctx = NodeRPCContext httpMgr (Uri.render nodeAddr)
+  newBlock <- modifyMVar cacheVar $ \cache -> do
+    let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
+    newStateRsp
+      :: Either RpcError CachedHistory'
+      <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
+        acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
+        sayShow ("new block", nodeAddr, headBlockInfo, acc)
+    case newStateRsp of
+      Left bad -> sayShow bad $> (cache, False)
+      Right good -> return (good, newBlock)
 
-    when newBlock $ do
-      say $ "new block from node at " <> Uri.render nodeAddr
-      say $ T.pack $ show headBlockInfo
+  when newBlock $ do
+    say $ "new block from node at " <> Uri.render nodeAddr
+    say $ T.pack $ show headBlockInfo
 
-      when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $
-        atomically $ updateLatestHead nds headBlockInfo
+    when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $
+      updateLatestHead nds headBlockInfo
 
-    let db = _nodeDataSource_pool nds
-    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      -- This isn't very nuanced: old, stale nodes, even if they are catching
-      -- up, will churn a lot here.  Maybe we could improve this to filter
-      -- out "new" blocks that are already on the branch of `oldHead`?
-      when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
-        let now = headBlockInfo ^. timestamp
-        have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
-          SELECT c."id"
-          FROM "Parameters" c
-          WHERE c."chain" = ?chainId |]
-        case have of
-          Just entryId ->
-            updateAndNotify entryId
-              [Parameters_headTimestampField =. now]
-          Nothing -> do
-            params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
-            insertAndNotify_ Parameters
-              { _parameters_protoInfo = params
-              , _parameters_chain = chainId
-              , _parameters_headTimestamp = now
-              }
+  let db = _nodeDataSource_pool nds
+  runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+    -- This isn't very nuanced: old, stale nodes, even if they are catching
+    -- up, will churn a lot here.  Maybe we could improve this to filter
+    -- out "new" blocks that are already on the branch of `oldHead`?
+    when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
+      let now = headBlockInfo ^. timestamp
+      have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
+        SELECT c."id"
+        FROM "Parameters" c
+        WHERE c."chain" = ?chainId |]
+      case have of
+        Just entryId ->
+          updateAndNotify entryId
+            [Parameters_headTimestampField =. now]
+        Nothing -> do
+          params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
+          insertAndNotify_ Parameters
+            { _parameters_protoInfo = params
+            , _parameters_chain = chainId
+            , _parameters_headTimestamp = now
+            }
 
-      clearInaccessibleEndpointError EndpointType_Node nodeAddr
-      updateAndNotify nodeId
-        [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
-        , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
-        , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
-        , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
-        , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
-        ]
+    clearInaccessibleEndpointError EndpointType_Node nodeAddr
+    updateAndNotify nodeId
+      [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
+      , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
+      , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
+      , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
+      , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
+      ]
 
 blockSummary :: BlockLike b => b -> BranchData a
 blockSummary blk = BranchData
@@ -210,24 +209,30 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     let staleNodes = thoseNodes `Map.difference` theseNodes
     sayShow ("new nodes", Map.keys newNodes, "deleted nodes", Map.keys staleNodes)
 
-    ifor_ staleNodes $ \nodeAddr killMonitor -> say ("stop monitor on " <> Uri.render nodeAddr) *> killMonitor
+    ifor_ staleNodes $ \nodeAddr killMonitor ->
+      say ("stop monitor on " <> Uri.render nodeAddr) *> killMonitor
 
     let
       chainId = _nodeDataSource_chain nds
 
-      nodeError :: URI -> RpcError -> ExceptT RpcError IO ()
-      nodeError nodeAddr _ = ExceptT $ fmap Right $
+    ifor_ newNodes $ \nodeAddr nodeId -> do
+      killMonitor <- workerWithDelay (pure 1) $ const $ do
+        _ :: Either RpcError () <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+          nodeRPC $ rMonitorHeads chainId $ \block -> do
+            -- If we receive a new head, we can clear connectivity errors for this node.
+            runNoLoggingT $ runDb (Identity db) $
+              runReaderT (clearInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+
+            nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId block
+
+        -- If the monitor stopped for any reason, we should report it as a connectivity error.
         runNoLoggingT $ runDb (Identity db) $
           runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
 
-    for_ (Map.toList newNodes) $ \(nodeAddr, nodeId :: Id Node) -> do
-      runExceptT $ flip catchError (nodeError nodeAddr) $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
-        killMonitor <- nodeRPC $ rMonitorHeads chainId (nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId)
-        let cleanup = killMonitor
-              *> modifyMVar_ nodePool ( return . Map.delete nodeAddr )
-        liftIO $ modifyMVar_ nodePool $ return . Map.insert nodeAddr cleanup
-        liftIO $ addFinalizer cleanup
-        say $ "start monitor on " <> Uri.render nodeAddr
+      let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
+      liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
+      liftIO $ addFinalizer cleanup
+      say $ "start monitor on " <> Uri.render nodeAddr
 
 publicNodesWorker
   :: NodeDataSource
@@ -256,7 +261,7 @@ publicNodesWorker nds namedChain appConfig db =
     updatePublicNodeInDb source = getHeadFromSource source >>= \case
       Left e -> sayErr (tshow e)
       Right b -> do
-        atomically $ updateLatestHead nds b
+        updateLatestHead nds b
         let
           sourceJson = Json source
           bLevel = b ^. level
@@ -278,9 +283,15 @@ publicNodesWorker nds namedChain appConfig db =
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
 
-updateLatestHead :: (BlockLike blk) => NodeDataSource -> blk -> STM ()
-updateLatestHead nds blk = do
-  let latestHeadTVar = _nodeDataSource_latestHead nds
-  latestHead <- readTVar latestHeadTVar
-  when (Just (blk ^. fitness) > latestHead ^? _Just . fitness) $
-    writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
+updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
+updateLatestHead nds blk = liftIO $ do
+  updatedLevel <- atomically $ do
+    let latestHeadTVar = _nodeDataSource_latestHead nds
+    latestHead <- readTVar latestHeadTVar
+    if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
+      writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
+      pure $ Just $ blk ^. level
+    else
+      pure Nothing
+
+  for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)

@@ -197,7 +197,7 @@ watchErrors intervals = do
     { _bakeViewSelector_errors = AppendIMap.fromSet (const 1) ivals
     }
   pure $ ffor theView $ \v ->
-    ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
+    ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) (semisetToSet mempty idsSet)
 
 watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
 watchPublicNodeHeads =

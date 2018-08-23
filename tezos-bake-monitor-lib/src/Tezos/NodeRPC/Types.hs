@@ -11,6 +11,7 @@ import Data.Int (Int32)
 #if !(MIN_VERSION_base(4,9,0))
 import Data.Semigroup
 #endif
+import Control.Exception.Safe (Exception)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
@@ -25,6 +26,7 @@ data RpcError
   | RpcError_UnexpectedStatus Int BS.ByteString
   | RpcError_NonJSON String LBS.ByteString
   deriving (Eq, Ord, Show, Typeable)
+instance Exception RpcError
 
 class AsRpcError e where
   asRpcError :: Prism' e RpcError
