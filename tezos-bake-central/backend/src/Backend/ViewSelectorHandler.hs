@@ -36,11 +36,12 @@ import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Id)
+import Rhyolite.Schema (Id, Json (..))
 import Say
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez
@@ -58,10 +59,11 @@ import Common.Schema
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => NodeDataSource
+  => Maybe NamedChain
+  -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
@@ -80,8 +82,13 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   nodeAddresses <- whenJust (_bakeViewSelector_nodeAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
-  publicNodeHeads <- whenJust (_bakeViewSelector_publicNodeHeads vs) $ \a ->
-    fmap (\v -> (First $ Just v, a)) <$> selectMap' PublicNodeHeadConstructor CondEmpty
+
+  publicNodeHeads <- whenJust ((,) <$> _bakeViewSelector_publicNodeHeads vs <*> namedChain') $ \(a, namedChain) ->
+    fmap (\v -> (First $ Just v, a)) <$> selectMap' PublicNodeHeadConstructor
+      (   PublicNodeHead_sourceField ==. Json (DataSource_TzScan (TzScanNode namedChain))
+      ||. PublicNodeHead_sourceField ==. Json (DataSource_BlockscaleNode (BlockscaleNode namedChain))
+      )
+
   nodes <- do
     let
       selNodesUniversal = isJust $ _universalMap_universe $ _bakeViewSelector_nodes vs

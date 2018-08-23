@@ -32,6 +32,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
+import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor (($>))
@@ -219,9 +220,8 @@ backend = do
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
     -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
-    case chain of
-      Left namedChain -> void $ initParams dataSrc [blockscaleNodeUri namedChain]
-      _ -> pure ()
+    for_ (leftToMaybe chain) $ \namedChain -> do
+      initParams dataSrc [blockscaleNodeUri namedChain]
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -233,7 +233,7 @@ backend = do
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
         (notifyHandler dataSrc)
-        (viewSelectorHandler dataSrc db)
+        (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
