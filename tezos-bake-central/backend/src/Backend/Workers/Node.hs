@@ -144,7 +144,6 @@ nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId headBlockInfo = do
             , _parameters_headTimestamp = now
             }
 
-    clearInaccessibleEndpointError EndpointType_Node nodeAddr
     updateAndNotify nodeId
       [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
       , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
