@@ -660,7 +660,7 @@ nodesTab = divClass "ui stackable grid" $ do
               elAttr "div" ("style"=:"padding-top:0.4em") $ errorStyle $
                 text $ tshow (unRawLevel numBehind) <> " Blocks Behind"
       where
-        errorStyle = elAttr "span" ("style"=:"color:red;font-weight:bold")
+        errorStyle = elClass "span" "block-level-error"
 
     nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
       for_ rows $ \(heading, value) -> el "tr" $ do
