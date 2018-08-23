@@ -161,24 +161,31 @@ blockSummary blk = BranchData
   , _branchData_fitness = blk ^. fitness
   }
 
-updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO ()
-updateNetworkStats httpMgr db nid before = flip runReaderT (NodeRPCContext httpMgr $ Uri.render $ _node_address before) $ do
-  let
-    onErr :: forall m a. Functor m => ExceptT RpcError m a -> m (Maybe a)
-    onErr = fmap rightToMaybe . runExceptT
-  connections <- onErr $ nodeRPC rConnections
-  networkStat <- onErr $ nodeRPC rNetworkStat
-  let
-    after = before
-      { _node_peerCount = connections -- intentionally not coalescing.
-      , _node_networkStat = fromMaybe (_node_networkStat before) networkStat
+updateNetworkStats :: AppConfig -> Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
+updateNetworkStats appConfig httpMgr db nid before = do
+  after :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+    connections <- nodeRPC rConnections
+    networkStat <- nodeRPC rNetworkStat
+
+    pure $ before
+      { _node_peerCount = Just connections
+      , _node_networkStat = networkStat
       }
 
-  when (before /= after) $ runNoLoggingT $ runDb (Identity db) $ do
-    updateAndNotify nid
-      [ Node_peerCountField =. _node_peerCount after
-      , Node_networkStatField =. _node_networkStat after
-      ]
+  case after of
+    Left err -> pure $ Left err
+    Right after -> do
+      -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
+      when (before /= after) $ inDb $
+        updateAndNotify nid
+          [ Node_peerCountField =. _node_peerCount after
+          , Node_networkStatField =. _node_networkStat after
+          ]
+      pure $ Right ()
+
+  where
+    nodeAddr = _node_address before
+    inDb = runNoLoggingT . runDb (Identity db)
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -197,7 +204,10 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
 
-    ifor_ theseNodeRecords $ updateNetworkStats httpMgr db
+    ifor_ theseNodeRecords $ \nodeId node -> do
+      updateNetworkStats appConfig httpMgr db nodeId node >>= \case
+        Left _e -> reportNodeInaccessible $ _node_address node
+        Right () -> pure () -- We'll rely on the block monitor to clear this error
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
 
@@ -207,7 +217,6 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     thoseNodes <- readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
     let staleNodes = thoseNodes `Map.difference` theseNodes
-    sayShow ("new nodes", Map.keys newNodes, "deleted nodes", Map.keys staleNodes)
 
     ifor_ staleNodes $ \nodeAddr killMonitor ->
       say ("stop monitor on " <> Uri.render nodeAddr) *> killMonitor
@@ -220,19 +229,23 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
         _ :: Either RpcError () <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
           nodeRPC $ rMonitorHeads chainId $ \block -> do
             -- If we receive a new head, we can clear connectivity errors for this node.
-            runNoLoggingT $ runDb (Identity db) $
-              runReaderT (clearInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+            clearNodeInaccessible nodeAddr
 
             nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId block
 
         -- If the monitor stopped for any reason, we should report it as a connectivity error.
-        runNoLoggingT $ runDb (Identity db) $
-          runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+        reportNodeInaccessible nodeAddr
 
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
       liftIO $ addFinalizer cleanup
       say $ "start monitor on " <> Uri.render nodeAddr
+
+  where
+    inDb = runNoLoggingT . runDb (Identity db)
+    reportNodeInaccessible nodeAddr = inDb $ runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+    clearNodeInaccessible nodeAddr = inDb $ runReaderT (clearInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+
 
 publicNodesWorker
   :: NodeDataSource
