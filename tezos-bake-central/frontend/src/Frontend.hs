@@ -60,6 +60,7 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
+import Rhyolite.SemiMap (knownSubMap)
 import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Types
@@ -74,6 +75,8 @@ import qualified Common.Config as Config
 import Common.Schema hiding (Event)
 import Common.URI (mkRootUri)
 import Frontend.Common
+
+import Common.Vassal
 
 urlInputRow
   :: (MonadRhyoliteFrontendWidget Bake t m
@@ -113,54 +116,51 @@ frontend =
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
-  (fmap . fmap) (join . getSingle . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_parameters = Just 1
+  (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_parameters = viewJust 1
     }
 
-watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (UniversalMap (Id Node) ()) -> m (Dynamic t (AppendMap (Id Node) Node))
+-- watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (_ (Id Node) ()) -> m (Dynamic t (AppendMap (Id Node) Node))
 watchNodes nidsDyn = do
   theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = fmap (const 1) nids
+    { _bakeViewSelector_nodes = viewRangeAll 1 -- fmap (const 1) nids
     }
-  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_nodes v)
+  return $ ffor theView $ \v -> getRangeView (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodeAddresses = Just 1
+    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_nodeAddresses v') $ \_ (First r, _) -> r
+  return $ ffor theView $ \v' -> getRangeView (_bakeView_nodeAddresses v')
 
 
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (AppendMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
-    { _bakeViewSelector_clients = Map.singleton cid 1
+    { _bakeViewSelector_clients = viewRangeExactly cid 1
     }
-  return $ ffor theView $ \v -> Map.mapMaybe (\(First n,_) -> n) (_bakeView_clients v)
+  return $ ffor theView $ \v -> getRangeView (_bakeView_clients v)
 
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
-  (fmap.fmap) (foldMap (getSemiSet . fst) . getOption . _bakeView_delegates) $ watchViewSelector $ pure $ mempty {_bakeViewSelector_delegates = Just 1}
+  theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_delegates = viewRangeAll 1}
+  return $ ffor theView $ Map.keysSet . getRangeView . _bakeView_delegates
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
   let levels :: RawLevel = 30
   theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
-    { _bakeViewSelector_delegateStats = Map.mapKeys (,levels) $ Map.fromSet (const 1) ds
+    { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewInterval (0, levels) 1
     }
-  return $ ffor theView $
-      Map.mapKeys fst
-    . Map.mapMaybeWithKey (\(pkh, lvl) x -> if lvl == levels then Just x else Nothing)
-    . Map.mapMaybe (\(First r, _) -> r)
-    . _bakeView_delegateStats
+  return $ ffor theView $ _ . second (fmap getIntervalView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
 watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = Just 1
     }
-  return $ ffor theView $ \v' -> flip Map.mapMaybeWithKey (_bakeView_clientAddresses v') $ \_ (First r, _) -> r
+  return $ ffor theView $ \v' -> fmapMaybe fst (knownSubMap $ _bakeView_clientAddresses v')
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do

@@ -85,8 +85,8 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
     flip single a . listToMaybe <$> select ((TzScan_chainIdField ==. _nodeDataSource_chain nds) `limitTo` 1)
   nodes <- do
     let
-      selNodesUniversal = isJust $ _universalMap_universe $ _bakeViewSelector_nodes vs
-      selNodes = In $ if selNodesUniversal then mempty else Map.keys $ _universalMap_only $ _bakeViewSelector_nodes vs
+      selNodesUniversal = isCompleteSelector $ _bakeViewSelector_nodes vs
+      selNodes = In $ semiMapSelectorKeys $ _bakeViewSelector_nodes vs
     rs <- [queryQ|
       SELECT n.id
         , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
@@ -107,7 +107,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
             , _node_deleted = False
             , _node_lastHeartbeat = lastHeartbeat
             })
-    return (uintersectionWith (,) nodeInfo (_bakeViewSelector_nodes vs))
+    return (_ uintersectionWith nodeInfo (if selNodesUniversal then fromKnownComplete else fromKnownAbsent $ _bakeViewSelector_nodes vs))
 
   delegates <- whenJust (_bakeViewSelector_delegates vs) $ \a -> do
     pure . (,a) . fromListSemiSet <$> project Delegate_publicKeyHashField (Delegate_deletedField ==. False)

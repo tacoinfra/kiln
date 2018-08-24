@@ -23,6 +23,7 @@ import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
+import Data.Function (on)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -81,7 +82,7 @@ data ClientInfo = ClientInfo
   , _clientInfo_report :: !(Json Report)
   , _clientInfo_config :: !(Json ClientConfig)
   -- , _clientInfo_node :: Id Node
-  } deriving (Eq, Show, Generic, Typeable)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ClientInfo
 
 data Node = Node
@@ -161,6 +162,9 @@ data ErrorEvent = ErrorEvent
   , _errorEvent_trace :: Json [Aeson.Value]
   } deriving (Show, Eq, Typeable, Generic)
 
+instance Ord ErrorEvent where
+  compare = compare `on` _errorEvent_message
+
 data EndorseEvent = EndorseEvent
   { _endorseEvent_hash :: BlockHash
   , _endorseEvent_level :: Int
@@ -183,7 +187,7 @@ data Report = Report
   , _report_errors :: [Event ErrorEvent]
   , _report_seen :: [Event SeenEvent]
   , _report_startTime :: UTCTime
-  } deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
@@ -212,14 +216,14 @@ data ClientDaemonWorker
   = ClientDaemonWorker_Baking
   | ClientDaemonWorker_Denunciation
   | ClientDaemonWorker_Endorsement
-  deriving (Enum, Show, Eq, Typeable, Generic)
+  deriving (Ord, Enum, Show, Eq, Typeable, Generic)
 
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
   , _clientConfig_delegates :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
   , _clientConfig_nodeUri :: ClientAddress
-  } deriving (Show, Eq, Typeable, Generic)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Delegate = Delegate
   { _delegate_publicKeyHash :: !PublicKeyHash

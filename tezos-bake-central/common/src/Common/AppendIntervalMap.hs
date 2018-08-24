@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -14,22 +15,41 @@
 module Common.AppendIntervalMap where
 
 import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex (itraverse))
-import Data.Aeson (FromJSON (parseJSON), ToJSON (toEncoding, toJSON))
+import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSONKey, parseJSON, liftParseJSON, liftParseJSONList)
+import Data.Aeson (ToJSON, ToJSON1, toEncoding, toJSON, liftToJSONList, liftToJSON, liftToEncoding, liftToEncodingList)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as Aeson
 import Data.Align (Align (align, nil))
-import qualified Data.IntervalMap.Generic.Interval as IntervalClass
-import qualified Data.IntervalMap.Generic.Lazy as IMap
+import Data.Functor.Classes
 import Data.Semigroup (Semigroup ((<>)))
 import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.These (These (That, These, This))
 import Data.Typeable (Typeable)
-import GHC.Generics (Generic)
+import GHC.Generics (Generic, Generic1)
 import Reflex.FunctorMaybe (FunctorMaybe (fmapMaybe))
+import qualified Data.Foldable as Foldable
+import qualified Data.IntervalMap.Generic.Interval as IntervalClass
+import qualified Data.IntervalMap.Generic.Lazy as IMap
+import qualified Data.Set as Set
+import qualified GHC.Exts as IsList
+
+{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 type IsInterval i e = IntervalClass.Interval i e
 
 newtype AppendIntervalMap k v = AppendIntervalMap { unAppendIntervalMap :: IMap.IntervalMap k v }
-  deriving (Functor, Foldable, Traversable, Show, Eq, Ord)
+  deriving 
+    (Functor, Foldable, Traversable, Show, Eq, Ord, Generic, Typeable, Generic1)
+
+instance Eq k => Eq1 (AppendIntervalMap k) where
+  liftEq f (AppendIntervalMap xs) (AppendIntervalMap ys) = liftEq f' (IMap.toAscList xs) (IMap.toAscList ys)
+    where
+      f' (k1, x) (k2, y) =  k1 == k2 && f x y
+
+instance Ord k => Ord1 (AppendIntervalMap k) where
+  liftCompare f (AppendIntervalMap xs) (AppendIntervalMap ys) = liftCompare f' (IMap.toAscList xs) (IMap.toAscList ys)
+    where
+      f' (k1, x) (k2, y) =  compare k1 k2 <> f x y
 
 deriving instance (IsInterval k e, Ord k, Read k, Read v) => Read (AppendIntervalMap k v)
 
@@ -51,7 +71,7 @@ instance (IsInterval k e, Ord k) => Align (AppendIntervalMap k) where
     where merge (This m) (That n) = These m n
           merge _ _ = error "Impossible: Align AppendIntervalMap merge"
 
-instance (IsInterval k e, Ord k) => FunctorMaybe (AppendIntervalMap k) where
+instance (IsInterval k e) => FunctorMaybe (AppendIntervalMap k) where
   fmapMaybe f v = AppendIntervalMap $ IMap.mapMaybe f (unAppendIntervalMap v)
 
 instance (IsInterval k e, Ord k, ToJSON k, ToJSON v) => ToJSON (AppendIntervalMap k v) where
@@ -60,6 +80,28 @@ instance (IsInterval k e, Ord k, ToJSON k, ToJSON v) => ToJSON (AppendIntervalMa
 
 instance (IsInterval k e, Ord k, Semigroup v, FromJSON k, FromJSON v) => FromJSON (AppendIntervalMap k v) where
   parseJSON = fmap (AppendIntervalMap . IMap.fromListWith (<>)) . parseJSON
+
+instance (FromJSON k, IsInterval k e, Ord k) => FromJSON1 (AppendIntervalMap k) where
+  liftParseJSON :: forall a. (Aeson.Value -> Aeson.Parser a) -> (Aeson.Value -> Aeson.Parser [a])
+                -> Aeson.Value -> Aeson.Parser (AppendIntervalMap k a)
+  liftParseJSON parse parseList val = AppendIntervalMap . IMap.fromList <$> liftParseJSON parse' parseList' val
+    where
+      parse' :: Aeson.Value -> Aeson.Parser (k, a)
+      parse' val = do
+        (k, aVal) <- parseJSON val
+        a <- parse aVal
+        return (k, a)
+
+      parseList' :: Aeson.Value -> Aeson.Parser [(k, a)]
+      parseList' val = traverse parse' =<< (parseJSON val :: Aeson.Parser [Aeson.Value])
+
+instance ToJSON k => ToJSON1 (AppendIntervalMap k) where
+  liftToJSON :: forall a. (a -> Aeson.Value) -> ([a] -> Aeson.Value) -> AppendIntervalMap k a -> Aeson.Value
+  liftToJSON to tos (AppendIntervalMap xs) = (liftToJSONList to tos :: [(k, a)] -> Aeson.Value ) $ IMap.toList xs
+
+  liftToEncoding :: forall a. (a -> Aeson.Encoding) -> ([a] -> Aeson.Encoding) -> AppendIntervalMap k a -> Aeson.Encoding
+  liftToEncoding to tos (AppendIntervalMap xs) = (liftToEncodingList to tos :: [(k, a)] -> Aeson.Encoding ) $ IMap.toList xs
+
 
 singleton :: forall k v e. (Ord k, IsInterval k e) => k -> v -> AppendIntervalMap k v
 singleton k = AppendIntervalMap . IMap.singleton k
@@ -142,6 +184,9 @@ data ClosedInterval a = ClosedInterval a a
 instance FromJSON a => FromJSON (ClosedInterval a)
 instance ToJSON a => ToJSON (ClosedInterval a)
 
+instance FromJSON a => FromJSONKey (ClosedInterval a)
+instance ToJSON a => ToJSONKey (ClosedInterval a)
+
 data WithInfinity a = LowerInfinity | Bounded a | UpperInfinity
   deriving (Eq, Ord, Generic, Typeable, Show, Read, Functor, Foldable, Traversable)
 instance FromJSON a => FromJSON (WithInfinity a)
@@ -151,6 +196,13 @@ getBounded :: WithInfinity a -> Maybe a
 getBounded = \case
   Bounded a -> Just a
   _ -> Nothing
+
+flattenIntervals
+  :: (Ord e, Semigroup a)
+  => (ClosedInterval e, a) -> (ClosedInterval e, a) -> Maybe (ClosedInterval e, a)
+flattenIntervals (i0@(ClosedInterval lb0 ub0), x0) (i1@(ClosedInterval lb1 ub1), x1)
+  | IMap.overlaps i0 i1 = Just (ClosedInterval (min lb0 lb1) (max ub0 ub1), (x0 <> x1))
+  | otherwise = Nothing
 
 instance Ord a => IMap.Interval (ClosedInterval a) a where
   lowerBound (ClosedInterval x _) = x

@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , writer-cps-mtl
     , tezos-bake-monitor-lib
     , attoparsec
     , base
@@ -21,6 +22,7 @@ library
     , bytestring
     , cases
     , containers
+    , constraints
     , cryptohash
     , cryptonite
     , data-default
@@ -31,15 +33,18 @@ library
     , lens
     , memory
     , modern-uri
+    , reflection
     , reflex
     , reflex-aeson-orphans
     , rhyolite-common
     , scientific
+    , template-haskell
     , text
     , these
     , monoidal-containers
     , time
     , rhyolite-datastructures
+    , transformers-compat
 
   exposed-modules:
     Common
@@ -50,5 +55,6 @@ library
     Common.Schema
     Common.URI
     Common.Verification
+    Common.Vassal
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
