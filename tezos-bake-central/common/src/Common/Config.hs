@@ -5,8 +5,7 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import Tezos.NodeRPC.Sources (NamedChain (..))
-import Tezos.Types (ChainId)
+import Tezos.Types (ChainId, NamedChain (..))
 
 changelogUrl :: Text
 changelogUrl = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/tree/develop/CHANGELOG.md"

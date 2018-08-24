@@ -22,6 +22,7 @@ library
     Tezos.Base58Check
     Tezos.Block
     Tezos.BlockHeader
+    Tezos.Chain
     Tezos.Contract
     Tezos.Fitness
     Tezos.History

@@ -41,7 +41,7 @@ import Say
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), TzScanNode (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez

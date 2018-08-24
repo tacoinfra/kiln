@@ -28,19 +28,11 @@ import qualified Text.URI.QQ as Uri
 
 import Tezos.Base58Check (toBase58Text)
 import Tezos.Block (Block, TzScanBlock (..))
+import Tezos.Chain (NamedChain (..))
 import Tezos.NodeRPC.Class (MonitorHeads (..), QueryBlock (..), QueryChain (..), QueryHistory (..),
                             QueryNode (..))
 import Tezos.NodeRPC.Network (NodeRPCContext (..), QueryNodeImpl (nodeRPC), nodeRPCImpl)
 import Tezos.NodeRPC.Types (AsRpcError)
-
-data NamedChain
-  = --NamedChain_Mainnet
-    NamedChain_Betanet
-  | NamedChain_Alphanet
-  | NamedChain_Zeronet
-  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
-instance FromJSON NamedChain
-instance ToJSON NamedChain
 
 data DataSource
   = DataSource_PlainNode PlainNode

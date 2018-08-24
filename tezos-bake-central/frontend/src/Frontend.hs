@@ -66,8 +66,7 @@ import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), PlainNode (..),
-                              TzScanNode (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.Types
 

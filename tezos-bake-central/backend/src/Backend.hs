@@ -100,7 +100,7 @@ import qualified Text.URI.Lens as Uri
 import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), NamedChain (..), blockscaleNodeUri, querySource)
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), blockscaleNodeUri, querySource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC

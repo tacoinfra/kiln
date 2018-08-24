@@ -58,8 +58,7 @@ import qualified Text.URI as Uri
 
 import Tezos.History (CachedHistory (..), accumHistory)
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), NamedChain (..), QDataSource,
-                              TzScanNode (..), querySource)
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), QDataSource, TzScanNode (..), querySource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC

@@ -28,8 +28,9 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (NamedChain, tzScanUri)
-import Tezos.Types
+import Tezos.NodeRPC.Sources (tzScanUri)
+import Tezos.Types (BlockHash, ChainId, Fitness (..), NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,
+                    toPublicKeyHashText, unFitness)
 
 import Common (tshow)
 import Common.URI (appendPaths, mkRootUri)

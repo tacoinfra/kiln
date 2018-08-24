@@ -22,13 +22,12 @@ module Common.Schema where
 import qualified Cases
 import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except (MonadError, runExcept, throwError)
+import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
 import Data.Version (Version)
@@ -38,13 +37,10 @@ import Rhyolite.Schema (Email, HasId, Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Base58Check (fromBase58)
 import Tezos.Json
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (DataSource, NamedChain (..))
+import Tezos.NodeRPC.Sources (DataSource)
 import Tezos.Types
-
-import Common (tshow)
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -113,20 +109,6 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-showChain :: Either NamedChain ChainId -> Text
-showChain = \case
-  Left n -> case n of
-    NamedChain_Zeronet -> "zeronet"
-    NamedChain_Alphanet -> "alphanet"
-    NamedChain_Betanet -> "betanet"
-  Right i -> toBase58Text i
-
-parseChain :: MonadError Text m => Text -> m (Either NamedChain ChainId)
-parseChain x = case T.toLower x of
-  "zeronet" -> pure $ Left NamedChain_Zeronet
-  "alphanet" -> pure $ Left NamedChain_Alphanet
-  "betanet" -> pure $ Left NamedChain_Betanet
-  _ -> either (throwError . tshow) (pure . Right) (fromBase58 $ T.encodeUtf8 x)
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
