@@ -76,12 +76,12 @@ library
 
   other-modules:
     Paths_backend
+    Backend.Alerts
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    Backend.Errors
     Backend.Graphs
     Backend.NotifyHandler
     Backend.RequestHandler

@@ -218,6 +218,36 @@ getErrorLogs intervalMap = do
             )
 
         , [queryQ|
+            SELECT
+                el.id
+              , el.started AT TIME ZONE 'UTC'
+              , el.stopped AT TIME ZONE 'UTC'
+              , el."lastSeen" AT TIME ZONE 'UTC'
+              , el."noticeSentAt" AT TIME ZONE 'UTC'
+              , t.address, t."expectedChainId", t."actualChainId"
+            FROM "ErrorLog" el
+            JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+            LEFT JOIN "Node" n ON n.address = t.address
+            WHERE
+              COALESCE(NOT n.deleted, TRUE) AND
+              (((?low IS NULL OR el.started >= ?low) AND
+               (?high IS NULL OR el.started <= ?high)) OR
+               ((?low IS NULL OR el.stopped >= ?low) AND
+               (?high IS NULL OR el.stopped <= ?high)))
+            ORDER BY el.id ASC
+            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tExpectedChainId, tActualChainId) ->
+              ( elId :: Id ErrorLog
+              , ( ErrorLog
+                    { _errorLog_started = elStarted
+                    , _errorLog_stopped = elStopped
+                    , _errorLog_lastSeen = elLastSeen
+                    , _errorLog_noticeSentAt = elNoticeSentAt
+                    }
+                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tAddress tExpectedChainId tActualChainId
+                )
+              )
+
+        , [queryQ|
           SELECT
               el.id
             , el.started AT TIME ZONE 'UTC'

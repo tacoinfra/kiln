@@ -31,6 +31,12 @@ workerWithDelay getDelay f = worker' $ do
 worker' :: MonadIO m => IO () -> m (IO ())
 worker' f = return . cancel <=< liftIO $ async $ supervise $ void $ forever f
 
+-- Like 'workerWithDelay' but without a supervising thread. Use this when you don't
+-- want your thread to be restarted without you controlling how that happens.
+unsupervisedWorkerWithDelay :: MonadIO m => NominalDiffTime -> IO () -> m (IO ())
+unsupervisedWorkerWithDelay delay f =
+  return . cancel <=< liftIO $ async $ forever $ f *> threadDelay' delay
+
 threadDelay' :: MonadIO m => NominalDiffTime -> m ()
 threadDelay' delay = liftIO $ threadDelay (fromIntegral $ nominalDiffTimeToMicroseconds delay)
 

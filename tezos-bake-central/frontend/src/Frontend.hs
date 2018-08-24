@@ -344,6 +344,11 @@ liveErrorsWidget errors = void $
                 EndpointType_Client -> "client"
           header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
 
+        ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> do
+          header $ "Node on wrong network: " <> Uri.render address
+          el "p" $
+            text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+
         ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
           header "Baker lagging behind" -- TODO Show client address
           el "p" $ do
@@ -554,7 +559,8 @@ errorsByNode :: AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)) -> Appe
 errorsByNode xs = Map.fromList [(k, (el, t)) | Just (el, t) <- Map.elems xs, let Just k = nodeKeyForErrorLogView t]
   where
     nodeKeyForErrorLogView = \case
-      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint eid EndpointType_Node url) -> Just $ Right url
+      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url) -> Just $ Right url
+      ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _) -> Just $ Right url
       _ -> Nothing
 
 nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
@@ -639,9 +645,9 @@ nodesTab = divClass "ui stackable grid" $ do
                   dyn_ $ ffor hasAlert $ \case
                     Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
                       ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
+                      ErrorLogView_NodeWrongChain{} -> divClass "ui error message" $ divClass "header" $ text "On wrong network."
                       _ -> blank
                     _ -> blank
-
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
     headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =

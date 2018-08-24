@@ -166,6 +166,7 @@ instance ToJSON MailServerView
 
 data ErrorLogView
   = ErrorLogView_InaccessibleEndpoint ErrorLogInaccessibleEndpoint
+  | ErrorLogView_NodeWrongChain ErrorLogNodeWrongChain
   | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
   | ErrorLogView_NodeOnFork ErrorLogNodeOnFork
   | ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate

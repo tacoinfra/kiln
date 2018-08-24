@@ -36,9 +36,9 @@ import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Say (say)
 
+import Backend.Alerts (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig)
-import Backend.Errors (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Version (parseVersion, version)
 import Common.Schema (UpgradeCheckError (..))
 

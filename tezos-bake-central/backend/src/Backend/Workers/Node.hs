@@ -4,7 +4,6 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,7 +13,6 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.Async (async, cancel)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (STM, atomically, readTVar, writeTVar)
 import Control.Lens (ifor, ifor_, ix, to, view, (.~), (<&>), (^.), (^?), _Just, _Right)
@@ -57,14 +55,17 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (CachedHistory (..), accumHistory)
-import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), QDataSource, TzScanNode (..), querySource)
+import Tezos.NodeRPC (BlockType, MonitorHeads, NodeRPCContext (..), QueryBlock, RpcError, nodeRPC, rChain,
+                      rConnections, rHead, rMonitorHeads, rNetworkStat)
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), QDataSource,
+                              TzScanNode (..), querySource)
 import Tezos.Types
 
+import Backend.Alerts (clearInaccessibleEndpointError, clearNodeWrongChainError,
+                       reportInaccessibleEndpointError, reportNodeWrongChainError)
 import Backend.CachedNodeRPC
-import Backend.Common (worker', workerWithDelay)
+import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
-import Backend.Errors
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Common (tshow)
@@ -101,19 +102,17 @@ nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId headBlockInfo = do
   oldHead <- runReaderT dataSourceHead nds
   updateNodeDataSource nds nodeAddr headBlockInfo
   let cacheVar = _nodeDataSource_history nds
-  let ctx = NodeRPCContext httpMgr (Uri.render nodeAddr)
+  let ctx = NodeRPCContext httpMgr (Uri.render nodeAddr) -- TODO: Use PlainNode data source here instead
   newBlock <- modifyMVar cacheVar $ \cache -> do
     let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp
-      :: Either RpcError CachedHistory'
-      <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
-        acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-        sayShow ("new block", nodeAddr, headBlockInfo, acc)
+    newStateRsp :: Either RpcError CachedHistory' <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
+      acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
+      sayShow ("new block", nodeAddr, headBlockInfo, acc)
     case newStateRsp of
-      Left bad -> sayShow bad $> (cache, False)
-      Right good -> return (good, newBlock)
+      Left e -> sayShow e $> (cache, Left e)
+      Right good -> return (good, Right newBlock)
 
-  when newBlock $ do
+  when (newBlock == Right True) $ do
     say $ "new block from node at " <> Uri.render nodeAddr
     say $ T.pack $ show headBlockInfo
 
@@ -204,7 +203,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
 
     ifor_ theseNodeRecords $ \nodeId node -> do
       updateNetworkStats appConfig httpMgr db nodeId node >>= \case
-        Left _e -> reportNodeInaccessible $ _node_address node
+        Left _e -> inDb $ reportNodeInaccessible $ _node_address node
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
@@ -223,16 +222,28 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr nodeId -> do
-      killMonitor <- workerWithDelay (pure 1) $ const $ do
-        _ :: Either RpcError () <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
-          nodeRPC $ rMonitorHeads chainId $ \block -> do
-            -- If we receive a new head, we can clear connectivity errors for this node.
+      let reconnectDelay = 5
+      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ do
+        let
+          nodeQuery :: QDataSource PlainNode a -> IO (Either RpcError a)
+          nodeQuery f = runExceptT $ querySource f httpMgr (PlainNode $ Uri.render nodeAddr)
+
+        _ <- nodeQuery $ rMonitorHeads chainId $ \block -> do
+          -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
+          inDb $ do
             clearNodeInaccessible nodeAddr
+            clearNodeWrongChainError nodeAddr
 
-            nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId block
+          nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId block
 
-        -- If the monitor stopped for any reason, we should report it as a connectivity error.
-        reportNodeInaccessible nodeAddr
+        nodeQuery rChain >>= inDb . \case
+          Left _e -> reportNodeInaccessible nodeAddr -- We have clear evidence that there are connectivity issues.
+          Right actualChainId
+            | actualChainId == chainId -> do
+                -- Monitor stopped even though we're on the right chain, so we'll assume there was a connectivity issue.
+                clearNodeWrongChainError nodeAddr
+                reportNodeInaccessible nodeAddr
+            | otherwise -> reportNodeWrongChainError nodeAddr chainId actualChainId
 
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
@@ -240,9 +251,10 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       say $ "start monitor on " <> Uri.render nodeAddr
 
   where
-    inDb = runNoLoggingT . runDb (Identity db)
-    reportNodeInaccessible nodeAddr = inDb $ runReaderT (reportInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
-    clearNodeInaccessible nodeAddr = inDb $ runReaderT (clearInaccessibleEndpointError EndpointType_Node nodeAddr) appConfig
+
+    inDb = runNoLoggingT . runDb (Identity db) . flip runReaderT appConfig
+    reportNodeInaccessible = reportInaccessibleEndpointError EndpointType_Node
+    clearNodeInaccessible = clearInaccessibleEndpointError EndpointType_Node
 
 
 publicNodesWorker

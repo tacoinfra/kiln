@@ -103,11 +103,11 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (BlockscaleNode (..), blockscaleNodeUri, querySource)
 import Tezos.Types
 
+import Backend.Alerts (clearUpgradeNotice)
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
-import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema

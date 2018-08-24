@@ -185,10 +185,11 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "Delegate" -> handleDelegate
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
-    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
-    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
+    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogNodeWrongChain" -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain
     "ErrorLogUpgradeNotice" -> handleUpgradeNotice
     "PublicNodeHead" -> handlePublicNodeHead
     _ -> do

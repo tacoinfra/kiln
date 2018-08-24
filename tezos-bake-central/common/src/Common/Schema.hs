@@ -112,7 +112,7 @@ instance HasId Node
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
-  Left (e :: Text) -> error $ T.unpack $ "Invalid chain '" <> x <> "': " <> e
+  Left e -> error $ T.unpack $ "Invalid chain '" <> x <> "': " <> e
   Right v -> v
 
 
@@ -141,8 +141,8 @@ mkNode addr = Node
   }
 
 data Parameters = Parameters
-  { _parameters_protoInfo :: !ProtoInfo
-  , _parameters_chain :: !ChainId
+  { _parameters_chain :: !ChainId
+  , _parameters_protoInfo :: !ProtoInfo
   , _parameters_headTimestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
@@ -314,6 +314,14 @@ data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleEndpoint
 
+data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
+  { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
+  , _errorLogNodeWrongChain_address :: !URI
+  , _errorLogNodeWrongChain_expectedChainId :: !ChainId
+  , _errorLogNodeWrongChain_actualChainId :: !ChainId
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeWrongChain
+
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
   , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
@@ -400,6 +408,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogInaccessibleEndpoint
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeOnFork
+  , ''ErrorLogNodeWrongChain
   , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
@@ -424,6 +433,7 @@ concat <$> traverse makeLenses
   , 'ErrorLogInaccessibleEndpoint
   , 'ErrorLogMultipleBakersForSameDelegate
   , 'ErrorLogNodeOnFork
+  , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
   , 'PublicNodeHead
@@ -433,22 +443,22 @@ concat <$> traverse makeLenses
   ]
 
 instance BlockLike VeryBlockLike where
-   hash = veryBlockLike_hash
-   predecessor = veryBlockLike_predecessor
-   fitness = veryBlockLike_fitness
-   level = veryBlockLike_level
-   timestamp = veryBlockLike_timestamp
+  hash = veryBlockLike_hash
+  predecessor = veryBlockLike_predecessor
+  fitness = veryBlockLike_fitness
+  level = veryBlockLike_level
+  timestamp = veryBlockLike_timestamp
 
 instance BlockLike (Event BakedEvent) where
-   hash = event_detail . bakedEvent_hash
-   predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
-   fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
-   level = event_detail . bakedEvent_signedHeader . blockHeader_level
-   timestamp = event_time
+  hash = event_detail . bakedEvent_hash
+  predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
+  fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
+  level = event_detail . bakedEvent_signedHeader . blockHeader_level
+  timestamp = event_time
 
 instance BlockLike (Event SeenEvent) where
-   hash = event_detail . seenEvent_hash
-   predecessor = event_detail . seenEvent_predecessor
-   fitness = event_detail . seenEvent_fitness
-   level = event_detail . seenEvent_level
-   timestamp = event_time
+  hash = event_detail . seenEvent_hash
+  predecessor = event_detail . seenEvent_predecessor
+  fitness = event_detail . seenEvent_fitness
+  level = event_detail . seenEvent_level
+  timestamp = event_time

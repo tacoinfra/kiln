@@ -49,10 +49,10 @@ import qualified Text.URI as Uri
 
 import Tezos.Types
 
+import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
-import Backend.Errors
 import Backend.Schema
 import Backend.Workers
 
