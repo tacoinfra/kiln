@@ -402,7 +402,7 @@ liveErrorsWidget errors = void $ do
       ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-optionsTab = divClass "ui two column grid" $ do
+optionsTab = divClass "ui two column stackable grid" $ do
   enableUpgradeCheck <- asks _cfg_checkForUpgrade
 
   divClass "column" $ traverse (divClass "ui basic segment") $
