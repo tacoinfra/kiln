@@ -194,14 +194,14 @@ backend = do
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
-  say $ "Monitoring chain " <> toBase58Text chainId
+  say $ "Monitoring network " <> toBase58Text chainId
 
   let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
     , injectPure Config.route . encodeViaJson <$> routeEnv
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
-    , Just $ injectPure Config.chain $ toBase58Text chainId
+    , Just $ injectPure Config.chain $ showChain chain
     ]
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
