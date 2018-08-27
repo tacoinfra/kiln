@@ -14,7 +14,7 @@
 
 module Frontend where
 
-import Control.Applicative (liftA2)
+import Control.Applicative (liftA2, liftA3)
 import Control.Lens ((<&>), _1, _2)
 import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
@@ -327,47 +327,74 @@ summaryTab = divClass "ui grid" $ do
 
   return ()
 
+radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
+radioLabels k0 ks = mdo
+  selectedDyn <- holdDyn k0 $ leftmost kClicks
+  kClicks <- for ks $ \(k, label) -> do
+    (element, ()) <- elDynAttr' "a" (ffor selectedDyn $ \selected -> "class"=:("ui " <> (if selected == k then "blue" else "") <> " tiny label link")) label
+    pure $ k <$ domEvent Click element
+  pure selectedDyn
+
+data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+
 liveErrorsWidget
   :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
   => Dynamic t (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))
   -> m ()
-liveErrorsWidget errors = void $
-  listWithKey (errorsByTime Down <$> errors) $ \_ vDyn -> dyn_ $ ffor vDyn $ \(log, specificLog) -> do
-    let header txt = divClass "header" $ text $ case _errorLog_stopped log of
-          Just _ -> "Resolved: " <> txt
-          Nothing -> txt
-    divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-      case specificLog of
-        ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
-          let endpointTypeName = case endpointType of
-                EndpointType_Node -> "node"
-                EndpointType_Client -> "client"
-          header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
+liveErrorsWidget errors = void $ do
+  filterDyn <- radioLabels AlertsFilter_All
+    [ (AlertsFilter_All, text "All")
+    , (AlertsFilter_UnresolvedOnly, text "Unresolved")
+    , (AlertsFilter_ResolvedOnly, text "Resolved")
+    ]
 
-        ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> do
-          header $ "Node on wrong network: " <> Uri.render address
-          el "p" $
-            text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
-
-        ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
-          header "Baker lagging behind" -- TODO Show client address
-          el "p" $ do
-            text "Last block level seen: "
-            blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
-
-        ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
-          header "Node is on fork" -- TODO Fill this out
-
-        ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
-          header "Multiple bakers for same delegate" -- TODO Fill this out
-
-      el "p" $ do
-        text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
-        case _errorLog_stopped log of
-          Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-          Just stopped -> text "Stopped: " *> localTimestamp stopped
+  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
+    listWithKey (errorsByTime Down <$> errors) $ \_ vDyn ->
+      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \((log, specificLog), filterSelection) -> do
+        let isResolved = isJust $ _errorLog_stopped log
+        when (filterSelection == AlertsFilter_All
+            || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
+            || filterSelection == AlertsFilter_ResolvedOnly && isResolved) $
+          logEntry log specificLog
 
   where
+    logEntry log specificLog = do
+      let header txt = divClass "header" $ text $ case _errorLog_stopped log of
+            Just _ -> "Resolved: " <> txt
+            Nothing -> txt
+      divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+        case specificLog of
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
+            let endpointTypeName = case endpointType of
+                  EndpointType_Node -> "node"
+                  EndpointType_Client -> "client"
+            header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
+
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> do
+            header $ "Node on wrong network: " <> Uri.render address
+            el "p" $
+              text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
+            header "Baker lagging behind" -- TODO Show client address
+            el "p" $ do
+              text "Last block level seen: "
+              blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+
+          ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
+            header "Node is on fork" -- TODO Fill this out
+
+          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
+            header "Multiple bakers for same delegate" -- TODO Fill this out
+
+        el "p" $ do
+          text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+          case _errorLog_stopped log of
+            Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+            Just stopped -> text "Stopped: " *> localTimestamp stopped
+
     errorsByTime direction errors = BaseMap.fromList
       [ (direction (_errorLog_started el, _errorLog_lastSeen el, elId), (el, t))
       | (elId, Just (el, t)) <- Map.toList errors
