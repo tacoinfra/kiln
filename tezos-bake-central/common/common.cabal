@@ -13,7 +13,6 @@ library
 
   build-depends:
       aeson
-    , tezos-bake-monitor-lib
     , attoparsec
     , base
     , base16-bytestring
@@ -31,11 +30,13 @@ library
     , lens
     , memory
     , modern-uri
+    , mtl
     , reflex
     , reflex-aeson-orphans
     , rhyolite-common
     , scientific
     , text
+    , tezos-bake-monitor-lib
     , these
     , time
 

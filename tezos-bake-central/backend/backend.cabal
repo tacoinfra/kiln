@@ -86,10 +86,12 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Supervisor
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.Workers
+    Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Delegate
     Backend.Workers.Node

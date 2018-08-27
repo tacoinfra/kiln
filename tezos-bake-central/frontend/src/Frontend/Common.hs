@@ -29,7 +29,7 @@ import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Sources (tzScanUri)
-import Tezos.Types (BlockHash, ChainId, Fitness (..), NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,
+import Tezos.Types (BlockHash, ChainId, Fitness, NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,
                     toPublicKeyHashText, unFitness)
 
 import Common (tshow)
