@@ -66,7 +66,8 @@ import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..),
+                              tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -620,21 +621,21 @@ nodesTab = divClass "ui stackable grid" $ do
 
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
-        Just tilesDyn -> divClass "ui stackable cards" $ void $ do
+        Just tilesDyn -> divClass "ui stackable cards" $ void $
           listWithKey (BaseMap.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
             uniqDyn <- holdUniqDyn vDyn
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
 
               NodeTile_PublicNode node -> do
-                let nodeTitle = text $ case unJson $ _publicNodeHead_source node of
-                      DataSource_TzScan (TzScanNode chain) -> "tzscan (" <> showChain (Left chain) <> ")"
-                      DataSource_BlockscaleNode (BlockscaleNode chain) -> "Foundation Nodes (" <> showChain (Left chain) <> ")"
-                      DataSource_PlainNode (PlainNode url) -> url
+                let nodeTitle = case unJson $ _publicNodeHead_source node of
+                      DataSource_TzScan (TzScanNode chain) -> urlLink (tzScanUri chain) $ text $ "tzscan (" <> showChain (Left chain) <> ")"
+                      DataSource_BlockscaleNode (BlockscaleNode chain) -> text $ "Foundation Nodes (" <> showChain (Left chain) <> ")"
+                      DataSource_PlainNode (PlainNode url) -> text url
                 headBlockLevelHeader
                   nodeTitle
                   (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
                   (pure Nothing)
-                divClass "description" $ do
+                divClass "description" $
                   nodeDataTable
                     [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
                     , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)

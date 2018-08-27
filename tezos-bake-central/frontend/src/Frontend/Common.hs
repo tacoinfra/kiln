@@ -42,6 +42,9 @@ data Cfg = Cfg
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
+urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
+urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
+
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
 
