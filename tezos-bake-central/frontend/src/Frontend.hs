@@ -97,7 +97,7 @@ frontend = (headTag,) $ void $ do
       liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
 
   chain :: Either NamedChain ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
-    maybe (error "No chain provided") (parseChainOrError . T.strip) r
+    maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
   runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
     { _cfg_checkForUpgrade = checkForUpgrade

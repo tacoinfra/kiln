@@ -352,8 +352,8 @@ optsArgDescr =
   , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
-  , Option [] [Config.chain] (mkReqArg "CHAIN" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
-      "Name of a chain (betanet, alphanet, zeronet) or a chain ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+  , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+      "Name of a network (betanet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
   ]
   where

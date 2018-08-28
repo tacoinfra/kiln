@@ -20,7 +20,7 @@ emailFromAddress :: FilePath
 emailFromAddress = "email-from"
 
 chain :: FilePath
-chain = "chain"
+chain = "network"
 
 defaultChain :: Either NamedChain ChainId
 defaultChain = Left NamedChain_Betanet
