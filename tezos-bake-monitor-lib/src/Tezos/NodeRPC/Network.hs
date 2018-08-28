@@ -16,29 +16,31 @@ module Tezos.NodeRPC.Network
   , nodeRPCImpl
   ) where
 
-import Control.Concurrent
 import Control.Exception.Safe (try)
-import Control.Lens (Lens', uncons, unsnoc, view)
-import Control.Monad.Except (MonadError, throwError)
-import Control.Monad.Reader
-import Data.Aeson
-import Data.Bifunctor
+import Control.Lens (Lens', re, uncons, unsnoc, view, (^.))
+import Control.Monad.Except (MonadError, runExceptT, throwError)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Reader (MonadReader, asks)
+import Data.Aeson (FromJSON)
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Char (ord)
-import Data.Foldable
+import Data.Foldable (fold, toList)
+import Data.Function (fix)
 import qualified Data.Map as Map
 import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Data.Typeable
-import Network.HTTP.Client
-import Network.HTTP.Types.Header
-import Network.HTTP.Types.Method (Method, methodGet)
-import Network.HTTP.Types.Status (Status (..))
+import Data.Traversable (for)
+import Data.Typeable (Typeable)
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Types.Header as Http
+import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
+import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Types
@@ -49,37 +51,37 @@ newtype QueryNodeImpl a = QueryNodeImpl {
   }
 
 instance QueryChain QueryNodeImpl where
-  rChain = QueryNodeImpl $ _block_chainId <$> nodeRPCImpl methodGet "/chains/main/blocks/head"
+  rChain = QueryNodeImpl $ _block_chainId <$> nodeRPCImpl Http.methodGet "/chains/main/blocks/head"
 
 instance QueryBlock QueryNodeImpl where
   type BlockType QueryNodeImpl = Block
   --rComplete (BlockPrefix pfx) = QueryNodeImpl $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  rHead chainId = QueryNodeImpl $ nodeRPCImpl methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head"
-  rBlock chainId blockHash = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash
+  rHead chainId = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head"
+  rBlock chainId blockHash = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ chainBlockUrl chainId blockHash
 
 instance QueryHistory QueryNodeImpl where
-  rBlockPred chainId blockHash (RawLevel levelsBack) = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "~" <> T.pack (show levelsBack)
-  rBlocks chainId (RawLevel len) heads = QueryNodeImpl $ byHead <$> nodeRPCImpl methodGet ("/chains/" <> toBase58Text chainId <> "/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads)
+  rBlockPred chainId blockHash (RawLevel levelsBack) = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ chainBlockUrl chainId blockHash <> "~" <> T.pack (show levelsBack)
+  rBlocks chainId (RawLevel len) heads = QueryNodeImpl $ byHead <$> nodeRPCImpl Http.methodGet ("/chains/" <> toBase58Text chainId <> "/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads)
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
       byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
       blk2param :: BlockHash -> Text
       blk2param blkHash = "&head=" <> toBase58Text blkHash
-  rProtoConstants chainId blockHash = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
-  rContract chainId blockHash contractId = QueryNodeImpl $ nodeRPCImpl methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
-  rBakingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
+  rProtoConstants chainId blockHash = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
+  rContract chainId blockHash contractId = QueryNodeImpl $ nodeRPCImpl Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
+  rBakingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
-  rEndorsingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
+  rEndorsingRights chainId blockHash params = QueryNodeImpl $ nodeRPCImpl Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
 
 instance QueryNode QueryNodeImpl where
   rConnections = QueryNodeImpl $ do
-    vs :: [Value] <- nodeRPCImpl methodGet "/network/connections"
+    vs :: [Aeson.Value] <- nodeRPCImpl Http.methodGet "/network/connections"
     return $ fromIntegral $ Prelude.length vs
-  rNetworkStat = QueryNodeImpl $ nodeRPCImpl methodGet "/network/stat"
+  rNetworkStat = QueryNodeImpl $ nodeRPCImpl Http.methodGet "/network/stat"
 
 instance MonitorHeads QueryNodeImpl where
-  rMonitorHeads chainId f = QueryNodeImpl $ nodeRPCChunkedImpl f methodGet ("/monitor/heads/" <> toBase58Text chainId)
+  rMonitorHeads chainId f = QueryNodeImpl $ nodeRPCChunkedImpl f Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
 
 
 chainBlockUrl :: ChainId -> BlockHash -> Text
@@ -91,8 +93,8 @@ dynamicParamRightsRangeToQueryArg = \case
   Right (Cycle x) -> "cycle=" <> T.pack (show x)
 
 data NodeRPCContext = NodeRPCContext
-  { _nodeRPCContext_httpManager :: Manager
-  , _nodeRPCContext_node :: Text
+  { _nodeRPCContext_httpManager :: !Http.Manager
+  , _nodeRPCContext_node :: !Text
   } deriving (Typeable)
 -- TODO: use $makeClassy
 class HasNodeRPC s where
@@ -105,113 +107,114 @@ nodeRPCImpl :: forall m a s e.
   , MonadReader s m , HasNodeRPC s
   , MonadError e m , AsRpcError e
   )
-  => Method -> Text -> m a
-nodeRPCImpl = nodeRPCImpl' eitherDecode
+  => Http.Method -> Text -> m a
+nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode
 
 nodeRPCImpl' :: forall m a s e.
   ( MonadIO m
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   )
-  => (LBS.ByteString -> Either String a) -> Method -> Text -> m a
+  => (LBS.ByteString -> Either String a) -> Http.Method -> Text -> m a
 nodeRPCImpl' decoder method_ rpcSelector = do
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
   node <- asks (_nodeRPCContext_node . view nodeRPCContext)
   -- sayShow (node, method_, rpcSelector)
 
-  let rpcUrl = node <> rpcSelector
+  let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
   liftIO $ T.putStrLn rpcUrl
 
   let rpcBoilerplate req = req
-        { method = method_
-        , requestBody = if method_ == methodGet then "" else "{}"
-        , requestHeaders =
-          [(hContentType, "application/json") | method_ /= methodGet]
-          ++ [ (hUserAgent, "tezos-bake-monitor")
-             , (hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
+        { Http.method = method_
+        , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
+        , Http.requestHeaders =
+          [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
+          ++ [ (Http.hUserAgent, "tezos-bake-monitor")
+             , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
              ]
         }
   let
-    request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
+    request = rpcBoilerplate $ Http.parseRequest_ $ T.unpack rpcUrl
     throwLoggedError e = {-sayErr ("NODERPC ERROR: " <> (T.pack $ show rpcUrl) <> " >> " <> (T.pack $ show e)) *>-} throwError e
 
-  liftIO (try @IO @HttpException $ httpLbs request mgr) >>= \case
+  liftIO (try @IO @Http.HttpException $ Http.httpLbs request mgr) >>= \case
     Left err -> throwLoggedError $ rpcResponse_HttpException (T.pack $ show err)
-    Right result -> case responseStatus result of
-      Status 200 _ -> do
-        let body = responseBody result
+    Right result -> case Http.responseStatus result of
+      Http.Status 200 _ -> do
+        let body = Http.responseBody result
         case decoder body of
           Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
-      Status code phrase -> do
-        liftIO $ print $ responseStatus result
-        liftIO $ LBS8.putStrLn $ responseBody result
+      Http.Status code phrase -> do
+        liftIO $ print $ Http.responseStatus result
+        liftIO $ LBS8.putStrLn $ Http.responseBody result
 
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
-nodeRPCChunkedImpl :: forall m a s e.
+nodeRPCChunkedImpl :: forall a r s e m.
   ( MonadIO m, FromJSON a
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
+  , Monoid r
   )
-  => (RpcResponse a -> IO ())
-  -> Method
+  => (a -> IO r)
+  -> Http.Method
   -> Text
-  -> m (IO ())
-nodeRPCChunkedImpl = nodeRPCChunkedImpl' eitherDecode
+  -> m r
+nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode
 
-nodeRPCChunkedImpl' :: forall m a s e.
+
+nodeRPCChunkedImpl' :: forall a r s e m.
   ( MonadIO m
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
+  , Monoid r
   )
   => (LBS.ByteString -> Either String a)
-  -> (RpcResponse a -> IO ())
-  -> Method
+  -> (a -> IO r)
+  -> Http.Method
   -> Text
-  -> m (IO ())
+  -> m r
 nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
-  -- sayShow (method_, rpcSelector)
-
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
   node <- asks (_nodeRPCContext_node . view nodeRPCContext)
 
   let
-    cb' :: LBS.ByteString -> IO ()
-    cb' chunk = callback $ first (\err -> rpcResponse_NonJSON err chunk) $ decoder chunk
-
     rpcUrl = node <> rpcSelector
+    rpcBoilerplate req = req
+      { Http.method = method_
+      , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
+      , Http.requestHeaders =
+           [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
+        ++ [ (Http.hUserAgent, "tezos-bake-monitor")
+           , (Http.hAccept, "*/*")
+           ]
+      }
+    request = rpcBoilerplate $ Http.parseRequest_ $ T.unpack rpcUrl
 
-  -- sayShow rpcUrl
+  res :: Either Http.HttpException (Either RpcError r) <- liftIO $ try @_ @Http.HttpException $
+    Http.withResponse request mgr $ \response -> runExceptT $ do
+      flip fix mempty $ \self (leftover, r) -> do
+        let
+          callbackWithDecode bytes = case decoder bytes of
+            Left e -> throwError $ RpcError_NonJSON e bytes
+            Right v -> liftIO $ callback v
 
-  let rpcBoilerplate req = req
-        { method = method_
-        , requestBody = if method_ == methodGet then "" else "{}"
-        , requestHeaders =
-          [(hContentType, "application/json") | method_ /= methodGet]
-          ++ [ (hUserAgent, "tezos-bake-monitor")
-             , (hAccept, "*/*")
-             ]
-        }
-  let request = rpcBoilerplate $ parseRequest_ $ T.unpack rpcUrl
-  liftIO (try @IO @HttpException $ responseOpen request mgr) >>= \case
-    Left err -> throwError $ rpcResponse_HttpException $ (T.pack $ show err)
-    Right response -> do
-      -- sayShow $ void response
-      let
-        bodyReader = responseBody response
-        worker :: LBS.ByteString -> IO ()
-        worker leftover = do
-          try @IO @HttpException (brRead bodyReader) >>= \case
-            Left err -> callback $ Left $ rpcResponse_HttpException $ (T.pack $ show err)
-            Right chunk -> do
-              -- sayShow chunk
-              let Just (xs, x) = unsnoc $ LBS.split (fromIntegral $ ord '\n') (leftover <> LBS.fromStrict chunk)
-              traverse_ cb' xs
+          callbackMany xs = (r `mappend`) . fold <$> for xs callbackWithDecode
 
-              if BS.length chunk == 0 -- thats it man, no more stuff after this
-                then cb' x
-                else worker x
-      thread <- liftIO $ forkIO $ worker mempty
-      return $ killThread thread
+        chunk <- liftIO $ Http.brRead (Http.responseBody response)
 
+        let messages = LBS.split (fromIntegral $ ord '\n') (leftover <> LBS.fromStrict chunk)
+
+        if BS.length chunk == 0 then
+          callbackMany messages
+        else case unsnoc messages of
+          Nothing -> pure r
+          Just (xs, x) -> do
+            r' <- callbackMany xs
+            self (x, r')
+
+  case res of
+    Left (httpErr :: Http.HttpException) -> throwError $ rpcResponse_HttpException (T.pack $ show httpErr)
+    Right (Left rpcError) -> throwError $ rpcError ^. re asRpcError
+    Right (Right r) -> pure r

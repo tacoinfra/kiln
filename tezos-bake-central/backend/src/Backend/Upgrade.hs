@@ -34,12 +34,11 @@ import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Concurrent (worker)
 import Say (say)
 
-import Backend.Common (worker')
+import Backend.Alerts (clearUpgradeNotice, reportUpgradeNotice)
+import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig)
-import Backend.Errors (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Version (parseVersion, version)
 import Common.Schema (UpgradeCheckError (..))
 
@@ -51,7 +50,7 @@ upgradeCheckWorker
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker upgradeBranch delay appConfig httpMgr db = worker' (pure delay) $ const $ do
+upgradeCheckWorker upgradeBranch delay appConfig httpMgr db = workerWithDelay (pure delay) $ const $ do
     say "Checking for upgrades"
     void $ checkForUpgrade upgradeBranch httpMgr appConfig (runNoLoggingT . runDb (Identity db))
 

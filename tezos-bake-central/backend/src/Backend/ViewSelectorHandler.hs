@@ -36,11 +36,12 @@ import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Id)
+import Rhyolite.Schema (Id, Json (..))
 import Say
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez
@@ -58,10 +59,11 @@ import Common.Schema
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => NodeDataSource
+  => Maybe NamedChain
+  -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
     return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
@@ -80,26 +82,32 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
   nodeAddresses <- whenJust (_bakeViewSelector_nodeAddresses vs) $ \a -> do
     rs <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ Map.fromList [(nid, (First (Just n), a)) | (nid, n) <- rs]
-  tzscan <- whenJust (_bakeViewSelector_tzscan vs) $ \a ->
-    flip single a . listToMaybe <$> select ((TzScan_chainIdField ==. _nodeDataSource_chain nds) `limitTo` 1)
+
+  publicNodeHeads <- whenJust ((,) <$> _bakeViewSelector_publicNodeHeads vs <*> namedChain') $ \(a, namedChain) ->
+    fmap (\v -> (First $ Just v, a)) <$> selectMap' PublicNodeHeadConstructor
+      (   PublicNodeHead_sourceField ==. Json (DataSource_TzScan (TzScanNode namedChain))
+      ||. PublicNodeHead_sourceField ==. Json (DataSource_BlockscaleNode (BlockscaleNode namedChain))
+      )
+
   nodes <- do
     let
       selNodesUniversal = isJust $ _universalMap_universe $ _bakeViewSelector_nodes vs
       selNodes = In $ if selNodesUniversal then mempty else Map.keys $ _universalMap_only $ _bakeViewSelector_nodes vs
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
-        , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
+        , n.address, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
-          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
+          (nid, addr, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (nid, First $ Just Node
             { _node_address = addr
             , _node_identity = ident
             , _node_headLevel = headLevel
             , _node_headBlockHash = headBlockHash
+            , _node_headBlockBakedAt = headBlockBakedAt
             , _node_peerCount = peerCount
             , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
             , _node_fitness = fitness
@@ -143,7 +151,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     { _bakeView_clients = clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
-    , _bakeView_tzscan = tzscan
+    , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_delegateStats = delegateStats
@@ -153,7 +161,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identi
     , _bakeView_summary = summary
     , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
-    , _bakeView_errors = first AppendMap.keysSet <$> errors
+    , _bakeView_errors = first (SemiSet_All . AppendMap.keysSet) <$> errors
     , _bakeView_errorsById = fold $ fst <$> errors
     , _bakeView_upgrade = upgrade
     }
@@ -191,7 +199,7 @@ getErrorLogs intervalMap = do
           LEFT JOIN "Node" n ON n.address = t.address
           LEFT JOIN "Client" c ON c.address = t.address
           WHERE
-            NOT n.deleted AND NOT c.deleted AND
+            COALESCE(NOT n.deleted, TRUE) AND COALESCE(NOT c.deleted, TRUE) AND
             (((?low IS NULL OR el.started >= ?low) AND
              (?high IS NULL OR el.started <= ?high)) OR
              ((?low IS NULL OR el.stopped >= ?low) AND
@@ -208,6 +216,36 @@ getErrorLogs intervalMap = do
               , ErrorLogView_InaccessibleEndpoint $ ErrorLogInaccessibleEndpoint elId tType tAddress
               )
             )
+
+        , [queryQ|
+            SELECT
+                el.id
+              , el.started AT TIME ZONE 'UTC'
+              , el.stopped AT TIME ZONE 'UTC'
+              , el."lastSeen" AT TIME ZONE 'UTC'
+              , el."noticeSentAt" AT TIME ZONE 'UTC'
+              , t.address, t."expectedChainId", t."actualChainId"
+            FROM "ErrorLog" el
+            JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+            LEFT JOIN "Node" n ON n.address = t.address
+            WHERE
+              COALESCE(NOT n.deleted, TRUE) AND
+              (((?low IS NULL OR el.started >= ?low) AND
+               (?high IS NULL OR el.started <= ?high)) OR
+               ((?low IS NULL OR el.stopped >= ?low) AND
+               (?high IS NULL OR el.stopped <= ?high)))
+            ORDER BY el.id ASC
+            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tExpectedChainId, tActualChainId) ->
+              ( elId :: Id ErrorLog
+              , ( ErrorLog
+                    { _errorLog_started = elStarted
+                    , _errorLog_stopped = elStopped
+                    , _errorLog_lastSeen = elLastSeen
+                    , _errorLog_noticeSentAt = elNoticeSentAt
+                    }
+                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tAddress tExpectedChainId tActualChainId
+                )
+              )
 
         , [queryQ|
           SELECT

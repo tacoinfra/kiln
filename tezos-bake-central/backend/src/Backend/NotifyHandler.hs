@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
@@ -41,7 +42,7 @@ import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
 import Common (tshow, whenJust)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), SemiSet (..), TimeWindow,
                    mailServerConfigToView, ulookup)
 import Common.Schema
 
@@ -159,16 +160,10 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
               pure $ if null relevantIntervals
                 then mempty :: BakeView a
                 else mempty
-                  { _bakeView_errors = (,) (Set.singleton logId) <$> relevantIntervals
+                  { _bakeView_errors = (SemiSet_Patch (Set.singleton logId) mempty, ) <$> relevantIntervals
                   , _bakeView_errorsById =
                       Map.singleton logId (First (Just (errorLog, toView specificLog)))
                   }
-
-      handleTzScan = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id TzScan) of
-        Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenJust (_bakeViewSelector_tzscan aggVS) $ \a -> do
-          tzscan <- get $ fromId nid
-          pure $ mempty { _bakeView_tzscan = single tzscan a }
 
       handleUpgradeNotice = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
@@ -177,6 +172,12 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
             n <- getUpgradeNotice
             pure $ mempty { _bakeView_upgrade = single n a }
 
+      handlePublicNodeHead = case fromJSON (_notifyMessage_value notifyMessage) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (nid :: Id PublicNodeHead) -> whenJust (_bakeViewSelector_publicNodeHeads aggVS) $ \a -> do
+          node <- get $ fromId nid
+          pure $ mempty { _bakeView_publicNodeHeads = Map.singleton nid (First node, a) }
+
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
     "Parameters" -> handleParameters
@@ -184,12 +185,13 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "Delegate" -> handleDelegate
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
-    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
-    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
+    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogNodeWrongChain" -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain
     "ErrorLogUpgradeNotice" -> handleUpgradeNotice
-    "TzScan" -> handleTzScan
+    "PublicNodeHead" -> handlePublicNodeHead
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty

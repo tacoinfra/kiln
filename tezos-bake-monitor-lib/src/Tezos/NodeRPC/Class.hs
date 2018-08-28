@@ -10,7 +10,7 @@ import Data.Sequence (Seq)
 import Data.Set (Set)
 import Data.Word (Word64)
 
-import Tezos.NodeRPC.Types (NetworkStat, RpcResponse)
+import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Types
 
 
@@ -39,4 +39,4 @@ class QueryNode repr where -- my node
   rNetworkStat :: repr NetworkStat
 
 class MonitorHeads repr where
-  rMonitorHeads :: ChainId -> (RpcResponse MonitorBlock -> IO ()) -> repr (IO ())
+  rMonitorHeads :: Monoid r => ChainId -> (MonitorBlock -> IO r) -> repr r

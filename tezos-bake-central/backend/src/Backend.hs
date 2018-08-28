@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -9,14 +10,13 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
 import Control.Applicative (ZipList (..), liftA2, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
+import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO, throwString)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
 import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
@@ -33,6 +33,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
+import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, foldl', for_, toList, traverse_)
 import Data.Function (on, (&))
 import Data.Functor (($>))
@@ -100,13 +101,14 @@ import qualified Text.URI.Lens as Uri
 import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), blockscaleNodeUri, querySource)
 import Tezos.Types
 
+import Backend.Alerts (clearUpgradeNotice)
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
-import Backend.Common (worker')
+import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
-import Backend.Errors
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -142,8 +144,6 @@ addNode node = do
     _ -> insertAndNotify node
 
 
-
-
 timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
 timeit note errback action = do
   !now <- liftIO getCurrentTime
@@ -151,7 +151,6 @@ timeit note errback action = do
   !later <- liftIO getCurrentTime
   sayShow (note, diffUTCTime later now)
   return result
-
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -174,13 +173,9 @@ backend = do
         (_opts_route =<< SnapServer.getOther cfg))
     (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
-  !(blockExplorer :: Maybe URI) <- liftA2 (<|>)
-    (pure $ _opts_blockExplorer =<< SnapServer.getOther cfg)
-    (getConfigFromFile (Just . mkRootUriOrError) $ configPath Config.blockExplorer)
-
-  !(chainId :: ChainId) <- fmap (fromMaybe betanetChain) $ liftA2 (<|>)
+  !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
-    (getConfigFromFile (either (const Nothing) Just . fromBase58 . T.encodeUtf8) $ configPath Config.chain)
+    (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
     (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
@@ -190,11 +185,23 @@ backend = do
     (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
+  httpMgr <- Http.newManager Https.tlsManagerSettings
+
+  chainId <- case chain of
+    Right chainId -> pure chainId
+    Left chainName -> runExceptT (querySource rChain httpMgr (BlockscaleNode chainName)) >>= \case
+      Left (e :: RpcError) -> throwString $
+        "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
+      Right chainId -> pure chainId
+
+  say $ "Monitoring network " <> toBase58Text chainId
+
+  let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
     [ Just $ fst frontend
-    , injectPure Config.route . T.decodeUtf8 . LBS.toStrict . Aeson.encode <$> routeEnv
-    , injectPure Config.blockExplorer . tshow <$> blockExplorer
+    , injectPure Config.route . encodeViaJson <$> routeEnv
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
+    , Just $ injectPure Config.chain $ showChain chain
     ]
 
   let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
@@ -206,25 +213,34 @@ backend = do
         migrateQueuedEmail tableInfo
         migrateSchema tableInfo
 
+    dataSrc <- blankNodeDataSource db chainId httpMgr
+
+    -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
+    for_ (leftToMaybe chain) $ \namedChain -> do
+      initParams dataSrc [blockscaleNodeUri namedChain]
+
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< worker' (pure 10) $ const $ runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
-
-      httpMgr <- Http.newManager Https.tlsManagerSettings
-      dataSrc <- blankNodeDataSource db chainId httpMgr
+      addFinalizer <=< workerWithDelay (pure 10) $ const $
+        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
         (notifyHandler dataSrc)
-        (viewSelectorHandler dataSrc db)
+        (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< tzScanWorker dataSrc appConfig db
+
+      case chain of
+        Left chainName -> do
+          addFinalizer =<< publicNodesWorker dataSrc chainName appConfig db
+        _ -> pure ()
+
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
 
@@ -303,8 +319,7 @@ data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
   , _opts_emailFromAddress :: !(Maybe Text)
-  , _opts_blockExplorer :: !(Maybe URI)
-  , _opts_chain :: !(Maybe ChainId)
+  , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
   }
@@ -314,14 +329,13 @@ instance Semigroup Opts where
     { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
     , _opts_route = _opts_route b <|> _opts_route a
     , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
-    , _opts_blockExplorer = _opts_blockExplorer b <|> _opts_blockExplorer a
     , _opts_chain = _opts_chain b <|> _opts_chain a
     , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
     , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -332,16 +346,15 @@ optsArgDescr =
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
   , Option [] [Config.emailFromAddress] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , Option [] [Config.blockExplorer] (mkReqArg "URL" $ \x -> mempty { _opts_blockExplorer = Just $ mkRootUriOrError $ T.pack x }) $
-      "URL of the block explorer to use for links. If blank, use contents of '" <> configPath Config.blockExplorer <> "'."
-  , Option [] [Config.chain] (mkReqArg "ChainId" $ \x -> mempty { _opts_chain = Just $ fromString x }) $
-      "Chain Id.  default:" <> T.unpack (toBase58Text betanetChain) <> " " <> configPath Config.blockExplorer <> "'."
   , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
   , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
+  , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+      "Name of a network (betanet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var

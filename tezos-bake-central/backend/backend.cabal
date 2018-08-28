@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , async
     , base
     , base16-bytestring
     , bytestring
@@ -75,20 +76,22 @@ library
 
   other-modules:
     Paths_backend
+    Backend.Alerts
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    Backend.Errors
     Backend.Graphs
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Supervisor
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.Workers
+    Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Delegate
     Backend.Workers.Node

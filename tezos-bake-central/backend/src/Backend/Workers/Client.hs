@@ -41,17 +41,18 @@ import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
                                 updateAndNotify)
-import Rhyolite.Concurrent (worker)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Types
 
+import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
-import Backend.Errors
 import Backend.Schema
 import Backend.Workers
 
@@ -70,20 +71,21 @@ clientWorker
   -> NodeDataSource
   -> IO (IO ())
 clientWorker appCfg nds =
-  worker' (readTimeBetweenBlocks nds) $ \delay ->
+  worker' $ (*> waitForNewHead nds) $
     readMVar (_nodeDataSource_parameters nds) >>= \protoInfo ->
       runNoLoggingT $ runDb (Identity (_nodeDataSource_pool nds)) $
-        runReaderT (doUpdate delay protoInfo) (ClientWorkerContext appCfg nds)
+        runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 
   where
-    doUpdate delay protoInfo = do
+    doUpdate protoInfo = do
       say "Update client cycle."
       now <- getTime
+      let delay = calcTimeBetweenBlocks protoInfo
       let maxTime = Just (addUTCTime (- delay) now)
 
       let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
-      toUpdate :: [(Id Client, ClientAddress)] <- [queryQ|
+      toUpdate :: [(Id Client, URI)] <- [queryQ|
         SELECT id, address
         FROM "Client" c
         WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
@@ -97,13 +99,13 @@ clientWorker appCfg nds =
               ]
 
         result <- handlingHttpExc $ do
-          say $ "Updating client at " <> address
+          say $ "Updating client at " <> Uri.render address
 
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
-          clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/config")
+          clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack (Uri.render address) <> "/config")
           let clientConfigJson = Json clientConfig
 
-          report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack address <> "/events")
+          report :: Report <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack (Uri.render address) <> "/events")
           let reportJson = Json report
 
           for_ (maximumByMay (compare `on` _event_time) $ _report_seen report) $ \seenEvent ->

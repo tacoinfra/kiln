@@ -8,12 +8,13 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens')
+import Control.Lens (Lens', iso)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
+import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import qualified Data.Text as T
@@ -106,7 +107,7 @@ data TzScanBlock = TzScanBlock
   -- , _tzScanBlock_testNetwork_ :: !Text
   -- , _tzScanBlock_testNetworkExpiration" :: !Text
   , _tzScanBlock_baker :: !TzScanBaker
-  , _tzScanBlock_nbOperations :: !Word64
+  , _tzScanBlock_nbOperations :: !(Maybe Word64)
   , _tzScanBlock_priority :: !Int
   , _tzScanBlock_level :: !RawLevel
   , _tzScanBlock_commitedNonceHash :: !TzScanNonceHash
@@ -164,7 +165,6 @@ concat <$> traverse makeLenses
  , 'TzScanProtocol
  ]
 
-
 class BlockLike b where
   -- chain :: Lens' b ChainId
   hash :: Lens' b BlockHash
@@ -186,6 +186,13 @@ instance BlockLike MonitorBlock where
   level = monitorBlock_level
   fitness = monitorBlock_fitness
   timestamp = monitorBlock_timestamp
+
+instance BlockLike TzScanBlock where
+  hash = tzScanBlock_hash
+  predecessor = tzScanBlock_predecessorHash
+  level = tzScanBlock_level
+  fitness = tzScanBlock_fitness . iso coerce coerce
+  timestamp = tzScanBlock_timestamp
 
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'

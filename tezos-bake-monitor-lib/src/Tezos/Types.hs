@@ -1,67 +1,23 @@
-{-# LANGUAGE OverloadedStrings #-}
-module Tezos.Types
-  ( module Tezos.Account
-  , module Tezos.BalanceUpdate
-  , module Tezos.Base16ByteString
-  , module Tezos.Base58Check
-  , module Tezos.Block
-  , module Tezos.BlockHeader
-  , module Tezos.Contract
-  , module Tezos.Fitness
-  , module Tezos.Json
-  , module Tezos.Level
-  , module Tezos.Operation
-  , module Tezos.PeriodSequence
-  , module Tezos.ProtocolConstants
-  , module Tezos.PublicKeyHash
-  , module Tezos.Tez
-  , module Tezos.Types
-  ) where
+module Tezos.Types (module X) where
 
-import Tezos.Account
-import Tezos.Base58Check
-  ( toBase58Text
-  , BlockHash
-  , OperationHash
-  , OperationListHash
-  , OperationListListHash
-  , ProtocolHash
-  , ContextHash
-  , Ed25519PublicKeyHash
-  , Secp256k1PublicKeyHash
-  , CryptoboxPublicKeyHash
-  , Ed25519Seed
-  , Ed25519PublicKey
-  , Secp256k1SecretKey
-  , Secp256k1PublicKey
-  , Ed25519SecretKey
-  , Ed25519Signature
-  , Secp256k1Signature
-  , GenericSignature
-  , ChainId
-  , P256PublicKeyHash
-  , P256Signature
-  , P256PublicKey
-  , ContractHash
-  , NonceHash
-  , CycleNonce
-  , BlindedPublicKeyHash
-  )
-
-import Tezos.BalanceUpdate
-import Tezos.Base16ByteString
-import Tezos.Block
-import Tezos.BlockHeader
-import Tezos.Contract
-import Tezos.Fitness
-import Tezos.Json(TezosWord64(..))
-import Tezos.Level
-import Tezos.Operation(Operation)
-import Tezos.ProtocolConstants
-import Tezos.PublicKeyHash
-import Tezos.PeriodSequence
-import Tezos.Tez
-
-
-betanetChain :: ChainId
-betanetChain = "NetXdQprcVkpaWU"
+import Tezos.Account as X
+import Tezos.BalanceUpdate as X
+import Tezos.Base16ByteString as X
+import Tezos.Base58Check as X (BlindedPublicKeyHash, BlockHash, ChainId, ContextHash, ContractHash,
+                               CryptoboxPublicKeyHash, CycleNonce, Ed25519PublicKey, Ed25519PublicKeyHash,
+                               Ed25519SecretKey, Ed25519Seed, Ed25519Signature, GenericSignature, NonceHash,
+                               OperationHash, OperationListHash, OperationListListHash, P256PublicKey,
+                               P256PublicKeyHash, P256Signature, ProtocolHash, Secp256k1PublicKey,
+                               Secp256k1PublicKeyHash, Secp256k1SecretKey, Secp256k1Signature, toBase58Text)
+import Tezos.Block as X
+import Tezos.BlockHeader as X
+import Tezos.Chain as X
+import Tezos.Contract as X
+import Tezos.Fitness as X
+import Tezos.Json as X (TezosWord64 (..))
+import Tezos.Level as X
+import Tezos.Operation as X (Operation)
+import Tezos.PeriodSequence as X
+import Tezos.ProtocolConstants as X
+import Tezos.PublicKeyHash as X
+import Tezos.Tez as X
