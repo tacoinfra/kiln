@@ -13,6 +13,8 @@ Some of these are harder to test than others, but they will all lead to the same
 
 ## Tests
 
+For now we only test via scenario #1 above.
+
   1. Run the monitor. Note that the monitor is configured to track a specific chain.
   1. Configure the monitor to send alerts via email or some other medium. Test this to verify it works.
   1. Start a node with an RPC address configured. It should be running on the same chain as the chain being tracked by the monitor.
@@ -20,6 +22,7 @@ Some of these are harder to test than others, but they will all lead to the same
   1. Verify that the node is showing up in the UI with new blocks updating regularly.
   1. Kill the node.
   1. Verify that the monitor UI immediately shows an error alert for the correct node.
+  1. Verify that a notification was sent to the proper medium.
   1. Start the node again.
   1. Verify that the alert becomes resolved and the node begins updating in the UI again.
 
