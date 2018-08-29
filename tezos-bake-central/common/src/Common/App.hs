@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -17,16 +19,15 @@ import Data.Bifunctor
 import Data.Foldable(fold)
 import Control.Lens (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Align (Align (alignWith, nil))
+import Data.Align (Align, alignWith, nil)
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as MMap
 import Data.Functor.Compose
-import Data.Fixed (Micro)
-import Data.Semigroup (First (..), Semigroup, (<>), Option(..))
+import Data.Semigroup (First (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import Data.These (These (..), mergeThese, these)
+import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
 import Data.Version (Version)
@@ -40,14 +41,8 @@ import Rhyolite.Schema (Email, Id)
 
 import Tezos.Types
 
-import Common
-import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval(..), WithInfinity(..))
-import qualified Common.AppendIntervalMap as AppendIMap
+import Common.AppendIntervalMap (ClosedInterval(..), WithInfinity(..))
 import Common.Schema
--- import Rhyolite.SemiMap (SemiMap(..))
--- import qualified Rhyolite.SemiMap as Rhyolite
-import qualified Data.Map.Monoidal as MMap
-import qualified Data.Map as Map
 
 import Common.Vassal
 
@@ -153,44 +148,62 @@ cropBakeView vs v = BakeView
       , _bakeView_summary         = cropView (_bakeViewSelector_summary         vs) (_bakeView_summary v)
       , _bakeView_errors          = cropView (_bakeViewSelector_errors          vs) (_bakeView_errors v)
       , _bakeView_upgrade         = cropView (_bakeViewSelector_upgrade         vs) (_bakeView_upgrade v)
-      -- , _bakeView_graphs = graphs
-      -- , _bakeView_summaryGraph = summaryGraph
       }
 
--- instance Align BakeViewSelector where
---   nil = BakeViewSelector nil nil nil nil nil nil nil nil nil nil nil nil nil
---   alignWith f u v = BakeViewSelector
---     { _bakeViewSelector_clientAddresses = alignWith f (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
---     , _bakeViewSelector_summary = alignWith f (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
---     , _bakeViewSelector_clients = alignWith f (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
---     , _bakeViewSelector_parameters = alignWith f (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
---     , _bakeViewSelector_tzscan = alignWith f (_bakeViewSelector_tzscan u) (_bakeViewSelector_tzscan v)
---     , _bakeViewSelector_nodes = alignWith f (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
---     , _bakeViewSelector_delegates = alignWith f (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
---     , _bakeViewSelector_delegateStats =  alignWith f (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
---     , _bakeViewSelector_notificatees = alignWith f (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
---     , _bakeViewSelector_mailServer = alignWith f (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
---     , _bakeViewSelector_nodeAddresses = alignWith f (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
---     , _bakeViewSelector_errors = alignWith f (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
---     , _bakeViewSelector_upgrade = alignWith f (_bakeViewSelector_upgrade u) (_bakeViewSelector_upgrade v)
---     }
 
--- instance FunctorMaybe BakeViewSelector where
---   fmapMaybe f a = BakeViewSelector
---     { _bakeViewSelector_clientAddresses = fmapMaybe f $ _bakeViewSelector_clientAddresses a
---     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
---     , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
---     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
---     , _bakeViewSelector_tzscan = fmapMaybe f $ _bakeViewSelector_tzscan a
---     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
---     , _bakeViewSelector_delegates = fmapMaybe f $ _bakeViewSelector_delegates a
---     , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
---     , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
---     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
---     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
---     , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
---     , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
---     }
+instance FunctorMaybe BakeViewSelector where
+  fmapMaybe f a = BakeViewSelector
+    { _bakeViewSelector_clientAddresses = fmapMaybe f $ _bakeViewSelector_clientAddresses a
+    , _bakeViewSelector_clients =         fmapMaybe f $ _bakeViewSelector_clients         a
+    , _bakeViewSelector_parameters =      fmapMaybe f $ _bakeViewSelector_parameters      a
+    , _bakeViewSelector_tzscan =          fmapMaybe f $ _bakeViewSelector_tzscan          a
+    , _bakeViewSelector_nodes =           fmapMaybe f $ _bakeViewSelector_nodes           a
+    , _bakeViewSelector_delegates =       fmapMaybe f $ _bakeViewSelector_delegates       a
+    , _bakeViewSelector_delegateStats =   fmapMaybe f $ _bakeViewSelector_delegateStats   a
+    , _bakeViewSelector_notificatees =    fmapMaybe f $ _bakeViewSelector_notificatees    a
+    , _bakeViewSelector_mailServer =      fmapMaybe f $ _bakeViewSelector_mailServer      a
+    , _bakeViewSelector_summary =         fmapMaybe f $ _bakeViewSelector_summary         a
+    , _bakeViewSelector_nodeAddresses =   fmapMaybe f $ _bakeViewSelector_nodeAddresses   a
+    , _bakeViewSelector_errors =          fmapMaybe f $ _bakeViewSelector_errors          a
+    , _bakeViewSelector_upgrade =         fmapMaybe f $ _bakeViewSelector_upgrade         a
+    }
+
+instance Align BakeViewSelector where
+  nil = BakeViewSelector
+    { _bakeViewSelector_clientAddresses = nil
+    , _bakeViewSelector_clients =         nil
+    , _bakeViewSelector_parameters =      nil
+    , _bakeViewSelector_tzscan =          nil
+    , _bakeViewSelector_nodes =           nil
+    , _bakeViewSelector_delegates =       nil
+    , _bakeViewSelector_delegateStats =   nil
+    , _bakeViewSelector_notificatees =    nil
+    , _bakeViewSelector_mailServer =      nil
+    , _bakeViewSelector_summary =         nil
+    , _bakeViewSelector_nodeAddresses =   nil
+    , _bakeViewSelector_errors =          nil
+    , _bakeViewSelector_upgrade =         nil
+    }
+
+  alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
+  alignWith f xs ys = BakeViewSelector
+    { _bakeViewSelector_clientAddresses = f' _bakeViewSelector_clientAddresses
+    , _bakeViewSelector_clients =         f' _bakeViewSelector_clients
+    , _bakeViewSelector_parameters =      f' _bakeViewSelector_parameters
+    , _bakeViewSelector_tzscan =          f' _bakeViewSelector_tzscan
+    , _bakeViewSelector_nodes =           f' _bakeViewSelector_nodes
+    , _bakeViewSelector_delegates =       f' _bakeViewSelector_delegates
+    , _bakeViewSelector_delegateStats =   f' _bakeViewSelector_delegateStats
+    , _bakeViewSelector_notificatees =    f' _bakeViewSelector_notificatees
+    , _bakeViewSelector_mailServer =      f' _bakeViewSelector_mailServer
+    , _bakeViewSelector_summary =         f' _bakeViewSelector_summary
+    , _bakeViewSelector_nodeAddresses =   f' _bakeViewSelector_nodeAddresses
+    , _bakeViewSelector_errors =          f' _bakeViewSelector_errors
+    , _bakeViewSelector_upgrade =         f' _bakeViewSelector_upgrade
+    }
+    where
+      f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
+      f' p = alignWith f (p xs) (p ys)
 
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView

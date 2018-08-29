@@ -26,6 +26,7 @@ module Common.Vassal where
 
 import Prelude hiding (lookup, (.), null)
 
+import Data.These (These(..))
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.Aeson(FromJSON, ToJSON, FromJSON1, ToJSON1, liftParseJSON, parseJSON, toJSON, toEncoding, liftToEncoding, liftToJSON)
 import Data.Aeson.TH (deriveJSON, mkLiftParseJSON, defaultOptions, mkParseJSON, mkToEncoding, mkToJSON, mkLiftToEncoding, mkLiftToJSON)
@@ -75,6 +76,8 @@ import Common.WrappedShow1
 import Data.Reflection (Reifies)
 import Data.Proxy(Proxy)
 import Unsafe.Coerce (unsafeCoerce)
+
+import Data.Align
 
 -- we have the general problem of needing to send "incremental" updates to a
 -- (view of) a shared data set.  The general idea is to have an initial query
@@ -155,6 +158,10 @@ deriving instance FunctorMaybe Option
 
 class ( TraversableWithIndex (ViewIndex f) (View f)
       , FunctorMaybe (View f)
+      -- these two shouldn't really be needed, rhyolite doesn't actually use
+      -- them.  for now, this makes it easier to "migrate", especially since
+      -- the needed semigroup instances can be more easily made with these
+      , FunctorMaybe f, Functor f, Align f
       ) => ViewSelector f where
   data View f :: * -> *
   type ViewIndex f
@@ -327,7 +334,9 @@ iWither f = fmap catMaybes . itraverse f
 type MaybeView v a = View (MaybeSelector v) a
 
 newtype MaybeSelector (v :: *) a = MaybeSelector { unMaybeSelector :: Option a }
-  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1)
+  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1, FunctorMaybe, Align)
+
+
 
 viewJust :: a -> MaybeSelector v a
 viewJust = MaybeSelector . Option . Just
@@ -361,7 +370,7 @@ instance TraversableWithIndex () (View (MaybeSelector v)) where
 
 
 newtype MapSelector k (v :: *) a = MapSelector { unMapSelector :: MonoidalMap k a }
-  deriving (Eq, Ord, Functor, Foldable, Traversable, Semigroup)
+  deriving (Eq, Ord, Functor, Foldable, Traversable, Semigroup, FunctorMaybe, Align)
 
 instance Ord k => ViewSelector (MapSelector k v) where
   newtype View (MapSelector k v) a = MapView { unMapView :: MonoidalMap k (First v, a) }
@@ -397,7 +406,7 @@ instance TraversableWithIndex k (View (MapSelector k v)) where
 
 newtype IntervalSelector e (i :: *) (v :: *) a = IntervalSelector
   { unIntervalSelector :: (AppendIntervalMap (ClosedInterval e)) a }
-  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1)
+  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, FunctorMaybe, Align)
 
 type IntervalSelector' e = IntervalSelector (WithInfinity e)
 
@@ -450,13 +459,9 @@ instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v)
 
 instance (Eq i, Eq v, Eq e) => Eq1 (View (IntervalSelector e i v)) where
   liftEq f (IntervalView xs xxs) (IntervalView ys yys) = liftEq f xs ys && xxs == yys
-    -- where
-      -- f' (v1, x) (v2, y) = v1 == v2 && f x y
 
 instance (Ord i, Ord v, Ord e) => Ord1 (View (IntervalSelector e i v)) where
   liftCompare f (IntervalView xs xxs) (IntervalView ys yys) = liftCompare f xs ys `mappend` compare xxs yys
-    -- where
-    --   f' (v1, x) (v2, y) = compare v1 v2 <> f x y
 
 instance (Ord i, Ord e) => FunctorMaybe (View (IntervalSelector e i v)) where
 
@@ -487,7 +492,9 @@ newtype RangeSelector e (v :: *) a = RangeSelector
     , Functor, Foldable, Traversable
     , Monoid, Semigroup
     , FromJSON, FromJSON1
-    , ToJSON, ToJSON1)
+    , ToJSON, ToJSON1
+    , FunctorMaybe
+    , Align)
 
 type RangeSelector' e = RangeSelector (WithInfinity e)
 
@@ -592,6 +599,24 @@ iMapSelectorKeys (RangeSelector vs) = fmapMaybe f $ IMap.keys vs
       _ -> Nothing
 
 -- more orphans!
+
+-- "witherable" has this instance.  I think, if we had a use for this instance (other than "we could use it in theory") we really want:
+-- instance (Foldable g, FunctorMaybe f, FunctorMaybe g) => FunctorMaybe (Compose f g)
+-- so that we could cut things from f when the contained g's become empty (as in `Foldable.null`).  That's different from the obvious instance below, which corresponds to the other instances for `Compose` in "witherable" and "compactible"
+instance (Functor f, FunctorMaybe g) => FunctorMaybe (Compose f g) where
+  fmapMaybe f (Compose xs) = Compose (fmap (fmapMaybe f) xs)
+
+instance (Align f, Align g) => Align (Compose f g) where
+  nil = Compose nil
+  alignWith f (Compose xs) (Compose ys) = Compose $ alignWith f' xs ys
+    where
+      f' = \case
+        This ga -> fmap (f . This) ga
+        That gb -> fmap (f . That) gb
+        These ga gb -> alignWith f ga gb
+
+deriving instance Align Option
+
 
 deriveShow1Methods [d|instance (Show v, Show e) => Show1 (View (RangeSelector e v))|]
 deriveShow1Methods [d|instance (        Show e) => Show1       (RangeSelector e v) |]
