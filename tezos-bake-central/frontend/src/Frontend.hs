@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
@@ -13,16 +14,15 @@
 
 module Frontend where
 
-import Control.Applicative (liftA2)
+import Control.Applicative (liftA2, liftA3)
 import Control.Lens ((<&>), _1, _2)
 import Control.Monad (when, (<=<), join)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.AppendMap (AppendMap, _unAppendMap)
 import qualified Data.AppendMap as Map
-import Data.Bifunctor
-import qualified Data.ByteString.Base16 as BS16
+import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
@@ -32,11 +32,12 @@ import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as BaseMap
-import Data.Maybe (fromMaybe, isJust)
-import Data.Ord (comparing)
+import Data.Maybe (fromMaybe, isJust, mapMaybe, maybeToList)
+import Data.Ord (Down (..), comparing)
 import Data.Semigroup (First (..), Option(..), (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -51,7 +52,7 @@ import qualified Obelisk.ExecutableConfig
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, validatedInput)
+import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
@@ -60,14 +61,17 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
-import Rhyolite.SemiMap (knownSubMap)
+import Safe (maximumMay)
+import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Data.IntervalMap.Generic.Lazy as IMap
 
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..),
+                              tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (tshow)
+import Common (maybeSomething, tshow, uriHostPortPath)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -79,41 +83,28 @@ import Frontend.Common
 
 import Common.Vassal
 
-urlInputRow
-  :: (MonadRhyoliteFrontendWidget Bake t m
-    , Eq a
-    , Show a
-    )
-  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t a)
-urlInputRow validator label info placeholder = el "tr" $ do
-  (tdEl, address) <- el' "td" $ formItem
-    $ validatedInput validator
-    $ def & Txt.setPlaceholder placeholder
-  addButton <- el "td" $ buttonWithInfo label info
-  return $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
-
 frontend :: (StaticWidget x (), Widget x ())
-frontend =
-  ( headTag
-  , void $ do
-      route :: RouteEnv <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
-        Just r -> return $ fromMaybe
-          (error "Unable to parse injected route")
-          (decodeValue' $ LBS.fromStrict $ T.encodeUtf8 r)
-        Nothing -> do
-          protocol <- getLocationProtocol
-          hostWithPort <- getLocationHost
-          return $ let (host, port) = T.breakOn ":" hostWithPort
-                    in (T.unpack protocol, T.unpack host, T.unpack port)
+frontend = (headTag,) $ void $ do
+  let decodeViaJson = decodeValue' . LBS.fromStrict . T.encodeUtf8
+  route :: RouteEnv <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
+    Just r -> return $ fromMaybe (error "Unable to parse injected route") (decodeViaJson r)
+    Nothing -> do
+      protocol <- getLocationProtocol
+      hostWithPort <- getLocationHost
+      return $ let (host, port) = T.breakOn ":" hostWithPort
+                in (T.unpack protocol, T.unpack host, T.unpack port)
 
-      blockExplorerUrl <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.blockExplorer) $ fmap $ \url ->
-        case mkRootUri url of
-          Left e -> error $ T.unpack $ "Error parsing injected block explorer URL " <> url <> ": " <> e
-          Right rootUrl -> rootUrl
+  checkForUpgrade <-
+    fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
+      liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
 
-      runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain (Cfg blockExplorerUrl)
-  )
+  chain :: Either NamedChain ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
+    maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
+  runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
+    { _cfg_checkForUpgrade = checkForUpgrade
+    , _cfg_chain = chain
+    }
 
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
@@ -128,7 +119,7 @@ watchNodes nidsDyn = do
     }
   return $ ffor theView $ \v -> getRangeView' (_bakeView_nodes v)
 
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) URI))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
@@ -161,7 +152,7 @@ watchDelegateStats delegates = do
   --     (\pkh acc (AppendIMap.AppendIntervalMap effs) -> Just (fold $ IMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) URI))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
@@ -199,18 +190,18 @@ watchMailServer =
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
-  -> m (Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (BaseMap.Map (Id ErrorLog) (ErrorLog, ErrorLogView))))
+  -> m (Dynamic t (Map.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrors intervals =
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  (fmap . fmap) (fmap (foldMap $ uncurry BaseMap.singleton) . getIntervalViewI . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
+  (fmap . fmap) (fmap (fst . getFirst) . _intervalView_elements . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
     { _bakeViewSelector_errors = viewIntervalSet ivals 1
     }
 
-watchTzScan :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TzScan))
-watchTzScan =
-  (fmap . fmap) (getMaybeView . _bakeView_tzscan) $
+watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
+watchPublicNodeHeads =
+  (fmap . fmap) (Set.fromList . toList . getRangeView' . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_tzscan = viewJust 1 }
+      { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
@@ -220,12 +211,11 @@ watchUpgradeNotice =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
 
-
 headTag :: DomBuilder t m => m ()
 headTag = do
   traverse_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
     [ "css/font-awesome.min.css"
-    , "semantic-ui/semantic.css"
+    , "semantic-ui/semantic.min.css"
     , "css/main.css"
     ]
   elAttr "meta" ("name" =: "viewport" <> "content" =: "width=device-width, initial-scale=1.0, maximum-scale=1.0") blank
@@ -236,15 +226,9 @@ headTag = do
 data UITab = UITab_Summary
            | UITab_Nodes
            | UITab_Delegate PublicKeyHash
-           | UITab_Client (Id Client) Text
+           | UITab_Client (Id Client) URI
            | UITab_Options
   deriving (Eq, Ord, Show)
---
--- TODO: 'maybeDyn' is strict and we can't use it directly here for some reason. Figure out why.
-updatedWithInit d = do
-      pb <- getPostBuild
-      pure $ leftmost [updated d, tag (current d) pb]
-
 
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
@@ -252,43 +236,42 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
-        [ semuiTab (text "Summary") UITab_Summary currentTab
-        , semuiTab (text "Nodes") UITab_Nodes currentTab
+        [ semuiTab (text "Nodes") UITab_Nodes currentTab
         , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
           fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
-            semuiTab (text $ "B:" <> name) (UITab_Client cid name) currentTab
+            semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTab
         , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
           fmap leftmost $ for (Set.toList ds) $ \pkh ->
             semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
         , semuiTab (text "Options") UITab_Options currentTab
         ]
-      currentTab <- fmap demux (holdDyn UITab_Summary selection)
+      currentTab <- fmap demux (holdDyn UITab_Nodes selection)
 
   divClass "ui bottom attached tab segment active" $ do
-    upgradeNotice <- maybeDyn =<< holdDyn Nothing =<< updatedWithInit =<< watchUpgradeNotice
+    divClass "ui one column grid" $ do
+      upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+      dyn_ $ ffor upgradeNotice $ \case
+        Nothing -> blank
+        Just (log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
+          case upgrade of
+            Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+            Right v -> do
+              let
+                versionText = T.pack (showVersion v)
+                versionAnchor = "anchor-" <> T.filter (/='.') versionText
+              elAttr "a"
+                (  "class"=:"ui green right ribbon label"
+                <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
+                <> "target"=:"_blank") $
+                  text $ "New version available: " <> versionText
 
-    let upgradeRibbon color = elClass "a" ("ui " <> color <> " right ribbon label")
-    dyn_ $ ffor upgradeNotice $ \case
-      Nothing -> blank
-      Just d -> dyn_ $ ffor d $ \(log, upgrade) -> case upgrade of
-        Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-        Right v -> do
-          let
-            versionText = T.pack (showVersion v)
-            versionAnchor = "anchor-" <> T.filter (/='.') versionText
-          elAttr "a"
-            (  "class"=:"ui green right ribbon label"
-            <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-            <> "target"=:"_blank") $
-              text $ "New version available: " <> versionText
-
-    widgetHold summaryTab $ ffor selection $ \case
-      UITab_Summary -> summaryTab
-      UITab_Nodes -> nodesTab
-      UITab_Options -> optionsTab
-      UITab_Client cid addr -> clientTab cid addr
-      UITab_Delegate pkh -> delegateTab pkh
-  return ()
+      divClass "column" $
+        widgetHold_ nodesTab $ ffor selection $ \case
+          UITab_Summary -> summaryTab
+          UITab_Nodes -> nodesTab
+          UITab_Options -> optionsTab
+          UITab_Client cid addr -> clientTab cid addr
+          UITab_Delegate pkh -> delegateTab pkh
 
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
@@ -320,40 +303,9 @@ summaryTab = divClass "ui grid" $ do
         tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
           text $ "Waiting: " <> tshow n
 
-      errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
-      dyn_ $ ffor errors $ traverse_ $ traverse_ $ \(log, specificLog) -> do
-        let header txt = divClass "header" $ text $ case _errorLog_stopped log of
-              Just _ -> "Resolved: " <> txt
-              Nothing -> txt
-        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-          case specificLog of
-            ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
-              let endpointTypeName = case endpointType of
-                    EndpointType_Node -> "node"
-                    EndpointType_Client -> "client"
-              header $ "Unable to connect to " <> endpointTypeName <> " at " <> address
-
-            ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
-              header "Baker lagging behind" -- TODO Show client address
-              el "p" $ do
-                text "Last block level seen: "
-                blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
-
-            ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
-              header "Node is on fork" -- TODO Fill this out
-
-            ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
-              header "Multiple bakers for same delegate" -- TODO Fill this out
-
-          el "p" $ do
-            text $ "First seen: " <> tshow (_errorLog_started log) <> " | "
-            case _errorLog_stopped log of
-              Nothing -> text $ "Last seen: " <> tshow (_errorLog_lastSeen log)
-              Just stopped -> text $ "Stopped: " <> tshow stopped
-
     mGraph <- watchSummaryGraph
     (graphEl, _) <- el' "div" blank
-    dyn . ffor mGraph $ \case
+    dyn_ . ffor mGraph $ \case
       Nothing -> blank
       Just (total, graphText) -> do
         setInnerHTML (_element_raw graphEl) graphText
@@ -379,76 +331,173 @@ summaryTab = divClass "ui grid" $ do
 
   return ()
 
+radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
+radioLabels k0 ks = mdo
+  selectedDyn <- holdDyn k0 $ leftmost kClicks
+  kClicks <- for ks $ \(k, label) -> do
+    (element, ()) <- elDynAttr' "a" (ffor selectedDyn $ \selected -> "class"=:("ui " <> (if selected == k then "blue" else "") <> " tiny label link")) label
+    pure $ k <$ domEvent Click element
+  pure selectedDyn
+
+data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+
+liveErrorsWidget
+  :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  => Dynamic t (AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+  -> m ()
+liveErrorsWidget errors = void $ do
+  filterDyn <- radioLabels AlertsFilter_All
+    [ (AlertsFilter_All, text "All")
+    , (AlertsFilter_UnresolvedOnly, text "Unresolved")
+    , (AlertsFilter_ResolvedOnly, text "Resolved")
+    ]
+
+  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
+    listWithKey (errorsByTime Down <$> errors) $ \_ vDyn ->
+      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \((log, specificLog), filterSelection) -> do
+        let isResolved = isJust $ _errorLog_stopped log
+        when (filterSelection == AlertsFilter_All
+            || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
+            || filterSelection == AlertsFilter_ResolvedOnly && isResolved) $
+          logEntry log specificLog
+
+  where
+    logEntry log specificLog = do
+      let header txt = divClass "header" $ text $ case _errorLog_stopped log of
+            Just _ -> "Resolved: " <> txt
+            Nothing -> txt
+      divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+        case specificLog of
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
+            let endpointTypeName = case endpointType of
+                  EndpointType_Node -> "node"
+                  EndpointType_Client -> "client"
+            header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
+
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> do
+            header $ "Node on wrong network: " <> Uri.render address
+            el "p" $
+              text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
+            header "Baker lagging behind" -- TODO Show client address
+            el "p" $ do
+              text "Last block level seen: "
+              blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+
+          ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
+            header "Node is on fork" -- TODO Fill this out
+
+          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
+            header "Multiple bakers for same delegate" -- TODO Fill this out
+
+        el "p" $ do
+          text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+          case _errorLog_stopped log of
+            Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+            Just stopped -> text "Stopped: " *> localTimestamp stopped
+
+    errorsByTime direction errors = BaseMap.fromList
+      [ (direction (_errorLog_started el, _errorLog_lastSeen el, elId), (el, t))
+      | (elId, (el, t)) <- Map.toList errors
+      ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-optionsTab = divClass "ui grid" $ do
-  divClass "row" primaryOptions
-  divClass "row" upgradeOptions
+optionsTab = divClass "ui two column stackable grid" $ do
+  enableUpgradeCheck <- asks _cfg_checkForUpgrade
+
+  divClass "column" $ traverse (divClass "ui basic segment") $
+    [ currentChain
+    , delegatesOptions
+    , nodesOptions
+    ]
+    ++ [ clientsOptions | False ]
+    ++ [ upgradeOptions | enableUpgradeCheck ]
+  divClass "column" $ do
+    divClass "ui basic segment" mailServerOptions
+    divClass "ui basic segment" notificationOptions
   where
-    primaryOptions = do
-      clients <- watchClientAddresses
-      nodes <- watchNodeAddresses
-      delegates <- watchDelegatePublicKeyHashes
-      divClass "four wide column" $ do
-        divClass "ui medium header" $ text "Notification Recipients"
-        notificatees <- watchNotificatees
+    currentChain = do
+      chain <- asks _cfg_chain
+      elClass "h3" "ui header" $ do
+        text "Network: "
+        el "em" $ text $ showChain chain
+      el "p" $ el "em" $ do
+        text "You can monitor a different network by setting the "
+        el "code" $ text $ T.pack Config.chain
+        text " configuration. Run the server with "
+        el "code" $ text "--help"
+        text " for more information."
 
-        let
-          emailWidget email = do
-            dynText email
-            text " "
-            ev <- uiButton "mini compact orange" "Send test"
-            void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
+    notificationOptions = do
+      divClass "ui medium header" $ text "Notification Recipients"
+      notificatees <- watchNotificatees
 
-        rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
-            addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
-            requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+      let
+        emailWidget email = do
+          dynText email
+          text " "
+          ev <- uiButton "mini compact orange" "Send test"
+          void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
 
-        divClass "ui medium header" $ text "SMTP Mail Server"
-        mailServer <- watchMailServer
-        dyn_ $ ffor mailServer $ \cfg -> do
-          let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
-          updatedForm <- mailServerForm form0
-          requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
+      rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
+          addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
+          requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
-      divClass "four wide column" $ do
-        divClass "ui medium header" $ text "Monitored Clients"
-        elAttr "table" ("class" =: "ui celled striped compact table") $ do
-          listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
-            el "td" $ dynText dName
-            el "td" $ do
-              eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker. It will continue running."
-              requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
+      pure ()
 
-          addE <- fmap Uri.render <$> urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
-          void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+    mailServerOptions = do
+      divClass "ui medium header" $ text "SMTP Mail Server"
+      mailServer <- watchMailServer
+      dyn_ $ ffor mailServer $ \cfg -> do
+        let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
+        updatedForm <- mailServerForm form0
+        requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
 
-        divClass "ui medium header" $ text "Delegates"
-        elAttr "table" ("class" =: "ui celled striped compact table") $ do
+    clientsOptions = void $ do
+      divClass "ui medium header" $ text "Clients"
+      elClass "table" "ui celled striped compact table" $ do
+        clients <- watchClientAddresses -- TODO
+        listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
+          el "td" $ dynText $ Uri.render <$> dName
+          el "td" $ do
+            eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
+            requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-          listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
-            el "td" $ publicKeyHashLink pkh
-            el "td" $ do
-              eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
-              requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
+        addE <- urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
 
-          addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-          void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
+    delegatesOptions = do
+      divClass "ui medium header" $ text "Delegates"
+      elClass "table" "ui celled striped compact table" $ do
+        delegates <- watchDelegatePublicKeyHashes
+        listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+          el "td" $ publicKeyHashLink pkh
+          el "td" $ do
+            eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
+            requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
-        divClass "ui medium header" $ text "Nodes"
-        elAttr "table" ("class" =: "ui celled striped compact table") $ do
-          listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
-            let dName = node
-            el "td" $ dynText dName
-            el "td" $ do
-              eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-              requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
+        addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+        void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
 
-          addE <- fmap Uri.render <$> urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-          let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-          void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+    nodesOptions = do
+      divClass "ui medium header" $ text "Nodes"
+      elClass "table" "ui celled striped compact table" $ do
+        nodes <- watchNodeAddresses
+        listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
+          let dName = node
+          el "td" $ dynText $ Uri.render <$> dName
+          el "td" $ do
+            eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+            requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
 
-    upgradeOptions = divClass "sixteen wide column" $ el "p" $ mdo
+        addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+        let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
+        void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+
+    upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
       checkUpgrade <- fmap (domEvent Click . fst) $ elDynAttr' "div"
         (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
@@ -457,6 +506,20 @@ optionsTab = divClass "ui grid" $ do
       widgetHold_ blank $ ffor result $ \case
         Left _ -> divClass "ui error message" $ text "We had trouble checking for upgrades"
         Right v -> divClass "ui success message" $ text $ "A new version is available: " <> T.pack (showVersion v)
+
+    urlInputRow
+      :: (MonadRhyoliteFrontendWidget Bake t m
+         , Eq a
+         , Show a
+         )
+      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t a)
+    urlInputRow validator label info placeholder = el "tr" $ do
+      (tdEl, address) <- el' "td" $ formItem
+        $ validatedInput validator
+        $ def & Txt.setPlaceholder placeholder & Txt.setFluid
+      addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
+      return $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
+
 
 mailServerForm
   :: ( DomBuilder t m
@@ -483,32 +546,35 @@ mailServerForm frm0 = do
 
   where
     fields = withFormFieldsErr (frm0, "") $ do
-      tellFieldErr (_1 . mailServerView_hostName) <=< formItem
-        $ validatedInput Validator.validateText
-        $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
+      divClass "three fields" $ do
+        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "eight wide"
+          $ validatedInput Validator.validateText
+          $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
 
-      tellFieldErr (_1 . mailServerView_portNumber) <=< formItem
-        $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-        $ defTxt "Port" & Txt.setInitial (T.pack $ show $ _mailServerView_portNumber frm0)
+        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "four wide"
+          $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
+          $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber frm0)
 
-      tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem
-        $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
-        $ do
-          labeled "Protocol"
-          SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol")
-            (Just $ _mailServerView_smtpProtocol frm0)
-            $ SemUi.TaggedStatic
-            $ SmtpProtocol_Plain=:text "Plain"
-            <> SmtpProtocol_Ssl=:text "SSL"
-            <> SmtpProtocol_Starttls=:text "STARTTLS"
+        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "four wide"
+          $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
+          $ do
+            labeled "Protocol"
+            SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol"
+                                & SemUi.dropdownConfig_fluid SemUi.|~ True)
+              (Just $ _mailServerView_smtpProtocol frm0)
+              $ SemUi.TaggedStatic
+              $ SmtpProtocol_Plain=:text "Plain"
+              <> SmtpProtocol_Ssl=:text "SSL"
+              <> SmtpProtocol_Starttls=:text "STARTTLS"
 
-      tellFieldErr (_1 . mailServerView_userName) <=< formItem
-        $ validatedInput Validator.validateText
-        $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
+      divClass "two fields" $ do
+        tellFieldErr (_1 . mailServerView_userName) <=< formItem
+          $ validatedInput Validator.validateText
+          $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
 
-      tellFieldErr _2 <=< formItem
-        $ validatedInput validatePassword
-        $ defTxt "Password"
+        tellFieldErr _2 <=< formItem
+          $ validatedInput validatePassword
+          $ defTxt "Password"
 
     validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
@@ -517,48 +583,129 @@ mailServerForm frm0 = do
 
 data NodeTile
   = NodeTile_PlainNode (Id Node) Node
-  | NodeTile_TzScan TzScan
-  | NodeTile_Foundation
+  | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
-nodesTab = do
-  tzscanDyn <- watchTzScan
-  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-  let
-    zipNodeTiles tzscan nodes =
-      (case tzscan of
-        Nothing -> id
-        Just v -> (NodeTile_TzScan v :)
-      ) -- if available, prepend the tzscan node to the list
-      (uncurry NodeTile_PlainNode <$> Map.toList nodes)
-  maybeTilesDyn <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit) $ nonEmpty <$> zipDynWith zipNodeTiles tzscanDyn nodesDyn
-  dyn_ $ ffor maybeTilesDyn $ \case
-    Nothing -> waitingForResponse
-    Just tilesDyn -> dyn_ $ ffor tilesDyn $ \tiles ->
-      divClass "ui three stackable cards" $ do
-      for_ tiles $ divClass "ui card" . divClass "content" . \case
-        NodeTile_TzScan tzscan -> do
-          divClass "ui center align header" $
-            blockHashLinkAs (_tzScan_headBlockHash tzscan) $ text $ tshow $ unRawLevel $ _tzScan_headLevel tzscan
-          divClass "description" $ text "tzscan.io"
-        NodeTile_Foundation -> text "foundation"
-        NodeTile_PlainNode _ node -> do
-          divClass "ui center align header" $
-            maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" (tshow . unRawLevel) $ _node_headLevel node)
-          divClass "description" $ do
-            text $ _node_address node
-            --el "div" $ do
-            --maybe id blockHashLinkAs (_node_headBlockHash node) (text $ maybe "N/A" tshow $ unRawLevel $ _node_headLevel node)
-            el "div" $ text $ "Head block fitness: " <> case _node_fitness node of
-              Nothing -> "N/A"
-              Just k -> T.intercalate ":" $ toList $ fmap (T.decodeUtf8 . BS16.encode) $ unFitness k
-            el "div" $ text $ "Peer count: " <> maybe "N/A" tshow (_node_peerCount node)
-            let stat = _node_networkStat node
-            el "div" $ text $ "Sent: " <> tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes"
-            el "div" $ text $ "Recv: " <> tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes"
-            el "div" $ text $ "Inflow: " <> tshow (_networkStat_currentInflow stat) <> " bytes/sec"
-            el "div" $ text $ "Outflow: " <> tshow (_networkStat_currentOutflow stat) <> " bytes/sec"
+errorsByNode :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> AppendMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
+errorsByNode xs = Map.fromList [(k, (el, t)) | (el, t) <- Map.elems xs, let Just k = nodeKeyForErrorLogView t]
+  where
+    nodeKeyForErrorLogView = \case
+      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url) -> Just $ Right url
+      ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _) -> Just $ Right url
+      _ -> Nothing
+
+nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
+nodesTab = divClass "ui stackable grid" $ do
+  let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+  x <- watchErrors (pure $ Set.singleton alertWindow)
+  let x' = fmap maybeSomething x
+  alertsDyn <- maybeDynLazy x'
+  -- alertsDyn :: Dynamic t (Maybe (Dynamic t (Map _ _))) <- _ =<< ( (fmap.fmap maybeSomething) $  )
+-- maybeDynLazy . fmap (maybeSomething <=< AppendIMap.lookup alertWindow) =<<
+
+
+  dyn_ $ ffor alertsDyn $ \case
+    Nothing -> divClass "column" $ nodeTilesWidget (constDyn Map.empty)
+    Just nonEmptyAlertsDyn -> do
+      divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn
+      divClass "six wide column" $ do
+        elClass "h3" "ui header" $ text "Alerts"
+        liveErrorsWidget nonEmptyAlertsDyn
+
+  where
+    nodeTilesWidget :: Dynamic t (Map.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> m ()
+    nodeTilesWidget alerts = do
+      publicNodesDyn <- watchPublicNodeHeads
+      nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+      let
+        zipNodeTiles publicNodes nodes =
+          (NodeTile_PublicNode <$> toList publicNodes) <>
+          (uncurry NodeTile_PlainNode <$> Map.toAscList nodes)
+      maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
+
+      maxLevelOnPublicNodes <- holdUniqDyn $
+        maximumMay . map _publicNodeHead_headLevel . Set.toList <$> publicNodesDyn
+
+      dyn_ $ ffor maybeTilesDyn $ \case
+        Nothing -> waitingForResponse
+        Just tilesDyn -> divClass "ui stackable cards" $ void $
+          listWithKey (BaseMap.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
+            uniqDyn <- holdUniqDyn vDyn
+            divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
+
+              NodeTile_PublicNode node -> do
+                let nodeTitle = case unJson $ _publicNodeHead_source node of
+                      DataSource_TzScan (TzScanNode chain) -> urlLink (tzScanUri chain) $ text $ "tzscan (" <> showChain (Left chain) <> ")"
+                      DataSource_BlockscaleNode (BlockscaleNode chain) -> text $ "Foundation Nodes (" <> showChain (Left chain) <> ")"
+                      DataSource_PlainNode (PlainNode url) -> text url
+                headBlockLevelHeader
+                  nodeTitle
+                  (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
+                  (pure Nothing)
+                divClass "description" $
+                  nodeDataTable
+                    [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
+                    , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
+                    , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
+                    ]
+
+              NodeTile_PlainNode _ node -> do
+                fallingBehindBy <- case _node_headLevel node of
+                  Nothing -> pure (pure Nothing)
+                  Just nodeLevel -> do
+                    let calcBehindBy maxLevel = if behindBy >= 5 then Just behindBy else Nothing
+                          where behindBy = maxLevel - nodeLevel
+
+                    holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
+
+                headBlockLevelHeader
+                  (text $ uriHostPortPath $ _node_address node)
+                  (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
+                  fallingBehindBy
+
+                divClass "description" $ do
+                  let stat = _node_networkStat node
+                  nodeDataTable
+                    [ (text "Block Hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
+                    , (text "Block Fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
+                    , (text "Block Baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
+                    , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
+                    , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
+                    , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")
+                    , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
+                    , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
+                    ]
+
+                  hasAlert <- holdUniqDyn $ Map.lookup (Right $ _node_address node) . errorsByNode <$> alerts
+                  dyn_ $ ffor hasAlert $ \case
+                    Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
+                      ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
+                      ErrorLogView_NodeWrongChain{} -> divClass "ui error message" $ divClass "header" $ text "On wrong network."
+                      _ -> blank
+                    _ -> blank
+
+    headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
+    headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
+      elClass "h3" "ui center aligned header" $ do
+        title
+        elAttr "div" ("class"=:"sub header"<>"style"=:"padding-top:1em") $ do
+          case blockHashAndLevel of
+            Nothing -> text "Connecting..."
+            Just (blockHash, blockLevel) -> dyn_ $ ffor blocksBehindDyn $ \blocksBehind -> do
+              let styled = if isJust blocksBehind then errorStyle else id
+              styled $ blockHashLinkAs blockHash $ text $ tshow $ unRawLevel blockLevel
+          divClass "sub header" $ do
+            text "Head Block Level"
+            dyn_ $ ffor blocksBehindDyn $ traverse_ $ \numBehind ->
+              elAttr "div" ("style"=:"padding-top:0.4em") $ errorStyle $
+                text $ tshow (unRawLevel numBehind) <> " Blocks Behind"
+      where
+        errorStyle = elClass "span" "block-level-error"
+
+    nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
+      for_ rows $ \(heading, value) -> el "tr" $ do
+        elAttr "th" ("style"=:"text-align:left") heading
+        elAttr "td" ("style"=:"text-align:left") value
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
@@ -606,10 +753,10 @@ delegateTab pkh = do
               text $ tshow rights
             when (rights /= 0) $ do
               text " ("
-              text $ tshow $ (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
+              text $ tshow (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
               text "%)"
 
-clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> Text -> m ()
+clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
   dyn_ $ ffor (Map.lookup cid <$> clients) $ \case
@@ -620,7 +767,7 @@ clientTab cid addr = do
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ text addr
+        elClass "h3" "ui medium header" $ text $ Uri.render addr
         divClass "delegates" $ do
           text "ID: "
           sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)

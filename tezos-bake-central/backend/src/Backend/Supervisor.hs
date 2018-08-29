@@ -7,9 +7,9 @@ import Say
 
 withTermination :: ((IO a -> IO ()) -> IO b) -> IO b
 withTermination k = do
-    finalizers <- newTVarIO (return ())
-    let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
-    finally (k addFinalizer) $ do
-      say "TERMINATING"
-      join (readTVarIO finalizers)
-      say "TERMINATED .. BYE"
+  finalizers <- newTVarIO (return ())
+  let addFinalizer f = atomically $ modifyTVar finalizers (f *>)
+  finally (k addFinalizer) $ do
+    say "TERMINATING"
+    join (readTVarIO finalizers)
+    say "TERMINATED .. BYE"

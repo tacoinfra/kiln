@@ -8,19 +8,21 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall #-}
+{-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
 
 module Common.Schema where
 
 import qualified Cases
 import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
+import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.Function (on)
@@ -33,10 +35,19 @@ import Data.Version (Version)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Json
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources (DataSource)
 import Tezos.Types
+
+instance Aeson.ToJSON Uri.URI where
+  toJSON = Aeson.toJSON . Uri.render
+  toEncoding = Aeson.toEncoding . Uri.render
+instance Aeson.FromJSON Uri.URI where
+  parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
 sumFees :: PublicKeyHash -> Operation -> Tez
 sumFees delegate = getSum . views balanceUpdates getFee
@@ -52,7 +63,7 @@ data Error = Error
   , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-type ClientAddress = Text
+-- type ClientAddress = URI
 
 
 -- TODO: move to ~-lib
@@ -63,7 +74,7 @@ knownProtocols =
   ]
 
 data Client = Client
-  { _client_address :: !ClientAddress
+  { _client_address :: !URI
   , _client_updated :: !(Maybe UTCTime)
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -86,10 +97,11 @@ data ClientInfo = ClientInfo
 instance HasId ClientInfo
 
 data Node = Node
-  { _node_address :: !ClientAddress
+  { _node_address :: !URI
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
+  , _node_headBlockBakedAt :: !(Maybe UTCTime)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
@@ -98,20 +110,30 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-data TzScan = TzScan
-  { _tzScan_chainId :: !ChainId
-  , _tzScan_headLevel :: !RawLevel
-  , _tzScan_headBlockHash :: !BlockHash
-  , _tzScan_fitness :: !Fitness
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId TzScan
 
-mkNode :: ClientAddress -> Node
+parseChainOrError :: Text -> Either NamedChain ChainId
+parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
+  Left e -> error $ T.unpack $ "Invalid chain '" <> x <> "': " <> e
+  Right v -> v
+
+
+data PublicNodeHead = PublicNodeHead
+  { _publicNodeHead_source :: !(Json DataSource)
+  , _publicNodeHead_headLevel :: !RawLevel
+  , _publicNodeHead_headBlockHash :: !BlockHash
+  , _publicNodeHead_headBlockFitness :: !Fitness
+  , _publicNodeHead_headBlockBakedAt :: !UTCTime
+  , _publicNodeHead_updated :: !UTCTime
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId PublicNodeHead
+
+mkNode :: URI -> Node
 mkNode addr = Node
   { _node_address = addr
   , _node_identity = Nothing -- TODO
   , _node_headLevel = Nothing
   , _node_headBlockHash = Nothing
+  , _node_headBlockBakedAt = Nothing
   , _node_peerCount = Nothing
   , _node_networkStat = NetworkStat 0 0 0 0
   , _node_fitness = Nothing
@@ -120,8 +142,8 @@ mkNode addr = Node
   }
 
 data Parameters = Parameters
-  { _parameters_protoInfo :: !ProtoInfo
-  , _parameters_chain :: !ChainId
+  { _parameters_chain :: !ChainId
+  , _parameters_protoInfo :: !ProtoInfo
   , _parameters_headTimestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
@@ -154,8 +176,6 @@ data Event e = Event
   , _event_time :: UTCTime
   , _event_worker :: Text
   } deriving (Show, Eq, Ord, Typeable, Generic)
-
--- instance BlockLike (Event BakedEvent) where
 
 data ErrorEvent = ErrorEvent
   { _errorEvent_message :: Text
@@ -222,7 +242,7 @@ data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
   , _clientConfig_delegates :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
-  , _clientConfig_nodeUri :: ClientAddress
+  , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Delegate = Delegate
@@ -267,8 +287,6 @@ mkVeryBlockLike blk = VeryBlockLike
   , _veryBlockLike_timestamp = blk ^. timestamp
   }
 
-
-
 data Notificatee = Notificatee
   { _notificatee_email :: Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -296,9 +314,17 @@ data EndpointType = EndpointType_Node | EndpointType_Client
 data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
   { _errorLogInaccessibleEndpoint_log :: !(Id ErrorLog)
   , _errorLogInaccessibleEndpoint_type :: !EndpointType
-  , _errorLogInaccessibleEndpoint_address :: !ClientAddress
+  , _errorLogInaccessibleEndpoint_address :: !URI
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleEndpoint
+
+data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
+  { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
+  , _errorLogNodeWrongChain_address :: !URI
+  , _errorLogNodeWrongChain_expectedChainId :: !ChainId
+  , _errorLogNodeWrongChain_actualChainId :: !ChainId
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeWrongChain
 
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
@@ -373,7 +399,8 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
-  , ''ClientConfig , ''ClientDaemonWorker
+  , ''ClientConfig
+  , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
   , ''Delegate
@@ -385,13 +412,14 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogInaccessibleEndpoint
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeOnFork
+  , ''ErrorLogNodeWrongChain
   , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
+  , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
-  , ''TzScan
   , ''UpgradeCheckError
   ]
 
@@ -409,31 +437,32 @@ concat <$> traverse makeLenses
   , 'ErrorLogInaccessibleEndpoint
   , 'ErrorLogMultipleBakersForSameDelegate
   , 'ErrorLogNodeOnFork
+  , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
+  , 'PublicNodeHead
   , 'Report
   , 'SeenEvent
-  , 'TzScan
   , 'VeryBlockLike
   ]
 
 instance BlockLike VeryBlockLike where
-   hash = veryBlockLike_hash
-   predecessor = veryBlockLike_predecessor
-   fitness = veryBlockLike_fitness
-   level = veryBlockLike_level
-   timestamp = veryBlockLike_timestamp
+  hash = veryBlockLike_hash
+  predecessor = veryBlockLike_predecessor
+  fitness = veryBlockLike_fitness
+  level = veryBlockLike_level
+  timestamp = veryBlockLike_timestamp
 
 instance BlockLike (Event BakedEvent) where
-   hash = event_detail . bakedEvent_hash
-   predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
-   fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
-   level = event_detail . bakedEvent_signedHeader . blockHeader_level
-   timestamp = event_time
+  hash = event_detail . bakedEvent_hash
+  predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
+  fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
+  level = event_detail . bakedEvent_signedHeader . blockHeader_level
+  timestamp = event_time
 
 instance BlockLike (Event SeenEvent) where
-   hash = event_detail . seenEvent_hash
-   predecessor = event_detail . seenEvent_predecessor
-   fitness = event_detail . seenEvent_fitness
-   level = event_detail . seenEvent_level
-   timestamp = event_time
+  hash = event_detail . seenEvent_hash
+  predecessor = event_detail . seenEvent_predecessor
+  fitness = event_detail . seenEvent_fitness
+  level = event_detail . seenEvent_level
+  timestamp = event_time

@@ -13,38 +13,39 @@ library
 
   build-depends:
       aeson
-    , writer-cps-mtl
-    , tezos-bake-monitor-lib
+    , IntervalMap
     , attoparsec
     , base
     , base16-bytestring
     , base58-bytestring
     , bytestring
     , cases
-    , containers
     , constraints
+    , containers
     , cryptohash
     , cryptonite
     , data-default
     , either
     , file-embed
     , hashing
-    , IntervalMap
     , lens
     , memory
     , modern-uri
+    , monoidal-containers
+    , mtl
     , reflection
     , reflex
     , reflex-aeson-orphans
     , rhyolite-common
+    , rhyolite-datastructures
     , scientific
     , template-haskell
     , text
+    , tezos-bake-monitor-lib
     , these
-    , monoidal-containers
     , time
-    , rhyolite-datastructures
     , transformers-compat
+    , writer-cps-mtl
 
   exposed-modules:
     Common

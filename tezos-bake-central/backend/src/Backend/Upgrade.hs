@@ -20,6 +20,7 @@ import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
+import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
@@ -33,34 +34,35 @@ import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Concurrent (worker)
 import Say (say)
 
-import Backend.Common (worker')
+import Backend.Alerts (clearUpgradeNotice, reportUpgradeNotice)
+import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig)
-import Backend.Errors (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Version (parseVersion, version)
 import Common.Schema (UpgradeCheckError (..))
 
 upgradeCheckWorker
   :: MonadIO m
-  => NominalDiffTime
+  => Text
+  -> NominalDiffTime
   -> AppConfig
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker delay appConfig httpMgr db = worker' (pure delay) $ const $ do
-  say "Checking for upgrades"
-  void $ checkForUpgrade httpMgr appConfig (runNoLoggingT . runDb (Identity db))
+upgradeCheckWorker upgradeBranch delay appConfig httpMgr db = workerWithDelay (pure delay) $ const $ do
+    say "Checking for upgrades"
+    void $ checkForUpgrade upgradeBranch httpMgr appConfig (runNoLoggingT . runDb (Identity db))
 
 checkForUpgrade
   :: (MonadIO m, PersistBackend trx, PostgresLargeObject trx, MonadIO trx)
-  => Http.Manager
+  => Text
+  -> Http.Manager
   -> AppConfig
   -> (forall a. trx a -> m a)
   -> m (Either UpgradeCheckError V.Version)
-checkForUpgrade httpMgr appConfig withTransaction = do
-  result <- runExceptT (getUpstreamVersion httpMgr)
+checkForUpgrade upgradeBranch httpMgr appConfig withTransaction = do
+  result <- runExceptT (getUpstreamVersion upgradeBranch httpMgr)
   withTransaction $ flip runReaderT appConfig $ case result of
     e@(Left _) -> reportUpgradeNotice e
     Right upstreamVersion -> if upstreamVersion > version then
@@ -70,13 +72,13 @@ checkForUpgrade httpMgr appConfig withTransaction = do
   pure result
 
 
-upstreamGitLab :: String
-upstreamGitLab = "https://gitlab.com/api/v4/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=develop"
+upstreamGitLab :: Text -> Text
+upstreamGitLab branch = "https://gitlab.com/api/v4/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
 
-getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Http.Manager -> m V.Version
-getUpstreamVersion httpMgr = do
+getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Text -> Http.Manager -> m V.Version
+getUpstreamVersion upgradeBranch httpMgr = do
   resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
-    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest upstreamGitLab)
+    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack $ upstreamGitLab upgradeBranch))
   case resp' of
     Left _ -> throwError UpgradeCheckError_UpstreamUnreachable
     Right resp -> case Http.getResponseStatusCode resp of

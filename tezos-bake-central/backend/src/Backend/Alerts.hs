@@ -8,7 +8,7 @@
 
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 
-module Backend.Errors where
+module Backend.Alerts where
 
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader)
@@ -34,6 +34,8 @@ import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAn
                                 updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id)
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Types
 
@@ -60,8 +62,9 @@ queueAllEmails message = do
 
 
 reportNoBakerHeartbeatError
-  :: (Monad m, PersistBackend m, PostgresRaw m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a)
+  :: ( Monad m, PersistBackend m, PostgresRaw m, PostgresLargeObject m, MonadIO m
+     , MonadReader a m, HasAppConfig a
+     )
   => Id Client -> SeenEvent -> m ()
 reportNoBakerHeartbeatError cid eventDetail = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
@@ -88,7 +91,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Baker at " <> maybe "?" _client_address client <> " has not seen a block for while!"
+        , _error_text = "Baker at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
         }]
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -108,7 +111,7 @@ clearNoBakerHeartbeatError cid = do
 
 reportInaccessibleEndpointError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => EndpointType -> ClientAddress -> m ()
+  => EndpointType -> URI -> m ()
 reportInaccessibleEndpointError endpointType addr = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
@@ -127,12 +130,12 @@ reportInaccessibleEndpointError endpointType addr = do
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Unable to connect to " <> typeName <> " at " <> addr
+        , _error_text = "Unable to connect to " <> typeName <> " at " <> Uri.render addr
         }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleEndpointError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> ClientAddress -> m ()
+  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> URI -> m ()
 clearInaccessibleEndpointError endpointType addr = do
   lids :: [Id ErrorLogInaccessibleEndpoint] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -140,6 +143,44 @@ clearInaccessibleEndpointError endpointType addr = do
     WHERE t.log = el.id AND t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notifyEntityId NotificationType_Update
+
+reportNodeWrongChainError
+  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
+  => URI -> ChainId -> ChainId -> m ()
+reportNodeWrongChainError addr expectedChainId actualChainId = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+     WHERE t."expectedChainId" = ?expectedChainId
+       AND t."actualChainId" = ?actualChainId
+       AND t.address = ?addr
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Nothing -> do
+      insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr expectedChainId actualChainId
+      now <- getTime
+      queueAllEmails [Error
+        { _error_time = now
+        , _error_text = "Node at " <> Uri.render addr <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+        }]
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+
+clearNodeWrongChainError
+  :: (Monad m, PostgresRaw m, PersistBackend m) => URI -> m ()
+clearNodeWrongChainError addr = do
+  lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeWrongChain" t
+    WHERE t.log = el.id
+      AND t.address = ?addr
+      AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notifyEntityId NotificationType_Update
+
 
 
 reportNodeOnForkError

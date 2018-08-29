@@ -197,7 +197,7 @@ instance IsBase58Hash t => IsString (HashedValue t ByteString) where
   fromString x = either (error . show) id $ fromBase58 $ fromString x
 
 instance IsBase58Hash t => Show (HashedValue t ByteString) where
-  show = ("fromString " <>) . show . toBase58
+  show x = "(fromString " <> show (toBase58 x) <> ")"
 
 instance IsBase58Hash 'HashType_BlockHash where
   prefix _ = "\001\052"
@@ -292,5 +292,5 @@ instance IsBase58Hash 'HashType_P256Signature where
   hashSize _ = 64
 
 instance IsBase58Hash 'HashType_P256PublicKey where
-  prefix _ = "\003\178\139\127" 
+  prefix _ = "\003\178\139\127"
   hashSize _ = 33

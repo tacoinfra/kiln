@@ -10,6 +10,7 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Lens (ifor, imap, itraverse, (<&>), (^.))
+import Text.URI
 import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
@@ -37,12 +38,13 @@ import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Id, Email)
+import Rhyolite.Schema (Id, Email, Json (..))
 import Say
 import qualified Data.IntervalMap.Generic.Lazy as IMap
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
+import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez
@@ -60,13 +62,16 @@ import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
 import Common.Vassal
 
+import Common
+
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
-  => NodeDataSource
+  => Maybe NamedChain
+  -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSelectorHandler END") . (say "************ viewSelectorHandler START" *>) . runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
   --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
@@ -88,28 +93,33 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
     in if null as
       then return mempty
       else do
-        rs :: [(Id Node, ClientAddress)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
+        rs :: [(Id Node, URI)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
         return $ toRangeView as $ fmap (first Bounded) rs -- Map.fromList [(nid, (First (Just n), _a)) | (nid, n) <- rs]
-  tzscan <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_tzscan vs) $ \a ->
-    toMaybeView (_bakeViewSelector_tzscan vs) . listToMaybe <$> select ((TzScan_chainIdField ==. _nodeDataSource_chain nds) `limitTo` 1)
+  let pnhVS = _bakeViewSelector_publicNodeHeads vs
+  publicNodeHeads <- for namedChain' $ \namedChain -> whenM (not $ null $ pnhVS) $
+    (toRangeView pnhVS  . fmap (first Bounded) . AppendMap.toList) <$> selectMap' PublicNodeHeadConstructor
+      (   PublicNodeHead_sourceField ==. Json (DataSource_TzScan (TzScanNode namedChain))
+      ||. PublicNodeHead_sourceField ==. Json (DataSource_BlockscaleNode (BlockscaleNode namedChain))
+      )
   nodes <- do
     let
       selNodesUniversal = isCompleteSelector $ _bakeViewSelector_nodes vs
       selNodes = In $ iMapSelectorKeys $ _bakeViewSelector_nodes vs
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.identity, n."headLevel", n."headBlockHash", n."peerCount"
-        , n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow" , n."networkStat#currentOutflow"
+        , n.address, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = Map.fromList $ do
-          (nid, addr, ident) Pg.:. (headLevel, headBlockHash) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
+          (nid, addr, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (Bounded nid, Node
             { _node_address = addr
             , _node_identity = ident
             , _node_headLevel = headLevel
             , _node_headBlockHash = headBlockHash
+            , _node_headBlockBakedAt = headBlockBakedAt
             , _node_peerCount = peerCount
             , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
             , _node_fitness = fitness
@@ -147,12 +157,7 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
     let ms' = Just $ mailServerConfigToView <$> ms
     return $ toMaybeView (_bakeViewSelector_mailServer vs) ms'
   maxLevel <- getMaxLevel
-  -- summaryGraph <- case (_bakeViewSelector_summary vs, maxLevel) of
-  --   (Just a, Just l) -> do
-  --     rewards <- getAllRewards a
-  --     mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewards)
-  --     return $ single mGraph a
-  --   _ -> return mempty
+
   summary <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_summary vs) $ \_ -> do
     toMaybeView (_bakeViewSelector_summary vs) <$> getSummaryReport
 
@@ -160,13 +165,12 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
   errors <- getErrorLogs $ unIntervalSelector $ errorsVS
   upgrade <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_upgrade vs) $ \a -> do -- case _bakeViewSelector_upgrade vs of
     toMaybeView (_bakeViewSelector_upgrade vs) <$> getUpgradeNotice
-    -- Nothing -> return mempty
-    -- Just a -> flip single a <$> getUpgradeNotice
+
   return BakeView
     { _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
-    , _bakeView_tzscan = tzscan
+    , _bakeView_publicNodeHeads = fold publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_delegateStats = delegateStats
@@ -177,7 +181,6 @@ viewSelectorHandler nds db = QueryHandler $ \vs -> (<* say "************ viewSel
     -- , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
-    -- , _bakeView_errorsById = fold $ fst <$> errors
     , _bakeView_upgrade = upgrade
     }
 
@@ -215,7 +218,7 @@ getErrorLogs intervalMap = do
           LEFT JOIN "Node" n ON n.address = t.address
           LEFT JOIN "Client" c ON c.address = t.address
           WHERE
-            NOT n.deleted AND NOT c.deleted AND
+            COALESCE(NOT n.deleted, TRUE) AND COALESCE(NOT c.deleted, TRUE) AND
             (((?low IS NULL OR el.started >= ?low) AND
              (?high IS NULL OR el.started <= ?high)) OR
              ((?low IS NULL OR el.stopped >= ?low) AND
@@ -232,6 +235,36 @@ getErrorLogs intervalMap = do
               , ErrorLogView_InaccessibleEndpoint $ ErrorLogInaccessibleEndpoint elId tType tAddress
               )
             )
+
+        , [queryQ|
+            SELECT
+                el.id
+              , el.started AT TIME ZONE 'UTC'
+              , el.stopped AT TIME ZONE 'UTC'
+              , el."lastSeen" AT TIME ZONE 'UTC'
+              , el."noticeSentAt" AT TIME ZONE 'UTC'
+              , t.address, t."expectedChainId", t."actualChainId"
+            FROM "ErrorLog" el
+            JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+            LEFT JOIN "Node" n ON n.address = t.address
+            WHERE
+              COALESCE(NOT n.deleted, TRUE) AND
+              (((?low IS NULL OR el.started >= ?low) AND
+               (?high IS NULL OR el.started <= ?high)) OR
+               ((?low IS NULL OR el.stopped >= ?low) AND
+               (?high IS NULL OR el.stopped <= ?high)))
+            ORDER BY el.id ASC
+            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tExpectedChainId, tActualChainId) ->
+              ( elId :: Id ErrorLog
+              , ( ErrorLog
+                    { _errorLog_started = elStarted
+                    , _errorLog_stopped = elStopped
+                    , _errorLog_lastSeen = elLastSeen
+                    , _errorLog_noticeSentAt = elNoticeSentAt
+                    }
+                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tAddress tExpectedChainId tActualChainId
+                )
+              )
 
         , [queryQ|
           SELECT
@@ -334,17 +367,17 @@ getUpgradeNotice
   => m (Maybe (ErrorLog, Either UpgradeCheckError Version))
 getUpgradeNotice = do
   row <- listToMaybe <$> [queryQ|
-      SELECT
-          el.started AT TIME ZONE 'UTC'
-        , el.stopped AT TIME ZONE 'UTC'
-        , el."lastSeen" AT TIME ZONE 'UTC'
-        , el."noticeSentAt" AT TIME ZONE 'UTC'
-        , t.error, t."newVersion"
-      FROM "ErrorLog" el
-      JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
-      WHERE el.stopped IS NULL
-      ORDER BY el.started DESC
-      LIMIT 1|]
+    SELECT
+        el.started AT TIME ZONE 'UTC'
+      , el.stopped AT TIME ZONE 'UTC'
+      , el."lastSeen" AT TIME ZONE 'UTC'
+      , el."noticeSentAt" AT TIME ZONE 'UTC'
+      , t.error, t."newVersion"
+    FROM "ErrorLog" el
+    JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
+    WHERE el.stopped IS NULL
+    ORDER BY el.started DESC
+    LIMIT 1|]
   pure $ row <&> \(elStarted, elStopped, elLastSeen, elNoticeSentAt, tError, tNewVersion) ->
     (ErrorLog
       { _errorLog_started = elStarted

@@ -133,6 +133,9 @@ keysSet = IMap.keysSet . unAppendIntervalMap
 elems :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [v]
 elems = IMap.elems . unAppendIntervalMap
 
+lookup :: forall k v e. (Ord k, IsInterval k e) => k -> AppendIntervalMap k v -> Maybe v
+lookup k = IMap.lookup k . unAppendIntervalMap
+
 mapWithKey :: forall k a b e. (Ord k, IsInterval k e) => (k -> a -> b) -> AppendIntervalMap k a -> AppendIntervalMap k b
 mapWithKey f = AppendIntervalMap . IMap.mapWithKey f . unAppendIntervalMap
 

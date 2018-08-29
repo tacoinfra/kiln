@@ -27,6 +27,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Foldable (toList)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
@@ -54,6 +55,8 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
+import Text.URI (URI)
+import qualified Text.URI as Uri
 
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
 import Tezos.NodeRPC.Types
@@ -102,13 +105,13 @@ instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (Tez x) = dbType p x
+  dbType p x = dbType p (getTez x)
 
 instance PersistField PeriodSequence where
   persistName _ = "PeriodSequence"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (PeriodSequence x) = dbType p (Json x)
+  dbType p x = dbType p (error "dbType for PeriodSequence forced" :: Json (NonEmpty TezosWord64))
 
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
@@ -263,25 +266,37 @@ instance PrimitivePersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
 
+instance PersistField URI where
+  persistName _ = "URI"
+  toPersistValues = primToPersistValue
+  fromPersistValues vs = first (fromMaybe (error "Invalid URI") . Uri.mkURI) <$> fromPersistValues vs
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField URI where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (Uri.render v)
+  fromPrimitivePersistValue x v = fromMaybe (error "Invalid URI") $ Uri.mkURI $ fromPrimitivePersistValue x v
+
+
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
-
 instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
 instance ToField EndpointType where
-  toField a = toField (show a)
-
+  toField = toField . show
 instance FromField EndpointType where
   fromField f b = read <$> fromField f b
 
 instance ToField ClientWorker where
-  toField a = toField (show a)
-
+  toField = toField . show
 instance FromField ClientWorker where
   fromField f b = read <$> fromField f b
 
+instance ToField URI where
+  toField = toField . Uri.render
+instance FromField URI where
+  fromField f b = fromMaybe (error "Invalid URI") . Uri.mkURI <$> fromField f b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
@@ -310,13 +325,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
-  - entity: TzScan
+  - entity: PublicNodeHead
     constructors:
-    - name: TzScan
+    - name: PublicNodeHead
       uniques:
-        - name: _tzscan_uniqueness
+        - name: _publicnodehead_uniqueness
           type: constraint
-          fields: [_tzScan_chainId]
+          fields: [_publicNodeHead_source]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
@@ -367,6 +382,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLog
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleEndpoint
+  - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogNodeOnFork
   - entity: ErrorLogUpgradeNotice
@@ -397,6 +413,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
+  , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
   , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)
@@ -406,5 +423,5 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
-  , (''TzScan, 'TzScanKey)
+  , (''PublicNodeHead, 'PublicNodeHeadKey)
   ]

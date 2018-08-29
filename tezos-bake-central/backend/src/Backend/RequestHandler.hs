@@ -23,6 +23,7 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
+import Data.Text (Text)
 import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
@@ -51,23 +52,22 @@ import Common.Schema
 
 requestHandler
   :: (MonadBaseControl IO m, MonadIO m)
-  => Address
+  => Text
+  -> Address
   -> Http.Manager
   -> Pool Postgresql
   -> AppConfig
   -> RequestHandler Bake m
-requestHandler emailFromAddr httpMgr db appConfig =
+requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
   RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $ case req of
     ApiRequest_Public r ->
       case r of
         PublicRequest_AddNode addr nodeIdent -> do
-          sayShow ("addNode:", addr)
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> do
               insertAndNotify_ (mkNode addr)
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
-          sayShow ("addNode - OK?")
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
@@ -144,7 +144,7 @@ requestHandler emailFromAddr httpMgr db appConfig =
               ]
 
         PublicRequest_CheckForUpgrade ->
-          checkForUpgrade httpMgr appConfig id
+          checkForUpgrade upgradeBranch httpMgr appConfig id
 
     ApiRequest_Private key r ->
       case r of

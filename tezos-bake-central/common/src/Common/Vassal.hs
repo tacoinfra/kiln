@@ -439,7 +439,7 @@ instance (Ord i, Ord e, Semigroup a) => Monoid (View (IntervalSelector e i v) a 
   mempty = IntervalView mempty mempty
   mappend = (<>)
 instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v) a ) where
-  -- im not too sure about this, really.  there's no way to represent partian
+  -- im not too sure about this, really.  there's no way to represent partial
   -- knownledge (other than absence in `intervals)
   --
   -- instead, any time two Views are merged, then, by assumption, the view on
@@ -447,7 +447,7 @@ instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v)
   -- interest.  so we merge the entries by normal semigroup, but throw away the
   -- query data on the left, only the query on the right is reflected.  In
   -- order to reduce the irrelevent entries, we then immediately "fmapMaybe Just"
-  IntervalView s1 e1 <> IntervalView s2 e2 = tightenView $ IntervalView s2 e'
+  IntervalView s1 e1 <> IntervalView s2 e2 = IntervalView s2 (e' <> e2)
     where
       -- theoretically, the left sided view contains less information, and is
       -- the only thing that needs to be pruned (values in e2 are already

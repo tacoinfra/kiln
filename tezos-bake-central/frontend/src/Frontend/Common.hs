@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -8,29 +9,50 @@
 module Frontend.Common where
 
 import Control.Lens ((%~))
+import Control.Monad.Fix (MonadFix)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
+import qualified Data.ByteString.Base16 as BS16
+import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import qualified Data.Time as Time
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
 
-import Tezos.Types
+import Tezos.NodeRPC.Sources (tzScanUri)
+import Tezos.Types (BlockHash, ChainId, Fitness, NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,
+                    toPublicKeyHashText, unFitness)
 
 import Common (tshow)
 import Common.URI (appendPaths, mkRootUri)
 
 
-newtype Cfg = Cfg { _cfg_blockExplorerUrl :: Maybe Uri.URI }
+data Cfg = Cfg
+  { _cfg_checkForUpgrade :: !Bool
+  , _cfg_chain :: !(Either NamedChain ChainId)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
 
+
+urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
+urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
 
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
 
+localTimestamp :: (DomBuilder t m, MonadIO m) => Time.UTCTime -> m ()
+localTimestamp timestamp = do
+  tz <- liftIO Time.getCurrentTimeZone
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
+    Time.utcToZonedTime tz timestamp
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
@@ -70,7 +92,6 @@ elDynAttrWithModifyConfig' f elementTag attrs child = do
   notReadyUntil =<< getPostBuild
   pure result
 
-
 -- | Like 'elDynAttr'' but configures "prevent default" on the given event.
 elDynAttrWithPreventDefaultEvent'
   :: forall en t m a. (DomBuilder t m, PostBuild t m)
@@ -83,19 +104,18 @@ elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
   (\elCfg -> elCfg & elementConfig_eventSpec %~
     addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const preventDefault))
 
-
 validateUri :: Validator.Validator t m Uri.URI
 validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
-
 blockExplorerLink :: (MonadReader Cfg m, DomBuilder t m) => Text -> m a -> m a
 blockExplorerLink path f = do
-  urlCfg <- asks _cfg_blockExplorerUrl
-  case urlCfg of
-    Nothing -> f
-    Just url -> elAttr "a" ("href"=:maybe "" Uri.render (url `appendPaths` [path]) <> "target"=:"_blank") f
+  chain <- asks _cfg_chain
+  case chain of
+    Right _chainId -> f
+    Left namedChain ->
+      elAttr "a" ("href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
 
 blockHashLink :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m ()
 blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)
@@ -106,3 +126,18 @@ blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
 publicKeyHashLink :: (MonadReader Cfg m, DomBuilder t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh
+
+fitnessText :: Fitness -> Text
+fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode) . unFitness
+
+-- | Terrible hack.
+updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
+updatedWithInit d = do
+  pb <- getPostBuild
+  pure $ leftmost [updated d, tag (current d) pb]
+
+-- | Lazier version of 'maybeDyn'. Very hacky.
+maybeDynLazy
+  :: (PostBuild t m, MonadHold t m, MonadFix m)
+  => Dynamic t (Maybe a) -> m (Dynamic t (Maybe (Dynamic t a)))
+maybeDynLazy d = maybeDyn =<< holdDyn Nothing =<< updatedWithInit d

@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
@@ -57,7 +58,7 @@ notifyHandler
   -> BakeViewSelector a
   -> m (BakeView a)
 notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeDataSource_pool nds) $ do
-  sayShow ("notified", notifyMessage)
+  -- sayShow ("notified", notifyMessage)
 
   let clientsVS = _bakeViewSelector_clients aggVS
       clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -167,12 +168,12 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
                   }
 
-      tzScanVS = _bakeViewSelector_tzscan aggVS
-      handleTzScan = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id TzScan) of
+      publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
+      handlePublicNodeHead = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenM (viewSelects () tzScanVS) $ do
-          tzscan <- get $ fromId nid
-          pure $ mempty { _bakeView_tzscan = toMaybeView tzScanVS tzscan }
+        Aeson.Success nid -> whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
+          node <- get $ fromId nid
+          pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) node }
 
       upgradeVS = _bakeViewSelector_upgrade aggVS
       handleUpgradeNotice = case fromJSON (_notifyMessage_value notifyMessage) of
@@ -189,12 +190,13 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "Delegate" -> handleDelegate
     "Notificatee" -> handleNotificatee
     "MailServerConfig" -> handleMailServer
-    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
-    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
+    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
+    "ErrorLogNodeWrongChain" -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain
     "ErrorLogUpgradeNotice" -> handleUpgradeNotice
-    "TzScan" -> handleTzScan
+    "PublicNodeHead" -> handlePublicNodeHead
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage
       return mempty

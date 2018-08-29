@@ -13,6 +13,7 @@ library
 
   build-depends:
       aeson
+    , async
     , base
     , base16-bytestring
     , bytestring
@@ -76,13 +77,13 @@ library
 
   other-modules:
     Paths_backend
+    Backend.Alerts
     Backend.BalanceTracking
     -- Backend.Blake2b
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    Backend.Errors
     Backend.Graphs
     Backend.NotifyHandler
     Backend.RequestHandler
@@ -98,7 +99,7 @@ library
     Backend.Workers.Node
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
-               -DREAL_BOY
+               -DREAL_BUILD
 
 executable backend
   hs-source-dirs: src-bin
