@@ -52,6 +52,9 @@ instance FromJSON ContractId where
       Left bad -> fail $ show bad
       Right ok -> return ok
 
+instance FromJSONKey ContractId
+instance ToJSONKey ContractId
+
 toContractIdText :: ContractId -> Text
 toContractIdText = \case
   Implicit x -> toPublicKeyHashText x

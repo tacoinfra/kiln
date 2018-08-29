@@ -13,12 +13,14 @@ library
 
   build-depends:
       aeson
+    , IntervalMap
     , attoparsec
     , base
     , base16-bytestring
     , base58-bytestring
     , bytestring
     , cases
+    , constraints
     , containers
     , cryptohash
     , cryptonite
@@ -26,19 +28,24 @@ library
     , either
     , file-embed
     , hashing
-    , IntervalMap
     , lens
     , memory
     , modern-uri
+    , monoidal-containers
     , mtl
+    , reflection
     , reflex
     , reflex-aeson-orphans
     , rhyolite-common
+    , rhyolite-datastructures
     , scientific
+    , template-haskell
     , text
     , tezos-bake-monitor-lib
     , these
     , time
+    , transformers-compat
+    , writer-cps-mtl
 
   exposed-modules:
     Common
@@ -49,5 +56,6 @@ library
     Common.Schema
     Common.URI
     Common.Verification
+    Common.Vassal
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

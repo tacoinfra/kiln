@@ -272,7 +272,7 @@ levelAncestor hist lvl ctx = ctxBlockHash
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
 rightsContext params hist ctx lvl = ctxBlockHash
     -- for this case, we want the first block in the cycle that sits
-    -- $PRESERVED_CYCLES before the requested level, that is on the correct
+    -- PRESERVED_CYCLES before the requested level, that is on the correct
     -- branch.
     where
       reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params

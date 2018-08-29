@@ -17,6 +17,9 @@ whenJust :: (Applicative m, Monoid a) => Maybe t -> (t -> m a) -> m a
 whenJust Nothing _ = pure mempty
 whenJust (Just x) f = f x
 
+whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
+whenM x true = if x then true else pure mempty
+
 curryMap :: (Eq a) => AppendMap (a, b) c -> AppendMap a (AppendMap b c)
 curryMap = AMap.fromAscList . fmap (\((a, b), c) -> (a, AMap.singleton b c)) . AMap.toAscList
 

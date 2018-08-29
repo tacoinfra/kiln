@@ -22,7 +22,7 @@ import Text.URI (URI)
 import Tezos.Types
 
 import Common.App (Bake, MailServerView)
-import Common.Schema (ClientAddress, UpgradeCheckError)
+import Common.Schema (UpgradeCheckError)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
