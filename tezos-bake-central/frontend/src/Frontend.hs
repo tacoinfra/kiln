@@ -27,7 +27,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_)
+import Data.Foldable (for_, toList, traverse_, fold)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
@@ -62,6 +62,7 @@ import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import Rhyolite.SemiMap (knownSubMap)
 import qualified Text.URI as Uri
+import qualified Data.IntervalMap.Generic.Lazy as IMap
 
 import Tezos.NodeRPC.Types
 import Tezos.Types
@@ -120,20 +121,19 @@ watchProtoInfo =
     { _bakeViewSelector_parameters = viewJust 1
     }
 
--- watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (_ (Id Node) ()) -> m (Dynamic t (AppendMap (Id Node) Node))
+watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) Node ()) -> m (Dynamic t (AppendMap (Id Node) Node))
 watchNodes nidsDyn = do
   theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = viewRangeAll 1 -- fmap (const 1) nids
+    { _bakeViewSelector_nodes = 1 <$ nids
     }
-  return $ ffor theView $ \v -> getRangeView (_bakeView_nodes v)
+  return $ ffor theView $ \v -> getRangeView' (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) ClientAddress))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> getRangeView (_bakeView_nodeAddresses v')
-
+  return $ ffor theView $ \v' -> getRangeView' (_bakeView_nodeAddresses v')
 
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (AppendMap (Id Client) ClientInfo))
 watchClient cidDyn = do
@@ -145,74 +145,80 @@ watchClient cidDyn = do
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
   theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_delegates = viewRangeAll 1}
-  return $ ffor theView $ Map.keysSet . getRangeView . _bakeView_delegates
+  return $ ffor theView $ Map.keysSet . getRangeView' . _bakeView_delegates
 
 watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
-  let levels :: RawLevel = 30
+  let levels :: (RawLevel, RawLevel) = (0, 30)
+      levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
   theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
-    { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewInterval (0, levels) 1
+    { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
     }
-  return $ ffor theView $ _ . second (fmap getIntervalView) . first getRangeView . getComposeView . _bakeView_delegateStats
+  holdDyn (Map.empty) never
+  -- return $ ffor theView $ uncurry (mergeMMap
+  --     (\_ acc -> Just (mempty, acc))
+  --     (\_ _ -> Nothing)
+  --     (\pkh acc (AppendIMap.AppendIntervalMap effs) -> Just (fold $ IMap.findWithDefault mempty levels' effs, acc))
+  --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
 watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) ClientAddress))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_clientAddresses = Just 1
+    { _bakeViewSelector_clientAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> fmapMaybe fst (knownSubMap $ _bakeView_clientAddresses v')
+  return $ ffor theView $ \v' -> (catMaybes $ getRangeView' $ _bakeView_clientAddresses v')
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_notificatees = Just 1
+    { _bakeViewSelector_notificatees = viewRangeAll 1
     }
-  return $ ffor theView $ \v -> fmapMaybe (getFirst . fst) (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> getRangeView' (_bakeView_notificatees v)
 
 watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
 watchSummary = do
   theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_summary = Just 1
+    { _bakeViewSelector_summary = viewJust 1
     }
-  improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summary v
+  improvingMaybe $ ffor theView $ \v -> getMaybeView $ _bakeView_summary v
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
-watchSummaryGraph = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_summary = Just 1
-    }
-  improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
+watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
+-- watchSummaryGraph = do
+--   theView <- watchViewSelector . pure $ mempty
+--     { _bakeViewSelector_summary = Just 1
+--     }
+--   improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
 
 watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
 watchMailServer =
-  (fmap . fmap) (join . getSingle . _bakeView_mailServer) $
+  (fmap . fmap) (join . getMaybeView . _bakeView_mailServer) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_mailServer = Just 1 }
+      { _bakeViewSelector_mailServer = viewJust 1 }
 
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
-  -> m (Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (AppendMap (Id ErrorLog) (Maybe (ErrorLog, ErrorLogView)))))
-watchErrors intervals = do
-  theView <- watchViewSelector $ ffor intervals $ \ivals -> mempty
-    { _bakeViewSelector_errors = AppendIMap.fromSet (const 1) ivals
+  -> m (Dynamic t (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) (BaseMap.Map (Id ErrorLog) (ErrorLog, ErrorLogView))))
+watchErrors intervals =
+  -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
+  (fmap . fmap) (fmap (foldMap $ uncurry BaseMap.singleton) . getIntervalViewI . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
+    { _bakeViewSelector_errors = viewIntervalSet ivals 1
     }
-  pure $ ffor theView $ \v ->
-    ffor (_bakeView_errors v) $ \(idsSet, _) -> getFirst <$> restrictKeys (_bakeView_errorsById v) idsSet
 
 watchTzScan :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TzScan))
 watchTzScan =
-  (fmap . fmap) (join . getSingle . _bakeView_tzscan) $
+  (fmap . fmap) (getMaybeView . _bakeView_tzscan) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_tzscan = Just 1 }
+      { _bakeViewSelector_tzscan = viewJust 1 }
 
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
 watchUpgradeNotice =
-  (fmap . fmap) (join . getSingle . _bakeView_upgrade) $
+  (fmap . fmap) (getMaybeView . _bakeView_upgrade) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_upgrade = Just 1 }
+      { _bakeViewSelector_upgrade = viewJust 1 }
 
 
 headTag :: DomBuilder t m => m ()
@@ -315,7 +321,7 @@ summaryTab = divClass "ui grid" $ do
           text $ "Waiting: " <> tshow n
 
       errors <- watchErrors (pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity)
-      dyn_ $ ffor errors $ traverse_ $ traverse_ $ traverse_ $ \(log, specificLog) -> do
+      dyn_ $ ffor errors $ traverse_ $ traverse_ $ \(log, specificLog) -> do
         let header txt = divClass "header" $ text $ case _errorLog_stopped log of
               Just _ -> "Resolved: " <> txt
               Nothing -> txt
@@ -518,7 +524,7 @@ data NodeTile
 nodesTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTab = do
   tzscanDyn <- watchTzScan
-  nodesDyn <- watchNodes $ pure $ universe ()
+  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
   let
     zipNodeTiles tzscan nodes =
       (case tzscan of

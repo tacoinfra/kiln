@@ -109,6 +109,9 @@ instance IsBase58Hash tag => FromJSON (HashedValue tag ByteString) where
     hexesText <- parseJSON x
     either (fail . show) pure $ fromBase58 $ T.encodeUtf8 hexesText
 
+instance IsBase58Hash tag => FromJSONKey (HashedValue tag ByteString)
+instance IsBase58Hash tag => ToJSONKey (HashedValue tag ByteString)
+
 -- instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
 --   parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize (Proxy :: Proxy t)
 --   encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x

@@ -19,7 +19,7 @@ import Control.Lens (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as Map
+import qualified Data.AppendMap as MMap
 import Data.Functor.Compose
 import Data.Fixed (Micro)
 import Data.Semigroup (First (..), Semigroup, (<>), Option(..))
@@ -41,73 +41,41 @@ import Rhyolite.Schema (Email, Id)
 import Tezos.Types
 
 import Common
-import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval, WithInfinity)
+import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval(..), WithInfinity(..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
 -- import Rhyolite.SemiMap (SemiMap(..))
 -- import qualified Rhyolite.SemiMap as Rhyolite
-import qualified Data.Map.Monoidal as MonoidalMap
+import qualified Data.Map.Monoidal as MMap
+import qualified Data.Map as Map
 
 import Common.Vassal
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
-restrictKeys m ks = Map.filterWithKey (\k _ -> k `Set.member` ks) m
+restrictKeys m ks = MMap.filterWithKey (\k _ -> k `Set.member` ks) m
 
 summary :: Semigroup v => AppendMap k v -> Maybe v
-summary = Map.lookup () . Map.mapKeysWith (<>) (const ())
-
--- universe :: a -> SemiMapSelector k a
--- universe = SemiMapSelector_Complete
--- 
--- usingleton :: k -> a -> SemiMapSelector k a
--- usingleton k a = SemiMapSelector_Partial (Map.singleton k a)
--- 
--- ulookup :: Ord k => k -> SemiMapSelector k a -> Maybe a
--- ulookup k (SemiMapSelector_Partial xs) = Map.lookup k xs
--- ulookup k (SemiMapSelector_Complete a) = Just a
+summary = MMap.lookup () . MMap.mapKeysWith (<>) (const ())
 
 data Bake = Bake
 
--- type TimeWindow = ClosedInterval (WithInfinity UTCTime)
-
--- fromListSemiSet :: Ord k => [k] -> SemiSet k
--- fromListSemiSet = completeSemiSet . Set.fromList
--- 
--- completeSemiSet :: Set k -> SemiSet k
--- completeSemiSet = SemiSet . Rhyolite.SemiMap_Complete . MonoidalMap.fromSet (const ())
--- 
--- deleteSemiMap :: k -> SemiSet k
--- deleteSemiMap = SemiSet .  Rhyolite.SemiMap_Partial . flip MonoidalMap.singleton (First $ Nothing)
--- 
--- insertSemiMap :: k -> SemiSet k
--- insertSemiMap = SemiSet .  Rhyolite.SemiMap_Partial . flip MonoidalMap.singleton (First $ Just ())
--- 
--- getSemiSet = Rhyolite.knownKeysSet . unSemiSet
--- 
--- instance Foldable SemiSet where
---   foldMap f = foldMap f . Rhyolite.knownKeysSet . unSemiSet
---   length = length . Rhyolite.knownKeysSet . unSemiSet
-
--- | a way to get sharing for things that could appear multipe times in a View
-
 type ErrorInfo = (ErrorLog, ErrorLogView)
+getErrorInterval :: (ErrorLog, ErrorLogView) -> First ((ErrorLog, ErrorLogView), ClosedInterval (WithInfinity UTCTime))
+getErrorInterval ei@(el, _) = First (ei, ClosedInterval
+  (Bounded $ _errorLog_started el)
+  (maybe UpperInfinity Bounded $ _errorLog_stopped el))
 
--- data BakeViewSummary = 
---   { report :: Report
---   , unreporting :: Int
---   , graph :: AppendMap (Id Client) (Micro, Text)
---   , 
 
 data BakeViewSelector a = BakeViewSelector
-  { _bakeViewSelector_clientAddresses ::  !(RangeSelector (Id Client) (Maybe ClientAddress) a)
+  { _bakeViewSelector_clientAddresses ::  !(RangeSelector' (Id Client) (Maybe ClientAddress) a)
   , _bakeViewSelector_clients ::          !(RangeSelector (Id Client) ClientInfo a)
-  , _bakeViewSelector_delegateStats ::    !(ComposeSelector (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_delegates ::        !(RangeSelector PublicKeyHash () a)
-  , _bakeViewSelector_errors ::           !(IntervalSelector UTCTime ErrorInfo a)
+  , _bakeViewSelector_delegateStats ::    !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeViewSelector_delegates ::        !(RangeSelector' PublicKeyHash () a)
+  , _bakeViewSelector_errors ::           !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeViewSelector_mailServer ::       !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses ::    !(RangeSelector (Id Node) ClientAddress a)
-  , _bakeViewSelector_nodes ::            !(RangeSelector (Id Node) Node a)
-  , _bakeViewSelector_notificatees ::     !(RangeSelector (Id Notificatee) (First (Maybe Email)) a)
+  , _bakeViewSelector_nodeAddresses ::    !(RangeSelector' (Id Node) ClientAddress a)
+  , _bakeViewSelector_nodes ::            !(RangeSelector' (Id Node) Node a)
+  , _bakeViewSelector_notificatees ::     !(RangeSelector' (Id Notificatee) Email a)
   , _bakeViewSelector_parameters ::       !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary ::          !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_tzscan ::           !(MaybeSelector TzScan a)
@@ -121,15 +89,15 @@ deriving instance (Ord a) => Ord (BakeViewSelector a)
 -- (Show (ComposeView (RangeSelector PublicKeyHash ()) (IntervalSelector RawLevel (BakeEfficiency, Account)) a))
 
 data BakeView a = BakeView
-  { _bakeView_clientAddresses ::  !(RangeView (Id Client) (Maybe ClientAddress) a)
+  { _bakeView_clientAddresses ::  !(RangeView' (Id Client) (Maybe ClientAddress) a)
   , _bakeView_clients ::          !(RangeView (Id Client) ClientInfo a)
-  , _bakeView_delegateStats ::    !(ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a)
-  , _bakeView_delegates ::        !(RangeView PublicKeyHash () a)
-  , _bakeView_errors ::           !(IntervalView UTCTime ErrorInfo a)
+  , _bakeView_delegateStats ::    !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeView_delegates ::        !(RangeView' PublicKeyHash () a)
+  , _bakeView_errors ::           !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeView_mailServer ::       !(MaybeView (Maybe MailServerView) a)
-  , _bakeView_nodeAddresses ::    !(RangeView (Id Node) ClientAddress a)
-  , _bakeView_nodes ::            !(RangeView (Id Node) Node a)
-  , _bakeView_notificatees ::     !(RangeView (Id Notificatee) (First (Maybe Email)) a)
+  , _bakeView_nodeAddresses ::    !(RangeView' (Id Node) ClientAddress a)
+  , _bakeView_nodes ::            !(RangeView' (Id Node) Node a)
+  , _bakeView_notificatees ::     !(RangeView' (Id Notificatee) Email a)
   , _bakeView_parameters ::       !(MaybeView ProtoInfo a)
   , _bakeView_summary ::          !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_tzscan ::           !(MaybeView TzScan a)
@@ -224,29 +192,22 @@ cropBakeView vs v = BakeView
 --     , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
 --     }
 
--- instance FunctorMaybe BakeView where
---   fmapMaybe f a = BakeView
---     { _bakeView_clientAddresses = fmapMaybeSnd f $ _bakeView_clientAddresses a
---     , _bakeView_clients = fmapMaybeSnd f $ _bakeView_clients a
---     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
---     , _bakeView_tzscan = fmapMaybe f $ _bakeView_tzscan a
---     , _bakeView_nodes = fmapMaybeSnd f $ _bakeView_nodes a
---     , _bakeView_delegates = fmapMaybe (traverse f) $ _bakeView_delegates a
---     , _bakeView_delegateStats = fmapMaybeSnd f $ _bakeView_delegateStats a
---     , _bakeView_notificatees = fmapMaybeSnd f $ _bakeView_notificatees a
---     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
---     , _bakeView_graphs = fmapMaybeSnd f $ _bakeView_graphs a
---     , _bakeView_summaryGraph = fmapMaybe f $ _bakeView_summaryGraph a
---     , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
---     , _bakeView_nodeAddresses = fmapMaybeSnd f (_bakeView_nodeAddresses a)
---     , _bakeView_errors = errors
---     , _bakeView_errorsById =
---         -- Crop the 'ErrorLog's to only those with the IDs referenced in the cropped set of errors.
---         restrictKeys (_bakeView_errorsById a) (foldMap fst $ AppendIMap.elems errors)
---     , _bakeView_upgrade = fmapMaybe f $ _bakeView_upgrade a
---     }
---     where
---       errors = fmapMaybeSnd f (_bakeView_errors a)
+instance FunctorMaybe BakeView where
+  fmapMaybe f a = BakeView
+    { _bakeView_clientAddresses = fmapMaybe f $ _bakeView_clientAddresses a
+    , _bakeView_clients =         fmapMaybe f $ _bakeView_clients         a
+    , _bakeView_parameters =      fmapMaybe f $ _bakeView_parameters      a
+    , _bakeView_tzscan =          fmapMaybe f $ _bakeView_tzscan          a
+    , _bakeView_nodes =           fmapMaybe f $ _bakeView_nodes           a
+    , _bakeView_delegates =       fmapMaybe f $ _bakeView_delegates       a
+    , _bakeView_delegateStats =   fmapMaybe f $ _bakeView_delegateStats   a
+    , _bakeView_notificatees =    fmapMaybe f $ _bakeView_notificatees    a
+    , _bakeView_mailServer =      fmapMaybe f $ _bakeView_mailServer      a
+    , _bakeView_summary =         fmapMaybe f $ _bakeView_summary         a
+    , _bakeView_nodeAddresses =   fmapMaybe f $ _bakeView_nodeAddresses   a
+    , _bakeView_errors =          fmapMaybe f $ _bakeView_errors          a
+    , _bakeView_upgrade =         fmapMaybe f $ _bakeView_upgrade         a
+    }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
 fmapMaybeSnd f = fmapMaybe $ \(e, a) -> case f a of

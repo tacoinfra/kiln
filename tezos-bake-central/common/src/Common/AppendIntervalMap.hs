@@ -12,10 +12,12 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Common.AppendIntervalMap where
 
 import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex (itraverse))
-import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSONKey, parseJSON, liftParseJSON, liftParseJSONList)
+import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSONKey, parseJSON, liftParseJSON)
 import Data.Aeson (ToJSON, ToJSON1, toEncoding, toJSON, liftToJSONList, liftToJSON, liftToEncoding, liftToEncodingList)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
@@ -27,11 +29,9 @@ import Data.These (These (That, These, This))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic, Generic1)
 import Reflex.FunctorMaybe (FunctorMaybe (fmapMaybe))
-import qualified Data.Foldable as Foldable
 import qualified Data.IntervalMap.Generic.Interval as IntervalClass
 import qualified Data.IntervalMap.Generic.Lazy as IMap
 import qualified Data.Set as Set
-import qualified GHC.Exts as IsList
 
 {-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
@@ -68,7 +68,7 @@ instance TraversableWithIndex k (AppendIntervalMap k) where
 instance (IsInterval k e, Ord k) => Align (AppendIntervalMap k) where
   nil = AppendIntervalMap mempty
   align m n = unionWith merge (This <$> m) (That <$> n)
-    where merge (This m) (That n) = These m n
+    where merge (This m') (That n') = These m' n'
           merge _ _ = error "Impossible: Align AppendIntervalMap merge"
 
 instance (IsInterval k e) => FunctorMaybe (AppendIntervalMap k) where
@@ -78,22 +78,22 @@ instance (IsInterval k e, Ord k, ToJSON k, ToJSON v) => ToJSON (AppendIntervalMa
   toJSON = toJSON . IMap.toAscList . unAppendIntervalMap
   toEncoding = toEncoding . IMap.toAscList . unAppendIntervalMap
 
-instance (IsInterval k e, Ord k, Semigroup v, FromJSON k, FromJSON v) => FromJSON (AppendIntervalMap k v) where
-  parseJSON = fmap (AppendIntervalMap . IMap.fromListWith (<>)) . parseJSON
+instance (IsInterval k e, Ord k, FromJSON k, FromJSON v) => FromJSON (AppendIntervalMap k v) where
+  parseJSON = fmap (AppendIntervalMap . IMap.fromList) . parseJSON
 
 instance (FromJSON k, IsInterval k e, Ord k) => FromJSON1 (AppendIntervalMap k) where
   liftParseJSON :: forall a. (Aeson.Value -> Aeson.Parser a) -> (Aeson.Value -> Aeson.Parser [a])
                 -> Aeson.Value -> Aeson.Parser (AppendIntervalMap k a)
-  liftParseJSON parse parseList val = AppendIntervalMap . IMap.fromList <$> liftParseJSON parse' parseList' val
+  liftParseJSON parse _parseList val = AppendIntervalMap . IMap.fromList <$> liftParseJSON parse' parseList' val
     where
       parse' :: Aeson.Value -> Aeson.Parser (k, a)
-      parse' val = do
-        (k, aVal) <- parseJSON val
+      parse' val' = do
+        (k, aVal) <- parseJSON val'
         a <- parse aVal
         return (k, a)
 
       parseList' :: Aeson.Value -> Aeson.Parser [(k, a)]
-      parseList' val = traverse parse' =<< (parseJSON val :: Aeson.Parser [Aeson.Value])
+      parseList' val' = traverse parse' =<< (parseJSON val' :: Aeson.Parser [Aeson.Value])
 
 instance ToJSON k => ToJSON1 (AppendIntervalMap k) where
   liftToJSON :: forall a. (a -> Aeson.Value) -> ([a] -> Aeson.Value) -> AppendIntervalMap k a -> Aeson.Value
@@ -191,6 +191,10 @@ data WithInfinity a = LowerInfinity | Bounded a | UpperInfinity
   deriving (Eq, Ord, Generic, Typeable, Show, Read, Functor, Foldable, Traversable)
 instance FromJSON a => FromJSON (WithInfinity a)
 instance ToJSON a => ToJSON (WithInfinity a)
+
+instance Bounded (WithInfinity a) where
+  minBound = LowerInfinity
+  maxBound = UpperInfinity
 
 getBounded :: WithInfinity a -> Maybe a
 getBounded = \case

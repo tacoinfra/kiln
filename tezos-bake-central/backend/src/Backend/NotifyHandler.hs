@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -6,6 +7,9 @@
 
 module Backend.NotifyHandler where
 
+import Prelude hiding (lookup)
+
+import Data.Time(UTCTime)
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Control.Monad.Except (runExceptT)
@@ -17,7 +21,7 @@ import Data.Aeson (FromJSON, fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as Map
 import Data.Bifunctor (first)
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
@@ -40,10 +44,11 @@ import Backend.CachedNodeRPC
 import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
-import Common (tshow, whenJust)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), TimeWindow,
-                   mailServerConfigToView, ulookup, single, deleteSemiMap, insertSemiMap, SemiSet)
+import Common (tshow, whenJust, whenM)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView)
 import Common.Schema
+
+import Common.Vassal
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
@@ -53,95 +58,90 @@ notifyHandler
   -> m (BakeView a)
 notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeDataSource_pool nds) $ do
   sayShow ("notified", notifyMessage)
-  let handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
+
+  let clientsVS = _bakeViewSelector_clients aggVS
+      clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
+      summaryVS = _bakeViewSelector_summary aggVS
+      handleClient = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success cid -> do
+        Aeson.Success cid -> whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
           client :: Maybe Client <- fmap listToMaybe $
             select $ AutoKeyField ==. fromId cid &&. Client_deletedField ==. False
-          infos :: [ClientInfo] <- select (ClientInfo_clientField ==. cid)
+          infos :: Maybe ClientInfo <- fmap listToMaybe $ select (ClientInfo_clientField ==. cid)
           let
-            clientsPatch = case Map.lookup cid (_bakeViewSelector_clients aggVS) of
-              Nothing -> mempty
-              Just a -> mempty
-                { _bakeView_clients = Map.singleton cid (First (listToMaybe infos), a)
+            clientsPatch = mempty
+                { _bakeView_clients = toRangeView1 clientsVS cid infos -- $ (cid,) <$> infos
+                , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ _client_address <$> client
                 }
-            clientAddressPatch = case _bakeViewSelector_clientAddresses aggVS of
-              Nothing -> mempty
-              Just a -> mempty
-                { _bakeView_clientAddresses = Map.singleton cid (First (_client_address <$> client), a)
-                }
-          summaryPatch <- whenJust (_bakeViewSelector_summary aggVS) $ \a -> do
-            rewardMap <- getAllRewards a
+          summaryPatch <- whenM (viewSelects () summaryVS) $ do
             maxLevel <- getMaxLevel
             summaryReport <- getSummaryReport
-            summaryGraph <- whenJust maxLevel $ \l -> do
-              mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
-              return $ single mGraph a
+            -- summaryGraph <- whenJust maxLevel $ \l -> do
+            --   mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
+            --   return $ single mGraph a
             return $ mempty
-              { _bakeView_summaryGraph = summaryGraph
-              , _bakeView_summary = single summaryReport a
+              { _bakeView_summary = toMaybeView (_bakeViewSelector_summary aggVS) summaryReport
               }
-          return $ clientsPatch <> clientAddressPatch <> summaryPatch
+          return $ clientsPatch <> summaryPatch
 
+      paramsVS = _bakeViewSelector_parameters aggVS
       handleParameters = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (nid :: Id Parameters) -> do
-          delegateStatsView <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
-            calculateDelegateStats (_bakeViewSelector_delegateStats aggVS)
-          whenJust (_bakeViewSelector_parameters aggVS) $ \a -> do
+          -- delegateStatsView <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
+          --   calculateDelegateStats (_bakeViewSelector_delegateStats aggVS)
+          whenM (viewSelects () paramsVS) $ do
             params :: Maybe Parameters <- listToMaybe <$> select (AutoKeyField ==. fromId nid)
             pure $ mempty
-              { _bakeView_parameters = single (_parameters_protoInfo <$> params) a
-              , _bakeView_delegateStats = delegateStatsView
+              { _bakeView_parameters = toMaybeView paramsVS $ _parameters_protoInfo <$> params
+              -- , _bakeView_delegateStats = delegateStatsView
               }
+
+      nodesVS = _bakeViewSelector_nodes aggVS
+      nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
 
       handleNode = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> do
+        Aeson.Success nid -> whenM (viewSelects (Bounded nid) nodesVS || viewSelects (Bounded nid) nodeAddressesVS) $ do
           node :: Maybe Node <- fmap listToMaybe $
             select $ AutoKeyField ==. fromId nid &&. Node_deletedField ==. False
-          let nodes = case ulookup nid (_bakeViewSelector_nodes aggVS) of
-                Nothing -> mempty
-                Just a -> mempty
-                  { _bakeView_nodes = Map.singleton nid (First node, a)
+          return mempty
+                  { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) node
+                  , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ _node_address <$> node
                   }
-          let nodeAddresses = case _bakeViewSelector_nodeAddresses aggVS of
-                Nothing -> mempty
-                Just a -> mempty
-                  { _bakeView_nodeAddresses = Map.singleton nid (First $ _node_address <$> node, a)
-                  }
-          return $ nodeAddresses <> nodes
+
+      delegateVS = _bakeViewSelector_delegates aggVS
 
       handleDelegate = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (dId :: Id Delegate) -> do
-          whenJust (_bakeViewSelector_delegates aggVS) $ \a -> do
-            delegate :: Maybe Delegate <- get $ fromId dId
-            let
-              f :: Delegate -> SemiSet PublicKeyHash
-              f d = if _delegate_deleted d then deleteSemiMap pkh else insertSemiMap pkh
-                where
-                  pkh = _delegate_publicKeyHash d
-            let pkh :: SemiSet PublicKeyHash = foldMap f $ delegate
-            pure $ mempty
-              { _bakeView_delegates = pure (pkh, a)
-              }
+          -- TODO: shove PKH in the NotifyMessage body so we can sample the
+          -- viewselector without making a trip to the database and this whole
+          -- thing can live in a withM (viewSelects ...)
+          delegate :: Maybe Delegate <- get $ fromId dId
+          pure $ mempty
+            { _bakeView_delegates = foldMap (\pkh -> toRangeView1 delegateVS (Bounded pkh) $ Just ()) $ _delegate_publicKeyHash <$> delegate
+            }
 
+      notificateesVS = _bakeViewSelector_notificatees aggVS
       handleNotificatee = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenJust (_bakeViewSelector_notificatees aggVS) $ \a -> do
+        Aeson.Success nid -> whenM (viewSelects (Bounded nid) notificateesVS) $ do
           notificatee :: Maybe Notificatee <- get $ fromId nid
           pure $ (mempty :: BakeView a)
-            { _bakeView_notificatees = Map.singleton nid (First $ _notificatee_email <$> notificatee, a)
+            { _bakeView_notificatees = toRangeView1 notificateesVS (Bounded nid) $ _notificatee_email <$> notificatee
             }
 
+      mailServerVS = _bakeViewSelector_mailServer aggVS
       handleMailServer = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id MailServerConfig) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenJust (_bakeViewSelector_mailServer aggVS) $ \a -> do
+        Aeson.Success nid -> whenM (viewSelects () mailServerVS) $ do
           mailServer :: Maybe MailServerConfig <- get $ fromId nid
           pure $ (mempty :: BakeView a)
-            { _bakeView_mailServer = single (mailServerConfigToView <$> mailServer) a
+            { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ mailServerConfigToView <$> mailServer
             }
+
+      errorsVS = _bakeViewSelector_errors aggVS
 
       handleErrorLog
         :: forall e m2. (EntityWithId e, FromJSON (IdData e), PersistBackend m2, MonadIO m2)
@@ -149,38 +149,38 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
       handleErrorLog getLogId toView = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (specificLogId :: Id e) -> do
+          -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
+          -- message body so that we can avoid doing some of the work if it
+          -- won't be observed
           specificLog' :: Maybe e <- getId specificLogId
           whenJust specificLog' $ \specificLog -> do
             let logId = getLogId specificLog
             errorLog' :: Maybe ErrorLog <- get $ fromId logId
             whenJust errorLog' $ \errorLog -> do
               let
-                relevantIntervals :: AppendIMap.AppendIntervalMap TimeWindow a =
-                  _bakeViewSelector_errors aggVS `AppendIMap.intersecting`
-                    ClosedInterval
+                -- todo: Common.App.getErrorInterval does this already
+                errorInterval = ClosedInterval
                       (Bounded $ _errorLog_started errorLog)
                       (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
-
-              pure $ if null relevantIntervals
-                then mempty :: BakeView a
-                else mempty
-                  { _bakeView_errors = (,) (Set.singleton logId) <$> relevantIntervals
-                  , _bakeView_errorsById =
-                      Map.singleton logId (First (Just (errorLog, toView specificLog)))
+              whenM (viewSelects errorInterval errorsVS) $ pure mempty
+                  { _bakeView_errors = IntervalView mempty $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                      Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
                   }
 
+      tzScanVS = _bakeViewSelector_tzscan aggVS
       handleTzScan = case fromJSON (_notifyMessage_value notifyMessage) :: Aeson.Result (Id TzScan) of
         Aeson.Error e -> parseErr notifyMessage e
-        Aeson.Success nid -> whenJust (_bakeViewSelector_tzscan aggVS) $ \a -> do
+        Aeson.Success nid -> whenM (viewSelects () tzScanVS) $ do
           tzscan <- get $ fromId nid
-          pure $ mempty { _bakeView_tzscan = single tzscan a }
+          pure $ mempty { _bakeView_tzscan = toMaybeView tzScanVS tzscan }
 
+      upgradeVS = _bakeViewSelector_upgrade aggVS
       handleUpgradeNotice = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
         Aeson.Success (specificLogId :: Id ErrorLogUpgradeNotice) ->
-          whenJust (_bakeViewSelector_upgrade aggVS) $ \a -> do
+          whenM (viewSelects () upgradeVS) $ do
             n <- getUpgradeNotice
-            pure $ mempty { _bakeView_upgrade = single n a }
+            pure $ mempty { _bakeView_upgrade = toMaybeView upgradeVS n }
 
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient

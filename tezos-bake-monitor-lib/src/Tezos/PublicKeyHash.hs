@@ -60,6 +60,9 @@ toPublicKeyHashText = \case
   PublicKeyHash_Secp256k1 x -> toBase58Text x
   PublicKeyHash_P256 x -> toBase58Text x
 
+instance FromJSONKey PublicKeyHash
+instance ToJSONKey PublicKeyHash
+
 instance Show PublicKeyHash where
   show = ("fromString " <>) . show . toPublicKeyHashText
 

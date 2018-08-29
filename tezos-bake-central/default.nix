@@ -87,8 +87,6 @@ obelisk.project ./. ({ pkgs, ... }:
         rev =  "abd1bab0738463657fc6303e606015a97b01c8a0";
         sha256 = "0lpc3cy8a7h62zgqf214g5bf68dg8clwgh1fs8hada5af4ppxf0l";
       };
-
-
     };
     overrides = self: super: {
       tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (
