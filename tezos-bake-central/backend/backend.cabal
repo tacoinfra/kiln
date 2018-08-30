@@ -79,7 +79,6 @@ library
     Paths_backend
     Backend.Alerts
     Backend.BalanceTracking
-    -- Backend.Blake2b
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common

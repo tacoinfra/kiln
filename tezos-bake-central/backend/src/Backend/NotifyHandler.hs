@@ -30,7 +30,6 @@ import Data.Semigroup (First (..), Semigroup, (<>))
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, Postgresql, get, select, (&&.),
                                       (==.))
--- import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
@@ -71,7 +70,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           infos :: Maybe ClientInfo <- fmap listToMaybe $ select (ClientInfo_clientField ==. cid)
           let
             clientsPatch = mempty
-                { _bakeView_clients = toRangeView1 clientsVS cid infos -- $ (cid,) <$> infos
+                { _bakeView_clients = toRangeView1 clientsVS cid infos
                 , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ _client_address <$> client
                 }
           summaryPatch <- whenM (viewSelects () summaryVS) $ do
@@ -164,7 +163,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       (Bounded $ _errorLog_started errorLog)
                       (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
               whenM (viewSelects errorInterval errorsVS) $ pure mempty
-                  { _bakeView_errors = IntervalView mempty $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                  { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
                       Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
                   }
 

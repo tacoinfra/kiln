@@ -193,13 +193,7 @@ getErrorLogs
 
 getErrorLogs intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
-  -- allLogs :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView) <- 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
-  -- -- Unflatten the results by finding which interval each log corresponded to.
-  -- pure $ fold $ flip imap allLogs $ \logId (errorLog@(ErrorLog started stopped _ _), view) ->
-  --     let relevantIntervals = intervalMap `AppendIMap.intersecting` ClosedInterval (Bounded started) (maybe UpperInfinity Bounded stopped)
-  --     in relevantIntervals <&> \a ->
-  --         (AppendMap.singleton logId $ First (Just (errorLog, view)), a)
 
   where
     runQueries (ClosedInterval lowWithInf highWithInf) = do
