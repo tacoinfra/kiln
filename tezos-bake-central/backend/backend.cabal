@@ -33,7 +33,6 @@ library
     , either
     , filepath
     , formatting
-    , frontend
     , generic-deriving
     , groundhog
     , groundhog-postgresql

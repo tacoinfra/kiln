@@ -1,28 +1,27 @@
 {-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Common.App where
 
-import Data.Bifunctor
-import Data.Foldable(fold)
 import Control.Lens (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align, alignWith, nil)
 import Data.AppendMap (AppendMap)
 import qualified Data.AppendMap as MMap
+import Data.Bifunctor
+import Data.Foldable (fold)
 import Data.Functor.Compose
 import Data.Semigroup (First (..), Semigroup, (<>))
 import Data.Set (Set)
@@ -37,15 +36,14 @@ import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Aeson.Orphans ()
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
-import Rhyolite.App (HasView, View, ViewSelector) -- that Single is not so good eh.
+import Rhyolite.App (HasView, View, ViewSelector)
 import Rhyolite.Schema (Email, Id)
 import Text.URI (URI)
 
 import Tezos.Types
 
-import Common.AppendIntervalMap (ClosedInterval(..), WithInfinity(..))
+import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Schema
-
 import Common.Vassal
 
 restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
@@ -270,7 +268,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
-  mempty = BakeViewSelector 
+  mempty = BakeViewSelector
     { _bakeViewSelector_clientAddresses = mempty
     , _bakeViewSelector_summary = mempty
     , _bakeViewSelector_clients = mempty

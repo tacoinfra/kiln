@@ -36,6 +36,7 @@ library
     , reflection
     , reflex
     , reflex-aeson-orphans
+    , reflex-dom-core
     , rhyolite-common
     , rhyolite-datastructures
     , scientific
@@ -53,6 +54,7 @@ library
     Common.App
     Common.AppendIntervalMap
     Common.Config
+    Common.HeadTag
     Common.Schema
     Common.URI
     Common.Verification

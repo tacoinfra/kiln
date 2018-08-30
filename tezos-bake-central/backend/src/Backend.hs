@@ -120,10 +120,10 @@ import Backend.Workers.Delegate
 import Backend.Workers.Node
 import Common (tshow)
 import qualified Common.Config as Config
+import Common.HeadTag (headTag)
 import Common.Schema
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
-import Frontend (frontend)
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -197,7 +197,7 @@ backend = do
 
   let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-    [ Just $ fst frontend
+    [ Just headTag
     , injectPure Config.route . encodeViaJson <$> routeEnv
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
     , Just $ injectPure Config.chain $ showChain chain
