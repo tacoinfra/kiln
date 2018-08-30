@@ -421,6 +421,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''SeenEvent
   , ''SmtpProtocol
   , ''UpgradeCheckError
+  , ''VeryBlockLike
   ]
 
 concat <$> traverse makeLenses

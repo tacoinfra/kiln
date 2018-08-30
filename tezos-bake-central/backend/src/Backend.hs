@@ -88,6 +88,7 @@ import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay, maximumMay)
 import Say (say, sayErr, sayShow)
 import Snap.Core (MonadSnap, route)
+import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
@@ -248,12 +249,47 @@ backend = do
       else
         runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
+
       SnapServer.httpServe cfg (route
         [ ("", rootHandler staticHead)
+        , ("/api/v1", snapCache dataSrc)
         , ("/listen", handleListen)
         , ("static", serveAssets "static" "static")
         , ("", serveDirectory "frontend.jsexe")
         ])
+
+
+
+snapBranchPoint :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockHash)
+snapBranchPoint = withCache (Left "nocache") $ \_proto -> do
+  Map.lookup "block" <$> Snap.getQueryParams >>= \case
+    Nothing -> return $ Left "bad param"
+    Just blockBS -> case traverse fromBase58 blockBS of
+      Left err -> return $ Left $ tshow err
+      Right (b1:b2:bs) -> branchPoint b1 b2 >>= \case
+        Nothing -> return $ Left "not found"
+        Just b' -> return $ Right $ _veryBlockLike_hash b'
+      Right _ -> return $ Left "not enough blocks requested"
+
+
+snapAncestors :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text [BlockHash])
+snapAncestors = withCache (Left "nocache") $ \_proto -> runExceptT $ do
+  branchBS <- maybe (throwError "missing param:branch") return =<< (listToMaybe <=< Map.lookup "branch") <$> Snap.liftSnap Snap.getQueryParams
+  branch <- either (throwError . tshow) return $ fromBase58 branchBS
+
+  levelBS <- maybe (throwError "missing param:level") return =<< (listToMaybe <=< Map.lookup "level") <$> Snap.liftSnap Snap.getQueryParams
+  level :: RawLevel <- either (throwError . tshow) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+
+  either (throwError . tshow ) return =<< runExceptT (ancestors level branch)
+
+snapCache :: MonadSnap m => NodeDataSource -> m ()
+snapCache dataSrc = route
+  [ ("", Snap.writeLBS . Aeson.encode =<< runReaderT dataSourceHead dataSrc )
+  , ("chain",     Snap.writeLBS . Aeson.encode $ _nodeDataSource_chain dataSrc)
+  , ("params",    Snap.writeLBS . Aeson.encode =<< runReaderT (withCache Nothing (pure . pure)) dataSrc)
+  , ("lca",       Snap.writeLBS . Aeson.encode =<< runReaderT snapBranchPoint dataSrc)
+  , ("ancestors", Snap.writeLBS . Aeson.encode =<< runReaderT snapAncestors dataSrc)
+  ]
 
 rootHandler :: MonadSnap m => ByteString -> m ()
 rootHandler pageHead =
