@@ -24,7 +24,7 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1)
+import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1, makeLenses)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -470,3 +470,5 @@ deriveGShow ''NodeQuery
 deriving instance Show (NodeQuery a)
 
 makeRequestForData ''NodeQuery
+
+makeLenses 'NodeDataSource

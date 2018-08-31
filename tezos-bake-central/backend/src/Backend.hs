@@ -22,7 +22,7 @@ import Control.Monad (join, unless, void, when, (<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as AppendMap
@@ -98,7 +98,7 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
-import Tezos.Base58Check (HashedValue (..), fromBase58)
+import Tezos.Base58Check (HashedValue (..), fromBase58, toBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (BlockscaleNode (..), blockscaleNodeUri, querySource)
@@ -125,6 +125,8 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Frontend (frontend)
+
+import Backend.WebApi (v1PublicApi)
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -176,6 +178,10 @@ backend = do
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
+
+  !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
+    (pure $ _opts_serveNodeCache =<< SnapServer.getOther cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
     (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
@@ -250,46 +256,13 @@ backend = do
         runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
 
-      SnapServer.httpServe cfg (route
+      SnapServer.httpServe cfg (route $
         [ ("", rootHandler staticHead)
-        , ("/api/v1", snapCache dataSrc)
         , ("/listen", handleListen)
         , ("static", serveAssets "static" "static")
         , ("", serveDirectory "frontend.jsexe")
-        ])
-
-
-
-snapBranchPoint :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockHash)
-snapBranchPoint = withCache (Left "nocache") $ \_proto -> do
-  Map.lookup "block" <$> Snap.getQueryParams >>= \case
-    Nothing -> return $ Left "bad param"
-    Just blockBS -> case traverse fromBase58 blockBS of
-      Left err -> return $ Left $ tshow err
-      Right (b1:b2:bs) -> branchPoint b1 b2 >>= \case
-        Nothing -> return $ Left "not found"
-        Just b' -> return $ Right $ _veryBlockLike_hash b'
-      Right _ -> return $ Left "not enough blocks requested"
-
-
-snapAncestors :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text [BlockHash])
-snapAncestors = withCache (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- maybe (throwError "missing param:branch") return =<< (listToMaybe <=< Map.lookup "branch") <$> Snap.liftSnap Snap.getQueryParams
-  branch <- either (throwError . tshow) return $ fromBase58 branchBS
-
-  levelBS <- maybe (throwError "missing param:level") return =<< (listToMaybe <=< Map.lookup "level") <$> Snap.liftSnap Snap.getQueryParams
-  level :: RawLevel <- either (throwError . tshow) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
-
-  either (throwError . tshow ) return =<< runExceptT (ancestors level branch)
-
-snapCache :: MonadSnap m => NodeDataSource -> m ()
-snapCache dataSrc = route
-  [ ("", Snap.writeLBS . Aeson.encode =<< runReaderT dataSourceHead dataSrc )
-  , ("chain",     Snap.writeLBS . Aeson.encode $ _nodeDataSource_chain dataSrc)
-  , ("params",    Snap.writeLBS . Aeson.encode =<< runReaderT (withCache Nothing (pure . pure)) dataSrc)
-  , ("lca",       Snap.writeLBS . Aeson.encode =<< runReaderT snapBranchPoint dataSrc)
-  , ("ancestors", Snap.writeLBS . Aeson.encode =<< runReaderT snapAncestors dataSrc)
-  ]
+        ] ++ [x | x <- [("/api/v1", v1PublicApi dataSrc)] , serveNodeCache ]
+        )
 
 rootHandler :: MonadSnap m => ByteString -> m ()
 rootHandler pageHead =
@@ -357,6 +330,7 @@ data Opts = Opts
   , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
+  , _opts_serveNodeCache :: !(Maybe Bool)
   }
 
 instance Semigroup Opts where
@@ -367,10 +341,11 @@ instance Semigroup Opts where
     , _opts_chain = _opts_chain b <|> _opts_chain a
     , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
     , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
+    , _opts_serveNodeCache = _opts_serveNodeCache b <|> _opts_serveNodeCache a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -384,12 +359,15 @@ optsArgDescr =
   , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
+
   , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
   , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
       "Name of a network (betanet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
+  , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x }) $
+      "Serve Node Cache.  Default enabled"
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
