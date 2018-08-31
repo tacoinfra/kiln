@@ -1,44 +1,44 @@
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 module Common.AppendIntervalMap where
 
 import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex (itraverse))
-import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSONKey, parseJSON, liftParseJSON)
-import Data.Aeson (ToJSON, ToJSON1, toEncoding, toJSON, liftToJSONList, liftToJSON, liftToEncoding, liftToEncodingList)
+import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSON, ToJSON1, ToJSONKey, liftParseJSON,
+                   liftToEncoding, liftToEncodingList, liftToJSON, liftToJSONList, parseJSON, toEncoding,
+                   toJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import Data.Align (Align (align, nil))
 import Data.Functor.Classes
+import qualified Data.IntervalMap.Generic.Interval as IntervalClass
+import qualified Data.IntervalMap.Generic.Lazy as IMap
 import Data.Semigroup (Semigroup ((<>)))
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.These (These (That, These, This))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic, Generic1)
 import Reflex.FunctorMaybe (FunctorMaybe (fmapMaybe))
-import qualified Data.IntervalMap.Generic.Interval as IntervalClass
-import qualified Data.IntervalMap.Generic.Lazy as IMap
-import qualified Data.Set as Set
-
-{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 type IsInterval i e = IntervalClass.Interval i e
 
 newtype AppendIntervalMap k v = AppendIntervalMap { unAppendIntervalMap :: IMap.IntervalMap k v }
-  deriving 
+  deriving
     (Functor, Foldable, Traversable, Show, Eq, Ord, Generic, Typeable, Generic1)
 
 instance Eq k => Eq1 (AppendIntervalMap k) where
@@ -193,7 +193,9 @@ instance ToJSON a => ToJSONKey (ClosedInterval a)
 data WithInfinity a = LowerInfinity | Bounded a | UpperInfinity
   deriving (Eq, Ord, Generic, Typeable, Show, Read, Functor, Foldable, Traversable)
 instance FromJSON a => FromJSON (WithInfinity a)
+instance FromJSON a => FromJSONKey (WithInfinity a)
 instance ToJSON a => ToJSON (WithInfinity a)
+instance ToJSON a => ToJSONKey (WithInfinity a)
 
 instance Bounded (WithInfinity a) where
   minBound = LowerInfinity
@@ -208,7 +210,7 @@ flattenIntervals
   :: (Ord e, Semigroup a)
   => (ClosedInterval e, a) -> (ClosedInterval e, a) -> Maybe (ClosedInterval e, a)
 flattenIntervals (i0@(ClosedInterval lb0 ub0), x0) (i1@(ClosedInterval lb1 ub1), x1)
-  | IMap.overlaps i0 i1 = Just (ClosedInterval (min lb0 lb1) (max ub0 ub1), (x0 <> x1))
+  | IMap.overlaps i0 i1 = Just (ClosedInterval (min lb0 lb1) (max ub0 ub1), x0 <> x1)
   | otherwise = Nothing
 
 instance Ord a => IMap.Interval (ClosedInterval a) a where

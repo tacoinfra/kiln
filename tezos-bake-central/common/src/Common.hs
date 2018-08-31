@@ -2,9 +2,9 @@
 
 module Common where
 
-import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as AMap
 import Data.Foldable (toList)
+import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -20,8 +20,8 @@ whenJust (Just x) f = f x
 whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
 whenM x true = if x then true else pure mempty
 
-curryMap :: (Eq a) => AppendMap (a, b) c -> AppendMap a (AppendMap b c)
-curryMap = AMap.fromAscList . fmap (\((a, b), c) -> (a, AMap.singleton b c)) . AMap.toAscList
+curryMap :: (Eq a) => MonoidalMap (a, b) c -> MonoidalMap a (MonoidalMap b c)
+curryMap = MMap.fromAscList . fmap (\((a, b), c) -> (a, MMap.singleton b c)) . MMap.toAscList
 
 maybeSomething :: Foldable f => f a -> Maybe (f a)
 maybeSomething as = if null as then Nothing else Just as

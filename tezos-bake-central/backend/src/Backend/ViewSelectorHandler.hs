@@ -1,16 +1,15 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wno-unused-matches #-}
 
 module Backend.ViewSelectorHandler where
 
 import Control.Lens (ifor, imap, itraverse, (<&>), (^.))
-import Text.URI
 import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
@@ -22,10 +21,11 @@ import qualified Data.AppendMap as AppendMap
 import Data.Bifunctor (first, second)
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
+import qualified Data.IntervalMap.Generic.Lazy as IMap
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.Monoid
 import Data.Pool (Pool)
-import Data.Semigroup (Option(..), First (..), Semigroup, (<>))
+import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Traversable (for)
@@ -33,14 +33,14 @@ import Data.Version (Version)
 import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
--- import Rhyolite.App (single)
+import Reflex.FunctorMaybe
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Id, Email, Json (..))
+import Rhyolite.Schema (Email, Id, Json (..))
 import Say
-import qualified Data.IntervalMap.Generic.Lazy as IMap
+import Text.URI
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
@@ -49,20 +49,17 @@ import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez
 import Tezos.Types
-import Reflex.FunctorMaybe
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Graphs
 import Backend.Schema
-import Common (whenJust)
+import Common
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
 import Common.Vassal
-
-import Common
 
 
 viewSelectorHandler
@@ -87,24 +84,25 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
   --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
   parameters <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_parameters vs) $ \a -> do
     param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
-    return $ MaybeView $ Option $ ((,a) . First . _parameters_protoInfo) <$> param -- MaybeView (Option $ First $ _parameters_protoInfo <$> param, a)
-  nodeAddresses <- -- whenJust (_ $ unRangeSelector $ _bakeViewSelector_nodeAddresses vs) $ \a -> do
-    let as = _bakeViewSelector_nodeAddresses vs
-    in if null as
-      then return mempty
-      else do
-        rs :: [(Id Node, URI)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
-        return $ toRangeView as $ fmap (first Bounded) rs -- Map.fromList [(nid, (First (Just n), _a)) | (nid, n) <- rs]
+    return $ MaybeView $ Option $ (,a) . First . _parameters_protoInfo <$> param
+
+  let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
+  nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
+    rs :: [(Id Node, URI)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
+    return $ toRangeView nodeAddrVS $ fmap (first Bounded) rs
+
   let pnhVS = _bakeViewSelector_publicNodeHeads vs
-  publicNodeHeads <- for namedChain' $ \namedChain -> whenM (not $ null $ pnhVS) $
-    (toRangeView pnhVS  . fmap (first Bounded) . AppendMap.toList) <$> selectMap' PublicNodeHeadConstructor
+  publicNodeHeads <- for namedChain' $ \namedChain -> whenM (not $ null pnhVS) $
+    toRangeView pnhVS . fmap (first Bounded) . AppendMap.toList <$> selectMap' PublicNodeHeadConstructor
       (   PublicNodeHead_sourceField ==. Json (DataSource_TzScan (TzScanNode namedChain))
       ||. PublicNodeHead_sourceField ==. Json (DataSource_BlockscaleNode (BlockscaleNode namedChain))
       )
-  nodes <- do
+
+  let nodesVS = _bakeViewSelector_nodes vs
+  nodes <- whenM (not $ null nodesVS) $ do
     let
-      selNodesUniversal = isCompleteSelector $ _bakeViewSelector_nodes vs
-      selNodes = In $ iMapSelectorKeys $ _bakeViewSelector_nodes vs
+      selNodesUniversal = isCompleteSelector nodesVS
+      selNodes = In $ iMapSelectorKeys nodesVS
     rs <- [queryQ|
       SELECT n.id
         , n.address, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
@@ -112,7 +110,7 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
-    let nodeInfo = Map.fromList $ do
+    let nodeInfo = do
           (nid, addr, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (Bounded nid, Node
             { _node_address = addr
@@ -126,14 +124,12 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
             , _node_deleted = False
             , _node_lastHeartbeat = lastHeartbeat
             })
-    return $ tightenView $ RangeView (unRangeSelector $ _bakeViewSelector_nodes $ vs) nodeInfo
-      -- (_ uintersectionWith nodeInfo (if selNodesUniversal then fromKnownComplete else fromKnownAbsent $ _bakeViewSelector_nodes vs))
+    return $ toRangeView nodesVS nodeInfo
 
-  delegates :: RangeView' PublicKeyHash () a  <- if not $ null $ _bakeViewSelector_delegates vs
-    then do
-      xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
-      return $ tightenView $ RangeView (unRangeSelector $ _bakeViewSelector_delegates vs) $ AppendMap.fromList $ fmap ((,()) . Bounded) xs
-    else pure mempty
+  let delegatesVS = _bakeViewSelector_delegates vs
+  delegates :: RangeView' PublicKeyHash () a <- whenM (not $ null delegatesVS) $ do
+    xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
+    return $ toRangeView delegatesVS $ (,()) . Bounded <$> xs
 
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
@@ -150,7 +146,6 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
       then do
         rs <- selectMap' NotificateeConstructor CondEmpty
         return $ tightenView $ RangeView (unRangeSelector $ _bakeViewSelector_notificatees vs) $ fmap _notificatee_email $ AppendMap.mapKeys Bounded rs
-        -- $ (\n -> (First (Just (_notificatee_email n)), a)) <$> rs
       else pure mempty
   mailServer <- whenJust (getOption $ unMaybeSelector $_bakeViewSelector_mailServer vs) $ \a -> do
     ms <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
@@ -158,12 +153,12 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
     return $ toMaybeView (_bakeViewSelector_mailServer vs) ms'
   maxLevel <- getMaxLevel
 
-  summary <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_summary vs) $ \_ -> do
+  summary <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_summary vs) $ \_ ->
     toMaybeView (_bakeViewSelector_summary vs) <$> getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
-  errors <- getErrorLogs $ unIntervalSelector $ errorsVS
-  upgrade <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_upgrade vs) $ \a -> do -- case _bakeViewSelector_upgrade vs of
+  errors <- getErrorLogs $ unIntervalSelector errorsVS
+  upgrade <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_upgrade vs) $ \a ->
     toMaybeView (_bakeViewSelector_upgrade vs) <$> getUpgradeNotice
 
   return BakeView
@@ -188,19 +183,9 @@ getErrorLogs
   :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m)
   => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
   -> m (AppendMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
-      -- (AppendIntervalMap (ClosedInterval (WithInfinity UTCTime))
-      -- (AppendMap (Id ErrorLog) (First (Maybe (ErrorLog, ErrorLogView))), a))
-
 getErrorLogs intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
-  -- allLogs :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView) <- 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
-  -- -- Unflatten the results by finding which interval each log corresponded to.
-  -- pure $ fold $ flip imap allLogs $ \logId (errorLog@(ErrorLog started stopped _ _), view) ->
-  --     let relevantIntervals = intervalMap `AppendIMap.intersecting` ClosedInterval (Bounded started) (maybe UpperInfinity Bounded stopped)
-  --     in relevantIntervals <&> \a ->
-  --         (AppendMap.singleton logId $ First (Just (errorLog, view)), a)
-
   where
     runQueries (ClosedInterval lowWithInf highWithInf) = do
       let (low, high) = (getBounded lowWithInf, getBounded highWithInf)

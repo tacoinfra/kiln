@@ -1,8 +1,8 @@
 module Main where
 
-import Reflex.Dom
+import Reflex.Dom (mainWidget)
 
-import Frontend
+import Frontend (frontend)
 
 main :: IO ()
 main = mainWidget $ snd frontend

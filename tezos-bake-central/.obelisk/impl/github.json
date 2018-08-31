@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "obelisk",
-  "branch": "eac-config-inject-reflex-dom-core",
-  "rev": "90448ba7b20b82f0d4eed61c4b9203d6633c258c",
+  "branch": "master",
+  "rev": "da0bf59df1ca0cd68b574c3c813c1ac32f96267d",
   "sha256": "10mlz3y9qwlb1lcvf2fvvmr6wayx81ml4qsky706rp7nd46ianqd"
 }

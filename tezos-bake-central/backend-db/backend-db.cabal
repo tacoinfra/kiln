@@ -1,0 +1,34 @@
+name: backend-db
+version: 0.1
+license: BSD3
+copyright: Copyright (C) Obsidian Systems LLC 2018
+author: Obsidian Systems LLC
+maintainer: maintainer@obsidian.systems
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.8
+
+flag support-gargoyle
+  description: Use gargoyle to handle database connections when no other run-time configuration is present
+  default: False
+  manual: True
+
+library
+  hs-source-dirs: src
+
+  exposed-modules:
+    Backend.Db
+
+  build-depends:
+      base
+    , bytestring
+    , groundhog-postgresql
+    , postgresql-simple
+    , resource-pool
+    , text
+
+  if flag(support-gargoyle)
+    build-depends: rhyolite-backend-db-gargoyle
+    cpp-options: -DSUPPORT_GARGOYLE
+
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls

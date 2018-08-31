@@ -11,10 +11,8 @@
 
 module Backend.RequestHandler where
 
-import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_)
 import Data.Functor (void)
@@ -24,25 +22,18 @@ import qualified Data.Map as Map
 import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Text (Text)
-import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
-import Say
 
-import Tezos.NodeRPC (NodeRPCContext (..))
-import Tezos.NodeRPC.Types (RpcError)
-import Tezos.Types (Block)
-
-import Backend.CachedNodeRPC (dataSourceNode)
 import Backend.Config (AppConfig)
 import Backend.Schema
 import Backend.Upgrade (checkForUpgrade)
@@ -71,13 +62,12 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
-          let inIds = In nids
           for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
         PublicRequest_AddClient addr -> do
           existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ $ Client
+            Nothing -> insertAndNotify_ Client
               { _client_address = addr
               , _client_updated = Nothing
               , _client_deleted = False
@@ -103,13 +93,13 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
           _ <- [executeQ| DELETE FROM "DelegateStats" ds WHERE ds.delegate IN ?inIds |]
           for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. True]
 
-        PublicRequest_AddNotificatee email -> do
-          insertAndNotify_ $ Notificatee { _notificatee_email = email }
+        PublicRequest_AddNotificatee email ->
+          insertAndNotify_ Notificatee { _notificatee_email = email }
 
         PublicRequest_RemoveNotificatee email -> do
           nids :: [Id Notificatee] <- fmap toId <$> project AutoKeyField (Notificatee_emailField ==. email)
           let inIds = In nids
-          _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.id IN inIds |]
+          _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.id IN ?inIds |]
           notifyEntitiesDeleted nids
 
         PublicRequest_SendTestEmail email -> void $ queueEmail
