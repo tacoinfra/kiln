@@ -14,6 +14,7 @@ library
   build-depends:
       aeson
     , async
+    , backend-db
     , base
     , base16-bytestring
     , bytestring
@@ -22,8 +23,8 @@ library
     , clientsession
     , colour
     , common
-    , containers
     , constraints
+    , containers
     , data-default
     , dependent-map
     , dependent-sum-template
@@ -33,7 +34,6 @@ library
     , either
     , filepath
     , formatting
-    , frontend
     , generic-deriving
     , groundhog
     , groundhog-postgresql
@@ -42,12 +42,14 @@ library
     , http-client-tls
     , http-conduit
     , http-types
+    , IntervalMap
     , lens
     , lens-aeson
     , mime-mail
     , modern-uri
     , monad-control
     , monad-logger
+    , monoidal-containers
     , mtl
     , network
     , obelisk-asset-serve-snap
@@ -79,7 +81,6 @@ library
     Paths_backend
     Backend.Alerts
     Backend.BalanceTracking
-    -- Backend.Blake2b
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
@@ -98,8 +99,8 @@ library
     Backend.Workers.Delegate
     Backend.Workers.Node
 
-  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
-               -DREAL_BUILD
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
+  cpp-options: -DREAL_BUILD
 
 executable backend
   hs-source-dirs: src-bin

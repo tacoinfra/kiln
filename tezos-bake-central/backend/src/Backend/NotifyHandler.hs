@@ -1,16 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
 
-import Prelude hiding (lookup)
-
-import Data.Time(UTCTime)
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Control.Monad.Except (runExceptT)
@@ -28,9 +23,9 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>))
 import qualified Data.Set as Set
+import Data.Time (UTCTime)
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, Postgresql, get, select, (&&.),
                                       (==.))
--- import Rhyolite.App (single)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
@@ -71,7 +66,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           infos :: Maybe ClientInfo <- fmap listToMaybe $ select (ClientInfo_clientField ==. cid)
           let
             clientsPatch = mempty
-                { _bakeView_clients = toRangeView1 clientsVS cid infos -- $ (cid,) <$> infos
+                { _bakeView_clients = toRangeView1 clientsVS cid infos
                 , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ _client_address <$> client
                 }
           summaryPatch <- whenM (viewSelects () summaryVS) $ do

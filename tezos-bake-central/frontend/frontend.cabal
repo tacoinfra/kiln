@@ -27,6 +27,7 @@ library
     , either
     , file-embed
     , ghcjs-dom
+    , IntervalMap
     , lens
     , modern-uri
     , mtl
@@ -45,13 +46,13 @@ library
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 
-
 executable frontend
-  main-is: main.hs
+  main-is: Main.hs
   hs-source-dirs: src-bin
-  build-depends: base
-               , reflex-dom
-               , frontend
+  build-depends:
+      base
+    , frontend
+    , reflex-dom
   ghc-options: -threaded
   if os(darwin)
      ghc-options: -dynamic

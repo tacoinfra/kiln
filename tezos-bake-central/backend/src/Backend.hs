@@ -62,7 +62,6 @@ import Data.Traversable (for)
 import Data.Word (Word64)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import qualified Database.PostgreSQL.Simple as Pg
 import qualified Network.HTTP.Client as Http (Manager, newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
@@ -73,7 +72,7 @@ import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap, withDb)
+import Rhyolite.Backend.DB (RunDb, getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
@@ -97,6 +96,7 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI.Lens as Uri
 
+import Backend.Db (gargoyleSupported, withDb)
 import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
@@ -120,10 +120,10 @@ import Backend.Workers.Delegate
 import Backend.Workers.Node
 import Common (tshow)
 import qualified Common.Config as Config
+import Common.HeadTag (headTag)
 import Common.Schema
 import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
-import Frontend (frontend)
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -184,6 +184,16 @@ backend = do
     (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
+  !(pgConnString :: Maybe Text) <- liftA2 (<|>)
+    (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
+    (getConfigFromFile Just $ configPath Config.db)
+
+  let
+    defaultDbSpec = if gargoyleSupported
+      then Left Config.db
+      else error "Please specify a PostgreSQL connection string"
+  !dbSpec <- pure $ maybe defaultDbSpec Right pgConnString
+
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
   chainId <- case chain of
@@ -197,14 +207,13 @@ backend = do
 
   let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-    [ Just $ fst frontend
+    [ Just headTag
     , injectPure Config.route . encodeViaJson <$> routeEnv
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
     , Just $ injectPure Config.chain $ showChain chain
     ]
 
-  let pgConnStr = _opts_pgConnectionString =<< SnapServer.getOther cfg
-  withGargoyleOrConnStr (maybe (Left Config.db) Right pgConnStr) $ \db -> do
+  withDb dbSpec $ \db -> do
     runNoLoggingT $ runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
@@ -215,7 +224,7 @@ backend = do
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
     -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
-    for_ (leftToMaybe chain) $ \namedChain -> do
+    for_ (leftToMaybe chain) $ \namedChain ->
       initParams dataSrc [blockscaleNodeUri namedChain]
 
     withTermination $ \addFinalizer -> do
@@ -236,7 +245,7 @@ backend = do
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
 
       case chain of
-        Left chainName -> do
+        Left chainName ->
           addFinalizer =<< publicNodesWorker dataSrc chainName appConfig db
         _ -> pure ()
 
@@ -271,7 +280,7 @@ clearMailQueueWithDynamicEmailEnv
   => f (Pool Postgresql)
   -> m ()
 clearMailQueueWithDynamicEmailEnv db = do
-  emailEnv <- runDb db $ do
+  emailEnv <- runDb db $
     getDefaultMailServer <&> \case
       Nothing -> error "No mail server configuration found"
       Just (_, c) ->
@@ -291,12 +300,6 @@ clearMailQueueWithDynamicEmailEnv db = do
 getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
 getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
-
-
-withGargoyleOrConnStr :: Either FilePath Text -> (Pool Postgresql -> IO a) -> IO a
-withGargoyleOrConnStr cfg f = case cfg of
-  Left dbPath -> withDb dbPath f
-  Right connStr -> f =<< openDb (T.encodeUtf8 connStr)
 
 
 uriToRouteEnv :: URI -> Maybe RouteEnv
