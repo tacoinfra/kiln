@@ -67,7 +67,11 @@ viewSelectorHandler
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ runDb (Identity db) $ do
+  let
+    maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
+      toMaybeView (getVS vs) <$> query
+
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
   --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
@@ -81,9 +85,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . ru
   --         (cid, report, config) <- rs
   --         return (cid, First (ClientInfo cid <$> report <*> config))
   --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
-  parameters <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_parameters vs) $ \a -> do
-    param :: Maybe Parameters <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
-    return $ MaybeView $ Option $ (,a) . First . _parameters_protoInfo <$> param
+  parameters <- maybeViewHandler _bakeViewSelector_parameters $
+    fmap _parameters_protoInfo . listToMaybe <$> select (CondEmpty `limitTo` 1)
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
@@ -92,8 +95,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . ru
 
   let pnhVS = _bakeViewSelector_publicNodeHeads vs
   publicNodeHeads <- whenM (not $ null pnhVS) $
-    (toRangeView pnhVS  . fmap (first Bounded) . AppendMap.toList) <$> selectMap' PublicNodeHeadConstructor
-      (   PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left $ namedChain)
+    toRangeView pnhVS . fmap (first Bounded) . AppendMap.toList <$> selectMap' PublicNodeHeadConstructor
+      (PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left namedChain)
       )
 
   let nodesVS = _bakeViewSelector_nodes vs
@@ -151,13 +154,12 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . ru
     return $ toMaybeView (_bakeViewSelector_mailServer vs) ms'
   maxLevel <- getMaxLevel
 
-  summary <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_summary vs) $ \_ ->
-    toMaybeView (_bakeViewSelector_summary vs) <$> getSummaryReport
+  summary <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
   errors <- getErrorLogs $ unIntervalSelector errorsVS
-  upgrade <- whenJust (getOption $ unMaybeSelector $ _bakeViewSelector_upgrade vs) $ \a ->
-    toMaybeView (_bakeViewSelector_upgrade vs) <$> getUpgradeNotice
+
+  upgrade <- maybeViewHandler _bakeViewSelector_upgrade getUpgradeNotice
 
   return BakeView
     { _bakeView_clients = mempty -- clients
@@ -176,6 +178,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . ru
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
     , _bakeView_upgrade = upgrade
     }
+
 
 getErrorLogs
   :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m)
@@ -287,9 +290,9 @@ getErrorLogs intervalMap = do
             , el.stopped AT TIME ZONE 'UTC'
             , el."lastSeen" AT TIME ZONE 'UTC'
             , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t."node", t."tooOld", t."bakedBlock", t."bakedBlockTime"
+            , t.node, t.lca, t."nodeHead", t."latestHead"
           FROM "ErrorLog" el
-          JOIN "ErrorLogNodeOnFork" t ON t.log = el.id
+          JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
           JOIN "Node" n ON n.id = t.node
           WHERE
             NOT n.deleted AND
@@ -298,7 +301,8 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tTooOld, tBakedBlock, tBakedBlockTime) ->
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \
+              (elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tLca, tNodeHead, tLatestHead) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
                   { _errorLog_started = elStarted
@@ -306,8 +310,15 @@ getErrorLogs intervalMap = do
                   , _errorLog_lastSeen = elLastSeen
                   , _errorLog_noticeSentAt = elNoticeSentAt
                   }
-              , ErrorLogView_NodeOnFork $
-                  ErrorLogNodeOnFork elId tNode tTooOld tBakedBlock tBakedBlockTime
+              , ErrorLogView_BadNodeHead
+                  ErrorLogBadNodeHead
+                    { _errorLogBadNodeHead_log = elId
+                    , _errorLogBadNodeHead_node = tNode
+                    , _errorLogBadNodeHead_lca = tLca
+                    , _errorLogBadNodeHead_nodeHead =tNodeHead
+                    , _errorLogBadNodeHead_latestHead = tLatestHead
+                    }
+
               )
             )
 

@@ -339,14 +339,14 @@ data ErrorLogMultipleBakersForSameDelegate = ErrorLogMultipleBakersForSameDelega
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameDelegate
 
-data ErrorLogNodeOnFork = ErrorLogNodeOnFork
-  { _errorLogNodeOnFork_log :: !(Id ErrorLog)
-  , _errorLogNodeOnFork_node :: !(Id Node)
-  , _errorLogNodeOnFork_tooOld :: !Bool
-  , _errorLogNodeOnFork_bakedBlock :: !BlockHash
-  , _errorLogNodeOnFork_bakedBlockTime :: !UTCTime
+data ErrorLogBadNodeHead = ErrorLogBadNodeHead
+  { _errorLogBadNodeHead_log :: !(Id ErrorLog)
+  , _errorLogBadNodeHead_node :: !(Id Node)
+  , _errorLogBadNodeHead_lca :: !(Maybe (Json VeryBlockLike))
+  , _errorLogBadNodeHead_nodeHead :: !(Json VeryBlockLike)
+  , _errorLogBadNodeHead_latestHead :: !(Json VeryBlockLike)
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogNodeOnFork
+instance HasId ErrorLogBadNodeHead
 
 data UpgradeCheckError
   = UpgradeCheckError_UpstreamUnreachable
@@ -402,10 +402,10 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''EndpointType
   , ''ErrorEvent
   , ''ErrorLog
+  , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleEndpoint
   , ''ErrorLogMultipleBakersForSameDelegate
-  , ''ErrorLogNodeOnFork
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogUpgradeNotice
   , ''Event
@@ -427,10 +427,10 @@ concat <$> traverse makeLenses
   , 'Error
   , 'ErrorEvent
   , 'ErrorLog
+  , 'ErrorLogBadNodeHead
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleEndpoint
   , 'ErrorLogMultipleBakersForSameDelegate
-  , 'ErrorLogNodeOnFork
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig

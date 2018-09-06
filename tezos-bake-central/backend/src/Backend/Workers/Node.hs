@@ -17,10 +17,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
-import Control.Monad.Except (runExceptT, MonadError)
+import Control.Monad.Except (MonadError, runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (runReaderT, MonadReader)
+import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first, second)
 import Data.Foldable (for_)
@@ -34,7 +34,7 @@ import Data.Semigroup ((<>))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
@@ -47,13 +47,15 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (NodeRPCContext (..), RpcError, rChain, rConnections, rMonitorHeads, rNetworkStat, RpcQuery, PlainNodeStream)
-import Tezos.NodeRPC.Network (nodeRPCChunked, nodeRPC)
-import Tezos.NodeRPC.Sources (PublicNode(..), getPublicNodeUri, PublicNodeError(..), AsPublicNodeError, HasPublicNodeContext, PublicNodeContext(..), getCurrentHead)
+import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
+                      rMonitorHeads, rNetworkStat)
+import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
+import Tezos.NodeRPC.Sources (AsPublicNodeError, HasPublicNodeContext, PublicNode (..),
+                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead, getPublicNodeUri)
 import Tezos.Types
 
-import Backend.Alerts (clearInaccessibleEndpointError, clearNodeWrongChainError,
-                       reportInaccessibleEndpointError, reportNodeWrongChainError)
+import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleEndpointError, clearNodeWrongChainError,
+                       reportBadNodeHeadError, reportInaccessibleEndpointError, reportNodeWrongChainError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -98,23 +100,23 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
     let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
       acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-      sayShow ("new block", (Uri.render nodeAddr), mkVeryBlockLike headBlockInfo, acc)
+      sayShow ("new block", Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-      -- say $ "new block from node at " <> Uri.render nodeAddr
-      -- say $ T.pack $ show headBlockInfo
-      updatedLevel <- atomically $ do
-        let latestHeadTVar = _nodeDataSource_latestHead nds
-        latestHead <- readTVar latestHeadTVar
-        if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
-          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-          pure $ Just $ headBlockInfo ^. level
-        else
-          pure Nothing
-      for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)
+    -- say $ "new block from node at " <> Uri.render nodeAddr
+    -- say $ T.pack $ show headBlockInfo
+    updatedLevel <- atomically $ do
+      let latestHeadTVar = _nodeDataSource_latestHead nds
+      latestHead <- readTVar latestHeadTVar
+      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
+        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
+        pure $ Just $ headBlockInfo ^. level
+      else
+        pure Nothing
+    for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: ChainId -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
@@ -257,7 +259,6 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       say $ "start monitor on " <> Uri.render nodeAddr
 
   where
-
     inDb = runNoLoggingT . runDb (Identity db) . flip runReaderT appConfig
     reportNodeInaccessible = reportInaccessibleEndpointError EndpointType_Node
     clearNodeInaccessible = clearInaccessibleEndpointError EndpointType_Node
@@ -284,7 +285,7 @@ publicNodesWorker nds namedChain appConfig db =
     queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
     workerForSource :: PublicNode -> IO (IO ())
-    workerForSource source = worker' $ updatePublicNodeInDb source' *> waitForNewHead nds
+    workerForSource source = worker' $ updatePublicNodeInDb source' *> waitForNewHeadWithTimeout nds
       where
         source' = (source, Left namedChain, getPublicNodeUri source namedChain)
 
@@ -317,3 +318,44 @@ publicNodesWorker nds namedChain appConfig db =
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
 
+nodeAlertWorker
+  :: NodeDataSource
+  -> AppConfig
+  -> Pool Postgresql
+  -> IO (IO ())
+nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
+  nodes <- readMVar (_nodeDataSource_nodes nds)
+  ifor_ nodes $ \nodeUri nodeHead' -> for_ nodeHead' $ \nodeHead -> do
+    lcaBlock' <- flip runReaderT nds $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+
+    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+      nodeId' <- fmap toId . listToMaybe <$> project AutoKeyField ((Node_addressField ==. nodeUri &&. Node_deletedField ==. False) `limitTo` 1)
+      case nodeId' of
+        Nothing -> sayErr $ "Node must have been deleted at address " <> Uri.render nodeUri
+        Just nodeId -> case lcaBlock' of
+          Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
+          Just lcaBlock -> do
+            let
+              -- Two cases to consider:
+              --   * Node is behind, so the LCA block and node block will be the same
+              --   * Node is branched, so the LCA block will be behind both the node *and* the latest
+              levelsBehindHead = latestHead ^. level - lcaBlock ^. level
+
+            if levelsBehindHead > 1
+              then reportBadNodeHeadError nodeId latestHead nodeHead (Just lcaBlock)
+              else clearBadNodeHeadError nodeId
+
+
+updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
+updateLatestHead nds blk = liftIO $ do
+  latestBlock' <- atomically $ do
+    let latestHeadTVar = _nodeDataSource_latestHead nds
+    latestHead <- readTVar latestHeadTVar
+    if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
+      writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
+      pure $ Just $ mkVeryBlockLike blk
+    else
+      pure Nothing
+
+  for_ latestBlock' $ \latestBlock ->
+    say $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)

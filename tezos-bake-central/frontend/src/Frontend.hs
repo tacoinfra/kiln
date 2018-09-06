@@ -14,30 +14,30 @@
 
 module Frontend where
 
-import Control.Applicative (liftA2, liftA3)
-import Control.Lens ((<&>), _1, _2)
-import Control.Monad (when, (<=<), join)
+import Control.Applicative (liftA2)
+import Control.Lens (_1, _2)
+import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
-import Data.AppendMap (AppendMap, _unAppendMap)
-import qualified Data.AppendMap as Map
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as LBS
+import Data.Coerce (coerce)
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_, fold)
+import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
-import qualified Data.Map as BaseMap
-import Data.Maybe (fromMaybe, isJust, mapMaybe, maybeToList)
+import qualified Data.Map as Map
+import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map.Monoidal as MMap
+import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
-import Data.Semigroup (First (..), Option(..), (<>))
+import Data.Semigroup (First (..), (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -64,21 +64,19 @@ import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
 import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
-import qualified Data.IntervalMap.Generic.Lazy as IMap
 
 import Tezos.NodeRPC.Sources (PublicNode(..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (maybeSomething, tshow, uriHostPortPath)
+import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
-import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
-import qualified Common.AppendIntervalMap as AppendIMap
+import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Schema hiding (Event)
-import Common.URI (mkRootUri)
 import Frontend.Common
 
 import Common.Vassal
@@ -112,21 +110,21 @@ watchProtoInfo =
     { _bakeViewSelector_parameters = viewJust 1
     }
 
-watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) Node ()) -> m (Dynamic t (AppendMap (Id Node) Node))
+watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) Node ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
 watchNodes nidsDyn = do
   theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
     { _bakeViewSelector_nodes = 1 <$ nids
     }
   return $ ffor theView $ \v -> getRangeView' (_bakeView_nodes v)
 
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Node) URI))
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) URI))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> getRangeView' (_bakeView_nodeAddresses v')
 
-watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (AppendMap (Id Client) ClientInfo))
+watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = viewRangeExactly cid 1
@@ -136,30 +134,30 @@ watchClient cidDyn = do
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
   theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_delegates = viewRangeAll 1}
-  return $ ffor theView $ Map.keysSet . getRangeView' . _bakeView_delegates
+  return $ ffor theView $ MMap.keysSet . getRangeView' . _bakeView_delegates
 
-watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (AppendMap PublicKeyHash (BakeEfficiency, Account)))
+watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
 watchDelegateStats delegates = do
   let levels :: (RawLevel, RawLevel) = (0, 30)
-      levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
+      --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
   theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
     { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
     }
-  holdDyn (Map.empty) never
+  holdDyn MMap.empty never
   -- return $ ffor theView $ uncurry (mergeMMap
   --     (\_ acc -> Just (mempty, acc))
   --     (\_ _ -> Nothing)
-  --     (\pkh acc (AppendIMap.AppendIntervalMap effs) -> Just (fold $ IMap.findWithDefault mempty levels' effs, acc))
+  --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Client) URI))
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> (catMaybes $ getRangeView' $ _bakeView_clientAddresses v')
+  return $ ffor theView $ \v' -> catMaybes $ getRangeView' $ _bakeView_clientAddresses v'
 
-watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (AppendMap (Id Notificatee) Email))
+watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = viewRangeAll 1
@@ -190,7 +188,7 @@ watchMailServer =
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
-  -> m (Dynamic t (Map.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
+  -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrors intervals =
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
   (fmap . fmap) (fmap (fst . getFirst) . _intervalView_elements . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
@@ -227,7 +225,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
         [ semuiTab (text "Nodes") UITab_Nodes currentTab
         , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-          fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
+          fmap leftmost . for (MMap.toList cs) $ \(cid, name) ->
             semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTab
         , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
           fmap leftmost $ for (Set.toList ds) $ \pkh ->
@@ -334,9 +332,10 @@ data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilte
 
 liveErrorsWidget
   :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
-  => Dynamic t (AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+  => Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+  -> Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
-liveErrorsWidget errors = void $ do
+liveErrorsWidget errorsDyn nodesDyn = void $ do
   filterDyn <- radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
     , (AlertsFilter_UnresolvedOnly, text "Unresolved")
@@ -344,53 +343,60 @@ liveErrorsWidget errors = void $ do
     ]
 
   elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
-    listWithKey (errorsByTime Down <$> errors) $ \_ vDyn ->
-      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \((log, specificLog), filterSelection) -> do
-        let isResolved = isJust $ _errorLog_stopped log
-        when (filterSelection == AlertsFilter_All
-            || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
-            || filterSelection == AlertsFilter_ResolvedOnly && isResolved) $
-          logEntry log specificLog
+    listWithKey (errorsByTime Down <$> errorsDyn) $ \_ vDyn ->
+      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \(v, filterSelection) -> do
+        let
+          (log, _specificLog) = v
+          passesFilter =
+            filterSelection == AlertsFilter_All
+              || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
+              || filterSelection == AlertsFilter_ResolvedOnly && isResolved
+            where isResolved = isJust $ _errorLog_stopped log
+
+        when passesFilter $ dyn_ $ ffor (logEntry v) $ traverse_ $ \message -> do
+          divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+            message
+            el "p" $ do
+              text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+              case _errorLog_stopped log of
+                Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+                Just stopped -> text "Stopped: " *> localTimestamp stopped
 
   where
-    logEntry log specificLog = do
+    logEntry (log, specificLog) =
       let header txt = divClass "header" $ text $ case _errorLog_stopped log of
             Just _ -> "Resolved: " <> txt
             Nothing -> txt
-      divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-        case specificLog of
-          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> do
+      in case specificLog of
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> constDyn $ Just $ do
             let endpointTypeName = case endpointType of
                   EndpointType_Node -> "node"
                   EndpointType_Client -> "client"
             header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
 
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> do
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> constDyn $ Just $ do
             header $ "Node on wrong network: " <> Uri.render address
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> do
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> constDyn $ Just $ do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
               blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
 
-          ErrorLogView_NodeOnFork ErrorLogNodeOnFork{} ->
-            header "Node is on fork" -- TODO Fill this out
+          ErrorLogView_BadNodeHead l ->
+            ffor (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn) $ fmap $ \node -> do
+              let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
+              header $ mkHeader $ Uri.render $ _node_address node
+              el "p" message
 
-          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} ->
+          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> constDyn $ Just $ do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
-        el "p" $ do
-          text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
-          case _errorLog_stopped log of
-            Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-            Just stopped -> text "Stopped: " *> localTimestamp stopped
-
-    errorsByTime direction errors = BaseMap.fromList
+    errorsByTime direction errors = Map.fromList
       [ (direction (_errorLog_started el, _errorLog_lastSeen el, elId), (el, t))
-      | (elId, (el, t)) <- Map.toList errors
+      | (elId, (el, t)) <- MMap.toList errors
       ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
@@ -449,7 +455,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
       divClass "ui medium header" $ text "Clients"
       elClass "table" "ui celled striped compact table" $ do
         clients <- watchClientAddresses -- TODO
-        listWithKey (Map._unAppendMap <$> clients) $ \_ dName -> el "tr" $ do
+        listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
           el "td" $ dynText $ Uri.render <$> dName
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
@@ -462,7 +468,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
       divClass "ui medium header" $ text "Delegates"
       elClass "table" "ui celled striped compact table" $ do
         delegates <- watchDelegatePublicKeyHashes
-        listWithKey (BaseMap.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+        listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
@@ -475,7 +481,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
       divClass "ui medium header" $ text "Nodes"
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
-        listWithKey (Map._unAppendMap <$> nodes) $ \_ node -> el "tr" $ do
+        listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
           let dName = node
           el "td" $ dynText $ Uri.render <$> dName
           el "td" $ do
@@ -575,41 +581,37 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-errorsByNode :: AppendMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> AppendMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
-errorsByNode xs = Map.fromList [(k, (el, t)) | (el, t) <- Map.elems xs, let Just k = nodeKeyForErrorLogView t]
+errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
+errorsByNode xs = MMap.fromList [(k, (el, t)) | (el, t) <- MMap.elems xs, Just k <- [nodeKeyForErrorLogView t]]
   where
     nodeKeyForErrorLogView = \case
       ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url) -> Just $ Right url
       ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _) -> Just $ Right url
+      ErrorLogView_BadNodeHead (l@ErrorLogBadNodeHead{}) -> Just $ Left $ _errorLogBadNodeHead_node l
       _ -> Nothing
 
 nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTab = divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-  x <- watchErrors (pure $ Set.singleton alertWindow)
-  let x' = fmap maybeSomething x
-  alertsDyn <- maybeDynLazy x'
-  -- alertsDyn :: Dynamic t (Maybe (Dynamic t (Map _ _))) <- _ =<< ( (fmap.fmap maybeSomething) $  )
--- maybeDynLazy . fmap (maybeSomething <=< AppendIMap.lookup alertWindow) =<<
-
+  alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
 
   dyn_ $ ffor alertsDyn $ \case
-    Nothing -> divClass "column" $ nodeTilesWidget (constDyn Map.empty)
+    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) (constDyn MMap.empty)
     Just nonEmptyAlertsDyn -> do
-      divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn
+      nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+      divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn nodesDyn
       divClass "six wide column" $ do
         elClass "h3" "ui header" $ text "Alerts"
-        liveErrorsWidget nonEmptyAlertsDyn
+        liveErrorsWidget nonEmptyAlertsDyn nodesDyn
 
   where
-    nodeTilesWidget :: Dynamic t (Map.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> m ()
-    nodeTilesWidget alerts = do
+    --nodeTilesWidget :: Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> m ()
+    nodeTilesWidget alerts nodesDyn = do
       publicNodesDyn <- watchPublicNodeHeads
-      nodesDyn <- watchNodes $ pure $ viewRangeAll ()
       let
         zipNodeTiles publicNodes nodes =
           (NodeTile_PublicNode <$> toList publicNodes) <>
-          (uncurry NodeTile_PlainNode <$> Map.toAscList nodes)
+          (uncurry NodeTile_PlainNode <$> MMap.toAscList nodes)
       maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
 
       maxLevelOnPublicNodes <- holdUniqDyn $
@@ -618,7 +620,7 @@ nodesTab = divClass "ui stackable grid" $ do
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
         Just tilesDyn -> divClass "ui stackable cards" $ void $
-          listWithKey (BaseMap.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
+          listWithKey (Map.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
             uniqDyn <- holdUniqDyn vDyn
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
 
@@ -665,7 +667,7 @@ nodesTab = divClass "ui stackable grid" $ do
                     , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                     ]
 
-                  hasAlert <- holdUniqDyn $ Map.lookup (Right $ _node_address node) . errorsByNode <$> alerts
+                  hasAlert <- holdUniqDyn $ MMap.lookup (Right $ _node_address node) . errorsByNode <$> alerts
                   dyn_ $ ffor hasAlert $ \case
                     Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
                       ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
@@ -704,7 +706,7 @@ delegateTab pkh = do
   delegates <- watchDelegateStats $ pure $ Set.singleton pkh
   dparameters <- watchProtoInfo
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisDelegate <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ Map.lookup pkh <$> delegates
+  thisDelegate <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> delegates
   dyn_ $ ffor thisDelegate $ \case
     Nothing -> waitingForResponse
     Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
@@ -748,7 +750,7 @@ delegateTab pkh = do
 clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
-  dyn_ $ ffor (Map.lookup cid <$> clients) $ \case
+  dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
     Nothing -> waitingForResponse
     Just clientInfo -> divClass "ui grid" $ do
       dparameters <- watchProtoInfo
@@ -806,7 +808,7 @@ listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)
           => Text -- ^ Placeholder for input
           -> (Text -> Bool) -- ^ Input validation
           -> (Dynamic t Text -> m ()) -- ^ Widget builder for each item in the list
-          -> Dynamic t (AppendMap k Text) -- ^ Items in list
+          -> Dynamic t (MonoidalMap k Text) -- ^ Items in list
           -> Event t (Either [Text] Text) -- ^ Event of error messages or successful submission
           -> m (Event t Text, Event t (k, Text)) -- ^ Add item event, remove item event
 listInput ph validate itemWidget items rsp = divClass "list-input" $ do
@@ -833,8 +835,8 @@ listInput ph validate itemWidget items rsp = divClass "list-input" $ do
       widgetHold_ blank $ ffor rsp $ \case
         Left errs -> for_ errs $ elClass "div" "modal-content__text-input-error" . text
         Right success -> elClass "div" "modal-content__text-input-success" $ text success
-      remove <- fmap (fmap (leftmost . BaseMap.elems)) $ elClass "ul" "list-input-items" $
-        listWithKey (_unAppendMap <$> items) $ \k t -> el "li" $ do
+      remove <- fmap (fmap (leftmost . Map.elems)) $ elClass "ul" "list-input-items" $
+        listWithKey (coerce <$> items) $ \k t -> el "li" $ do
           el "span" $ itemWidget t
           fmap ((,) k) . tag (current t) . domEvent Click . fst <$> el' "span" (elClass "i" "fa fa-fw fa-times-circle" blank)
   return (ffilter validate submit, switch . current $ remove)

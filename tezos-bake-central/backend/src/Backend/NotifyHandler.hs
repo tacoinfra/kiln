@@ -138,7 +138,6 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
             }
 
       errorsVS = _bakeViewSelector_errors aggVS
-
       handleErrorLog
         :: forall e m2. (EntityWithId e, FromJSON (IdData e), PersistBackend m2, MonadIO m2)
         => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> m2 (BakeView a)
@@ -180,17 +179,17 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
 
   case _notifyMessage_entityName notifyMessage of
     "Client" -> handleClient
-    "Parameters" -> handleParameters
-    "Node" -> handleNode
     "Delegate" -> handleDelegate
-    "Notificatee" -> handleNotificatee
-    "MailServerConfig" -> handleMailServer
+    "ErrorLogBadNodeHead" -> handleErrorLog _errorLogBadNodeHead_log ErrorLogView_BadNodeHead
     "ErrorLogBakerNoHeartbeat" -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat
     "ErrorLogInaccessibleEndpoint" -> handleErrorLog _errorLogInaccessibleEndpoint_log ErrorLogView_InaccessibleEndpoint
     "ErrorLogMultipleBakersForSameDelegate" -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate
-    "ErrorLogNodeOnFork" -> handleErrorLog _errorLogNodeOnFork_log ErrorLogView_NodeOnFork
     "ErrorLogNodeWrongChain" -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain
     "ErrorLogUpgradeNotice" -> handleUpgradeNotice
+    "MailServerConfig" -> handleMailServer
+    "Node" -> handleNode
+    "Notificatee" -> handleNotificatee
+    "Parameters" -> handleParameters
     "PublicNodeHead" -> handlePublicNodeHead
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage

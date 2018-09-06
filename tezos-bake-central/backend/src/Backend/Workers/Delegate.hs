@@ -1,12 +1,11 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.Workers.Delegate where
 
-import Control.Concurrent.MVar
+import Control.Concurrent.MVar (readMVar)
 import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
+import Control.Monad.Except (catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
@@ -33,7 +32,7 @@ import Tezos.Contract (ContractId (..))
 import Tezos.NodeRPC
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceHead, dataSourceNode, waitForNewHead)
+import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceHead, dataSourceNode, waitForNewHeadWithTimeout)
 import Backend.Common (worker')
 import Backend.Schema
 import Backend.Workers
@@ -44,7 +43,7 @@ delegateWorker
   :: MonadIO m
   => NodeDataSource
   -> m (IO ())
-delegateWorker nds = worker' $ (*> waitForNewHead nds) $ do
+delegateWorker nds = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
   protoInfo <- readMVar $ _nodeDataSource_parameters nds
   let chainId = _nodeDataSource_chain nds
       httpMgr = _nodeDataSource_httpMgr nds
