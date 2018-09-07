@@ -21,7 +21,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager, newManager)
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
                                 updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)

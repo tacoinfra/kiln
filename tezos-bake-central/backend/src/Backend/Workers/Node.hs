@@ -14,51 +14,41 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (STM, atomically, readTVar, writeTVar)
-import Control.Lens (ifor, ifor_, ix, to, view, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad (when, (<=<))
-import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
+import Control.Concurrent.STM (atomically, readTVar, writeTVar)
+import Control.Lens (ifor_, view, (^.), (^?), _Just)
+import Control.Monad (when)
+import Control.Monad.Except (runExceptT, MonadError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT, MonadReader)
 import Control.Monad.State (execStateT)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first, second)
-import Data.Either.Combinators (rightToMaybe)
-import Data.Foldable (for_, toList, fold)
+import Data.Foldable (for_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
-import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (Max (..), Sum (..), (<>))
-import Data.Text (Text)
+import Data.Semigroup ((<>))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
-import Data.Traversable (for)
-import Data.Tuple (swap)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, (=.), (==.))
 import qualified Network.HTTP.Client as Http
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
-import Rhyolite.Backend.Schema (fromId, toId)
+import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
+import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
+import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
-import Rhyolite.Concurrent (supervise, worker)
 import Rhyolite.Schema (Id (..), IdData, Json (..))
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (BlockType, MonitorHeads, NodeRPCContext (..), QueryBlock, RpcError, nodeRPC, rChain,
-                      rConnections, rHead, rMonitorHeads, rNetworkStat, RpcQuery, PlainNodeStream)
-import Tezos.NodeRPC.Network (nodeRPCChunked)
-
+import Tezos.NodeRPC (NodeRPCContext (..), RpcError, rChain, rConnections, rMonitorHeads, rNetworkStat, RpcQuery, PlainNodeStream)
+import Tezos.NodeRPC.Network (nodeRPCChunked, nodeRPC)
 import Tezos.NodeRPC.Sources (PublicNode(..), getPublicNodeUri, PublicNodeError(..), AsPublicNodeError, HasPublicNodeContext, PublicNodeContext(..), getCurrentHead)
 import Tezos.Types
 
@@ -66,7 +56,7 @@ import Backend.Alerts (clearInaccessibleEndpointError, clearNodeWrongChainError,
                        reportInaccessibleEndpointError, reportNodeWrongChainError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
-import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Common (tshow)
@@ -172,9 +162,9 @@ blockSummary blk = BranchData
   , _branchData_fitness = blk ^. fitness
   }
 
-updateNetworkStats :: AppConfig -> Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
-updateNetworkStats appConfig httpMgr db nid before = do
-  after :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
+updateNetworkStats httpMgr db nid before = do
+  after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
 
@@ -183,7 +173,7 @@ updateNetworkStats appConfig httpMgr db nid before = do
       , _node_networkStat = networkStat
       }
 
-  case after of
+  case after' of
     Left err -> pure $ Left err
     Right after -> do
       -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
@@ -211,12 +201,12 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     say "Update node cycle."
 
     -- read the persistent list of nodes
-    theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $ do
+    theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
 
-    ifor_ theseNodeRecords $ \nodeId node -> do
-      updateNetworkStats appConfig httpMgr db nodeId node >>= \case
+    ifor_ theseNodeRecords $ \nodeId node ->
+      updateNetworkStats httpMgr db nodeId node >>= \case
         Left _e -> inDb $ reportNodeInaccessible $ _node_address node
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 

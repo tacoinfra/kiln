@@ -35,7 +35,7 @@ library
     , mtl
     , reflection
     , reflex
-    , reflex-aeson-orphans
+    , reflex-dom-core
     , rhyolite-common
     , rhyolite-datastructures
     , scientific
@@ -53,9 +53,11 @@ library
     Common.App
     Common.AppendIntervalMap
     Common.Config
+    Common.HeadTag
     Common.Schema
     Common.URI
-    Common.Verification
     Common.Vassal
+    Common.Verification
+    Common.WrappedShow1
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

@@ -27,7 +27,7 @@ import Backend.CachedNodeRPC (CacheLine (..), CachedResult (..), NodeDataSource 
 import Backend.Common (workerWithDelay)
 import Backend.Schema (Field (..), stripOnly)
 import Common.Schema (GenericCacheEntry (..))
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB (RunDb, runDb)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)

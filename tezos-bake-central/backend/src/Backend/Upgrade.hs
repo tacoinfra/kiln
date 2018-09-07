@@ -13,26 +13,21 @@ import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
-import Data.Aeson (FromJSON, ToJSON)
-import Data.Bifunctor (first, second)
+import Data.Bifunctor (second)
 import qualified Data.ByteString.Lazy as Bz
 import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
-import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime)
-import Data.Typeable (Typeable)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql (PersistBackend, Postgresql)
-import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http
-import qualified Network.HTTP.Client.TLS as Https
 import qualified Network.HTTP.Simple as Http
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
+import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Say (say)
 

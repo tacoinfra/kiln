@@ -18,31 +18,28 @@ import Common (tshow)
 import Common.Schema
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 import Control.Concurrent.MVar
-import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
+import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
-import Control.Monad (join, unless, void, when, (<=<))
-import Control.Monad.IO.Class
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT)
-import Data.Foldable (fold, foldl', for_, toList, traverse_)
-import Data.Function (on, (&))
+import Control.Monad (unless, void)
+import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
+import Data.Foldable (for_, toList)
+import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
-import Data.Pool (Pool)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import qualified Data.Set as Set
 import qualified Data.Text as T
-import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
-import Rhyolite.Backend.DB (RunDb, getTime, openDb, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
+import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB.PsqlSimple (Values (..), executeQ, queryQ)
+import Rhyolite.Backend.Listen (updateAndNotify)
 import Rhyolite.Schema (Id (..), Json (..))
-import Safe (maximumByMay, maximumMay)
+import Safe (maximumByMay)
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri

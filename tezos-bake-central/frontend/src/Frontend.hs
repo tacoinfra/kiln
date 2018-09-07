@@ -76,6 +76,7 @@ import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import qualified Common.Config as Config
+import Common.HeadTag (headTag)
 import Common.Schema hiding (Event)
 import Common.URI (mkRootUri)
 import Frontend.Common
@@ -209,17 +210,6 @@ watchUpgradeNotice =
   (fmap . fmap) (getMaybeView . _bakeView_upgrade) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
-
-headTag :: DomBuilder t m => m ()
-headTag = do
-  traverse_ (\s -> elAttr "link" ("rel" =: "stylesheet" <> "href" =: s) blank)
-    [ "css/font-awesome.min.css"
-    , "semantic-ui/semantic.min.css"
-    , "css/main.css"
-    ]
-  elAttr "meta" ("name" =: "viewport" <> "content" =: "width=device-width, initial-scale=1.0, maximum-scale=1.0") blank
-  elAttr "meta" ("charset" =: "utf-8") blank
-
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
