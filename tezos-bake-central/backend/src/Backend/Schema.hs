@@ -61,6 +61,7 @@ import qualified Text.URI as Uri
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
 import Tezos.NodeRPC.Types
 import Tezos.Types
+import Tezos.NodeRPC.Sources(PublicNode(..))
 
 import Backend.Version (parseVersion)
 import Common.Schema
@@ -85,6 +86,22 @@ instance HasResolution a => PersistField (Fixed a) where
 instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
+
+instance PersistField NamedChainOrChainId where
+  persistName _ = "NamedChainOrChainId"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = dbType p (error "dbType for NamedChainOrChainId forced" :: String)
+
+instance PrimitivePersistField NamedChainOrChainId where
+  toPrimitivePersistValue p (NamedChainOrChainId c) = toPrimitivePersistValue p $ showChain c
+  fromPrimitivePersistValue p v = NamedChainOrChainId $ parseChainOrError $ fromPrimitivePersistValue p v
+
+instance ToField NamedChainOrChainId where
+  toField (NamedChainOrChainId v) = toField (showChain v)
+
+instance ToField PublicNode where
+  toField = toField . show
 
 deriving instance ToField Tez
 deriving instance FromField Tez
@@ -331,7 +348,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
       uniques:
         - name: _publicnodehead_uniqueness
           type: constraint
-          fields: [_publicNodeHead_source]
+          fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Parameters
@@ -379,6 +396,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: EndpointType
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
+  - primitive: PublicNode
   - entity: ErrorLog
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleEndpoint

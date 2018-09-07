@@ -96,12 +96,14 @@ import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
+import qualified Text.URI as URI
 import qualified Text.URI.Lens as Uri
 
+import Tezos.Chain (betanetChainId)
 import Tezos.Base58Check (HashedValue (..), fromBase58, toBase58)
 import Tezos.Lenses
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), blockscaleNodeUri, querySource)
+import Tezos.NodeRPC.Sources (getPublicNodeUri, PublicNode(..))
 import Tezos.Types
 
 import Backend.Alerts (clearUpgradeNotice)
@@ -195,7 +197,9 @@ backend = do
 
   chainId <- case chain of
     Right chainId -> pure chainId
-    Left chainName -> runExceptT (querySource rChain httpMgr (BlockscaleNode chainName)) >>= \case
+    Left NamedChain_Betanet -> pure betanetChainId
+
+    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
@@ -223,7 +227,7 @@ backend = do
 
     -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
     for_ (leftToMaybe chain) $ \namedChain -> do
-      initParams dataSrc [blockscaleNodeUri namedChain]
+      initParams dataSrc [getPublicNodeUri PublicNode_Blockscale namedChain]
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails

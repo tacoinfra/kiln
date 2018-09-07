@@ -8,7 +8,7 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', iso)
+import Control.Lens (Lens', iso, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
@@ -143,6 +143,15 @@ newtype TzScanNonceHash = TzScanNonceHash (Maybe NonceHash)
 instance FromJSON TzScanNonceHash where
   parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
 
+data VeryBlockLike = VeryBlockLike
+  { _veryBlockLike_hash :: !BlockHash
+  , _veryBlockLike_predecessor :: !BlockHash
+  , _veryBlockLike_fitness :: !Fitness
+  , _veryBlockLike_level :: !RawLevel
+  , _veryBlockLike_timestamp :: !UTCTime
+  } deriving (Eq, Ord, Show, Typeable)
+
+
 
 concat <$> traverse deriveTezosJson
   [ ''Block
@@ -153,6 +162,7 @@ concat <$> traverse deriveTezosJson
   , ''TzScanBlock
   , ''TzScanProtocol
   , ''VotingPeriodKind
+  , ''VeryBlockLike
   ]
 
 concat <$> traverse makeLenses
@@ -163,6 +173,7 @@ concat <$> traverse makeLenses
  , 'TzScanBaker
  , 'TzScanBlock
  , 'TzScanProtocol
+ , 'VeryBlockLike
  ]
 
 class BlockLike b where
@@ -194,10 +205,27 @@ instance BlockLike TzScanBlock where
   fitness = tzScanBlock_fitness . iso coerce coerce
   timestamp = tzScanBlock_timestamp
 
+instance BlockLike VeryBlockLike where
+  hash = veryBlockLike_hash
+  predecessor = veryBlockLike_predecessor
+  fitness = veryBlockLike_fitness
+  level = veryBlockLike_level
+  timestamp = veryBlockLike_timestamp
+
+
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'
     where
       blk' x y = blk {_block_metadata = x, _block_operations = y}
       md' = (blockMetadata_balanceUpdates . traverse) f $ _block_metadata blk
       ops' = (traverse . traverse . balanceUpdates) f $ _block_operations blk
+
+mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
+mkVeryBlockLike blk = VeryBlockLike
+  { _veryBlockLike_hash = blk ^. hash
+  , _veryBlockLike_predecessor = blk ^. predecessor
+  , _veryBlockLike_fitness = blk ^. fitness
+  , _veryBlockLike_level = blk ^. level
+  , _veryBlockLike_timestamp = blk ^. timestamp
+  }
 

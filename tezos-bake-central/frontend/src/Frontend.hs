@@ -66,8 +66,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Data.IntervalMap.Generic.Lazy as IMap
 
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), TzScanNode (..),
-                              tzScanUri)
+import Tezos.NodeRPC.Sources (PublicNode(..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -634,10 +633,10 @@ nodesTab = divClass "ui stackable grid" $ do
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
 
               NodeTile_PublicNode node -> do
-                let nodeTitle = case unJson $ _publicNodeHead_source node of
-                      DataSource_TzScan (TzScanNode chain) -> urlLink (tzScanUri chain) $ text $ "tzscan (" <> showChain (Left chain) <> ")"
-                      DataSource_BlockscaleNode (BlockscaleNode chain) -> text $ "Foundation Nodes (" <> showChain (Left chain) <> ")"
-                      DataSource_PlainNode (PlainNode url) -> text url
+                let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
+                let nodeTitle = case _publicNodeHead_source node of
+                      PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
+                      PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
                 headBlockLevelHeader
                   nodeTitle
                   (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))

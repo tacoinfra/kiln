@@ -144,6 +144,20 @@ branchPoint x y = do
     yPath = Map.lookup y $ _cachedHistory_blocks history
   return $ fmap histToBlockLike . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
 
+lookupBlock ::
+  ( MonadIO m
+  , MonadReader a m, HasNodeDataSource a
+  )
+  => BlockHash -> m (Maybe VeryBlockLike)
+lookupBlock x = do
+  dsrc <- asks (^. nodeDataSource)
+  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  let
+    xPath = Map.lookup x $ _cachedHistory_blocks history
+    f :: LCA.Path BlockHash (BranchData CachedBlockInfo) -> VeryBlockLike
+    f p = histToBlockLike (x, LCA.measure p, p)
+  return $ fmap f xPath
+
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(MVar CachedHistory')
   , _nodeDataSource_nodes :: !(MVar (Map URI (Maybe VeryBlockLike)))
@@ -412,6 +426,7 @@ ancestors (RawLevel n) branch = do
   case Map.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
+
 
 calculateBakeEfficiency ::
   ( MonadIO m

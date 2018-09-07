@@ -1,4 +1,7 @@
 {-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -6,9 +9,20 @@
 module Tezos.NodeRPC.Class where
 
 import Data.Map (Map)
+import Control.Lens (uncons)
+import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import Data.Word (Word64)
+import Data.Semigroup ((<>))
+
+import qualified Data.ByteString.Lazy as LBS
+import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Aeson (FromJSON)
+import qualified Data.Aeson as Aeson
+import qualified Data.Map as Map
 
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Types
@@ -17,7 +31,7 @@ import Tezos.Types
 class QueryChain repr where
   rChain :: repr ChainId
 
-class QueryBlock repr where -- tzscan
+class QueryBlock repr where
   type BlockType repr
   rHead :: ChainId -> repr (BlockType repr)
   rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
@@ -39,4 +53,59 @@ class QueryNode repr where -- my node
   rNetworkStat :: repr NetworkStat
 
 class MonitorHeads repr where
-  rMonitorHeads :: Monoid r => ChainId -> (MonitorBlock -> IO r) -> repr r
+  rMonitorHeads :: ChainId -> repr MonitorBlock
+
+data RpcQuery a = RpcQuery
+  { _RpcQuery_decoder :: LBS.ByteString -> Either String a
+  , _RpcQuery_method :: Http.Method
+  , _RpcQuery_resource :: Text
+  } deriving Functor
+
+plainNodeRequest :: FromJSON a => Http.Method -> Text -> RpcQuery a
+plainNodeRequest = RpcQuery Aeson.eitherDecode
+
+newtype PlainNode a = PlainNode (RpcQuery a)
+newtype PlainNodeStream a = PlainNodeStream (RpcQuery a)
+
+instance QueryChain RpcQuery where
+  rChain = _block_chainId <$> plainNodeRequest Http.methodGet "/chains/main/blocks/head"
+
+instance QueryBlock RpcQuery where
+  type BlockType RpcQuery = Block
+  --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
+  rHead chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head"
+  rBlock chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash
+
+instance QueryHistory RpcQuery where
+  rBlockPred chainId blockHash (RawLevel levelsBack) = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "~" <> T.pack (show levelsBack)
+  rBlocks chainId (RawLevel len) heads = byHead <$> plainNodeRequest Http.methodGet ("/chains/" <> toBase58Text chainId <> "/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads)
+    where
+      byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
+      byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
+      blk2param :: BlockHash -> Text
+      blk2param blkHash = "&head=" <> toBase58Text blkHash
+  rProtoConstants chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
+  rContract chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
+  rBakingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
+      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
+  rEndorsingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
+      <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
+
+instance QueryNode RpcQuery where
+  rConnections = decoder <$> plainNodeRequest Http.methodGet "/network/connections"
+    where
+      decoder :: [Aeson.Value] -> Word64
+      decoder = fromIntegral . length
+  rNetworkStat = plainNodeRequest Http.methodGet "/network/stat"
+
+instance MonitorHeads PlainNodeStream where
+  rMonitorHeads chainId = PlainNodeStream $ plainNodeRequest Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
+
+chainBlockUrl :: ChainId -> BlockHash -> Text
+chainBlockUrl chainId blockHash = "/chains/" <> toBase58Text chainId <> "/blocks/" <> toBase58Text blockHash
+
+dynamicParamRightsRangeToQueryArg :: Either RawLevel Cycle -> Text
+dynamicParamRightsRangeToQueryArg = \case
+  Left (RawLevel x) -> "level=" <> T.pack (show x)
+  Right (Cycle x) -> "cycle=" <> T.pack (show x)
+
