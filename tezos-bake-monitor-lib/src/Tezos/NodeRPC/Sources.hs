@@ -35,7 +35,7 @@ import qualified Data.Text as T
 
 import Tezos.Level (RawLevel(..))
 import Tezos.Base58Check (toBase58Text, BlockHash, ChainId)
-import Tezos.Block (TzScanBlock (..), VeryBlockLike(..), mkVeryBlockLike, BlockLike, hash, level)
+import Tezos.Block (TzScanBlock (..), VeryBlockLike(..), mkVeryBlockLike, BlockLike, hash, level, predecessor)
 import Tezos.Chain (NamedChain (..))
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network (HasNodeRPC, nodeRPCContext, NodeRPCContext (..), nodeRPC)
@@ -84,6 +84,7 @@ data PublicNodeError
   = PublicNodeError_RpcError RpcError
   | PublicNodeError_FeatureNotSupported
   deriving (Eq, Ord, Show, Generic, Typeable)
+  
 
 makeLenses 'PublicNodeContext
 makePrisms ''PublicNodeError
@@ -159,7 +160,10 @@ getHistory :: forall blk e r m.
 getHistory chain blk levels branches = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> theNormalWay
   Just PublicNode_Blockscale -> theNormalWay
-  Just PublicNode_TzScan     -> throwFeatureNotSupported
+  Just PublicNode_TzScan
+    | levels == 1 -> pure $ pure $ blk ^. predecessor
+    | levels == 0 -> pure mempty
+    | otherwise -> throwFeatureNotSupported
   Just PublicNode_Obsidian   -> do
     levels' <-
       if null branches

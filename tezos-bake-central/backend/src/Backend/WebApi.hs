@@ -54,7 +54,6 @@ v1PublicApi dataSrc = route
   where
     chain = _nodeDataSource_chain dataSrc
     chainTXT = toBase58 chain
-    -- writeJSON :: forall m r a. (MonadSnap m, Aeson.ToJSON a, MonadReader r m, HasNodeDataSource r) => m (Either Text a) -> _ ()
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
       liftIO (MVar.tryReadMVar (_nodeDataSource_parameters dataSrc)) >>= \case
