@@ -24,7 +24,7 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1)
+import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1, makeLenses)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -143,6 +143,20 @@ branchPoint x y = do
     xPath = Map.lookup x $ _cachedHistory_blocks history
     yPath = Map.lookup y $ _cachedHistory_blocks history
   return $ fmap histToBlockLike . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
+
+lookupBlock ::
+  ( MonadIO m
+  , MonadReader a m, HasNodeDataSource a
+  )
+  => BlockHash -> m (Maybe VeryBlockLike)
+lookupBlock x = do
+  dsrc <- asks (^. nodeDataSource)
+  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  let
+    xPath = Map.lookup x $ _cachedHistory_blocks history
+    f :: LCA.Path BlockHash (BranchData CachedBlockInfo) -> VeryBlockLike
+    f p = histToBlockLike (x, LCA.measure p, p)
+  return $ fmap f xPath
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(MVar CachedHistory')
@@ -413,6 +427,7 @@ ancestors (RawLevel n) branch = do
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
+
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
@@ -470,3 +485,5 @@ deriveGShow ''NodeQuery
 deriving instance Show (NodeQuery a)
 
 makeRequestForData ''NodeQuery
+
+makeLenses 'NodeDataSource

@@ -33,7 +33,7 @@ import Data.Version (Version)
 import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
-import Reflex.FunctorMaybe
+-- import Reflex.FunctorMaybe
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
@@ -44,7 +44,6 @@ import Text.URI
 
 import Tezos.Account
 import Tezos.Json (TezosWord64 (..))
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), TzScanNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Tez
@@ -68,7 +67,7 @@ viewSelectorHandler
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
+viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT . runDb (Identity db) $ do
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
   --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
@@ -92,10 +91,9 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
     return $ toRangeView nodeAddrVS $ fmap (first Bounded) rs
 
   let pnhVS = _bakeViewSelector_publicNodeHeads vs
-  publicNodeHeads <- for namedChain' $ \namedChain -> whenM (not $ null pnhVS) $
-    toRangeView pnhVS . fmap (first Bounded) . AppendMap.toList <$> selectMap' PublicNodeHeadConstructor
-      (   PublicNodeHead_sourceField ==. Json (DataSource_TzScan (TzScanNode namedChain))
-      ||. PublicNodeHead_sourceField ==. Json (DataSource_BlockscaleNode (BlockscaleNode namedChain))
+  publicNodeHeads <- whenM (not $ null pnhVS) $
+    (toRangeView pnhVS  . fmap (first Bounded) . AppendMap.toList) <$> selectMap' PublicNodeHeadConstructor
+      (   PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left $ namedChain)
       )
 
   let nodesVS = _bakeViewSelector_nodes vs
@@ -165,7 +163,7 @@ viewSelectorHandler namedChain' nds db = QueryHandler $ \vs -> runNoLoggingT . r
     { _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
-    , _bakeView_publicNodeHeads = fold publicNodeHeads
+    , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_delegateStats = delegateStats

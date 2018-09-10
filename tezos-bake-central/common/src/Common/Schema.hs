@@ -24,6 +24,7 @@ import Control.Lens (views, (^.))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Function (on)
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
@@ -40,7 +41,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Json
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (DataSource)
+import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 instance Aeson.ToJSON Uri.URI where
@@ -116,9 +117,19 @@ parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either Named
   Left e -> error $ T.unpack $ "Invalid chain '" <> x <> "': " <> e
   Right v -> v
 
+newtype NamedChainOrChainId = NamedChainOrChainId { getNamedChainOrChainId :: Either NamedChain ChainId }
+  deriving (Eq, Ord, Show, Generic, Typeable, Aeson.ToJSON, Aeson.FromJSON)
+
+instance Aeson.FromJSONKey NamedChainOrChainId where
+  fromJSONKey = Aeson.FromJSONKeyTextParser $ either (fail . T.unpack) (pure . NamedChainOrChainId) . parseChain
+
+instance Aeson.ToJSONKey NamedChainOrChainId where
+  toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
+    where f = showChain . getNamedChainOrChainId
 
 data PublicNodeHead = PublicNodeHead
-  { _publicNodeHead_source :: !(Json DataSource)
+  { _publicNodeHead_source :: !PublicNode
+  , _publicNodeHead_chain :: !NamedChainOrChainId
   , _publicNodeHead_headLevel :: !RawLevel
   , _publicNodeHead_headBlockHash :: !BlockHash
   , _publicNodeHead_headBlockFitness :: !Fitness
@@ -269,23 +280,6 @@ instance Semigroup BakeEfficiency where
 instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
   mappend = (<>)
-
-data VeryBlockLike = VeryBlockLike
-  { _veryBlockLike_hash :: !BlockHash
-  , _veryBlockLike_predecessor :: !BlockHash
-  , _veryBlockLike_fitness :: !Fitness
-  , _veryBlockLike_level :: !RawLevel
-  , _veryBlockLike_timestamp :: !UTCTime
-  } deriving (Eq, Ord, Show, Typeable)
-
-mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
-mkVeryBlockLike blk = VeryBlockLike
-  { _veryBlockLike_hash = blk ^. hash
-  , _veryBlockLike_predecessor = blk ^. predecessor
-  , _veryBlockLike_fitness = blk ^. fitness
-  , _veryBlockLike_level = blk ^. level
-  , _veryBlockLike_timestamp = blk ^. timestamp
-  }
 
 data Notificatee = Notificatee
   { _notificatee_email :: Email
@@ -443,15 +437,7 @@ concat <$> traverse makeLenses
   , 'PublicNodeHead
   , 'Report
   , 'SeenEvent
-  , 'VeryBlockLike
   ]
-
-instance BlockLike VeryBlockLike where
-  hash = veryBlockLike_hash
-  predecessor = veryBlockLike_predecessor
-  fitness = veryBlockLike_fitness
-  level = veryBlockLike_level
-  timestamp = veryBlockLike_timestamp
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

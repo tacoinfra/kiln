@@ -37,6 +37,9 @@ upgradeBranch = "upgrade-branch"
 upgradeBranchDefault :: Text
 upgradeBranchDefault = "master"
 
+serveNodeCache :: FilePath
+serveNodeCache = "serve-node-cache"
+
 parseBool :: Text -> Bool
 parseBool txt
   | v `elem` trues = True

@@ -98,6 +98,7 @@ library
     Backend.Workers.Client
     Backend.Workers.Delegate
     Backend.Workers.Node
+    Backend.WebApi
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
   cpp-options: -DREAL_BUILD

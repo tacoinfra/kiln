@@ -159,7 +159,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       (Bounded $ _errorLog_started errorLog)
                       (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
               whenM (viewSelects errorInterval errorsVS) $ pure mempty
-                  { _bakeView_errors = IntervalView mempty $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                  { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
                       Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
                   }
 

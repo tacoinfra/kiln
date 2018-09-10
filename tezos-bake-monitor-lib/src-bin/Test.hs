@@ -21,6 +21,7 @@ import System.ProgressBar
 import Tezos.History
 import Tezos.NodeRPC
 import Tezos.Types
+import Tezos.NodeRPC.Sources
 
 
 scanProgress :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
@@ -37,14 +38,15 @@ showProgress blk (Progress x y) = T.unpack $ T.concat
   ]
 
 -- onRPCError :: (HasNodeRPC ctx, MonadReader ctx m, MonadIO m) => NodeRPCRequest a -> m a
-onRPCError :: RpcError -> a
+onRPCError :: PublicNodeError -> a
 onRPCError = \case
-  RpcError_HttpException bad ->         error $ ("\n" <>) $ show bad
-  RpcError_UnexpectedStatus code bad -> error $ ("\n" <>) (show code <> show bad)
-  RpcError_NonJSON clue bad ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
+  PublicNodeError_FeatureNotSupported ->                           error "\nfeature not supported"
+  PublicNodeError_RpcError (RpcError_HttpException bad) ->         error $ ("\n" <>) $ show bad
+  PublicNodeError_RpcError (RpcError_UnexpectedStatus code bad) -> error $ ("\n" <>) (show code <> show bad)
+  PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
 --     Right ok -> ok
 
-accum :: ChainId -> Block -> StateT (CachedHistory Fitness) (ExceptT RpcError (ReaderT NodeRPCContext IO)) ()
+accum :: ChainId -> Block -> StateT (CachedHistory Fitness) (ExceptT PublicNodeError (ReaderT PublicNodeContext IO)) ()
 accum chainId = void . accumHistory scanProgress chainId (^. fitness) -- getBalanceChanges
 
 main :: IO ()
@@ -70,5 +72,5 @@ main = do
     liftIO $ putStrLn "constants"
     void $ nodeRPC $ rProtoConstants chainId (_block_hash headBlk)
 
-runTest :: NodeRPCContext -> ExceptT RpcError (ReaderT NodeRPCContext IO) () -> IO ()
-runTest ctx action = either onRPCError id <$> runReaderT (runExceptT action) ctx
+runTest :: NodeRPCContext -> ExceptT PublicNodeError (ReaderT PublicNodeContext IO) () -> IO ()
+runTest ctx action = either onRPCError id <$> runReaderT (runExceptT action) (PublicNodeContext ctx Nothing)

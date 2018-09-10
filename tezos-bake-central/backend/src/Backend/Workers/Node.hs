@@ -10,7 +10,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{-# OPTIONS_GHC -fmax-relevant-binds=32 #-}
 
 module Backend.Workers.Node where
 
@@ -18,10 +17,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
-import Control.Monad.Except (runExceptT)
+import Control.Monad.Except (runExceptT, MonadError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (runReaderT)
+import Control.Monad.Reader (runReaderT, MonadReader)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first, second)
 import Data.Foldable (for_)
@@ -48,10 +47,9 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (BlockType, NodeRPCContext (..), QueryBlock, RpcError, nodeRPC, rChain, rConnections,
-                      rHead, rMonitorHeads, rNetworkStat)
-import Tezos.NodeRPC.Sources (BlockscaleNode (..), DataSource (..), PlainNode (..), QDataSource,
-                              TzScanNode (..), querySource)
+import Tezos.NodeRPC (NodeRPCContext (..), RpcError, rChain, rConnections, rMonitorHeads, rNetworkStat, RpcQuery, PlainNodeStream)
+import Tezos.NodeRPC.Network (nodeRPCChunked, nodeRPC)
+import Tezos.NodeRPC.Sources (PublicNode(..), getPublicNodeUri, PublicNodeError(..), AsPublicNodeError, HasPublicNodeContext, PublicNodeContext(..), getCurrentHead)
 import Tezos.Types
 
 import Backend.Alerts (clearInaccessibleEndpointError, clearNodeWrongChainError,
@@ -90,27 +88,40 @@ minCachedBlockLevel = 1
 nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
 nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up", branch, current, i, n)
 
-nodeMonitor :: ChainId -> Http.Manager -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
-nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId headBlockInfo = do
-  oldHead <- runReaderT dataSourceHead nds
-  updateNodeDataSource nds nodeAddr headBlockInfo
+haveNewHead :: BlockLike blk => NodeDataSource -> Maybe PublicNode -> URI -> blk -> IO ()
+haveNewHead nds pn nodeAddr headBlockInfo = do
+  let httpMgr = _nodeDataSource_httpMgr nds
+  let chainId = _nodeDataSource_chain nds
   let cacheVar = _nodeDataSource_history nds
-  let ctx = NodeRPCContext httpMgr (Uri.render nodeAddr) -- TODO: Use PlainNode data source here instead
+  oldHead <- runReaderT dataSourceHead nds
   newBlock <- modifyMVar cacheVar $ \cache -> do
     let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp :: Either RpcError CachedHistory' <- runExceptT $ flip runReaderT ctx $ flip execStateT cache $ do
+    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
       acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-      sayShow ("new block", nodeAddr, headBlockInfo, acc)
+      sayShow ("new block", (Uri.render nodeAddr), mkVeryBlockLike headBlockInfo, acc)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
 
-  when (newBlock == Right True) $ do
-    say $ "new block from node at " <> Uri.render nodeAddr
-    say $ T.pack $ show headBlockInfo
+  when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
+      -- say $ "new block from node at " <> Uri.render nodeAddr
+      -- say $ T.pack $ show headBlockInfo
+      updatedLevel <- atomically $ do
+        let latestHeadTVar = _nodeDataSource_latestHead nds
+        latestHead <- readTVar latestHeadTVar
+        if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
+          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
+          pure $ Just $ headBlockInfo ^. level
+        else
+          pure Nothing
+      for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-    when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $
-      updateLatestHead nds headBlockInfo
+nodeMonitor :: ChainId -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
+nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
+  let httpMgr = _nodeDataSource_httpMgr nds
+  oldHead <- runReaderT dataSourceHead nds
+  updateNodeDataSource nds nodeAddr headBlockInfo
+  haveNewHead nds Nothing nodeAddr headBlockInfo
 
   let db = _nodeDataSource_pool nds
   runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
@@ -218,16 +229,18 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       let reconnectDelay = 5
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ do
         let
-          nodeQuery :: QDataSource PlainNode a -> IO (Either RpcError a)
-          nodeQuery f = runExceptT $ querySource f httpMgr (PlainNode $ Uri.render nodeAddr)
+          nodeQuery :: RpcQuery a -> IO (Either RpcError a)
+          nodeQuery f = runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
+          chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
+          chunkedNodeQuery f k = runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        _ <- nodeQuery $ rMonitorHeads chainId $ \block -> do
+        chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           inDb $ do
             clearNodeInaccessible nodeAddr
             clearNodeWrongChainError nodeAddr
 
-          nodeMonitor chainId httpMgr nds appConfig nodeAddr nodeId block
+          nodeMonitor chainId nds appConfig nodeAddr nodeId block
 
         nodeQuery rChain >>= inDb . \case
           Left _e -> reportNodeInaccessible nodeAddr -- We have clear evidence that there are connectivity issues.
@@ -248,7 +261,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     inDb = runNoLoggingT . runDb (Identity db) . flip runReaderT appConfig
     reportNodeInaccessible = reportInaccessibleEndpointError EndpointType_Node
     clearNodeInaccessible = clearInaccessibleEndpointError EndpointType_Node
-
+type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
 publicNodesWorker
   :: NodeDataSource
@@ -257,29 +270,34 @@ publicNodesWorker
   -> Pool Postgresql
   -> IO (IO ())
 publicNodesWorker nds namedChain appConfig db =
-  (*>)
-    <$> workerForSource (DataSource_BlockscaleNode $ BlockscaleNode namedChain)
-    <*> workerForSource (DataSource_TzScan $ TzScanNode namedChain)
+
+  foldMap workerForSource [ minBound .. maxBound ]
 
   where
-    workerForSource source = worker' $ updatePublicNodeInDb source *> waitForNewHead nds
+    chain = _nodeDataSource_chain nds
 
-    getHeadFromSource :: DataSource -> IO (Either RpcError VeryBlockLike)
-    getHeadFromSource = \case
-      DataSource_TzScan node -> second mkVeryBlockLike <$> getHeadFromNode node
-      DataSource_BlockscaleNode node -> second mkVeryBlockLike <$> getHeadFromNode node
-      DataSource_PlainNode node -> second mkVeryBlockLike <$> getHeadFromNode node
+    queryPublicNode :: forall a. (forall e r m.
+      ( MonadIO m
+      , MonadError e m , AsPublicNodeError e
+      , MonadReader r m, HasPublicNodeContext r
+      ) => m a) -> DataSource -> IO (Either PublicNodeError a)
+    queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
-    getHeadFromNode :: QueryBlock (QDataSource node) => node -> IO (Either RpcError (BlockType (QDataSource node)))
-    getHeadFromNode = runExceptT . querySource (rHead $ _nodeDataSource_chain nds) (_nodeDataSource_httpMgr nds)
+    workerForSource :: PublicNode -> IO (IO ())
+    workerForSource source = worker' $ updatePublicNodeInDb source' *> waitForNewHead nds
+      where
+        source' = (source, Left namedChain, getPublicNodeUri source namedChain)
+
+    getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
+    getHeadFromSource = queryPublicNode $ getCurrentHead chain
 
     updatePublicNodeInDb :: DataSource -> IO ()
-    updatePublicNodeInDb source = getHeadFromSource source >>= \case
+    updatePublicNodeInDb dsrc@(source, chain, uri) = getHeadFromSource dsrc >>= \case
       Left e -> sayErr (tshow e)
       Right b -> do
-        updateLatestHead nds b
+        haveNewHead nds (Just source) uri b
         let
-          sourceJson = Json source
+          bChain = NamedChainOrChainId chain
           bLevel = b ^. level
           bHash = b ^. hash
           bFitness = b ^. fitness
@@ -287,9 +305,9 @@ publicNodesWorker nds namedChain appConfig db =
         runNoLoggingT $ runDb (Identity db) $ do
           updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
             INSERT INTO "PublicNodeHead"
-              ("source", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
-              VALUES (?sourceJson, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
-            ON CONFLICT ("source") DO UPDATE SET
+              ("source", "chain", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
+              VALUES (?source, ?bChain, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
+            ON CONFLICT ("source", "chain") DO UPDATE SET
               "headLevel" = ?bLevel,
               "headBlockHash" = ?bHash,
               "headBlockFitness" = ?bFitness,
@@ -299,15 +317,3 @@ publicNodesWorker nds namedChain appConfig db =
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
 
-updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
-updateLatestHead nds blk = liftIO $ do
-  updatedLevel <- atomically $ do
-    let latestHeadTVar = _nodeDataSource_latestHead nds
-    latestHead <- readTVar latestHeadTVar
-    if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
-      writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
-      pure $ Just $ blk ^. level
-    else
-      pure Nothing
-
-  for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)
