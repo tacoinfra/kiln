@@ -20,7 +20,7 @@
 module Common.Schema where
 
 import qualified Cases
-import Control.Lens (views, (^.))
+import Control.Lens (views)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson

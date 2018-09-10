@@ -10,7 +10,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
@@ -23,6 +22,7 @@ import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first, second)
+import Data.Either.Combinators (rightToMaybe)
 import Data.Foldable (for_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -34,7 +34,7 @@ import Data.Semigroup ((<>))
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
@@ -324,27 +324,29 @@ nodeAlertWorker
   -> Pool Postgresql
   -> IO (IO ())
 nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
-  nodes <- readMVar (_nodeDataSource_nodes nds)
-  ifor_ nodes $ \nodeUri nodeHead' -> for_ nodeHead' $ \nodeHead -> do
-    lcaBlock' <- flip runReaderT nds $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+  nodeHeadHashes <- fmap (Map.mapMaybe _node_headBlockHash) $ runNoLoggingT $ runDb (Identity db) $
+    selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
 
-    runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      nodeId' <- fmap toId . listToMaybe <$> project AutoKeyField ((Node_addressField ==. nodeUri &&. Node_deletedField ==. False) `limitTo` 1)
-      case nodeId' of
-        Nothing -> sayErr $ "Node must have been deleted at address " <> Uri.render nodeUri
-        Just nodeId -> case lcaBlock' of
-          Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
-          Just lcaBlock -> do
-            let
-              -- Two cases to consider:
-              --   * Node is behind, so the LCA block and node block will be the same
-              --   * Node is branched, so the LCA block will be behind both the node *and* the latest
-              levelsBehindHead = latestHead ^. level - lcaBlock ^. level
+  ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
+    nodeHeadAndLca :: Either RpcError (Block, Maybe VeryBlockLike)
+      <- flip runReaderT nds $ runExceptT $ do
+        nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
+        bp <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+        pure (nodeHead, bp)
 
-            if levelsBehindHead > 1
-              then reportBadNodeHeadError nodeId latestHead nodeHead (Just lcaBlock)
-              else clearBadNodeHeadError nodeId
+    for_ nodeHeadAndLca $ \(nodeHead, lcaBlock') -> runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $
+      case lcaBlock' of
+        Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
+        Just lcaBlock -> do
+          let
+            -- Two cases to consider:
+            --   * Node is behind, so the LCA block and node block will be the same
+            --   * Node is branched, so the LCA block will be behind both the node *and* the latest
+            levelsBehindHead = latestHead ^. level - lcaBlock ^. level
 
+          if levelsBehindHead > 1
+            then reportBadNodeHeadError nodeId latestHead nodeHead (Just lcaBlock)
+            else clearBadNodeHeadError nodeId
 
 updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
 updateLatestHead nds blk = liftIO $ do
