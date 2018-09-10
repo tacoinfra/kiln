@@ -24,7 +24,7 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, re, uncons, view, (^.), _1, makeLenses)
+import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (^.), _1)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -32,7 +32,7 @@ import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Foldable (fold, toList)
+import Data.Foldable (fold, length, toList)
 import Data.Function (on)
 import Data.Functor.Identity (Identity (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
@@ -42,7 +42,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup
+import Data.Semigroup (First (..), Semigroup, (<>))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -142,7 +142,7 @@ branchPoint x y = do
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
     yPath = Map.lookup y $ _cachedHistory_blocks history
-  return $ fmap histToBlockLike . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
+  return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
 
 lookupBlock ::
   ( MonadIO m
@@ -155,7 +155,7 @@ lookupBlock x = do
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
     f :: LCA.Path BlockHash (BranchData CachedBlockInfo) -> VeryBlockLike
-    f p = histToBlockLike (x, LCA.measure p, p)
+    f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
   return $ fmap f xPath
 
 data NodeDataSource = NodeDataSource
@@ -205,23 +205,27 @@ calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBe
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 --
--- NB: Blocks on 'NodeDataSource' parameters.
-waitForNewHead :: NodeDataSource -> IO ()
-waitForNewHead nds = do
+-- Returns most recently seen head.
+waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
+waitForNewHeadWithTimeout nds = do
   -- TODO: This shouldn't be necessary once we have a way to know the parameters better. Foundation nodes should give us params.
   timeLimit <- maybe 60 calcTimeBetweenBlocks <$> tryReadMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  void $ timeout' timeLimit $ waitForNewHead nds
+
+waitForNewHead :: NodeDataSource -> IO VeryBlockLike
+waitForNewHead nds = do
   oldHead <- atomically $ readTVar (_nodeDataSource_latestHead nds)
-  void $ timeout' timeLimit $ atomically $ do
-    newHead <- readTVar (_nodeDataSource_latestHead nds)
-    when (oldHead == newHead) retry
+  atomically $ do
+    newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
+    when (oldHead == Just newHead) retry
     pure newHead
 
-
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
-histToBlockLike :: (BlockHash, BranchData CachedBlockInfo, LCA.Path BlockHash (BranchData CachedBlockInfo)) -> VeryBlockLike
-histToBlockLike (h, BranchData f l t _, path) = VeryBlockLike h p f l t
-      where
-        p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
+histToBlockLike :: RawLevel -> (BlockHash, BranchData CachedBlockInfo, LCA.Path BlockHash (BranchData CachedBlockInfo)) -> VeryBlockLike
+histToBlockLike minLevel (h, BranchData f _ t _, path) = VeryBlockLike h p f blockLevel t
+  where
+    blockLevel = minLevel + fromIntegral (length path)
+    p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
 updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
 updateNodeDataSource nds nodeAddr blk =
@@ -261,7 +265,9 @@ dataSourceHead = withCache Nothing $ \_ -> do
   dsrc <- asks (^. nodeDataSource)
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
   let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
-  pure $ fmap histToBlockLike $ (>>= LCA.uncons) $ maximumByMay (compare `on` LCA.measure) $ toList branches
+  pure $ fmap (histToBlockLike (_cachedHistory_minLevel history))
+    $ (LCA.uncons =<<)
+    $ maximumByMay (compare `on` LCA.measure) $ toList branches
 
 -- | extrats the fittest known node from cache
 dataSourceNode ::

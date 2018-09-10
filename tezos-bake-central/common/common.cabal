@@ -49,6 +49,7 @@ library
 
   exposed-modules:
     Common
+    Common.Alerts
     Common.Api
     Common.App
     Common.AppendIntervalMap

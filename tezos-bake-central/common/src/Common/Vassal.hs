@@ -419,28 +419,9 @@ getIntervalViewI (IntervalView _ entries) = IMap.fromList $ (\(i, First (v, k)) 
 instance (Ord i, Ord e, Semigroup a) => Monoid (View (IntervalSelector e i v) a ) where
   mempty = IntervalView mempty mempty
   mappend = (<>)
-instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v) a ) where
-  -- im not too sure about this, really.  there's no way to represent partial
-  -- knownledge (other than absence in `intervals)
-  --
-  -- instead, any time two Views are merged, then, by assumption, the view on
-  -- the left has newer data, but the view on the right reflects more accurate
-  -- interest.  so we merge the entries by normal semigroup, but throw away the
-  -- query data on the left, only the query on the right is reflected.  In
-  -- order to reduce the irrelevent entries, we then immediately "fmapMaybe Just"
-  --
-  -- or rather, this is what I think it's supposed to be... but apparently that doesn't quite work.
-  -- IntervalView s1 e1 <> IntervalView s2 e2 = IntervalView s2 (e' <> e2)
 
+instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v) a) where
   IntervalView s1 e1 <> IntervalView s2 e2 = IntervalView (s1 <> s2) (e1 <> e2)
-    -- where
-      -- theoretically, the left sided view contains less information, and is
-      -- the only thing that needs to be pruned (values in e2 are already
-      -- supported by s2), and any facts that would be overwritten in e2 by
-      -- values in e1 would still be supported by s2.  so for "performance", we
-      -- do the restriction on only e1|s2 instead of (e1<>e2)|s2; it should be
-      -- the same.
-      -- IntervalView _ e' = tightenView (IntervalView s2 e1)
 
 instance (Eq i, Eq v, Eq e) => Eq1 (View (IntervalSelector e i v)) where
   liftEq f (IntervalView xs xxs) (IntervalView ys yys) = liftEq f xs ys && xxs == yys
@@ -449,7 +430,6 @@ instance (Ord i, Ord v, Ord e) => Ord1 (View (IntervalSelector e i v)) where
   liftCompare f (IntervalView xs xxs) (IntervalView ys yys) = liftCompare f xs ys `mappend` compare xxs yys
 
 instance (Ord i, Ord e) => FunctorMaybe (View (IntervalSelector e i v)) where
-
   fmapMaybe :: forall a b. (a -> Maybe b) -> View (IntervalSelector e i v) a -> View (IntervalSelector e i v) b
   fmapMaybe f (IntervalView support entries) = IntervalView support' entries'
     where

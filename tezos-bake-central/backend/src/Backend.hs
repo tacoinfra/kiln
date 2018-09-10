@@ -254,6 +254,7 @@ backend = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
+      addFinalizer =<< nodeAlertWorker dataSrc appConfig db
 
       case chain of
         Left chainName ->
