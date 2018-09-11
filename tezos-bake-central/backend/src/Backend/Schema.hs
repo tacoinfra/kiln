@@ -18,7 +18,8 @@
 
 module Backend.Schema where
 
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -60,9 +61,9 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
+import Tezos.NodeRPC.Sources (PublicNode (..))
 import Tezos.NodeRPC.Types
 import Tezos.Types
-import Tezos.NodeRPC.Sources(PublicNode(..))
 
 import Backend.Version (parseVersion)
 import Common.Schema
@@ -259,9 +260,9 @@ unArray (Groundhog.Array a) = a
 
 -- prefix fitness arrays with length so that they naturally order correctly
 toDBFitness :: ToJSON a => FitnessF a -> [Text]
-toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . encode) $ x
+toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . Aeson.encode) $ x
 fromDBFitness :: FromJSON a => [Text] -> FitnessF a
-fromDBFitness = FitnessF . Seq.fromList . fmap ( fromJust . decode . LBS.fromStrict . T.encodeUtf8 ) . tail
+fromDBFitness = FitnessF . Seq.fromList . fmap ( fromJust . Aeson.decode . LBS.fromStrict . T.encodeUtf8 ) . tail
 
 instance (ToJSON a, FromJSON a) => PrimitivePersistField (FitnessF a) where
   toPrimitivePersistValue p x = toPrimitivePersistValue p ( Groundhog.Array $ toDBFitness x)
@@ -345,6 +346,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _node_uniqueness
             type: constraint
             fields: [_node_address]
+  - entity: PublicNodeConfig
+    constructors:
+    - name: PublicNodeConfig
+      uniques:
+        - name: _publicnodeconfig_uniqueness
+          type: constraint
+          fields: [_publicNodeConfig_source]
   - entity: PublicNodeHead
     constructors:
     - name: PublicNodeHead
@@ -445,5 +453,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
   , (''PendingReward, 'PendingRewardKey)
+  , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   ]

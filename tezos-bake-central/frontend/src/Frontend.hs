@@ -65,7 +65,7 @@ import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode(..), tzScanUri)
+import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -195,6 +195,13 @@ watchErrors intervals =
     { _bakeViewSelector_errors = viewIntervalSet ivals 1
     }
 
+watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
+watchPublicNodeConfig =
+  (fmap . fmap) (getRangeView . _bakeView_publicNodeConfig) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
+
+
 watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
 watchPublicNodeHeads =
   (fmap . fmap) (Set.fromList . toList . getRangeView' . _bakeView_publicNodeHeads) $
@@ -208,6 +215,8 @@ watchUpgradeNotice =
   (fmap . fmap) (getMaybeView . _bakeView_upgrade) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
+
+
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Summary
@@ -405,9 +414,10 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
   divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
-    , delegatesOptions
+    , publicNodeOptions
     , nodesOptions
     ]
+    ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
     ++ [ upgradeOptions | enableUpgradeCheck ]
   divClass "column" $ do
@@ -476,6 +486,23 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
         addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
+
+    publicNodeOptions = do
+      divClass "ui medium header" $ text "Public Nodes"
+
+      let
+        showPublicNode = \case
+          PublicNode_TzScan -> "tzscan.io"
+          PublicNode_Blockscale -> "Foundation"
+          PublicNode_Obsidian -> "Obsidian"
+
+      pncDyn <- watchPublicNodeConfig
+      for_ [minBound..maxBound] $ \pn -> do
+        let isPublicNodeEnabled pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
+        (element, ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pnc then "blue" else "") <> " tiny label link")) $
+          text $ showPublicNode pn
+        let toggled = tag (current $ not . isPublicNodeEnabled <$> pncDyn) (domEvent Click element)
+        void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     nodesOptions = do
       divClass "ui medium header" $ text "Nodes"

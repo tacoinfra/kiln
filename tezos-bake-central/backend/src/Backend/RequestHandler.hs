@@ -136,6 +136,22 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
         PublicRequest_CheckForUpgrade ->
           checkForUpgrade upgradeBranch httpMgr appConfig id
 
+        PublicRequest_SetPublicNodeConfig publicNode enabled -> do
+          cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
+            project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
+          now <- getTime
+          case cid' of
+            Nothing -> insertAndNotify_ PublicNodeConfig
+              { _publicNodeConfig_source = publicNode
+              , _publicNodeConfig_enabled = enabled
+              , _publicNodeConfig_updated = now
+              }
+            Just cid -> updateAndNotify cid
+              [ PublicNodeConfig_sourceField =. publicNode
+              , PublicNodeConfig_enabledField =. enabled
+              , PublicNodeConfig_updatedField =. now
+              ]
+
     ApiRequest_Private key r ->
       case r of
         PrivateRequest_NoOp -> return ()

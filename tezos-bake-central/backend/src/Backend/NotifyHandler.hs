@@ -162,6 +162,15 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                       Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
                   }
 
+      publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
+      handlePublicNodeConfig = case fromJSON (_notifyMessage_value notifyMessage) of
+        Aeson.Error e -> parseErr notifyMessage e
+        Aeson.Success (cid :: Id PublicNodeConfig) -> do
+          pnc' :: Maybe PublicNodeConfig <- get $ fromId cid
+          whenJust pnc' $ \pnc ->
+            whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $ do
+              pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
+
       publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
       handlePublicNodeHead = case fromJSON (_notifyMessage_value notifyMessage) of
         Aeson.Error e -> parseErr notifyMessage e
@@ -190,6 +199,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
     "Node" -> handleNode
     "Notificatee" -> handleNotificatee
     "Parameters" -> handleParameters
+    "PublicNodeConfig" -> handlePublicNodeConfig
     "PublicNodeHead" -> handlePublicNodeHead
     _ -> do
       sayErr $ "Unhandled NotifyMessage: " <> tshow notifyMessage

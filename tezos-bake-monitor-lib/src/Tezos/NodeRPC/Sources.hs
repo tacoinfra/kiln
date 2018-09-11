@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -10,36 +9,38 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Tezos.NodeRPC.Sources where
 
+import Control.Lens (Lens', Prism', re, view, (^.))
+import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Reader (asks, MonadReader)
-import Data.Aeson (FromJSON, ToJSON)
-import Control.Lens (Lens', Prism', view, (^.), re)
-import Control.Lens.TH (makePrisms, makeLenses)
+import Control.Monad.Reader (MonadReader, asks)
+import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
+import qualified Data.Map as Map
 import Data.Semigroup ((<>))
+import Data.Sequence (Seq)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Types.Method (methodGet)
 import Text.URI (URI)
 import qualified Text.URI.QQ as Uri
-import qualified Data.Set as Set
-import qualified Data.Map as Map
-import Data.Sequence (Seq)
-import Data.Set (Set)
-import qualified Data.Text as T
 
-import Tezos.Level (RawLevel(..))
-import Tezos.Base58Check (toBase58Text, BlockHash, ChainId)
-import Tezos.Block (TzScanBlock (..), VeryBlockLike(..), mkVeryBlockLike, BlockLike, hash, level, predecessor)
+import Tezos.Base58Check (BlockHash, ChainId, toBase58Text)
+import Tezos.Block (BlockLike, TzScanBlock (..), VeryBlockLike (..), hash, level, mkVeryBlockLike,
+                    predecessor)
 import Tezos.Chain (NamedChain (..))
+import Tezos.Level (RawLevel (..))
 import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Network (HasNodeRPC, nodeRPCContext, NodeRPCContext (..), nodeRPC)
-import Tezos.NodeRPC.Types (AsRpcError, RpcError(..), asRpcError)
+import Tezos.NodeRPC.Network (HasNodeRPC, NodeRPCContext (..), nodeRPC, nodeRPCContext)
+import Tezos.NodeRPC.Types (AsRpcError, RpcError (..), asRpcError)
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
@@ -51,6 +52,9 @@ data PublicNode
 
 instance ToJSON PublicNode
 instance FromJSON PublicNode
+instance ToJSONKey PublicNode
+instance FromJSONKey PublicNode
+
 
 canFetchHistory :: PublicNode -> Bool
 canFetchHistory PublicNode_Blockscale = True
@@ -84,7 +88,7 @@ data PublicNodeError
   = PublicNodeError_RpcError RpcError
   | PublicNodeError_FeatureNotSupported
   deriving (Eq, Ord, Show, Generic, Typeable)
-  
+
 
 makeLenses 'PublicNodeContext
 makePrisms ''PublicNodeError

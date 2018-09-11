@@ -98,12 +98,12 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 import qualified Text.URI.Lens as Uri
 
-import Tezos.Chain (betanetChainId)
-import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Backend.Db (gargoyleSupported, withDb)
+import Tezos.Base58Check (HashedValue (..), fromBase58)
+import Tezos.Chain (betanetChainId)
 import Tezos.Lenses
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (getPublicNodeUri, PublicNode(..))
+import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.Alerts (clearUpgradeNotice)
@@ -374,7 +374,7 @@ optsArgDescr =
   , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
       "Name of a network (betanet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
-  , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x }) $
+  , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
       "Serve Node Cache.  Default enabled"
   ]
   where
