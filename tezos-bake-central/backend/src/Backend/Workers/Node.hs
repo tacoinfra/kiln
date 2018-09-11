@@ -100,7 +100,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
     let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
       acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-      sayShow ("new block", Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
+      sayShow ("new block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
@@ -266,13 +266,13 @@ type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
 publicNodesWorker
   :: NodeDataSource
-  -> NamedChain
   -> AppConfig
   -> Pool Postgresql
+  -> [DataSource]
   -> IO (IO ())
-publicNodesWorker nds namedChain appConfig db =
+publicNodesWorker nds appConfig db publicDataSources =
 
-  foldMap workerForSource [ minBound .. maxBound ]
+  foldMap workerForSource publicDataSources -- [ minBound .. maxBound ]
 
   where
     chain = _nodeDataSource_chain nds
@@ -284,10 +284,8 @@ publicNodesWorker nds namedChain appConfig db =
       ) => m a) -> DataSource -> IO (Either PublicNodeError a)
     queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
-    workerForSource :: PublicNode -> IO (IO ())
-    workerForSource source = worker' $ updatePublicNodeInDb source' *> waitForNewHeadWithTimeout nds
-      where
-        source' = (source, Left namedChain, getPublicNodeUri source namedChain)
+    workerForSource :: DataSource -> IO (IO ())
+    workerForSource source = worker' $ updatePublicNodeInDb source *> waitForNewHeadWithTimeout nds
 
     getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ getCurrentHead chain
