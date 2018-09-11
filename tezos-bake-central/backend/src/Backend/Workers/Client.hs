@@ -68,7 +68,7 @@ clientWorker
   -> NodeDataSource
   -> IO (IO ())
 clientWorker appCfg nds =
-  worker' $ (*> waitForNewHead nds) $
+  worker' $ (*> waitForNewHeadWithTimeout nds) $
     readMVar (_nodeDataSource_parameters nds) >>= \protoInfo ->
       runNoLoggingT $ runDb (Identity (_nodeDataSource_pool nds)) $
         runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)

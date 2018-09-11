@@ -14,12 +14,12 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader)
 import Data.Either.Combinators (leftToMaybe, rightToMaybe)
 import Data.Foldable (for_)
+import Data.Functor.Const (Const (..))
 import Data.Maybe (listToMaybe)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
-import Data.Time (UTCTime)
 import Data.Version (Version)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (PersistBackend)
@@ -30,7 +30,7 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Schema (Id)
+import Rhyolite.Schema (Id, Json (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -38,8 +38,8 @@ import Tezos.Types
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Schema
+import Common.Alerts (badNodeHeadMessage)
 import Common.Schema
-import Common.Verification (ForkInfo (..), ForkStatus (..), showBadFork)
 
 mailFor :: Address -> Text -> [Error] -> Mail
 mailFor fromAddr toAddr errs =
@@ -77,7 +77,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
     seenHash = _seenEvent_hash eventDetail
   case existingLog of
     Nothing -> do
-      insertErrorLog $ \logId -> ErrorLogBakerNoHeartbeat
+      _ <- insertErrorLog $ \logId -> ErrorLogBakerNoHeartbeat
         { _errorLogBakerNoHeartbeat_log = logId
         , _errorLogBakerNoHeartbeat_lastLevel = seenLevel
         , _errorLogBakerNoHeartbeat_lastBlockHash = seenHash
@@ -120,7 +120,7 @@ reportInaccessibleEndpointError endpointType addr = do
     |]
   case existingLog of
     Nothing -> do
-      insertErrorLog $ \logId -> ErrorLogInaccessibleEndpoint logId endpointType addr
+      _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleEndpoint logId endpointType addr
       let typeName = case endpointType of
             EndpointType_Node -> "node"
             EndpointType_Client -> "client"
@@ -158,7 +158,7 @@ reportNodeWrongChainError addr expectedChainId actualChainId = do
     |]
   case existingLog of
     Nothing -> do
-      insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr expectedChainId actualChainId
+      _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr expectedChainId actualChainId
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
@@ -178,40 +178,48 @@ clearNodeWrongChainError addr = do
     RETURNING t.id |]
   for_ lids $ notifyEntityId NotificationType_Update
 
-
-
-reportNodeOnForkError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => Id Node -> Bool -> BlockHash -> UTCTime -> m ()
-reportNodeOnForkError nodeId tooOld bakedBlock bakedBlockTime = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeOnFork) <- listToMaybe <$> [queryQ|
+reportBadNodeHeadError
+  :: ( Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+     , BlockLike latestHead, BlockLike nodeHead, BlockLike lca)
+  => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
+reportBadNodeHeadError nodeId latestHead nodeHead lca = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
-      JOIN "ErrorLogNodeOnFork" t ON t.log = el.id
+      JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
      WHERE t.node = ?nodeId AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> do
-      insertErrorLog $ \logId -> ErrorLogNodeOnFork logId nodeId tooOld bakedBlock bakedBlockTime
+      l <- insertErrorLog $ \logId -> ErrorLogBadNodeHead
+        { _errorLogBadNodeHead_log = logId
+        , _errorLogBadNodeHead_node = nodeId
+        , _errorLogBadNodeHead_lca = Json . mkVeryBlockLike <$> lca
+        , _errorLogBadNodeHead_nodeHead = Json $ mkVeryBlockLike nodeHead
+        , _errorLogBadNodeHead_latestHead = Json $ mkVeryBlockLike latestHead
+        }
       node <- get $ fromId nodeId
-      for_ node $ \n ->
-        queueAllEmails
-          [showBadFork n $ ForkInfo (Left $ if tooOld then ForkStatus_TooOld else ForkStatus_Forked) bakedBlockTime bakedBlock]
+      for_ node $ \n -> do
+        let (mkSubject, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        now <- getTime
+        queueAllEmails [Error now $
+          mkSubject (Uri.render $ _node_address n) <> "\n\n" <> message]
+      pure ()
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
-        [ ErrorLogNodeOnFork_tooOldField =. tooOld
-        , ErrorLogNodeOnFork_bakedBlockField =. bakedBlock
-        , ErrorLogNodeOnFork_bakedBlockTimeField =. bakedBlockTime
+        [ ErrorLogBadNodeHead_lcaField =. (Json . mkVeryBlockLike <$> lca)
+        , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
+        , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
 
-clearNodeOnForkError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
-clearNodeOnForkError nodeId = do
-  lids :: [Id ErrorLogNodeOnFork] <- stripOnly <$> [queryQ|
+clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+clearBadNodeHeadError nodeId = do
+  lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
-      FROM "ErrorLogNodeOnFork" t
+      FROM "ErrorLogBadNodeHead" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notifyEntityId NotificationType_Update
@@ -230,7 +238,7 @@ reportUpgradeNotice errorOrNewVersion = do
     |]
   case existingLog of
     Nothing -> do
-      insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
+      _ <- insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
@@ -262,7 +270,9 @@ insertErrorLog mkErrorLog = do
     , _errorLog_lastSeen = now
     , _errorLog_noticeSentAt = Just now
     }
-  insertAndNotify_ $ mkErrorLog logId
+  let errLog = mkErrorLog logId
+  insertAndNotify_ errLog
+  pure errLog
 
 updateErrorLog logId specificLogId = do
   updateErrorLogLastSeen logId

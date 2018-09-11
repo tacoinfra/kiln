@@ -55,6 +55,7 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..))
+import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -147,6 +148,8 @@ instance NeverNull RawLevel
 instance NeverNull Tez
 instance NeverNull TezosWord64
 instance NeverNull Version
+instance NeverNull VeryBlockLike
+instance NeverNull (Json VeryBlockLike)
 
 -- unsafeParseBinary :: TezosBinary a => ByteString -> a
 -- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
@@ -303,12 +306,12 @@ instance FromField PublicKeyHash where
 instance ToField EndpointType where
   toField = toField . show
 instance FromField EndpointType where
-  fromField f b = read <$> fromField f b
+  fromField f b = maybe (fail "Invalid value for EndpointType") pure . readMaybe =<< fromField f b
 
 instance ToField ClientWorker where
   toField = toField . show
 instance FromField ClientWorker where
-  fromField f b = read <$> fromField f b
+  fromField f b = maybe (fail "Invalid value for ClientWorker") pure . readMaybe =<< fromField f b
 
 instance ToField URI where
   toField = toField . Uri.render
@@ -373,6 +376,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _delegate_uniqueness
             type: constraint
             fields: [_delegate_publicKeyHash]
+  - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
       - name: Notificatee
@@ -393,16 +397,16 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
-  - primitive: EndpointType
   - primitive: ClientWorker
+  - primitive: EndpointType
   - primitive: UpgradeCheckError
   - primitive: PublicNode
   - entity: ErrorLog
+  - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleEndpoint
-  - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogMultipleBakersForSameDelegate
-  - entity: ErrorLogNodeOnFork
+  - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogUpgradeNotice
   - entity: CachedProtocolConstants
     constructors:
@@ -429,11 +433,11 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Delegate, 'DelegateKey)
   , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
-  , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
-  , (''ErrorLogNodeOnFork, 'ErrorLogNodeOnForkKey)
+  , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
