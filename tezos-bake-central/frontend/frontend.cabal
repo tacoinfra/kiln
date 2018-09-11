@@ -30,6 +30,7 @@ library
     , IntervalMap
     , lens
     , modern-uri
+    , monoidal-containers
     , mtl
     , obelisk-executable-config
     , reflex
