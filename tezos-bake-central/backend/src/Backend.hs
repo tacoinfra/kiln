@@ -13,7 +13,7 @@
 
 module Backend where
 
-import Control.Applicative (ZipList (..), liftA2, (<|>))
+import Control.Applicative (ZipList (..), liftA2, liftA3, (<|>))
 import Control.Category ((.))
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO, throwString)
@@ -46,7 +46,8 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Semigroup (Semigroup, Sum (..), getSum, (<>), First(..))
+import qualified Data.Semigroup as Semi
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -197,6 +198,36 @@ backend = do
     (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
+  let maybeNamedChain = either Just (const Nothing) chain
+  let
+    firstOption :: [IO (Maybe a)] -> IO (Maybe a)
+    firstOption = (fmap.fmap) getFirst . fmap Semi.getOption . fold . (fmap.fmap) Semi.Option . (fmap.fmap.fmap) First
+
+  !(tzscanApi :: Maybe URI) <- firstOption
+    [ (pure $ _opts_tzscanApiUri =<< SnapServer.getOther cfg)
+    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri)
+    , pure $ (getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain)
+    ]
+  !(blockscaleApi :: Maybe URI) <- firstOption
+    [ (pure $ _opts_blockscaleApiUri =<< SnapServer.getOther cfg)
+    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri)
+    , pure $ (getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain)
+    ]
+  !(obsidianApi :: Maybe URI) <- firstOption
+    [ (pure $ _opts_obsidianApiUri =<< SnapServer.getOther cfg)
+    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri)
+    , pure $ (getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain)
+    ]
+
+  let
+    publicDataSources :: [DataSource]
+    publicDataSources = catMaybes
+      [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
+      , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
+      , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
+      ]
+  sayShow ("PUBLIC NODES:", publicDataSources)
+
   let
     defaultDbSpec = if gargoyleSupported
       then Left Config.db
@@ -235,6 +266,9 @@ backend = do
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
     -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
+    -- TODO: prefer to get this from the database, or from private nodes before
+    -- trying to use foundation nodes.  for betanet, we could actually just
+    -- hardcode the values.
     for_ (leftToMaybe chain) $ \namedChain ->
       initParams dataSrc [getPublicNodeUri PublicNode_Blockscale namedChain]
 
@@ -254,12 +288,7 @@ backend = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-
-      case chain of
-        Left chainName ->
-          addFinalizer =<< publicNodesWorker dataSrc chainName appConfig db
-        _ -> pure ()
-
+      addFinalizer =<< publicNodesWorker dataSrc appConfig db publicDataSources
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
 
@@ -338,6 +367,9 @@ data Opts = Opts
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
   , _opts_serveNodeCache :: !(Maybe Bool)
+  , _opts_tzscanApiUri :: !(Maybe URI)
+  , _opts_blockscaleApiUri :: !(Maybe URI)
+  , _opts_obsidianApiUri :: !(Maybe URI)
   }
 
 instance Semigroup Opts where
@@ -349,10 +381,13 @@ instance Semigroup Opts where
     , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
     , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
     , _opts_serveNodeCache = _opts_serveNodeCache b <|> _opts_serveNodeCache a
+    , _opts_tzscanApiUri = _opts_tzscanApiUri b <|> _opts_tzscanApiUri a
+    , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
+    , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
@@ -375,6 +410,14 @@ optsArgDescr =
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
   , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x }) $
       "Serve Node Cache.  Default enabled"
+
+  , Option [] [Config.tzscanApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_tzscanApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
+      "Custom tzscan api url.  Default none."
+  , Option [] [Config.blockscaleApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_blockscaleApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
+      "Custom blockscale api url.  Default none."
+  , Option [] [Config.obsidianApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_obsidianApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
+      "Custom obsidian api url.  Default none."
+
   ]
   where
     mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
