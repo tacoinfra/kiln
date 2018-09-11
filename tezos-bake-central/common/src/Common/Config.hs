@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Common.Config where
 
+import Control.Exception.Safe (impureThrow)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Text.URI as Uri
 import Text.URI (URI)
-import System.IO.Unsafe (unsafePerformIO)
 
 import Tezos.Types (ChainId, NamedChain (..))
 
@@ -55,7 +55,7 @@ parseBool txt
     v = T.toLower $ T.strip txt
 
 parseURIUnsafe :: Text -> URI
-parseURIUnsafe = unsafePerformIO . Uri.mkURI -- (mkURI is MonadThrow m => Text -> m URI;  we want it to just actually throw.
+parseURIUnsafe = either impureThrow id . Uri.mkURI
 
 tzscanApiUri :: FilePath
 tzscanApiUri = "tzscan-api-uri"

@@ -28,7 +28,7 @@ import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup ((<>))
 import qualified Data.Text as T
@@ -270,18 +270,16 @@ publicNodesWorker
   -> Pool Postgresql
   -> [DataSource]
   -> IO (IO ())
-publicNodesWorker nds appConfig db publicDataSources =
-
-  foldMap workerForSource publicDataSources -- [ minBound .. maxBound ]
-
+publicNodesWorker nds appConfig db = foldMap workerForSource
   where
     chain = _nodeDataSource_chain nds
 
-    queryPublicNode :: forall a. (forall e r m.
-      ( MonadIO m
-      , MonadError e m , AsPublicNodeError e
-      , MonadReader r m, HasPublicNodeContext r
-      ) => m a) -> DataSource -> IO (Either PublicNodeError a)
+    queryPublicNode :: forall a.
+      (forall e r m.
+        ( MonadIO m
+        , MonadError e m , AsPublicNodeError e
+        , MonadReader r m, HasPublicNodeContext r
+        ) => m a) -> DataSource -> IO (Either PublicNodeError a)
     queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
     workerForSource :: DataSource -> IO (IO ())
@@ -289,6 +287,11 @@ publicNodesWorker nds appConfig db publicDataSources =
 
     getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ getCurrentHead chain
+
+    publicNodeEnabled :: PublicNode -> IO Bool
+    publicNodeEnabled pn = fmap (fromMaybe False . listToMaybe) $
+      runNoLoggingT $ runDb (Identity db) $
+        project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
 
     updatePublicNodeInDb :: DataSource -> IO ()
     updatePublicNodeInDb dsrc@(source, chain, uri) = getHeadFromSource dsrc >>= \case
@@ -315,6 +318,7 @@ publicNodesWorker nds appConfig db publicDataSources =
             RETURNING id
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
+
 
 nodeAlertWorker
   :: NodeDataSource

@@ -201,6 +201,8 @@ watchPublicNodeConfig =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
 
+isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
+isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
 watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
 watchPublicNodeHeads =
@@ -498,10 +500,9 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
       pncDyn <- watchPublicNodeConfig
       for_ [minBound..maxBound] $ \pn -> do
-        let isPublicNodeEnabled pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
-        (element, ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pnc then "blue" else "") <> " tiny label link")) $
+        (element, ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " tiny label link")) $
           text $ showPublicNode pn
-        let toggled = tag (current $ not . isPublicNodeEnabled <$> pncDyn) (domEvent Click element)
+        let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element)
         void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     nodesOptions = do
@@ -632,10 +633,14 @@ nodesTab = divClass "ui stackable grid" $ do
         liveErrorsWidget nonEmptyAlertsDyn nodesDyn
 
   where
-    --nodeTilesWidget :: Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> m ()
     nodeTilesWidget alerts nodesDyn = do
-      publicNodesDyn <- watchPublicNodeHeads
+      publicNodeConfigDyn <- watchPublicNodeConfig
+      rawPublicNodesDyn <- watchPublicNodeHeads
       let
+        publicNodesDyn = zipDynWith (\pnc ->
+          Set.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
+          ) publicNodeConfigDyn rawPublicNodesDyn
+
         zipNodeTiles publicNodes nodes =
           (NodeTile_PublicNode <$> toList publicNodes) <>
           (uncurry NodeTile_PlainNode <$> MMap.toAscList nodes)
