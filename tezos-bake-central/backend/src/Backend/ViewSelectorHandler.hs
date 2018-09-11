@@ -9,9 +9,9 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Lens (ifor, imap, itraverse, (<&>), (^.))
+import Control.Lens (imap, itraverse, (<&>))
 import Control.Monad.Except (runExceptT)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -93,6 +93,11 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
     rs :: [(Id Node, URI)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
     return $ toRangeView nodeAddrVS $ fmap (first Bounded) rs
 
+  let pncVS = _bakeViewSelector_publicNodeConfig vs
+  publicNodeConfig <- whenM (not $ null pncVS) $ do
+    xs :: [PublicNodeConfig] <- select CondEmpty
+    pure $ toRangeView pncVS [(_publicNodeConfig_source x, x) | x <- xs]
+
   let pnhVS = _bakeViewSelector_publicNodeHeads vs
   publicNodeHeads <- whenM (not $ null pnhVS) $
     toRangeView pnhVS . fmap (first Bounded) . AppendMap.toList <$> selectMap' PublicNodeHeadConstructor
@@ -165,6 +170,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
     { _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
+    , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses

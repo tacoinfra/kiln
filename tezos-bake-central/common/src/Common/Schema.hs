@@ -127,6 +127,13 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
+data PublicNodeConfig = PublicNodeConfig
+  { _publicNodeConfig_source :: !PublicNode
+  , _publicNodeConfig_enabled :: !Bool
+  , _publicNodeConfig_updated :: !UTCTime
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId PublicNodeConfig
+
 data PublicNodeHead = PublicNodeHead
   { _publicNodeHead_source :: !PublicNode
   , _publicNodeHead_chain :: !NamedChainOrChainId
@@ -410,6 +417,7 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
+  , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
@@ -434,6 +442,7 @@ concat <$> traverse makeLenses
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
+  , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report
   , 'SeenEvent

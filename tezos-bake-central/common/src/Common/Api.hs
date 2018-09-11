@@ -19,6 +19,7 @@ import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 import Text.URI (URI)
 
+import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (Bake, MailServerView)
@@ -60,6 +61,10 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
       :: PublicRequest Bake (Either UpgradeCheckError Version)
+    PublicRequest_SetPublicNodeConfig
+      :: PublicNode
+      -> Bool
+      -> PublicRequest Bake ()
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
