@@ -265,12 +265,6 @@ backend = do
 
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
-    -- If tracking a named chain, use foundation nodes to initialize the chain parameters.
-    -- TODO: prefer to get this from the database, or from private nodes before
-    -- trying to use foundation nodes.  for betanet, we could actually just
-    -- hardcode the values.
-    for_ (leftToMaybe chain) $ \namedChain ->
-      initParams dataSrc [getPublicNodeUri PublicNode_Blockscale namedChain]
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails

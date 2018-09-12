@@ -216,7 +216,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
-    initParams nds (Map.keys theseNodes)
+    initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
 
     thoseNodes <- readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
@@ -284,7 +284,10 @@ publicNodesWorker nds appConfig db = foldMap workerForSource
     queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
     workerForSource :: DataSource -> IO (IO ())
-    workerForSource source = worker' $ updatePublicNodeInDb source *> waitForNewHeadWithTimeout nds
+    workerForSource source@(pn, _, uri) = worker' $ do
+      enabled <- publicNodeEnabled pn
+      -- TODO: prefer to get this from the database, or from private nodes before
+      when enabled $ initParams nds (Identity (Just pn, uri)) *> updatePublicNodeInDb source *> waitForNewHeadWithTimeout nds
 
     getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ getCurrentHead chain

@@ -33,11 +33,7 @@ import Network.HTTP.Types.Method (methodGet)
 import Text.URI (URI)
 import qualified Text.URI.QQ as Uri
 
-import Tezos.Base58Check (BlockHash, ChainId, toBase58Text)
-import Tezos.Block (BlockLike, TzScanBlock (..), VeryBlockLike (..), hash, level, mkVeryBlockLike,
-                    predecessor)
-import Tezos.Chain (NamedChain (..))
-import Tezos.Level (RawLevel (..))
+import Tezos.Types
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network (HasNodeRPC, NodeRPCContext (..), nodeRPC, nodeRPCContext)
 import Tezos.NodeRPC.Types (AsRpcError, RpcError (..), asRpcError)
@@ -63,9 +59,9 @@ canFetchHistory PublicNode_Obsidian = True
 
 
 getPublicNodeUri :: PublicNode -> NamedChain -> URI
-getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos.obsidian.systems/zeronet|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos.obsidian.systems/alphanet|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Betanet  = [Uri.uri|https://tezos.obsidian.systems/|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos-api.obsidian.systems/zeronet/api|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos-api.obsidian.systems/alphanet/api|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Betanet  = [Uri.uri|https://tezos-api.obsidian.systems/api|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = [Uri.uri|https://rpczero.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = [Uri.uri|https://rpcalpha.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Betanet  = [Uri.uri|https://rpc.tzbeta.net|]
@@ -127,6 +123,18 @@ getNodeChain = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \ca
     Just PublicNode_Blockscale -> nodeRPC rChain
     Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest methodGet "/v2/head/"
     Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet "/v1/chain"
+
+getProtoConstants :: forall e r m.
+  ( MonadIO m
+  , MonadReader r m, HasPublicNodeContext r
+  , MonadError e m, AsPublicNodeError e
+  )
+  => ChainId -> m ProtoInfo
+getProtoConstants chain = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+  Nothing                    -> nodeRPC $ rAnyConstants chain
+  Just PublicNode_Blockscale -> nodeRPC $ rAnyConstants chain
+  Just PublicNode_TzScan     -> throwFeatureNotSupported
+  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet $ "/v1/" <> toBase58Text chain <> "/params"
 
 getCurrentHead :: forall e r m.
   ( MonadIO m

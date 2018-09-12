@@ -24,7 +24,7 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (^.), _1)
+import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (^.), _1, (<&>))
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -62,6 +62,7 @@ import qualified Text.URI as Uri
 
 import Tezos.History
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Sources
 import Tezos.Types
 
 import Backend.Common (timeout')
@@ -232,27 +233,26 @@ updateNodeDataSource nds nodeAddr blk =
   modifyMVar_ (_nodeDataSource_nodes nds) $ return . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
 
 -- Make sure that the protocol parameters have been loaded and the datasource initialzied.
-initParams :: Foldable f => NodeDataSource -> f URI -> IO Bool
+initParams :: Foldable f => NodeDataSource -> f (Maybe PublicNode, URI) -> IO Bool
 initParams nds theseNodes = do
   needParams <- isEmptyMVar $ _nodeDataSource_parameters nds
 
   let
     chainId = _nodeDataSource_chain nds
-    step :: MonadIO m => URI -> m (Map URI ProtoInfo)
-    step someNode = do
-      let ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)
-      let protoConstantsAtHead = do
-            headBlockHash <- _block_hash <$> nodeRPC (rHead chainId)
-            nodeRPC $ rProtoConstants chainId headBlockHash
-      runExceptT (runReaderT protoConstantsAtHead ctx) >>= \case
-        Left (_ :: RpcError) -> pure mempty
-        Right params -> pure $ Map.singleton someNode params
-  onChainNodes :: Map URI ProtoInfo <- fold <$> traverse step (toList $ Set.fromList $ toList theseNodes)
+    step :: IO (Maybe ProtoInfo) -> (Maybe PublicNode, URI) -> IO (Maybe ProtoInfo)
+    step l (pn, someNode) = l >>= \case
+      Nothing -> do
+        let ctx = PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)) pn
+        runExceptT (runReaderT (getProtoConstants chainId) ctx) <&> \case
+          Left (_ :: PublicNodeError) -> Nothing
+          Right params -> Just params
+      l' -> return l'
+    onChainNodes = foldl step (return Nothing) $ theseNodes
 
-  when needParams $ case fmap fst $ uncons $ toList onChainNodes of
+  when needParams $ onChainNodes >>= \case
     Just params -> do
       void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-    Nothing -> say "Still no params"
+    _ -> say "Still no params"
 
   fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
 
