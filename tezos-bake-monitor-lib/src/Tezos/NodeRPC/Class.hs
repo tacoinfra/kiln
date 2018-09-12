@@ -41,6 +41,7 @@ class QueryHistory repr where -- blockscale
   rBlockPred :: ChainId -> BlockHash -> RawLevel -> repr (BlockType repr)
 
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
+  rAnyConstants :: ChainId -> repr ProtoInfo
   rContract :: ChainId -> BlockHash -> ContractId -> repr Account
 
   -- This only produces results when the cycles requested are between within
@@ -85,6 +86,7 @@ instance QueryHistory RpcQuery where
       blk2param :: BlockHash -> Text
       blk2param blkHash = "&head=" <> toBase58Text blkHash
   rProtoConstants chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
+  rAnyConstants chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head/context/constants"
   rContract chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
   rBakingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
