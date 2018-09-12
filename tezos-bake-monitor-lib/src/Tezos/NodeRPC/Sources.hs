@@ -63,9 +63,9 @@ canFetchHistory PublicNode_Obsidian = True
 
 
 getPublicNodeUri :: PublicNode -> NamedChain -> URI
-getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos.obsidian.systems/zeronet|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos.obsidian.systems/alphanet|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Betanet  = [Uri.uri|https://tezos.obsidian.systems/|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos-api.obsidian.systems/zeronet|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos-api.obsidian.systems/alphanet|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Betanet  = [Uri.uri|https://tezos-api.obsidian.systems/|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = [Uri.uri|https://rpczero.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = [Uri.uri|https://rpcalpha.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Betanet  = [Uri.uri|https://rpc.tzbeta.net|]
