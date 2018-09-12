@@ -40,7 +40,6 @@ badNodeHeadMessage text blockHashLink l =
               , blockHashLink $ lca ^. hash
               , text $ " which is " <> tshow levelsBehindHead <> " blocks behind the latest head of "
               , blockHashLink $ latestHead ^. hash
-              , text "."
               , text ". (Node's head is "
               , blockHashLink $ nodeHead ^. hash
               , text ")"
