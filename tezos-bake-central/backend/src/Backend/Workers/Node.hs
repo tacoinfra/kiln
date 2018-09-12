@@ -9,6 +9,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 module Backend.Workers.Node where
 
@@ -209,10 +210,10 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
 
     ifor_ theseNodeRecords $ \nodeId node ->
       updateNetworkStats httpMgr db nodeId node >>= \case
-        Left _e -> inDb $ reportNodeInaccessible $ _node_address node
+        Left _e -> inDb $ reportNodeInaccessible (_node_address node) (_node_alias node)
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, i)) $ Map.toList theseNodeRecords
+    let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     initParams nds (Map.keys theseNodes)
@@ -227,7 +228,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     let
       chainId = _nodeDataSource_chain nds
 
-    ifor_ newNodes $ \nodeAddr nodeId -> do
+    ifor_ newNodes $ \nodeAddr (nodeId, nodeAlias) -> do
       let reconnectDelay = 5
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ do
         let
@@ -245,13 +246,13 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
           nodeMonitor chainId nds appConfig nodeAddr nodeId block
 
         nodeQuery rChain >>= inDb . \case
-          Left _e -> reportNodeInaccessible nodeAddr -- We have clear evidence that there are connectivity issues.
+          Left _e -> reportNodeInaccessible nodeAddr nodeAlias -- We have clear evidence that there are connectivity issues.
           Right actualChainId
             | actualChainId == chainId -> do
                 -- Monitor stopped even though we're on the right chain, so we'll assume there was a connectivity issue.
                 clearNodeWrongChainError nodeAddr
-                reportNodeInaccessible nodeAddr
-            | otherwise -> reportNodeWrongChainError nodeAddr chainId actualChainId
+                reportNodeInaccessible nodeAddr nodeAlias
+            | otherwise -> reportNodeWrongChainError nodeAddr nodeAlias chainId actualChainId
 
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup

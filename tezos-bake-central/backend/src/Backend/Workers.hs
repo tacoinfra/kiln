@@ -28,6 +28,6 @@ insertClientDelegates pkhs = do
     first (map toId) . unzip <$> project (AutoKeyField, Delegate_publicKeyHashField) CondEmpty
 
   let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
-  for_ newPkhs $ \pkh -> insertAndNotify $ Delegate pkh False
+  for_ newPkhs $ \pkh -> insertAndNotify $ Delegate pkh Nothing False
 
 

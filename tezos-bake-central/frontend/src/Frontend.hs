@@ -117,7 +117,7 @@ watchNodes nidsDyn = do
     }
   return $ ffor theView $ \v -> getRangeView' (_bakeView_nodes v)
 
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) URI))
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) (URI, Maybe Text)))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
@@ -379,14 +379,14 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             Just _ -> "Resolved: " <> txt
             Nothing -> txt
       in case specificLog of
-          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address) -> constDyn $ Just $ do
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> constDyn $ Just $ do
             let endpointTypeName = case endpointType of
                   EndpointType_Node -> "node"
                   EndpointType_Client -> "client"
-            header $ "Unable to connect to " <> endpointTypeName <> " at " <> Uri.render address
+            header $ "Unable to connect to " <> endpointTypeName <> (maybe "" (" " <>) alias) <> " at " <> Uri.render address
 
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address expectedChainId actualChainId) -> constDyn $ Just $ do
-            header $ "Node on wrong network: " <> Uri.render address
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> constDyn $ Just $ do
+            header $ "Node on wrong network: " <> maybe (Uri.render address) id alias
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
@@ -474,7 +474,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
         addE <- urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
-        void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddClient addr)
+        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     delegatesOptions = do
       divClass "ui medium header" $ text "Delegates"
@@ -487,7 +487,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
             requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
         addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-        void $ requestingIdentity $ ffor addE $ \pkh -> public (PublicRequest_AddDelegate pkh)
+        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
     publicNodeOptions = do
       divClass "ui medium header" $ text "Public Nodes"
@@ -510,15 +510,17 @@ optionsTab = divClass "ui two column stackable grid" $ do
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
         listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
-          let dName = node
-          el "td" $ dynText $ Uri.render <$> dName
+          let dAddress = ffor node $ fst
+          let dName = ffor node $ snd
+          el "td" $ dynText $ ffor dAddress $ Uri.render
+          el "td" $ dynText $ ffor dName $ fromMaybe ""
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveNode <$> tag (current dName) eRemove
+            requestingIdentity $ public . PublicRequest_RemoveNode . fst <$> tag (current node) eRemove
 
         addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
         let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-        void $ requestingIdentity $ ffor addE $ \addr -> public (PublicRequest_AddNode addr nodeIdent)
+        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias nodeIdent)
 
     upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
@@ -535,13 +537,17 @@ optionsTab = divClass "ui two column stackable grid" $ do
          , Eq a
          , Show a
          )
-      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t a)
+      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
     urlInputRow validator label info placeholder = el "tr" $ do
-      (tdEl, address) <- el' "td" $ formItem
+      (tdEl1, address) <- el' "td" $ formItem
         $ validatedInput validator
         $ def & Txt.setPlaceholder placeholder & Txt.setFluid
+      (tdEl2, alias) <- el' "td" $ formItem
+        $ validatedInput (Validator.optional Validator.validateText)
+        $ def & Txt.setPlaceholder "alias" & Txt.setFluid
       addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
-      return $ filterRight $ tag (current address) $ leftmost [addButton, keypress Enter tdEl]
+      let namedAddress = liftA2 (liftA2 (,)) address alias
+      return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
 
 
 mailServerForm
@@ -613,8 +619,8 @@ errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMa
 errorsByNode xs = MMap.fromList [(k, (el, t)) | (el, t) <- MMap.elems xs, Just k <- [nodeKeyForErrorLogView t]]
   where
     nodeKeyForErrorLogView = \case
-      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url) -> Just $ Right url
-      ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _) -> Just $ Right url
+      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url _) -> Just $ Right url
+      ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _ _) -> Just $ Right url
       ErrorLogView_BadNodeHead (l@ErrorLogBadNodeHead{}) -> Just $ Left $ _errorLogBadNodeHead_node l
       _ -> Nothing
 
@@ -682,7 +688,7 @@ nodesTab = divClass "ui stackable grid" $ do
                     holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
 
                 headBlockLevelHeader
-                  (text $ uriHostPortPath $ _node_address node)
+                  (text $ maybe (uriHostPortPath $ _node_address node) id $ _node_alias node)
                   (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
                   fallingBehindBy
 

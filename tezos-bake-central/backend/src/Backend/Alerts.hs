@@ -88,7 +88,7 @@ reportNoBakerHeartbeatError cid eventDetail = do
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Baker at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
+        , _error_text = "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
         }]
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -108,8 +108,8 @@ clearNoBakerHeartbeatError cid = do
 
 reportInaccessibleEndpointError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => EndpointType -> URI -> m ()
-reportInaccessibleEndpointError endpointType addr = do
+  => EndpointType -> URI -> Maybe Text -> m ()
+reportInaccessibleEndpointError endpointType addr alias = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
@@ -120,14 +120,14 @@ reportInaccessibleEndpointError endpointType addr = do
     |]
   case existingLog of
     Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleEndpoint logId endpointType addr
+      _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleEndpoint logId endpointType addr alias
       let typeName = case endpointType of
             EndpointType_Node -> "node"
             EndpointType_Client -> "client"
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Unable to connect to " <> typeName <> " at " <> Uri.render addr
+        , _error_text = "Unable to connect to " <> typeName <> maybe "" (" " <>) alias <> " at " <> Uri.render addr
         }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -143,8 +143,8 @@ clearInaccessibleEndpointError endpointType addr = do
 
 reportNodeWrongChainError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => URI -> ChainId -> ChainId -> m ()
-reportNodeWrongChainError addr expectedChainId actualChainId = do
+  => URI -> Maybe Text -> ChainId -> ChainId -> m ()
+reportNodeWrongChainError addr alias expectedChainId actualChainId = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
@@ -158,11 +158,11 @@ reportNodeWrongChainError addr expectedChainId actualChainId = do
     |]
   case existingLog of
     Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr expectedChainId actualChainId
+      _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr alias expectedChainId actualChainId
       now <- getTime
       queueAllEmails [Error
         { _error_time = now
-        , _error_text = "Node at " <> Uri.render addr <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+        , _error_text = "Node" <> (maybe "" (" " <>) alias) <> " at " <> Uri.render addr <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
         }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -205,7 +205,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
         let (mkSubject, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
         now <- getTime
         queueAllEmails [Error now $
-          mkSubject (Uri.render $ _node_address n) <> "\n\n" <> message]
+          mkSubject (maybe "" (\x -> "Node " <> x <> " at ") $ _node_alias n) <> (Uri.render $ _node_address n) <> "\n\n" <> message]
       pure ()
 
     Just (logId, specificLogId) -> do

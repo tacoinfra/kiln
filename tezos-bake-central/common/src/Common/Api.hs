@@ -29,6 +29,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PublicRequest Bake a where
     PublicRequest_AddNode
       :: URI
+      -> Maybe Text
       -> Maybe CryptoboxPublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_RemoveNode
@@ -36,6 +37,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: URI -- address of client to subscribe to
+      -> Maybe Text
       -> PublicRequest Bake () -- TODO: perhaps give an Id Client
     PublicRequest_RemoveClient
       :: URI -- address of client to unsubscribe from
@@ -55,6 +57,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_AddDelegate
       :: PublicKeyHash
+      -> Maybe Text
       -> PublicRequest Bake ()
     PublicRequest_RemoveDelegate
       :: PublicKeyHash

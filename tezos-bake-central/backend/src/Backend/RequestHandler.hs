@@ -53,26 +53,27 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
   RequestHandler $ \req -> runNoLoggingT $ runDb (Identity db) $ case req of
     ApiRequest_Public r ->
       case r of
-        PublicRequest_AddNode addr nodeIdent -> do
+        PublicRequest_AddNode addr alias nodeIdent -> do
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> do
-              insertAndNotify_ (mkNode addr)
-            Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False]
+              insertAndNotify_ (mkNode addr alias)
+            Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False, Node_aliasField =. alias]
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
 
-        PublicRequest_AddClient addr -> do
+        PublicRequest_AddClient addr alias -> do
           existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
           case nonEmpty existingIds of
             Nothing -> insertAndNotify_ Client
               { _client_address = addr
+              , _client_alias = alias
               , _client_updated = Nothing
               , _client_deleted = False
               }
-            Just cids -> for_ cids $ \cid -> updateAndNotify cid [Client_deletedField =. False]
+            Just cids -> for_ cids $ \cid -> updateAndNotify cid [Client_deletedField =. False, Client_aliasField =. alias]
 
         PublicRequest_RemoveClient addr -> do
           cids :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
@@ -80,11 +81,11 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
           notifyEntitiesDeleted cids
 
-        PublicRequest_AddDelegate pkh -> do
+        PublicRequest_AddDelegate pkh alias -> do
           existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ $ Delegate { _delegate_publicKeyHash = pkh, _delegate_deleted = False }
-            Just dids -> for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. False]
+            Nothing -> insertAndNotify_ $ Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
+            Just dids -> for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. False, Delegate_aliasField =. alias]
 
         PublicRequest_RemoveDelegate pkh -> do
           dids :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
