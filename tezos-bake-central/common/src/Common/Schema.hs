@@ -76,6 +76,7 @@ knownProtocols =
 
 data Client = Client
   { _client_address :: !URI
+  , _client_alias :: !(Maybe Text)
   , _client_updated :: !(Maybe UTCTime)
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -99,6 +100,7 @@ instance HasId ClientInfo
 
 data Node = Node
   { _node_address :: !URI
+  , _node_alias :: !(Maybe Text)
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
@@ -145,9 +147,10 @@ data PublicNodeHead = PublicNodeHead
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
-mkNode :: URI -> Node
-mkNode addr = Node
+mkNode :: URI -> Maybe Text -> Node
+mkNode addr alias = Node
   { _node_address = addr
+  , _node_alias = alias
   , _node_identity = Nothing -- TODO
   , _node_headLevel = Nothing
   , _node_headBlockHash = Nothing
@@ -265,6 +268,7 @@ data ClientConfig = ClientConfig
 
 data Delegate = Delegate
   { _delegate_publicKeyHash :: !PublicKeyHash
+  , _delegate_alias :: !(Maybe Text)
   , _delegate_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Delegate
@@ -316,12 +320,14 @@ data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
   { _errorLogInaccessibleEndpoint_log :: !(Id ErrorLog)
   , _errorLogInaccessibleEndpoint_type :: !EndpointType
   , _errorLogInaccessibleEndpoint_address :: !URI
+  , _errorLogInaccessibleEndpoint_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleEndpoint
 
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_address :: !URI
+  , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
   , _errorLogNodeWrongChain_actualChainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)

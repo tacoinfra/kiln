@@ -82,14 +82,14 @@ clientWorker appCfg nds =
 
       let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
-      toUpdate :: [(Id Client, URI)] <- [queryQ|
-        SELECT id, address
+      toUpdate :: [(Id Client, URI, Maybe T.Text)] <- [queryQ|
+        SELECT id, address, alias
         FROM "Client" c
         WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
         ORDER BY updated NULLS FIRST
       |]
 
-      clientDelegates <- for toUpdate $ \(cid, address) -> do
+      clientDelegates <- for toUpdate $ \(cid, address, alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> sayErr (tshow e) $> Nothing
               , Handler $ \(e :: Http.HttpException) -> sayErr (tshow e) $> Nothing
@@ -168,7 +168,7 @@ clientWorker appCfg nds =
           return $ _clientConfig_delegates clientConfig
 
         case result of
-          Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address
+          Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address alias
           Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
 
       insertClientDelegates (Set.fromList $ concat clientDelegates)

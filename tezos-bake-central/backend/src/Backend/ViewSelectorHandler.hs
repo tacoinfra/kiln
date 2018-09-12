@@ -27,6 +27,7 @@ import qualified Data.Monoid
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import qualified Data.Set as Set
+import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.Traversable (for)
 import Data.Version (Version)
@@ -90,8 +91,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
-    rs :: [(Id Node, URI)] <- [queryQ| SELECT n.id, n.address from "Node" n WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded) rs
+    rs :: [(Id Node, URI, Maybe Text)] <- [queryQ| SELECT n.id, n.address, n.alias from "Node" n WHERE NOT n.deleted |]
+    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,(y,z))) rs
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do
@@ -111,15 +112,16 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
       selNodes = In $ iMapSelectorKeys nodesVS
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
         , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."lastHeartbeat" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = do
-          (nid, addr, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
+          (nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
           return (Bounded nid, Node
             { _node_address = addr
+            , _node_alias = alias
             , _node_identity = ident
             , _node_headLevel = headLevel
             , _node_headBlockHash = headBlockHash
@@ -204,7 +206,7 @@ getErrorLogs intervalMap = do
             , el.stopped AT TIME ZONE 'UTC'
             , el."lastSeen" AT TIME ZONE 'UTC'
             , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t.type, t.address
+            , t.type, t.address, t.alias
           FROM "ErrorLog" el
           JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
           LEFT JOIN "Node" n ON n.address = t.address
@@ -216,7 +218,7 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress) ->
+          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress, tAlias) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
                   { _errorLog_started = elStarted
@@ -224,7 +226,7 @@ getErrorLogs intervalMap = do
                   , _errorLog_lastSeen = elLastSeen
                   , _errorLog_noticeSentAt = elNoticeSentAt
                   }
-              , ErrorLogView_InaccessibleEndpoint $ ErrorLogInaccessibleEndpoint elId tType tAddress
+              , ErrorLogView_InaccessibleEndpoint $ ErrorLogInaccessibleEndpoint elId tType tAddress tAlias
               )
             )
 
@@ -235,7 +237,7 @@ getErrorLogs intervalMap = do
               , el.stopped AT TIME ZONE 'UTC'
               , el."lastSeen" AT TIME ZONE 'UTC'
               , el."noticeSentAt" AT TIME ZONE 'UTC'
-              , t.address, t."expectedChainId", t."actualChainId"
+              , t.address, t.alias, t."expectedChainId", t."actualChainId"
             FROM "ErrorLog" el
             JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
             LEFT JOIN "Node" n ON n.address = t.address
@@ -246,7 +248,7 @@ getErrorLogs intervalMap = do
                ((?low IS NULL OR el.stopped >= ?low) AND
                (?high IS NULL OR el.stopped <= ?high)))
             ORDER BY el.id ASC
-            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tExpectedChainId, tActualChainId) ->
+            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
               ( elId :: Id ErrorLog
               , ( ErrorLog
                     { _errorLog_started = elStarted
@@ -254,7 +256,7 @@ getErrorLogs intervalMap = do
                     , _errorLog_lastSeen = elLastSeen
                     , _errorLog_noticeSentAt = elNoticeSentAt
                     }
-                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tAddress tExpectedChainId tActualChainId
+                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tAddress tAlias tExpectedChainId tActualChainId
                 )
               )
 

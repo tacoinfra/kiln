@@ -8,6 +8,7 @@ module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
+import Control.Arrow ((&&&))
 import Control.Monad.Except (runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
@@ -103,7 +104,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
             select $ AutoKeyField ==. fromId nid &&. Node_deletedField ==. False
           return mempty
                   { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) node
-                  , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ _node_address <$> node
+                  , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ (_node_address &&& _node_alias) <$> node
                   }
 
       delegateVS = _bakeViewSelector_delegates aggVS
