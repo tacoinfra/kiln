@@ -667,6 +667,7 @@ nodesTab = divClass "ui stackable grid" $ do
                 let nodeTitle = case _publicNodeHead_source node of
                       PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
                       PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
+                      PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
                 headBlockLevelHeader
                   nodeTitle
                   (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
