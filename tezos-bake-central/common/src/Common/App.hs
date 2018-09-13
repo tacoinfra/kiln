@@ -61,15 +61,17 @@ getErrorInterval ei@(el, _) = First (ei, ClosedInterval
   (maybe UpperInfinity Bounded $ _errorLog_stopped el))
 
 
+type Deletable a = First (Maybe a)
+
 data BakeViewSelector a = BakeViewSelector
-  { _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Maybe URI) a)
-  , _bakeViewSelector_clients :: !(RangeSelector (Id Client) ClientInfo a)
+  { _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
+  , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
   , _bakeViewSelector_delegateStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash () a)
+  , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
   , _bakeViewSelector_errors :: !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (URI, Maybe Text) a)
-  , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) Node a)
+  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
   , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) Email a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
@@ -80,14 +82,14 @@ data BakeViewSelector a = BakeViewSelector
 
 
 data BakeView a = BakeView
-  { _bakeView_clientAddresses :: !(RangeView' (Id Client) (Maybe URI) a)
-  , _bakeView_clients :: !(RangeView (Id Client) ClientInfo a)
+  { _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
+  , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
   , _bakeView_delegateStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeView_delegates :: !(RangeView' PublicKeyHash () a)
+  , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
   , _bakeView_errors :: !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
-  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (URI, Maybe Text) a)
-  , _bakeView_nodes :: !(RangeView' (Id Node) Node a)
+  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
   , _bakeView_notificatees :: !(RangeView' (Id Notificatee) Email a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.

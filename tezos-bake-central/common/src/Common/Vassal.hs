@@ -109,6 +109,26 @@ mergeMMap :: forall k a b c. Ord k
 mergeMMap fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalMap . runIdentity
   $ mergeMapA (\k a -> Identity $ fa k a) (\k b -> Identity $ fb k b) (\k a b -> Identity $ fab k a b) xs ys
 
+-- TODO:
+-- i think i know how to fix the deletes issues for all of the selectors here,
+-- as with other notes, all Views should be a pair of "response data" with no
+-- 'a's in them, and the verbatim ViewSelector.
+--
+-- for MaybeView/MapView, use maybes at the individual keys (theres nothing
+-- else to do anyway)
+--
+-- for RangeView, keep a separate IntervalMap e () of whiteouts which indicates
+-- what the response contains.
+--
+-- for IntervalView, the results data is essentially a RangeView, combined with
+-- a mapping from the "Id's" associated with the
+--  - if the IntervalSelector allowed the user to also query for these ID's,
+--    then whiteouts work exactly as RangeView
+--  - if not, the only way to make deletes work is to have per-element maybes
+--    (as MaybeView/MapView above) with the extra side condition that the
+--    individual elements result interval cannot ever get smaller, even once
+--    they're deleted.
+
 instance Ord k => Eq1 (Map.Map k) where
   liftEq f xs ys = getAll $ getConst $ mergeMapA
     (\_ _ -> Const $ All False)
