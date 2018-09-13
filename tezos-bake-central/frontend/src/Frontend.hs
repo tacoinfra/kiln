@@ -22,12 +22,13 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import Data.Bifunctor (first)
+import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_)
+import Data.Foldable (fold, for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
@@ -62,7 +63,7 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
-import Safe (maximumMay)
+import Safe (maximumMay, headDef)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -105,6 +106,12 @@ frontend = (headTag,) $ void $ do
     , _cfg_chain = chain
     }
 
+validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
+validatingRange f v =
+  if null $ _rangeView_support v
+    then Nothing
+    else Just $ f v
+
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
   (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
@@ -117,6 +124,13 @@ watchNodes nidsDyn = do
     { _bakeViewSelector_nodes = 1 <$ nids
     }
   return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodes v)
+
+watchNodesValid :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (Maybe (MonoidalMap (Id Node) Node)))
+watchNodesValid nidsDyn = do
+  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
+    { _bakeViewSelector_nodes = 1 <$ nids
+    }
+  return $ ffor theView $ \v -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) (URI, Maybe Text)))
 watchNodeAddresses = do
@@ -151,12 +165,12 @@ watchDelegateStats delegates = do
   --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map.Map (Id Client) URI))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
+  return $ ffor theView $ \v' -> MMap.getMonoidalMap $ fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
 watchNotificatees = do
@@ -202,6 +216,12 @@ watchPublicNodeConfig =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
 
+watchPublicNodeConfigValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap PublicNode PublicNodeConfig)))
+watchPublicNodeConfigValid =
+  (fmap . fmap) (validatingRange getRangeView . _bakeView_publicNodeConfig) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
+
 isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
@@ -234,43 +254,56 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Baker Central"
-  rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
-        [ semuiTab (text "Nodes") UITab_Nodes currentTab
-        , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-          fmap leftmost . for (MMap.toList cs) $ \(cid, name) ->
-            semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTab
-        , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
-          fmap leftmost $ for (Set.toList ds) $ \pkh ->
-            semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTab
-        , semuiTab (text "Options") UITab_Options currentTab
-        ]
-      currentTab <- fmap demux (holdDyn UITab_Nodes selection)
+  publicNodesMaybe <- watchPublicNodeConfigValid
+  nodesMaybe <- watchNodesValid $ pure $ viewRangeAll () 
+  -- doing some straightforward calculations, but inside a Dynamic and a Maybe
+  let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
+        (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
+        (fmap . fmap) (not . null) nodesMaybe
+  initialSelection <- maybeDyn $
+        (fmap . fmap) (bool UITab_Options UITab_Nodes . isEnabled) nodesTabEnabledMaybe
+  dyn_ $ ffor initialSelection $ \case
+    Nothing -> divClass "column" waitingForResponse
+    Just aTab -> do
+      initialTab <- sample (current aTab) -- only needed for initial value, don't want it to steal your focus
+      rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
+            [ semuiTab (text "Nodes") UITab_Nodes currentTabD (fmap (fromMaybe Disabled) nodesTabEnabledMaybe)
+            , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
+              fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
+                semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTabD (pure Enabled)
+            , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
+              fmap leftmost $ for (Set.toList ds) $ \pkh ->
+                semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTabD (pure Enabled)
+            , semuiTab (text "Options") UITab_Options currentTabD (pure Enabled)
+            ]
+          currentTab <- holdDyn initialTab selection
+          let currentTabD = demux currentTab
 
-  divClass "ui bottom attached tab segment active" $ do
-    divClass "ui one column grid" $ do
-      upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
-      dyn_ $ ffor upgradeNotice $ \case
-        Nothing -> blank
-        Just (log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
-          case upgrade of
-            Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-            Right v -> do
-              let
-                versionText = T.pack (showVersion v)
-                versionAnchor = "anchor-" <> T.filter (/='.') versionText
-              elAttr "a"
-                (  "class"=:"ui green right ribbon label"
-                <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-                <> "target"=:"_blank") $
-                  text $ "New version available: " <> versionText
+      divClass "ui bottom attached tab segment active" $ do
+        divClass "ui one column grid" $ do
+          upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+          dyn_ $ ffor upgradeNotice $ \case
+            Nothing -> blank
+            Just (log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
+              case upgrade of
+                Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+                Right v -> do
+                  let
+                    versionText = T.pack (showVersion v)
+                    versionAnchor = "anchor-" <> T.filter (/='.') versionText
+                  elAttr "a"
+                    (  "class"=:"ui green right ribbon label"
+                    <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
+                    <> "target"=:"_blank") $
+                      text $ "New version available: " <> versionText
 
-      divClass "column" $
-        widgetHold_ nodesTab $ ffor selection $ \case
-          UITab_Summary -> summaryTab
-          UITab_Nodes -> nodesTab
-          UITab_Options -> optionsTab
-          UITab_Client cid addr -> clientTab cid addr
-          UITab_Delegate pkh -> delegateTab pkh
+          divClass "column" $
+            dyn_ $ ffor currentTab $ \case
+              UITab_Summary -> summaryTab
+              UITab_Nodes -> nodesTab
+              UITab_Options -> optionsTab
+              UITab_Client cid addr -> clientTab cid addr
+              UITab_Delegate pkh -> delegateTab pkh
 
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
@@ -839,10 +872,19 @@ clientTab cid addr = do
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
 
-semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> m (Event t k)
-semuiTab label k currentTab =
-  fmap ((k <$) . domEvent Click . fst) $
-    elDynAttr' "a" (ffor (demuxed currentTab k) $ \b -> "class" =: if b then "item active" else "item") label
+data Enabled = Disabled | Enabled
+  deriving (Eq, Ord, Show, Read, Enum)
+
+isDisabled Disabled = True
+isDisabled Enabled = False
+isEnabled Enabled = True
+isEnabled Disabled = False
+
+semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> Dynamic t Enabled -> m (Event t k)
+semuiTab label k currentTab enabled =
+  fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
+    elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
+      "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
 -- | Control that allows the user to build a list of items.
 listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)
