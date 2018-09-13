@@ -10,10 +10,11 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-unused-do-bind #-}
+-- {-# OPTIONS_GHC -Werror -Wall #-}
 
 module Frontend where
 
+import Prelude hiding (log)
 import Control.Applicative (liftA2)
 import Control.Lens (_1, _2)
 import Control.Monad (join, when, (<=<))
@@ -140,7 +141,7 @@ watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set P
 watchDelegateStats delegates = do
   let levels :: (RawLevel, RawLevel) = (0, 30)
       --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
-  theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
+  _theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
     { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
     }
   holdDyn MMap.empty never
@@ -333,8 +334,8 @@ radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) 
 radioLabels k0 ks = mdo
   selectedDyn <- holdDyn k0 $ leftmost kClicks
   kClicks <- for ks $ \(k, label) -> do
-    (element, ()) <- elDynAttr' "a" (ffor selectedDyn $ \selected -> "class"=:("ui " <> (if selected == k then "blue" else "") <> " tiny label link")) label
-    pure $ k <$ domEvent Click element
+    (element', ()) <- elDynAttr' "a" (ffor selectedDyn $ \selected -> "class"=:("ui " <> (if selected == k then "blue" else "") <> " tiny label link")) label
+    pure $ k <$ domEvent Click element'
   pure selectedDyn
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -390,7 +391,7 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash clientId) -> constDyn $ Just $ do
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> constDyn $ Just $ do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
@@ -406,15 +407,15 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
-      [ (direction (_errorLog_started el, _errorLog_lastSeen el, elId), (el, t))
-      | (elId, (el, t)) <- MMap.toList errors
+      [ (direction (_errorLog_started l, _errorLog_lastSeen l, elId), (l, t))
+      | (elId, (l, t)) <- MMap.toList errors
       ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
 optionsTab = divClass "ui two column stackable grid" $ do
   enableUpgradeCheck <- asks _cfg_checkForUpgrade
 
-  divClass "column" $ traverse (divClass "ui basic segment") $
+  _ <- divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
     , publicNodeOptions
     , nodesOptions
@@ -451,7 +452,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
       rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
           addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
-          requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
+          _ <- requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
 
       pure ()
 
@@ -467,7 +468,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
       divClass "ui medium header" $ text "Clients"
       elClass "table" "ui celled striped compact table" $ do
         clients <- watchClientAddresses -- TODO
-        listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
+        _ <- listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
           el "td" $ dynText $ Uri.render <$> dName
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
@@ -480,7 +481,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
       divClass "ui medium header" $ text "Delegates"
       elClass "table" "ui celled striped compact table" $ do
         delegates <- watchDelegatePublicKeyHashes
-        listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+        _ <- listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
@@ -500,16 +501,16 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
       pncDyn <- watchPublicNodeConfig
       for_ [minBound..maxBound] $ \pn -> do
-        (element, ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " tiny label link")) $
+        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " tiny label link")) $
           text $ showPublicNode pn
-        let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element)
+        let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
         void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     nodesOptions = do
       divClass "ui medium header" $ text "Nodes"
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
-        listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
+        _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
           let dAddress = ffor node $ fst
           let dName = ffor node $ snd
           el "td" $ dynText $ ffor dAddress $ Uri.render
@@ -616,7 +617,7 @@ data NodeTile
   deriving (Eq, Ord, Show)
 
 errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
-errorsByNode xs = MMap.fromList [(k, (el, t)) | (el, t) <- MMap.elems xs, Just k <- [nodeKeyForErrorLogView t]]
+errorsByNode xs = MMap.fromList [(k, (l, t)) | (l, t) <- MMap.elems xs, Just k <- [nodeKeyForErrorLogView t]]
   where
     nodeKeyForErrorLogView = \case
       ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url _) -> Just $ Right url
@@ -629,10 +630,11 @@ nodesTab = divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
   alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
 
+  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+
   dyn_ $ ffor alertsDyn $ \case
-    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) (constDyn MMap.empty)
+    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) nodesDyn
     Just nonEmptyAlertsDyn -> do
-      nodesDyn <- watchNodes $ pure $ viewRangeAll ()
       divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn nodesDyn
       divClass "six wide column" $ do
         elClass "h3" "ui header" $ text "Alerts"
@@ -658,15 +660,16 @@ nodesTab = divClass "ui stackable grid" $ do
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
         Just tilesDyn -> divClass "ui stackable cards" $ void $
-          listWithKey (Map.fromList . zip [1..] . toList <$> tilesDyn) $ \_ vDyn -> do
-            uniqDyn <- holdUniqDyn vDyn
-            divClass "ui card" $ divClass "content" $ dyn_ $ ffor uniqDyn $ \case
+          listWithKey (Map.fromList . zip [1 :: Int ..] . toList <$> tilesDyn) $ \_ vDyn -> do
+            vDyn' <- holdUniqDyn vDyn
+            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \case
 
               NodeTile_PublicNode node -> do
                 let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
                 let nodeTitle = case _publicNodeHead_source node of
                       PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
                       PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
+                      PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
                 headBlockLevelHeader
                   nodeTitle
                   (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
@@ -720,9 +723,9 @@ nodesTab = divClass "ui stackable grid" $ do
         elAttr "div" ("class"=:"sub header"<>"style"=:"padding-top:1em") $ do
           case blockHashAndLevel of
             Nothing -> text "Connecting..."
-            Just (blockHash, blockLevel) -> dyn_ $ ffor blocksBehindDyn $ \blocksBehind -> do
+            Just (blockHash, lvl) -> dyn_ $ ffor blocksBehindDyn $ \blocksBehind -> do
               let styled = if isJust blocksBehind then errorStyle else id
-              styled $ blockHashLinkAs blockHash $ text $ tshow $ unRawLevel blockLevel
+              styled $ blockHashLinkAs blockHash $ text $ tshow $ unRawLevel lvl
           divClass "sub header" $ do
             text "Head Block Level"
             dyn_ $ ffor blocksBehindDyn $ traverse_ $ \numBehind ->
@@ -732,9 +735,9 @@ nodesTab = divClass "ui stackable grid" $ do
         errorStyle = elClass "span" "block-level-error"
 
     nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
-      for_ rows $ \(heading, value) -> el "tr" $ do
-        elAttr "th" ("style"=:"text-align:left") heading
-        elAttr "td" ("style"=:"text-align:left") value
+      for_ rows $ \(heading, val) -> el "tr" $ do
+        _ <- elAttr "th" ("style"=:"text-align:left") heading
+        elAttr "td" ("style"=:"text-align:left") val
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
@@ -797,7 +800,7 @@ clientTab cid addr = do
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ text $ Uri.render addr
-        divClass "delegates" $ do
+        _ <- divClass "delegates" $ do
           text "ID: "
           sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
 
