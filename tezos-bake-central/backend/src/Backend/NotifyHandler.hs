@@ -18,6 +18,7 @@ import Data.Aeson (FromJSON, fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as Map
 import Data.Bifunctor (first)
+import Data.Bool (bool)
 import Data.Foldable (fold, toList)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -67,8 +68,8 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           infos :: Maybe ClientInfo <- fmap listToMaybe $ select (ClientInfo_clientField ==. cid)
           let
             clientsPatch = mempty
-                { _bakeView_clients = toRangeView1 clientsVS cid infos
-                , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ _client_address <$> client
+                { _bakeView_clients = toRangeView1 clientsVS cid $ Just $ First infos
+                , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ First $ _client_address <$> client
                 }
           summaryPatch <- whenM (viewSelects () summaryVS) $ do
             maxLevel <- getMaxLevel
@@ -103,8 +104,8 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           node :: Maybe Node <- fmap listToMaybe $
             select $ AutoKeyField ==. fromId nid &&. Node_deletedField ==. False
           return mempty
-                  { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) node
-                  , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ (_node_address &&& _node_alias) <$> node
+                  { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
+                  , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (_node_address &&& _node_alias) <$> node
                   }
 
       delegateVS = _bakeViewSelector_delegates aggVS
@@ -117,7 +118,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
           -- thing can live in a withM (viewSelects ...)
           delegate :: Maybe Delegate <- get $ fromId dId
           pure $ mempty
-            { _bakeView_delegates = foldMap (\pkh -> toRangeView1 delegateVS (Bounded pkh) $ Just ()) $ _delegate_publicKeyHash <$> delegate
+            { _bakeView_delegates = foldMap (\d -> toRangeView1 delegateVS (Bounded $ _delegate_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _delegate_deleted d)) delegate
             }
 
       notificateesVS = _bakeViewSelector_notificatees aggVS

@@ -111,26 +111,26 @@ watchProtoInfo =
     { _bakeViewSelector_parameters = viewJust 1
     }
 
-watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) Node ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
+watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
 watchNodes nidsDyn = do
   theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
     { _bakeViewSelector_nodes = 1 <$ nids
     }
-  return $ ffor theView $ \v -> getRangeView' (_bakeView_nodes v)
+  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodes v)
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) (URI, Maybe Text)))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> getRangeView' (_bakeView_nodeAddresses v')
+  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = viewRangeExactly cid 1
     }
-  return $ ffor theView $ \v -> getRangeView (_bakeView_clients v)
+  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView (_bakeView_clients v)
 
 watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
 watchDelegatePublicKeyHashes = do
@@ -156,7 +156,7 @@ watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> catMaybes $ getRangeView' $ _bakeView_clientAddresses v'
+  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
 watchNotificatees = do

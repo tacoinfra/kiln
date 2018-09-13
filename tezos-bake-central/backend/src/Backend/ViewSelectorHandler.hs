@@ -92,7 +92,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
     rs :: [(Id Node, URI, Maybe Text)] <- [queryQ| SELECT n.id, n.address, n.alias from "Node" n WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,(y,z))) rs
+    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,First (Just (y,z)))) rs
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do
@@ -119,7 +119,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = do
           (nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
-          return (Bounded nid, Node
+          return (Bounded nid, First $ Just $ Node
             { _node_address = addr
             , _node_alias = alias
             , _node_identity = ident
@@ -135,9 +135,9 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
     return $ toRangeView nodesVS nodeInfo
 
   let delegatesVS = _bakeViewSelector_delegates vs
-  delegates :: RangeView' PublicKeyHash () a <- whenM (not $ null delegatesVS) $ do
+  delegates :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null delegatesVS) $ do
     xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
-    return $ toRangeView delegatesVS $ (,()) . Bounded <$> xs
+    return $ toRangeView delegatesVS $ (,First $ Just()) . Bounded <$> xs
 
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
