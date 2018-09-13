@@ -629,10 +629,11 @@ nodesTab = divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
   alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
 
+  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+
   dyn_ $ ffor alertsDyn $ \case
-    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) (constDyn MMap.empty)
+    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) nodesDyn
     Just nonEmptyAlertsDyn -> do
-      nodesDyn <- watchNodes $ pure $ viewRangeAll ()
       divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn nodesDyn
       divClass "six wide column" $ do
         elClass "h3" "ui header" $ text "Alerts"
