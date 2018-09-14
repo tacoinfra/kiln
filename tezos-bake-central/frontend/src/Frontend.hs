@@ -139,6 +139,13 @@ watchNodeAddresses = do
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
+watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) (URI, Maybe Text))))
+watchNodeAddressesValid = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
+
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
@@ -255,7 +262,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Node Monitor"
   publicNodesMaybe <- watchPublicNodeConfigValid
-  nodesMaybe <- watchNodesValid $ pure $ viewRangeAll ()
+  nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
