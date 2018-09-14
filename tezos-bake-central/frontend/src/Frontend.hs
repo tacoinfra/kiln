@@ -534,13 +534,13 @@ optionsTab = divClass "ui two column stackable grid" $ do
 
       pncDyn <- watchPublicNodeConfig
       for_ [minBound..maxBound] $ \pn -> do
-        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " tiny label link")) $
+        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " button link")) $
           text $ showPublicNode pn
         let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
         void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     nodesOptions = do
-      divClass "ui medium header" $ text "Nodes"
+      divClass "ui medium header" $ text "Monitored Nodes"
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
         _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
