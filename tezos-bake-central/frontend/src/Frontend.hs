@@ -540,7 +540,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
         void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     nodesOptions = do
-      divClass "ui medium header" $ text "Nodes"
+      divClass "ui medium header" $ text "Monitored Nodes"
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
         _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
