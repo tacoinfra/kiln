@@ -253,7 +253,7 @@ appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performa
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
-  el "h1" $ text "Baker Central"
+  el "h1" $ text "Node Monitor"
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodesValid $ pure $ viewRangeAll () 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
