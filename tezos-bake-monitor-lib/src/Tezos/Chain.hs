@@ -17,8 +17,7 @@ import GHC.Generics (Generic)
 import Tezos.Base58Check (ChainId, fromBase58, toBase58Text)
 
 data NamedChain
-  = --NamedChain_Mainnet
-    NamedChain_Betanet
+  = NamedChain_Mainnet
   | NamedChain_Alphanet
   | NamedChain_Zeronet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
@@ -29,13 +28,14 @@ showNamedChain :: NamedChain -> Text
 showNamedChain = \case
   NamedChain_Zeronet -> "zeronet"
   NamedChain_Alphanet -> "alphanet"
-  NamedChain_Betanet -> "betanet"
+  NamedChain_Mainnet -> "mainnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = case T.toLower x of
   "zeronet" -> Just NamedChain_Zeronet
   "alphanet" -> Just NamedChain_Alphanet
-  "betanet" -> Just NamedChain_Betanet
+  "betanet" -> Just NamedChain_Mainnet
+  "mainnet" -> Just NamedChain_Mainnet
   _ -> Nothing
 
 showChain :: Either NamedChain ChainId -> Text
@@ -46,5 +46,8 @@ parseChain x = case parseNamedChain x of
   Nothing -> either (throwError . T.pack . show) (pure . Right) (fromBase58 $ T.encodeUtf8 x)
   Just n -> pure $ Left n
 
+mainnetChainId :: ChainId
+mainnetChainId = "NetXdQprcVkpaWU"
+
 betanetChainId :: ChainId
-betanetChainId = "NetXdQprcVkpaWU"
+betanetChainId = mainnetChainId

@@ -46,7 +46,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (Semigroup, Sum (..), getSum, (<>), First(..))
+import Data.Semigroup (First (..), Semigroup, Sum (..), getSum, (<>))
 import qualified Data.Semigroup as Semi
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -101,7 +101,7 @@ import qualified Text.URI.Lens as Uri
 
 import Backend.Db (gargoyleSupported, withDb)
 import Tezos.Base58Check (HashedValue (..), fromBase58)
-import Tezos.Chain (betanetChainId)
+import Tezos.Chain (mainnetChainId)
 import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
@@ -238,7 +238,7 @@ backend = do
 
   chainId <- case chain of
     Right chainId -> pure chainId
-    Left NamedChain_Betanet -> pure betanetChainId
+    Left NamedChain_Mainnet -> pure mainnetChainId
 
     Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
@@ -401,7 +401,7 @@ optsArgDescr =
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
   , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
-      "Name of a network (betanet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
   , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
       "Serve Node Cache.  Default enabled"

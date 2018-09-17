@@ -26,7 +26,7 @@ chain :: FilePath
 chain = "network"
 
 defaultChain :: Either NamedChain ChainId
-defaultChain = Left NamedChain_Betanet
+defaultChain = Left NamedChain_Mainnet
 
 checkForUpgrade :: FilePath
 checkForUpgrade = "check-for-upgrade"

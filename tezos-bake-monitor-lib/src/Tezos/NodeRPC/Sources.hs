@@ -33,10 +33,10 @@ import Network.HTTP.Types.Method (methodGet)
 import Text.URI (URI)
 import qualified Text.URI.QQ as Uri
 
-import Tezos.Types
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network (HasNodeRPC, NodeRPCContext (..), nodeRPC, nodeRPCContext)
 import Tezos.NodeRPC.Types (AsRpcError, RpcError (..), asRpcError)
+import Tezos.Types
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
@@ -61,19 +61,19 @@ canFetchHistory PublicNode_Obsidian = True
 getPublicNodeUri :: PublicNode -> NamedChain -> URI
 getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos-api.obsidian.systems/zeronet/api|]
 getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos-api.obsidian.systems/alphanet/api|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Betanet  = [Uri.uri|https://tezos-api.obsidian.systems/api|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Mainnet  = [Uri.uri|https://tezos-api.obsidian.systems/api|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = [Uri.uri|https://rpczero.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = [Uri.uri|https://rpcalpha.tzbeta.net|]
-getPublicNodeUri PublicNode_Blockscale NamedChain_Betanet  = [Uri.uri|https://rpc.tzbeta.net|]
+getPublicNodeUri PublicNode_Blockscale NamedChain_Mainnet  = [Uri.uri|https://rpc.tzbeta.net|]
 getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet  = [Uri.uri|https://zeronet-api.tzscan.io|]
 getPublicNodeUri PublicNode_TzScan NamedChain_Alphanet = [Uri.uri|https://alphanet-api.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Betanet  = [Uri.uri|https://api.tzscan.io|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Mainnet  = [Uri.uri|https://api.tzscan.io|]
 
 tzScanUri :: NamedChain -> URI
 tzScanUri = \case
   NamedChain_Zeronet  -> [Uri.uri|https://zeronet.tzscan.io|]
   NamedChain_Alphanet -> [Uri.uri|https://alphanet.tzscan.io|]
-  NamedChain_Betanet  -> [Uri.uri|https://tzscan.io|]
+  NamedChain_Mainnet  -> [Uri.uri|https://tzscan.io|]
 
 data PublicNodeContext = PublicNodeContext
   { _publicNodeContext_nodeCtx :: !NodeRPCContext
