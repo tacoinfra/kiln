@@ -57,7 +57,7 @@ delegateWorker nds = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
       latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
       levelRange = [max 0 (headLevel - 10) .. headLevel]
       headBlockHash = head ^. hash
-    say $ "Head level is " <> tshow headLevel <> " in cycle " <> tshow latestCycle
+    say $ "Head level is " <> tshow (unRawLevel headLevel) <> " in cycle " <> tshow (unRawLevel latestCycle)
     delegates :: Map (Id Delegate) Delegate <- runNoLoggingT $ runDb (Identity db) $ selectMap DelegateConstructor (Delegate_deletedField ==. False)
     let oops :: forall a m. MonadIO m => RpcError -> m ()
         oops = sayShow

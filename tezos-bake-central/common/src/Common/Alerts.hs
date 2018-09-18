@@ -8,7 +8,7 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..))
+import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
 
 import Common (tshow)
 import Common.Schema (ErrorLogBadNodeHead (..))
@@ -35,10 +35,10 @@ badNodeHeadMessage text blockHashLink l =
       | levelsBehindNode > 0 ->
           ( branchHeader
           , sequenceA_
-              [ text $ "The node is on a branch " <> tshow levelsBehindNode <> " blocks long."
-              , text "The branch began at "
+              [ text $ "The node is on a branch " <> tshow (unRawLevel levelsBehindNode) <> " blocks long."
+              , text " The branch began at "
               , blockHashLink $ lca ^. hash
-              , text $ " which is " <> tshow levelsBehindHead <> " blocks behind the latest head of "
+              , text $ " which is " <> tshow (unRawLevel levelsBehindHead) <> " blocks behind the latest head of "
               , blockHashLink $ latestHead ^. hash
               , text ". (Node's head is "
               , blockHashLink $ nodeHead ^. hash
@@ -50,7 +50,7 @@ badNodeHeadMessage text blockHashLink l =
           , sequenceA_
               [ text "The node's head at "
               , blockHashLink $ nodeHead ^. hash
-              , text $ " is " <> tshow levelsBehindHead <> " blocks behind the latest head of "
+              , text $ " is " <> tshow (unRawLevel levelsBehindHead) <> " blocks behind the latest head of "
               , blockHashLink $ latestHead ^. hash
               , text "."
               ]
