@@ -8,7 +8,6 @@ The Software alerts users within the GUI if a Monitored Node:
 * Is on the wrong network
 * Falls 5 blocks behind the current head block level
 * Cannot be reached by the Monitoring Software (ie. is offline)
-* Has not seen a new block in X minutes (coming soon)
 
 In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choosing.
 
