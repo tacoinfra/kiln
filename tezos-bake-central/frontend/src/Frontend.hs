@@ -14,7 +14,6 @@
 
 module Frontend where
 
-import Prelude hiding (log)
 import Control.Applicative (liftA2)
 import Control.Lens (_1, _2)
 import Control.Monad (join, when, (<=<))
@@ -28,7 +27,7 @@ import Data.Coerce (coerce)
 import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (fold, for_, toList, traverse_)
+import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
@@ -51,6 +50,7 @@ import qualified Form.Checks as Check
 import GHCJS.DOM.Element (setInnerHTML)
 import GHCJS.DOM.Types (MonadJSM)
 import qualified Obelisk.ExecutableConfig
+import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -63,7 +63,7 @@ import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
-import Safe (maximumMay, headDef)
+import Safe (headDef, maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -255,7 +255,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Node Monitor"
   publicNodesMaybe <- watchPublicNodeConfigValid
-  nodesMaybe <- watchNodesValid $ pure $ viewRangeAll () 
+  nodesMaybe <- watchNodesValid $ pure $ viewRangeAll ()
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $

@@ -24,7 +24,7 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (^.), _1, (<&>))
+import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (<&>), (^.), _1)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
@@ -225,7 +225,7 @@ waitForNewHead nds = do
 histToBlockLike :: RawLevel -> (BlockHash, BranchData CachedBlockInfo, LCA.Path BlockHash (BranchData CachedBlockInfo)) -> VeryBlockLike
 histToBlockLike minLevel (h, BranchData f _ t _, path) = VeryBlockLike h p f blockLevel t
   where
-    blockLevel = minLevel + fromIntegral (length path)
+    blockLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
 updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()

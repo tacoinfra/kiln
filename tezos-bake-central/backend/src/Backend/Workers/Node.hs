@@ -98,7 +98,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
   let cacheVar = _nodeDataSource_history nds
   oldHead <- runReaderT dataSourceHead nds
   newBlock <- modifyMVar cacheVar $ \cache -> do
-    let newBlock = Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
+    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
       acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
       sayShow ("new block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
