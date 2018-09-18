@@ -9,6 +9,7 @@ import Data.Aeson
 import Data.Semigroup
 #endif
 import qualified Data.ByteString as BS
+import Data.ByteString.Short (fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.String
 import Data.Text (Text)
@@ -88,9 +89,9 @@ rawContextLink pkh = T.intercalate "/"
     b16 x = T.decodeUtf8 $ BS16.encode x
 
     rawContextKeyPath :: PublicKeyHash -> Text
-    rawContextKeyPath (PublicKeyHash_Ed25519 (HashedValue x)) = "ed25519/" <> hashedValueKeyPath (b16 x)
-    rawContextKeyPath (PublicKeyHash_Secp256k1 (HashedValue x)) = "secp256k1/" <> hashedValueKeyPath (b16 x)
-    rawContextKeyPath (PublicKeyHash_P256 (HashedValue x)) = "p256/" <> hashedValueKeyPath (b16 x)
+    rawContextKeyPath (PublicKeyHash_Ed25519 (HashedValue x)) = "ed25519/" <> hashedValueKeyPath (b16 $ fromShort x)
+    rawContextKeyPath (PublicKeyHash_Secp256k1 (HashedValue x)) = "secp256k1/" <> hashedValueKeyPath (b16 $ fromShort x)
+    rawContextKeyPath (PublicKeyHash_P256 (HashedValue x)) = "p256/" <> hashedValueKeyPath (b16 $ fromShort x)
 
     hashedValueKeyPath :: Text -> Text
     hashedValueKeyPath x = T.toLower $ T.intercalate "/"

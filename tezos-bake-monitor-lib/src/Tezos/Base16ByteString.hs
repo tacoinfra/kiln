@@ -10,6 +10,7 @@ import Data.Aeson
 import Data.Semigroup
 #endif
 import Data.Aeson.Types
+import Data.ByteString.Short (ShortByteString, fromShort, toShort)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
@@ -18,6 +19,13 @@ import Data.Typeable
 
 newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
+
+instance FromJSON (Base16ByteString ShortByteString) where
+  parseJSON x = fmap toShort <$> parseJSON x
+
+instance ToJSON (Base16ByteString ShortByteString) where
+  toJSON = toJSON . fmap fromShort
+  toEncoding = toEncoding . fmap fromShort
 
 instance FromJSON (Base16ByteString BS.ByteString) where
   parseJSON x = do

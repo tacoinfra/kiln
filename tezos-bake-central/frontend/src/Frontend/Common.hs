@@ -13,6 +13,7 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import Data.ByteString.Short (fromShort)
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
@@ -128,7 +129,7 @@ publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh
 
 fitnessText :: Fitness -> Text
-fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode) . unFitness
+fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)

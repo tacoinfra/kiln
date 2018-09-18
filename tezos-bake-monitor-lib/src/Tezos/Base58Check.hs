@@ -17,6 +17,7 @@ import Data.Semigroup
 #endif
 import Data.Aeson
 import Data.ByteString (ByteString)
+import Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
 -- import Data.Monoid
@@ -34,40 +35,40 @@ import qualified Data.ByteArray as BA
 
 
 -- see ~/tezos/src/lib_crypto/base58.ml
-type BlockHash = HashedValue 'HashType_BlockHash ByteString
-type OperationHash = HashedValue 'HashType_OperationHash ByteString
-type OperationListHash = HashedValue 'HashType_OperationListHash ByteString
-type OperationListListHash = HashedValue 'HashType_OperationListListHash ByteString
-type ProtocolHash = HashedValue 'HashType_ProtocolHash ByteString
-type ContextHash = HashedValue 'HashType_ContextHash ByteString
-type Ed25519PublicKeyHash = HashedValue 'HashType_Ed25519PublicKeyHash ByteString
-type Secp256k1PublicKeyHash = HashedValue 'HashType_Secp256k1PublicKeyHash ByteString
-type CryptoboxPublicKeyHash = HashedValue 'HashType_CryptoboxPublicKeyHash ByteString
-type Ed25519Seed = HashedValue 'HashType_Ed25519Seed ByteString
-type Ed25519PublicKey = HashedValue 'HashType_Ed25519PublicKey ByteString
-type Secp256k1SecretKey = HashedValue 'HashType_Secp256k1SecretKey ByteString
-type Secp256k1PublicKey = HashedValue 'HashType_Secp256k1PublicKey ByteString
-type Ed25519SecretKey = HashedValue 'HashType_Ed25519SecretKey ByteString
-type Ed25519Signature = HashedValue 'HashType_Ed25519Signature ByteString
-type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature ByteString
-type GenericSignature = HashedValue 'HashType_GenericSignature ByteString
-type ChainId = HashedValue 'HashType_ChainId ByteString
-type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash ByteString
-type P256PublicKey = HashedValue 'HashType_P256PublicKey ByteString
-type P256Signature = HashedValue 'HashType_P256Signature ByteString
+type BlockHash = HashedValue 'HashType_BlockHash
+type OperationHash = HashedValue 'HashType_OperationHash
+type OperationListHash = HashedValue 'HashType_OperationListHash
+type OperationListListHash = HashedValue 'HashType_OperationListListHash
+type ProtocolHash = HashedValue 'HashType_ProtocolHash
+type ContextHash = HashedValue 'HashType_ContextHash
+type Ed25519PublicKeyHash = HashedValue 'HashType_Ed25519PublicKeyHash
+type Secp256k1PublicKeyHash = HashedValue 'HashType_Secp256k1PublicKeyHash
+type CryptoboxPublicKeyHash = HashedValue 'HashType_CryptoboxPublicKeyHash
+type Ed25519Seed = HashedValue 'HashType_Ed25519Seed
+type Ed25519PublicKey = HashedValue 'HashType_Ed25519PublicKey
+type Secp256k1SecretKey = HashedValue 'HashType_Secp256k1SecretKey
+type Secp256k1PublicKey = HashedValue 'HashType_Secp256k1PublicKey
+type Ed25519SecretKey = HashedValue 'HashType_Ed25519SecretKey
+type Ed25519Signature = HashedValue 'HashType_Ed25519Signature
+type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature
+type GenericSignature = HashedValue 'HashType_GenericSignature
+type ChainId = HashedValue 'HashType_ChainId
+type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash
+type P256PublicKey = HashedValue 'HashType_P256PublicKey
+type P256Signature = HashedValue 'HashType_P256Signature
 
 
 
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/contract_hash.ml
-type ContractHash = HashedValue 'HashType_ContractHash ByteString
+type ContractHash = HashedValue 'HashType_ContractHash
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/nonce_hash.ml
-type NonceHash = HashedValue 'HashType_NonceHash ByteString
+type NonceHash = HashedValue 'HashType_NonceHash
 type CycleNonce = NonceHash -- called both, depending on where you're asking...
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/blinded_public_key_hash.ml
-type BlindedPublicKeyHash = HashedValue 'HashType_BlindedPublicKeyHash ByteString
+type BlindedPublicKeyHash = HashedValue 'HashType_BlindedPublicKeyHash
 
 
 data HashType
@@ -97,22 +98,22 @@ data HashType
   | HashType_P256PublicKey
   deriving (Eq, Ord, Show, Typeable, Enum)
 
-newtype HashedValue (tag :: HashType) (a :: *) = HashedValue { unHashedValue :: a }
+newtype HashedValue (tag :: HashType) = HashedValue { unHashedValue :: ShortByteString }
   deriving (Eq, Ord)
 
-instance IsBase58Hash tag => ToJSON (HashedValue tag ByteString) where
+instance IsBase58Hash tag => ToJSON (HashedValue tag) where
   toJSON = toJSON . T.decodeUtf8 . toBase58
   toEncoding = toEncoding . T.decodeUtf8 . toBase58
 
-instance IsBase58Hash tag => FromJSON (HashedValue tag ByteString) where
+instance IsBase58Hash tag => FromJSON (HashedValue tag) where
   parseJSON x = do
     hexesText <- parseJSON x
     either (fail . show) pure $ fromBase58 $ T.encodeUtf8 hexesText
 
-instance IsBase58Hash tag => FromJSONKey (HashedValue tag ByteString)
-instance IsBase58Hash tag => ToJSONKey (HashedValue tag ByteString)
+instance IsBase58Hash tag => FromJSONKey (HashedValue tag)
+instance IsBase58Hash tag => ToJSONKey (HashedValue tag)
 
--- instance IsBase58Hash t => TezosBinary (HashedValue t ByteString) where
+-- instance IsBase58Hash t => TezosBinary (HashedValue t) where
 --   parseBinary = fmap HashedValue <$> parseFixedByteString $ hashSize (Proxy :: Proxy t)
 --   encodeBinary (HashedValue x) | BS.length x == hashSize (Proxy :: Proxy t) = x
 --                                | otherwise = error "base58 tagged object wrong length"
@@ -132,12 +133,12 @@ sha256 = BS.pack . BA.unpack . (hash :: BS.ByteString -> Digest SHA256)
 #endif
 
 
-toBase58 :: forall t. IsBase58Hash t => HashedValue t ByteString -> ByteString
+toBase58 :: forall t. IsBase58Hash t => HashedValue t -> ByteString
 toBase58 (HashedValue x) = encodeBase58 bitcoinAlphabet $ x' <> checksum x'
   where
-    x' = prefix (Proxy :: Proxy t) <> x
+    x' = prefix (Proxy :: Proxy t) <> fromShort x
 
-toBase58Text :: forall t. IsBase58Hash t => HashedValue t ByteString -> Text
+toBase58Text :: forall t. IsBase58Hash t => HashedValue t -> Text
 toBase58Text = T.decodeUtf8 . toBase58
 
 
@@ -150,7 +151,7 @@ data HashBase58Error
 
 
 data TryDecodeBase58 a where
-  TryDecodeBase58 :: IsBase58Hash t => (HashedValue t ByteString -> a) -> TryDecodeBase58 a
+  TryDecodeBase58 :: IsBase58Hash t => (HashedValue t -> a) -> TryDecodeBase58 a
 
 tryFromBase58 :: [TryDecodeBase58 a] -> ByteString -> Either HashBase58Error a
 tryFromBase58 x y = go x
@@ -161,8 +162,8 @@ tryFromBase58 x y = go x
       Left (HashBase58Error_InvalidPrefix _ _) -> go fs
       Left bad -> Left bad
 
-fromBase58 :: forall t. IsBase58Hash t => ByteString -> Either HashBase58Error (HashedValue t ByteString)
-fromBase58 b58chk = return . HashedValue <=< verifyLength <=< verifyPrefix <=< verifyChecksum <=< swizzle58 $ b58chk
+fromBase58 :: forall t. IsBase58Hash t => ByteString -> Either HashBase58Error (HashedValue t)
+fromBase58 b58chk = return . HashedValue . toShort <=< verifyLength <=< verifyPrefix <=< verifyChecksum <=< swizzle58 $ b58chk
   where
     expectedPfx = prefix (Proxy :: (Proxy t))
     expectedSize = hashSize (Proxy :: (Proxy t))
@@ -193,10 +194,10 @@ fromBase58 b58chk = return . HashedValue <=< verifyLength <=< verifyPrefix <=< v
         payload = BS.take checksummedSize x
         expectedSum = checksum payload
 
-instance IsBase58Hash t => IsString (HashedValue t ByteString) where
+instance IsBase58Hash t => IsString (HashedValue t) where
   fromString x = either (error . show) id $ fromBase58 $ fromString x
 
-instance IsBase58Hash t => Show (HashedValue t ByteString) where
+instance IsBase58Hash t => Show (HashedValue t) where
   show x = "(fromString " <> show (toBase58 x) <> ")"
 
 instance IsBase58Hash 'HashType_BlockHash where
