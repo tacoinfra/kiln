@@ -12,6 +12,7 @@ import Control.Lens (Lens', iso, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
+import Tezos.ShortByteString (toShort, fromShort)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Coerce (coerce)
@@ -21,9 +22,9 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time
 import Data.Typeable (Typeable)
-import qualified Data.Vector as Vector
 import Data.Word
 import GHC.Generics (Generic)
+import qualified Data.Sequence as Seq
 
 import Tezos.BalanceUpdate
 import Tezos.Base16ByteString (Base16ByteString (..))
@@ -123,11 +124,11 @@ data TzScanBlock = TzScanBlock
 newtype TzScanFitness = TzScanFitness Fitness
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance FromJSON TzScanFitness where
-  parseJSON = Aeson.withText "block fitness string" $ \txt -> TzScanFitness <$>
-    Aeson.parseJSON (Aeson.Array $ Vector.fromList $ Aeson.String <$> T.splitOn " " txt)
+  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList $
+    (Base16ByteString . toShort . fst . BS16.decode . T.encodeUtf8 <$> T.splitOn " " txt)
 instance ToJSON TzScanFitness where
-  toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . unbase16ByteString <$> xs
-  toEncoding (TzScanFitness (FitnessF xs)) = Aeson.toEncoding $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . unbase16ByteString <$> xs
+  toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs
+  toEncoding (TzScanFitness (FitnessF xs)) = Aeson.toEncoding $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs
 
 newtype TzScanProtocol = TzScanProtocol
   { -- _tzScanProtocol_name :: !Text -- TODO: What even is this?

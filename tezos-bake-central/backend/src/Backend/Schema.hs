@@ -23,6 +23,7 @@ import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.ByteString.Short (fromShort, toShort)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
@@ -139,7 +140,7 @@ instance PrimitivePersistField PeriodSequence where
 instance FromField Micro where
   fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
-instance NeverNull (HashedValue a ByteString)
+instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Fitness
@@ -173,18 +174,18 @@ parseVersionOrError = fromMaybe (error "Invalid version") . parseVersion
 --   fromPersistValues = (fmap.first) (Base16ByteString . unsafeParseBinary) . primFromPersistValue
 --   dbType p x = dbType p (encodeBinary x)
 
-instance FromField (HashedValue t ByteString) where
-  fromField f b = HashedValue . fromBinary <$> fromField f b
+instance FromField (HashedValue t) where
+  fromField f b = HashedValue . toShort . fromBinary <$> fromField f b
 
-instance ToField (HashedValue t ByteString) where
-  toField (HashedValue a) = toField $ Binary a
+instance ToField (HashedValue t) where
+  toField (HashedValue a) = toField $ Binary $ fromShort a
 
 
-instance PrimitivePersistField a => PersistField (HashedValue t a) where
+instance {-PrimitivePersistField a =>-} PersistField (HashedValue t) where
   persistName _ = "HashedValue"
-  toPersistValues = primToPersistValue . unHashedValue
-  fromPersistValues = (fmap.first) HashedValue . primFromPersistValue
-  dbType p (HashedValue x) = dbType p x
+  toPersistValues = primToPersistValue . fromShort . unHashedValue
+  fromPersistValues = (fmap.first) (HashedValue . toShort) . primFromPersistValue
+  dbType p _ = dbType p (error "dbType for HashedValue forced" :: ByteString)
 
 deriving instance ToField TezosWord64
 deriving instance FromField TezosWord64
@@ -207,9 +208,9 @@ instance PrimitivePersistField Cycle where
   toPrimitivePersistValue x (Cycle v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = Cycle $ fromPrimitivePersistValue x v
 
-instance PrimitivePersistField (HashedValue t ByteString) where
-  toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x v
-  fromPrimitivePersistValue x v = HashedValue $ fromPrimitivePersistValue x v
+instance PrimitivePersistField (HashedValue t) where
+  toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
+  fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
 
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
