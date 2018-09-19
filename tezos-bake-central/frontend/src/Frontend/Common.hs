@@ -13,7 +13,7 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
-import Data.ByteString.Short (fromShort)
+import Tezos.ShortByteString (fromShort)
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))

@@ -17,7 +17,7 @@ import Data.Semigroup
 #endif
 import Data.Aeson
 import Data.ByteString (ByteString)
-import Data.ByteString.Short (ShortByteString, toShort, fromShort)
+import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
 -- import Data.Monoid

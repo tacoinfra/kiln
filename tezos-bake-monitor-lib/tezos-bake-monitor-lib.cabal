@@ -41,6 +41,7 @@ library
     Tezos.PublicKey
     Tezos.PublicKeyHash
     Tezos.Signature
+    Tezos.ShortByteString
     Tezos.TestChainStatus
     Tezos.Tez
     Tezos.Types

@@ -12,7 +12,7 @@ import Control.Lens (Lens', iso, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.ByteString.Short (toShort, fromShort)
+import Tezos.ShortByteString (toShort, fromShort)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Coerce (coerce)

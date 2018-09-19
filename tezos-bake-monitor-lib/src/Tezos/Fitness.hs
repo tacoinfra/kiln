@@ -9,7 +9,7 @@ import Data.Aeson
 import Data.Semigroup
 #endif
 -- import Data.Attoparsec.ByteString ((<?>))
-import Data.ByteString.Short (ShortByteString, toShort, fromShort)
+import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Function
 import Data.Foldable (toList)

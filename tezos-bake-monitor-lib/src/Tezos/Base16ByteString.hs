@@ -10,7 +10,7 @@ import Data.Aeson
 import Data.Semigroup
 #endif
 import Data.Aeson.Types
-import Data.ByteString.Short (ShortByteString, fromShort, toShort)
+import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
