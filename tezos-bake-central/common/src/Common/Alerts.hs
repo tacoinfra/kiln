@@ -24,11 +24,11 @@ badNodeHeadMessage text blockHashLink l =
     Nothing ->
       ( branchHeader
       , sequenceA_
-          [ text "The node's head is has no common history with the latest known head of "
-          , blockHashLink $ latestHead ^. hash
-          , text ". (Node's head is "
+          [ text "The node's head of "
           , blockHashLink $ nodeHead ^. hash
-          , text ")"
+          , text " has no common history with the latest known head of "
+          , blockHashLink $ latestHead ^. hash
+          , text "."
           ]
       )
     Just (Json lca)
