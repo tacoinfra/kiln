@@ -721,7 +721,10 @@ nodesTab = divClass "ui stackable grid" $ do
                   ]
 
           listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \_ vDyn -> do
-            vDyn' <- holdUniqDyn vDyn
+            vDyn'' <- holdUniqDyn vDyn
+            vDyn'start <- sample $ current vDyn''
+            vDyn'update <- throttle 0.2 (updated vDyn'')
+            vDyn' <- holdDyn vDyn'start vDyn'update
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
               fallingBehindBy <- case _node_headLevel node of
                 Nothing -> pure (pure Nothing)
