@@ -440,10 +440,11 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
               text "Last block level seen: "
               blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
 
-          ErrorLogView_BadNodeHead l ->
-            dyn_ $ ffor (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn) $ traverse_ $ \node -> do
+          ErrorLogView_BadNodeHead l -> do
+            nodeAddrDyn <- holdUniqDyn $ fmap _node_address <$> (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn)
+            dyn_ $ ffor nodeAddrDyn $ traverse_ $ \addr -> do
               let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
-              header $ mkHeader $ Uri.render $ _node_address node
+              header $ mkHeader $ Uri.render $ addr
               el "p" message
 
           ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
