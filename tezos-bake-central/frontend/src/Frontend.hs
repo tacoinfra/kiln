@@ -394,18 +394,15 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
 
-  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
-    listWithKey (errorsByTime Down <$> errorsDyn) $ \_ vDyn ->
-      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \(v, filterSelection) -> do
-        let
-          (log, _specificLog) = v
-          passesFilter =
-            filterSelection == AlertsFilter_All
-              || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
-              || filterSelection == AlertsFilter_ResolvedOnly && isResolved
-            where isResolved = isJust $ _errorLog_stopped log
+  let
+    visibleErrorsDyn :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    visibleErrorsDyn = ffor (zipDyn filterDyn errorsDyn) . uncurry $ \filterSelection ->
+      MMap.filter (passesFilter filterSelection)
 
-        when passesFilter $ dyn_ $ ffor (logEntry v) $ traverse_ $ \message -> do
+  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
+    listWithKey (errorsByTime Down <$> visibleErrorsDyn) $ \_ vDyn ->
+      dyn_ $ ffor vDyn $ \v@(log, _) -> do
+        dyn_ $ ffor (logEntry v) $ traverse_ $ \message -> do
           divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
             message
             el "p" $ do
@@ -415,6 +412,12 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
                 Just stopped -> text "Stopped: " *> localTimestamp stopped
 
   where
+    passesFilter filterSelection (log, _specificLog) =
+      filterSelection == AlertsFilter_All
+        || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
+        || filterSelection == AlertsFilter_ResolvedOnly && isResolved
+      where isResolved = isJust $ _errorLog_stopped log
+
     logEntry (log, specificLog) =
       let header txt = divClass "header" $ text $ case _errorLog_stopped log of
             Just _ -> "Resolved: " <> txt
