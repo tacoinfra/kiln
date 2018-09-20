@@ -232,9 +232,9 @@ watchPublicNodeConfigValid =
 isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
-watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
+watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
 watchPublicNodeHeads =
-  (fmap . fmap) (Set.fromList . toList . getRangeView' . _bakeView_publicNodeHeads) $
+  (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
@@ -686,7 +686,7 @@ nodesTab = divClass "ui stackable grid" $ do
       rawPublicNodesDyn <- watchPublicNodeHeads
       let
         publicNodesDyn = zipDynWith (\pnc ->
-          Set.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
+          MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
         zipNodeTiles publicNodes nodes =
@@ -695,7 +695,7 @@ nodesTab = divClass "ui stackable grid" $ do
       maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
 
       maxLevelOnPublicNodes <- holdUniqDyn $
-        maximumMay . map _publicNodeHead_headLevel . Set.toList <$> publicNodesDyn
+        maximumMay . map _publicNodeHead_headLevel . toList <$> publicNodesDyn
 
       dyn_ $ ffor maybeTilesDyn $ \case
         Nothing -> waitingForResponse
