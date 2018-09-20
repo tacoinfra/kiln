@@ -139,6 +139,13 @@ watchNodeAddresses = do
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
+watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) (URI, Maybe Text))))
+watchNodeAddressesValid = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
+
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
@@ -225,9 +232,9 @@ watchPublicNodeConfigValid =
 isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
-watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Set PublicNodeHead))
+watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
 watchPublicNodeHeads =
-  (fmap . fmap) (Set.fromList . toList . getRangeView' . _bakeView_publicNodeHeads) $
+  (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
@@ -255,7 +262,7 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
   delegates <- watchDelegatePublicKeyHashes
   el "h1" $ text "Node Monitor"
   publicNodesMaybe <- watchPublicNodeConfigValid
-  nodesMaybe <- watchNodesValid $ pure $ viewRangeAll ()
+  nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
@@ -387,56 +394,60 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
 
-  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
-    listWithKey (errorsByTime Down <$> errorsDyn) $ \_ vDyn ->
-      dyn_ $ ffor (zipDyn vDyn filterDyn) $ \(v, filterSelection) -> do
-        let
-          (log, _specificLog) = v
-          passesFilter =
-            filterSelection == AlertsFilter_All
-              || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
-              || filterSelection == AlertsFilter_ResolvedOnly && isResolved
-            where isResolved = isJust $ _errorLog_stopped log
+  let
+    visibleErrorsDyn :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    visibleErrorsDyn = ffor (zipDyn filterDyn errorsDyn) . uncurry $ \filterSelection ->
+      MMap.filter (passesFilter filterSelection)
 
-        when passesFilter $ dyn_ $ ffor (logEntry v) $ traverse_ $ \message -> do
-          divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-            message
-            el "p" $ do
-              text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
-              case _errorLog_stopped log of
-                Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-                Just stopped -> text "Stopped: " *> localTimestamp stopped
+  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
+    listWithKey (errorsByTime Down <$> visibleErrorsDyn) $ \_ vDyn ->
+      dyn_ $ ffor vDyn $ \v@(log, _) -> do
+        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+          logEntry v
+          el "p" $ do
+            text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+            case _errorLog_stopped log of
+              Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+              Just stopped -> text "Stopped: " *> localTimestamp stopped
 
   where
+    passesFilter filterSelection (log, _specificLog) =
+      filterSelection == AlertsFilter_All
+        || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
+        || filterSelection == AlertsFilter_ResolvedOnly && isResolved
+      where isResolved = isJust $ _errorLog_stopped log
+
+    logEntry :: (ErrorLog, ErrorLogView) -> m ()
     logEntry (log, specificLog) =
       let header txt = divClass "header" $ text $ case _errorLog_stopped log of
             Just _ -> "Resolved: " <> txt
             Nothing -> txt
       in case specificLog of
-          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> constDyn $ Just $ do
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> do
             let endpointTypeName = case endpointType of
                   EndpointType_Node -> "node"
                   EndpointType_Client -> "client"
             header $ "Unable to connect to " <> endpointTypeName <> (maybe "" (" " <>) alias) <> " at " <> Uri.render address
 
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> constDyn $ Just $ do
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> do
             header $ "Node on wrong network: " <> maybe (Uri.render address) id alias
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> constDyn $ Just $ do
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
               blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
 
-          ErrorLogView_BadNodeHead l ->
-            ffor (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn) $ fmap $ \node -> do
+          ErrorLogView_BadNodeHead l -> do
+            nodeAddrDyn <- holdUniqDyn $ fmap _node_address <$> (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn)
+            dyn_ $ ffor nodeAddrDyn $ traverse_ $ \addr -> do
               let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
-              header $ mkHeader $ Uri.render $ _node_address node
+              header $ mkHeader $ Uri.render $ addr
               el "p" message
 
-          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> constDyn $ Just $ do
+          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
@@ -679,75 +690,75 @@ nodesTab = divClass "ui stackable grid" $ do
       rawPublicNodesDyn <- watchPublicNodeHeads
       let
         publicNodesDyn = zipDynWith (\pnc ->
-          Set.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
+          MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
-        zipNodeTiles publicNodes nodes =
-          (NodeTile_PublicNode <$> toList publicNodes) <>
-          (uncurry NodeTile_PlainNode <$> MMap.toAscList nodes)
-      maybeTilesDyn <- maybeDynLazy $ nonEmpty <$> zipDynWith zipNodeTiles publicNodesDyn nodesDyn
+      useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
 
       maxLevelOnPublicNodes <- holdUniqDyn $
-        maximumMay . map _publicNodeHead_headLevel . Set.toList <$> publicNodesDyn
+        maximumMay . map _publicNodeHead_headLevel . toList <$> publicNodesDyn
 
-      dyn_ $ ffor maybeTilesDyn $ \case
-        Nothing -> waitingForResponse
-        Just tilesDyn -> divClass "ui stackable cards" $ void $
-          listWithKey (Map.fromList . zip [1 :: Int ..] . toList <$> tilesDyn) $ \_ vDyn -> do
+      dyn_ $ ffor useBlocker $ \case
+        True -> waitingForResponse
+        False -> divClass "ui stackable cards" $ void $ do
+          listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             vDyn' <- holdUniqDyn vDyn
-            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \case
+            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
+              let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
+              let nodeTitle = case _publicNodeHead_source node of
+                    PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
+                    PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
+                    PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
+              headBlockLevelHeader
+                nodeTitle
+                (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
+                (pure Nothing)
+              divClass "description" $
+                nodeDataTable
+                  [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
+                  , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
+                  , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
+                  ]
 
-              NodeTile_PublicNode node -> do
-                let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
-                let nodeTitle = case _publicNodeHead_source node of
-                      PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
-                      PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
-                      PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
-                headBlockLevelHeader
-                  nodeTitle
-                  (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
-                  (pure Nothing)
-                divClass "description" $
-                  nodeDataTable
-                    [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
-                    , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
-                    , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
-                    ]
+          listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \_ vDyn -> do
+            vDyn'' <- holdUniqDyn vDyn
+            vDyn'start <- sample $ current vDyn''
+            vDyn'update <- throttle 0.2 (updated vDyn'')
+            vDyn' <- holdDyn vDyn'start vDyn'update
+            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
+              fallingBehindBy <- case _node_headLevel node of
+                Nothing -> pure (pure Nothing)
+                Just nodeLevel -> do
+                  let calcBehindBy maxLevel = if behindBy >= 5 then Just behindBy else Nothing
+                        where behindBy = maxLevel - nodeLevel
 
-              NodeTile_PlainNode _ node -> do
-                fallingBehindBy <- case _node_headLevel node of
-                  Nothing -> pure (pure Nothing)
-                  Just nodeLevel -> do
-                    let calcBehindBy maxLevel = if behindBy >= 5 then Just behindBy else Nothing
-                          where behindBy = maxLevel - nodeLevel
+                  holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
 
-                    holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
+              headBlockLevelHeader
+                (text $ maybe (uriHostPortPath $ _node_address node) id $ _node_alias node)
+                (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
+                fallingBehindBy
 
-                headBlockLevelHeader
-                  (text $ maybe (uriHostPortPath $ _node_address node) id $ _node_alias node)
-                  (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
-                  fallingBehindBy
+              divClass "description" $ do
+                let stat = _node_networkStat node
+                nodeDataTable
+                  [ (text "Block Hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
+                  , (text "Block Fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
+                  , (text "Block Baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
+                  , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
+                  , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
+                  , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")
+                  , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
+                  , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
+                  ]
 
-                divClass "description" $ do
-                  let stat = _node_networkStat node
-                  nodeDataTable
-                    [ (text "Block Hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
-                    , (text "Block Fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
-                    , (text "Block Baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
-                    , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
-                    , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
-                    , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")
-                    , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
-                    , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
-                    ]
-
-                  hasAlert <- holdUniqDyn $ MMap.lookup (Right $ _node_address node) . errorsByNode <$> alerts
-                  dyn_ $ ffor hasAlert $ \case
-                    Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
-                      ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
-                      ErrorLogView_NodeWrongChain{} -> divClass "ui error message" $ divClass "header" $ text "On wrong network."
-                      _ -> blank
+                hasAlert <- holdUniqDyn $ MMap.lookup (Right $ _node_address node) . errorsByNode <$> alerts
+                dyn_ $ ffor hasAlert $ \case
+                  Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
+                    ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
+                    ErrorLogView_NodeWrongChain{} -> divClass "ui error message" $ divClass "header" $ text "On wrong network."
                     _ -> blank
+                  _ -> blank
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
     headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
