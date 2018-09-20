@@ -402,14 +402,13 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
   elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
     listWithKey (errorsByTime Down <$> visibleErrorsDyn) $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \v@(log, _) -> do
-        dyn_ $ ffor (logEntry v) $ traverse_ $ \message -> do
-          divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-            message
-            el "p" $ do
-              text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
-              case _errorLog_stopped log of
-                Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-                Just stopped -> text "Stopped: " *> localTimestamp stopped
+        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+          logEntry v
+          el "p" $ do
+            text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+            case _errorLog_stopped log of
+              Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
+              Just stopped -> text "Stopped: " *> localTimestamp stopped
 
   where
     passesFilter filterSelection (log, _specificLog) =
@@ -418,35 +417,36 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         || filterSelection == AlertsFilter_ResolvedOnly && isResolved
       where isResolved = isJust $ _errorLog_stopped log
 
+    logEntry :: (ErrorLog, ErrorLogView) -> m ()
     logEntry (log, specificLog) =
       let header txt = divClass "header" $ text $ case _errorLog_stopped log of
             Just _ -> "Resolved: " <> txt
             Nothing -> txt
       in case specificLog of
-          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> constDyn $ Just $ do
+          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> do
             let endpointTypeName = case endpointType of
                   EndpointType_Node -> "node"
                   EndpointType_Client -> "client"
             header $ "Unable to connect to " <> endpointTypeName <> (maybe "" (" " <>) alias) <> " at " <> Uri.render address
 
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> constDyn $ Just $ do
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> do
             header $ "Node on wrong network: " <> maybe (Uri.render address) id alias
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> constDyn $ Just $ do
+          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
               blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
 
           ErrorLogView_BadNodeHead l ->
-            ffor (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn) $ fmap $ \node -> do
+            dyn_ $ ffor (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn) $ traverse_ $ \node -> do
               let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
               header $ mkHeader $ Uri.render $ _node_address node
               el "p" message
 
-          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> constDyn $ Just $ do
+          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
