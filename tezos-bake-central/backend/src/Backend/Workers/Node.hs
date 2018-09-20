@@ -9,7 +9,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 module Backend.Workers.Node where
 
@@ -22,8 +21,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT)
 import Control.Monad.State (execStateT)
-import Data.Bifunctor (first, second)
-import Data.Either.Combinators (rightToMaybe)
+import Data.Bifunctor (first)
 import Data.Foldable (for_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -99,16 +97,16 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
   oldHead <- runReaderT dataSourceHead nds
   newBlock <- modifyMVar cacheVar $ \cache -> do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
-      acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-      sayShow ("new block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
+    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
+      flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
+        flip execStateT cache $ do
+          acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
+          sayShow ("new block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-    -- say $ "new block from node at " <> Uri.render nodeAddr
-    -- say $ T.pack $ show headBlockInfo
     updatedLevel <- atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
@@ -133,10 +131,7 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
     -- out "new" blocks that are already on the branch of `oldHead`?
     when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
       let now = headBlockInfo ^. timestamp
-      have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
-        SELECT c."id"
-        FROM "Parameters" c
-        WHERE c."chain" = ?chainId |]
+      have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
       case have of
         Just entryId ->
           updateAndNotify entryId

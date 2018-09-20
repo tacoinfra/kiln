@@ -15,11 +15,10 @@ module Backend where
 
 import Control.Applicative (ZipList (..), liftA2, liftA3, (<|>))
 import Control.Category ((.))
-import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO, throwString)
-import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad (join, unless, void, when, (<=<))
-import Control.Monad.Except (ExceptT (..), MonadError, catchError, runExceptT, throwError)
+import Control.Exception.Safe (catch, throwIO, throwString)
+import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Monad ((<=<))
+import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
@@ -292,14 +291,13 @@ backend = do
       else
         runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
-
-      SnapServer.httpServe cfg (route $
+      SnapServer.httpServe cfg $ Snap.route $
         [ ("", rootHandler staticHead)
         , ("/listen", handleListen)
-        , ("static", serveAssets "static" "static")
-        , ("", serveDirectory "frontend.jsexe")
-        ] ++ [x | x <- [("/api/v1", v1PublicApi dataSrc)] , serveNodeCache ]
-        )
+        , ("/static", serveAssets "static" "static")
+        ]
+        ++ [("/api/v1", v1PublicApi dataSrc) | serveNodeCache]
+        ++ [("", serveDirectory "frontend.jsexe")]
 
 rootHandler :: MonadSnap m => ByteString -> m ()
 rootHandler pageHead =
