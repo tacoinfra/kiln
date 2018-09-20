@@ -9,8 +9,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "ceb5334d0c80304d05b80d11830d880cdb1a3562";
-      sha256 = "0c658d17g7ax22v51djga6vdwxvl7p3axhbj2pf0l25hfvjjf7va";
+      rev = "3ac3e40edec5354b773af55c142427714ce2ef71";
+      sha256 = "1d75r3hx6bbh3kgki1j6l3rldn2awgcmxwc878gi0rgpmv3gdynx";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
 
@@ -26,7 +26,12 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
     };
 
-    overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: {
+    overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+      email-validate = dontCheck super.email-validate;
+      modern-uri = dontCheck super.modern-uri;
+      base58-bytestring = dontCheck super.base58-bytestring;
+      lens-aeson = dontCheck super.lens-aeson;
+      megaparsec = dontCheck super.megaparsec;
       backend-db = if supportGargoyle
         then
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
