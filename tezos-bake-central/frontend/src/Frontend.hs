@@ -15,6 +15,7 @@
 module Frontend where
 
 import Control.Applicative (liftA2, (<|>))
+import Control.Arrow ((&&&))
 import Control.Lens (_1, _2)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
@@ -457,10 +458,10 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
               blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
 
           ErrorLogView_BadNodeHead l -> do
-            nodeAddrDyn <- holdUniqDyn $ fmap _node_address <$> (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn)
-            dyn_ $ ffor nodeAddrDyn $ traverse_ $ \addr -> do
+            nodeAddrDyn <- holdUniqDyn $ fmap (_node_address &&& _node_alias) <$> (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn)
+            dyn_ $ ffor nodeAddrDyn $ traverse_ $ \(addr,alias) -> do
               let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
-              header $ mkHeader $ Uri.render $ addr
+              header $ mkHeader $ maybe (Uri.render addr) id alias
               el "p" message
 
           ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
