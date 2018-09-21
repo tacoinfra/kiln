@@ -15,13 +15,12 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as Map
-import qualified Data.AppendMap as AppendMap
 import Data.Bifunctor (first, second)
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.IntervalMap.Generic.Lazy as IMap
+import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.Monoid
 import Data.Pool (Pool)
@@ -34,7 +33,6 @@ import Data.Version (Version)
 import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
--- import Reflex.FunctorMaybe
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
@@ -101,7 +99,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
 
   let pnhVS = _bakeViewSelector_publicNodeHeads vs
   publicNodeHeads <- whenM (not $ null pnhVS) $
-    toRangeView pnhVS . fmap (first Bounded) . AppendMap.toList <$> selectMap' PublicNodeHeadConstructor
+    toRangeView pnhVS . fmap (first Bounded) . MMap.toList <$> selectMap' PublicNodeHeadConstructor
       (PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left namedChain)
       )
 
@@ -119,7 +117,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     let nodeInfo = do
           (nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, lastHeartbeat) <- rs
-          return (Bounded nid, First $ Just $ Node
+          return (Bounded nid, First $ Just Node
             { _node_address = addr
             , _node_alias = alias
             , _node_identity = ident
@@ -137,7 +135,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
   let delegatesVS = _bakeViewSelector_delegates vs
   delegates :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null delegatesVS) $ do
     xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
-    return $ toRangeView delegatesVS $ (,First $ Just()) . Bounded <$> xs
+    return $ toRangeView delegatesVS $ (, First $ Just ()) . Bounded <$> xs
 
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
@@ -149,17 +147,15 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
   --     flip itraverse (_bakeViewSelector_delegateStats vs) $ \(i, j) -> _
   --     -- calculateDelegateStats (_bakeViewSelector_delegateStats vs)
 
-  notificatees :: RangeView' (Id Notificatee) Email a <-
-    if not $ null $ _bakeViewSelector_notificatees vs
-      then do
-        rs <- selectMap' NotificateeConstructor CondEmpty
-        return $ tightenView $ RangeView (unRangeSelector $ _bakeViewSelector_notificatees vs) $ fmap _notificatee_email $ AppendMap.mapKeys Bounded rs
-      else pure mempty
+  let notificateesVS = _bakeViewSelector_notificatees vs
+  notificatees <- whenM (not $ null notificateesVS) $ do
+    rs <- selectMap' NotificateeConstructor CondEmpty
+    return $ tightenView $ toRangeView notificateesVS $ MMap.toList $ First . Just . _notificatee_email <$> MMap.mapKeys Bounded rs
+
   mailServer <- whenJust (getOption $ unMaybeSelector $_bakeViewSelector_mailServer vs) $ \a -> do
     ms <- fmap listToMaybe $ select $ CondEmpty `limitTo` 1
     let ms' = Just $ mailServerConfigToView <$> ms
     return $ toMaybeView (_bakeViewSelector_mailServer vs) ms'
-  maxLevel <- getMaxLevel
 
   summary <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
@@ -191,7 +187,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
 getErrorLogs
   :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m)
   => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
-  -> m (AppendMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
+  -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
 getErrorLogs intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
@@ -218,7 +214,7 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress, tAlias) ->
+          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tType, tAddress, tAlias) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
                   { _errorLog_started = elStarted
@@ -248,7 +244,7 @@ getErrorLogs intervalMap = do
                ((?low IS NULL OR el.stopped >= ?low) AND
                (?high IS NULL OR el.stopped <= ?high)))
             ORDER BY el.id ASC
-            |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
+            |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
               ( elId :: Id ErrorLog
               , ( ErrorLog
                     { _errorLog_started = elStarted
@@ -278,7 +274,7 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tLastLevel, tLastBlockHash, tClient) ->
+          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tLastLevel, tLastBlockHash, tClient) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
                   { _errorLog_started = elStarted
@@ -309,7 +305,7 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \
+          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \
               (elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tLca, tNodeHead, tLatestHead) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
@@ -348,7 +344,7 @@ getErrorLogs intervalMap = do
              ((?low IS NULL OR el.stopped >= ?low) AND
              (?high IS NULL OR el.stopped <= ?high)))
           ORDER BY el.id ASC
-          |] <&> \rows -> AppendMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
+          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
             ( elId :: Id ErrorLog
             , ( ErrorLog
                   { _errorLog_started = elStarted
@@ -362,7 +358,7 @@ getErrorLogs intervalMap = do
             )
         ]
 
-    leftBiasedUnions = AppendMap.unionsWith const
+    leftBiasedUnions = MMap.unionsWith const
 
 getUpgradeNotice
   :: (Monad m, PostgresRaw m, MonadIO m)

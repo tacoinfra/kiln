@@ -30,7 +30,6 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup ((<>))
-import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
@@ -40,7 +39,7 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
-import Rhyolite.Schema (Id (..), IdData, Json (..))
+import Rhyolite.Schema (Id (..), IdData)
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -50,7 +49,7 @@ import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, 
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (AsPublicNodeError, HasPublicNodeContext, PublicNode (..),
-                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead, getPublicNodeUri)
+                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleEndpointError, clearNodeWrongChainError,
