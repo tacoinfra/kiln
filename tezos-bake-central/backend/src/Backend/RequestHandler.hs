@@ -56,8 +56,7 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
         PublicRequest_AddNode addr alias nodeIdent -> do
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
-            Nothing -> do
-              insertAndNotify_ (mkNode addr alias)
+            Nothing -> insertAndNotify_ (mkNode addr alias)
             Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False, Node_aliasField =. alias]
 
         PublicRequest_RemoveNode addr -> do
@@ -84,7 +83,7 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
         PublicRequest_AddDelegate pkh alias -> do
           existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ $ Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
+            Nothing -> insertAndNotify_ Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
             Just dids -> for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. False, Delegate_aliasField =. alias]
 
         PublicRequest_RemoveDelegate pkh -> do
@@ -153,12 +152,11 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
               , PublicNodeConfig_updatedField =. now
               ]
 
-    ApiRequest_Private key r ->
-      case r of
-        PrivateRequest_NoOp -> return ()
+    ApiRequest_Private _key r -> case r of
+      PrivateRequest_NoOp -> return ()
 
-    where
-      notifyEntitiesDeleted ids = for_ ids $ void . notifyEntityId NotificationType_Delete
+  where
+    notifyEntitiesDeleted ids = for_ ids $ void . notifyEntityId NotificationType_Delete
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

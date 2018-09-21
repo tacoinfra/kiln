@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Common.Config where
 
-import Control.Exception.Safe (impureThrow)
 import Data.Semigroup ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set

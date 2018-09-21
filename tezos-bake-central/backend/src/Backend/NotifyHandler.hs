@@ -127,7 +127,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
         Aeson.Success nid -> whenM (viewSelects (Bounded nid) notificateesVS) $ do
           notificatee :: Maybe Notificatee <- get $ fromId nid
           pure $ (mempty :: BakeView a)
-            { _bakeView_notificatees = toRangeView1 notificateesVS (Bounded nid) $ _notificatee_email <$> notificatee
+            { _bakeView_notificatees = toRangeView1 notificateesVS (Bounded nid) $ Just $ First $ _notificatee_email <$> notificatee
             }
 
       mailServerVS = _bakeViewSelector_mailServer aggVS

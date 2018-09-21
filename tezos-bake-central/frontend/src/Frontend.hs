@@ -10,7 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- {-# OPTIONS_GHC -Werror -Wall #-}
+--{-# OPTIONS_GHC -Werror -Wall #-}
 
 module Frontend where
 
@@ -63,7 +63,6 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
-import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
 import Safe (maximumMay)
@@ -189,19 +188,19 @@ watchDelegateStats delegates = do
   --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map.Map (Id Client) URI))
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> MMap.getMonoidalMap $ fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
+  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
 
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_notificatees = viewRangeAll 1
     }
-  return $ ffor theView $ \v -> getRangeView' (_bakeView_notificatees v)
+  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_notificatees v)
 
 watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
 watchSummary = do
@@ -290,10 +289,10 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
     Nothing -> divClass "column" waitingForResponse
     Just aTab -> do
       initialTab <- sample (current aTab) -- only needed for initial value, don't want it to steal your focus
-      rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ fmap leftmost $ sequenceA
+      rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ leftmost <$> sequenceA
             [ semuiTab (text "Nodes") UITab_Nodes currentTabD (fmap (fromMaybe Disabled) nodesTabEnabledMaybe)
             , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-              fmap leftmost . for (Map.toList cs) $ \(cid, name) ->
+              fmap leftmost . for (MMap.toList cs) $ \(cid, name) ->
                 semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTabD (pure Enabled)
             , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
               fmap leftmost $ for (Set.toList ds) $ \pkh ->
@@ -303,14 +302,14 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
           currentTab <- holdDyn initialTab selection
           let currentTabD = demux currentTab
 
-      divClass "ui bottom attached tab segment active" $ do
+      divClass "ui bottom attached tab segment active" $
         divClass "ui one column grid" $ do
           upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
           dyn_ $ ffor upgradeNotice $ \case
             Nothing -> blank
-            Just (log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
+            Just (_log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
               case upgrade of
-                Left e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+                Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
                 Right v -> do
                   let
                     versionText = T.pack (showVersion v)
@@ -717,8 +716,8 @@ nodesTab = divClass "ui stackable grid" $ do
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
-        False -> divClass "ui stackable cards" $ void $ do
-          listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
+        False -> divClass "ui stackable cards" $ do
+          void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             vDyn' <- holdUniqDyn vDyn
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
               let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
@@ -737,7 +736,7 @@ nodesTab = divClass "ui stackable grid" $ do
                   , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
                   ]
 
-          listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \_ vDyn -> do
+          void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \_ vDyn -> do
             vDyn'' <- holdUniqDyn vDyn
             vDyn'start <- sample $ current vDyn''
             vDyn'update <- throttle 0.2 (updated vDyn'')
@@ -903,8 +902,11 @@ waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered 
 data Enabled = Disabled | Enabled
   deriving (Eq, Ord, Show, Read, Enum)
 
+isDisabled :: Enabled -> Bool
 isDisabled Disabled = True
 isDisabled Enabled = False
+
+isEnabled :: Enabled -> Bool
 isEnabled Enabled = True
 isEnabled Disabled = False
 
