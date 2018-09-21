@@ -40,7 +40,7 @@ The fragile network works like this:
   1. Odd numbered nodes (nodes 2, 4, 6, and 8) are all peers.
   1. Node 1 has both odd numbered and even numbered nodes as peers.
   1. Because of this, node 1 is the only way that the even nodes and odd nodes can talk to each other.
-  1. By stopping node 1, the even and odd halves become a "split brain" because they never talk to each other. The both progress independently.
+  1. By stopping node 1, the even and odd halves become a "split brain" because they never talk to each other. They both progress independently.
 
 To run this network:
   1. You must have the `tezos-baking-platform` repository.
