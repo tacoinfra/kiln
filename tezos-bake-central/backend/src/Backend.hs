@@ -13,7 +13,7 @@
 
 module Backend where
 
-import Control.Applicative (ZipList (..), liftA2, liftA3, (<|>))
+import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right)
@@ -21,76 +21,50 @@ import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
+import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
-import qualified Data.AppendMap as AppendMap
-import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Dependent.Map (DMap)
-import qualified Data.Dependent.Map as DMap
 import Data.Either.Combinators (leftToMaybe)
-import Data.Foldable (fold, foldl', for_, toList, traverse_)
-import Data.Function (on, (&))
-import Data.Functor (($>))
+import Data.Foldable (fold, for_, toList)
+import Data.Function ((&))
 import Data.Functor.Identity (Identity (..))
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (sortBy)
-import Data.List.NonEmpty (nonEmpty)
-import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, Sum (..), getSum, (<>))
-import qualified Data.Semigroup as Semi
-import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq
+import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import qualified Data.Text.Lazy as TL
-import Data.Time.Clock (NominalDiffTime, addUTCTime, diffUTCTime, getCurrentTime)
-import Data.Traversable (for)
-import Data.Word (Word64)
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
-import qualified Network.HTTP.Client as Http (Manager, newManager)
+import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
-import qualified Network.HTTP.Simple as Http
-import Network.Mail.Mime (Address (..), Mail, simpleMail')
+import Network.Mail.Mime (Address (..))
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
 import Prelude hiding ((.))
 import Reflex.Dom.Core (renderStatic)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, getTime, runDb, selectMap)
-import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.DB (RunDb, runDb)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
-import Rhyolite.Backend.Schema (fromId, toId)
+import Rhyolite.Backend.Listen (insertAndNotify, updateAndNotify)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
-import Rhyolite.Concurrent (worker)
-import Rhyolite.Route (RouteEnv)
-import Rhyolite.Schema (Id (..), Json (..))
-import Safe (maximumByMay, maximumMay)
-import Say (say, sayErr, sayShow)
-import Snap.Core (MonadSnap, route)
+import Rhyolite.Schema (Id (..))
+import Say (say, sayShow)
+import Snap.Core (MonadSnap)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import Snap.Util.FileServe (serveDirectory)
-import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
+import qualified System.Console.GetOpt as GetOpt
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -99,7 +73,6 @@ import qualified Text.URI as URI
 import qualified Text.URI.Lens as Uri
 
 import Backend.Db (gargoyleSupported, withDb)
-import Tezos.Base58Check (HashedValue (..), fromBase58)
 import Tezos.Chain (mainnetChainId)
 import Tezos.Lenses
 import Tezos.NodeRPC
@@ -171,10 +144,8 @@ backend = do
       (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
-    (pure $
-      fromMaybe (error "invalid URL") . uriToRouteEnv <$>
-        (_opts_route =<< SnapServer.getOther cfg))
+  !(route :: Maybe URI) <- liftA2 (<|>)
+    (pure $ _opts_route =<< SnapServer.getOther cfg)
     (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
@@ -197,26 +168,31 @@ backend = do
     (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
-  let maybeNamedChain = either Just (const Nothing) chain
   let
+    maybeNamedChain = either Just (const Nothing) chain
+
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
-    firstOption = (fmap.fmap) getFirst . fmap Semi.getOption . fold . (fmap.fmap) Semi.Option . (fmap.fmap.fmap) First
+    firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
 
   !(tzscanApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_tzscanApiUri =<< SnapServer.getOther cfg)
-    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri)
-    , pure $ (getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain)
+    [ pure $ _opts_tzscanApiUri =<< SnapServer.getOther cfg
+    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri
+    , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
   !(blockscaleApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_blockscaleApiUri =<< SnapServer.getOther cfg)
-    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri)
-    , pure $ (getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain)
+    [ pure $ _opts_blockscaleApiUri =<< SnapServer.getOther cfg
+    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri
+    , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
   !(obsidianApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_obsidianApiUri =<< SnapServer.getOther cfg)
-    , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri)
-    , pure $ (getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain)
+    [ pure $ _opts_obsidianApiUri =<< SnapServer.getOther cfg
+    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri
+    , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
+
+  !(nodes :: Maybe (Set URI)) <- liftA2 (<|>)
+    (pure $ getOption . _opts_nodes =<< SnapServer.getOther cfg)
+    (getConfigFromFile (Just . Config.parseNodes) $ configPath Config.nodes)
 
   let
     publicDataSources :: [DataSource]
@@ -245,11 +221,12 @@ backend = do
       Right chainId -> pure chainId
 
   say $ "Monitoring network " <> toBase58Text chainId
+  for_ route $ \r -> say $ "Using route " <> URI.render r
 
   let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
   !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-    [ Just headTag
-    , injectPure Config.route . encodeViaJson <$> routeEnv
+    [ Just $ headTag route
+    , injectPure Config.route . encodeViaJson <$> route
     , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
     , Just $ injectPure Config.chain $ showChain chain
     ]
@@ -262,8 +239,17 @@ backend = do
         migrateQueuedEmail tableInfo
         migrateSchema tableInfo
 
-    dataSrc <- blankNodeDataSource db chainId httpMgr
+      -- Set nodes overrides based on configuration
+      for_ nodes $ \ns -> do
+        update [Node_deletedField =. True] CondEmpty
+        update [Node_deletedField =. False] (Node_addressField `in_` toList ns)
+        enabled <- project Node_addressField (Node_deletedField ==. False)
 
+        let needToAdd = ns `Set.difference` Set.fromList enabled
+        for_ needToAdd $ \newAddress -> do
+          insert $ mkNode newAddress Nothing
+
+    dataSrc <- blankNodeDataSource db chainId httpMgr
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -336,22 +322,6 @@ getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
 getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
-
-uriToRouteEnv :: URI -> Maybe RouteEnv
-uriToRouteEnv uri = (,,)
-  <$> (uri ^? Uri.uriScheme . _Just . Uri.unRText . to (<> ":") . to T.unpack)
-  <*> (uri ^? Uri.uriAuthority . _Right . to renderBeforePort . to T.unpack)
-  <*> Just (T.unpack renderPortAndAfter)
-  where
-    renderBeforePort a = maybe "" ((<> "@") . renderUserInfo) (a ^. Uri.authUserInfo)
-      <> (a ^. Uri.authHost . Uri.unRText)
-    renderUserInfo u = (u ^. Uri.uiUsername . Uri.unRText) <> maybe "" (":" <>) (u ^? Uri.uiPassword . _Just . Uri.unRText)
-    renderPortAndAfter =
-      fromMaybe "" (uri ^? Uri.uriAuthority . _Right . Uri.authPort . _Just . to tshow . to (":" <>))
-      <>
-      (if null $ uri ^. Uri.uriPath then "" else renderPieces $ uri ^. Uri.uriPath)
-    renderPieces pieces = "/" <> T.intercalate "/" (map (^. Uri.unRText) pieces)
-
 data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
@@ -363,6 +333,7 @@ data Opts = Opts
   , _opts_tzscanApiUri :: !(Maybe URI)
   , _opts_blockscaleApiUri :: !(Maybe URI)
   , _opts_obsidianApiUri :: !(Maybe URI)
+  , _opts_nodes :: !(Option (Set URI))
   }
 
 instance Semigroup Opts where
@@ -377,43 +348,46 @@ instance Semigroup Opts where
     , _opts_tzscanApiUri = _opts_tzscanApiUri b <|> _opts_tzscanApiUri a
     , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
     , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
+    , _opts_nodes = _opts_nodes b <> _opts_nodes a -- Union the sets if there are multiple
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty
   mappend = (<>)
 
-optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
+optsArgDescr :: MonadSnap m => [GetOpt.OptDescr (Maybe (SnapServer.Config m Opts))]
 optsArgDescr =
-  [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
+  [ mkReqArg Config.pgConnectionString "CONNSTRING" (\x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
-  , Option [] [Config.route] (mkReqArg "URL" $ \x -> mempty { _opts_route = Just $ mkRootUriOrError $ T.pack x }) $
+  , mkReqArg Config.route "URL" (\x -> mempty { _opts_route = Just $ mkRootUriOrError $ T.pack x }) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
-  , Option [] [Config.emailFromAddress] (mkReqArg "EMAIL" $ \x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
+  , mkReqArg Config.emailFromAddress "EMAIL" (\x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , Option [] [Config.checkForUpgrade] (mkReqArg "BOOL" $ \x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
+  , mkReqArg Config.checkForUpgrade "BOOL" (\x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
 
-  , Option [] [Config.upgradeBranch] (mkReqArg "BRANCH" $ \x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
+  , mkReqArg Config.upgradeBranch "BRANCH" (\x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
-  , Option [] [Config.chain] (mkReqArg "NETWORK" $ \x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+  , mkReqArg Config.chain "NETWORK" (\x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
       "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
-  , Option [] [Config.serveNodeCache] (mkReqArg "BOOL" $ \x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
-      "Serve Node Cache.  Default enabled"
+  , mkReqArg Config.serveNodeCache "BOOL" (\x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
+      "Serve Node Cache.  Default disabled."
 
-  , Option [] [Config.tzscanApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_tzscanApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
-      "Custom tzscan api url.  Default none."
-  , Option [] [Config.blockscaleApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_blockscaleApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
-      "Custom blockscale api url.  Default none."
-  , Option [] [Config.obsidianApiUri] (mkReqArg "URL" $ \x -> mempty { _opts_obsidianApiUri = Just $ Config.parseURIUnsafe $ T.pack x }) $
-      "Custom obsidian api url.  Default none."
+  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+      "Custom tzscan API URL.  Default none."
+  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+      "Custom Blockscale API URL.  Default none."
+  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+      "Custom Obsidian API URL.  Default none."
 
+  , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
+      "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
   ]
   where
-    mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
+    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var)
 
 configPath :: FilePath -> FilePath
 configPath = ("config" </>)

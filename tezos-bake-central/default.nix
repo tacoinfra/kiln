@@ -13,7 +13,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       sha256 = "0c658d17g7ax22v51djga6vdwxvl7p3axhbj2pf0l25hfvjjf7va";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
-
   in {
     packages = {
       backend-db = ./backend-db;

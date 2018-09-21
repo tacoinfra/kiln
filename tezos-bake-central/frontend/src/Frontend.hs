@@ -14,7 +14,7 @@
 
 module Frontend where
 
-import Control.Applicative (liftA2)
+import Control.Applicative (liftA2, (<|>))
 import Control.Lens (_1, _2)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
@@ -47,8 +47,11 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Traversable (for)
 import Data.Version (Version, showVersion)
 import qualified Form.Checks as Check
+import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.Element (setInnerHTML)
+import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Prelude hiding (log)
 import Reflex.Dom.Core
@@ -62,8 +65,8 @@ import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, wa
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
-import Rhyolite.WebSocket (websocketUrlFromRouteEnv)
-import Safe (headDef, maximumMay)
+import Rhyolite.WebSocket (WebSocketUrl (..))
+import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -84,15 +87,12 @@ import Frontend.Common
 import Common.Vassal
 
 frontend :: (StaticWidget x (), Widget x ())
-frontend = (headTag,) $ void $ do
+frontend = (headTag Nothing,) $ void $ do
   let decodeViaJson = decodeValue' . LBS.fromStrict . T.encodeUtf8
-  route :: RouteEnv <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
+  route :: URI <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
     Just r -> return $ fromMaybe (error "Unable to parse injected route") (decodeViaJson r)
-    Nothing -> do
-      protocol <- getLocationProtocol
-      hostWithPort <- getLocationHost
-      return $ let (host, port) = T.breakOn ":" hostWithPort
-                in (T.unpack protocol, T.unpack host, T.unpack port)
+    Nothing ->
+      Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
 
   checkForUpgrade <-
     fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
@@ -101,7 +101,24 @@ frontend = (headTag,) $ void $ do
   chain :: Either NamedChain ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
     maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
-  runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg
+  let
+    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
+    renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
+    routeAuthority = rightToMaybe $ Uri.uriAuthority route
+    wsPort = (Uri.authPort =<< routeAuthority)
+      <|> ffor routeScheme (\case
+        "http" -> 80
+        "https" -> 443
+        _ -> 80)
+    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen"
+
+    wsUrl = WebSocketUrl
+      <$> (T.replace "http" "ws" <$> routeScheme)
+      <*> (Uri.unRText . Uri.authHost <$> routeAuthority)
+      <*> pure (fromIntegral $ fromMaybe 80 wsPort)
+      <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
+
+  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ runReaderT appMain Cfg
     { _cfg_checkForUpgrade = checkForUpgrade
     , _cfg_chain = chain
     }
