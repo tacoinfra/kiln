@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -18,6 +20,7 @@ import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks)
 import Data.Text (Text)
 import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
+import GHC.Generics
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Method as Http
 import qualified Data.Text as T
@@ -38,13 +41,44 @@ import Tezos.NodeRPC
 import Tezos.Base58Check (toBase58, fromBase58)
 import Tezos.Types
 
+import System.Posix.Resource
+
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapHead = maybe (Left "cache not ready") pure <$> dataSourceHead
 
+deriving instance Enum Resource
+deriving instance Ord Resource
+deriving instance Bounded Resource
+deriving instance Generic Resource
+instance Aeson.ToJSON Resource
+instance Aeson.FromJSON Resource
+instance Aeson.ToJSONKey Resource
+deriving instance Generic ResourceLimit
+instance Aeson.FromJSON ResourceLimit
+instance Aeson.ToJSON ResourceLimit
+deriving instance Generic ResourceLimits
+instance Aeson.FromJSON ResourceLimits
+instance Aeson.ToJSON ResourceLimits
+
+snapGetRLimits :: MonadIO m => m (Either Text (Map.Map Resource ResourceLimits))
+snapGetRLimits = fmap (Right . Map.fromList) $ flip traverse [minBound .. maxBound] $ \rsrc -> do
+  lim <- liftIO $ getResourceLimit rsrc
+  return (rsrc, lim)
+
+{- curl -vs http://localhost:8000/api/v1 -data
+  '["ResourceTotalMemory",{"hardLimit":{"tag":"ResourceLimitUnknown"},"softLimit":{"tag":"ResourceLimit","contents":1200000000}}]'
+ - -}
+
+snapSetRLimits :: (MonadSnap m) => m (Either Text ())
+snapSetRLimits = Aeson.eitherDecode <$> Snap.readRequestBody 100000 >>= \case
+  Right limits -> fmap Right $ liftIO $ uncurry setResourceLimit limits
+  Left bad -> pure $ Left $ T.pack bad
 
 v1PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
 v1PublicApi dataSrc = route
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
+  , ( "getrlimit",    writeJSON' snapGetRLimits)
+  , ( "setrlimit",    writeJSON' snapSetRLimits)
   , ( chainTXT <> "/params",    writeJSON $ pure . pure)
   , ( chainTXT <> "/head",      writeJSON $ const snapHead )
   , ( chainTXT <> "/lca",       writeJSON $ const snapBranchPoint )
@@ -54,6 +88,10 @@ v1PublicApi dataSrc = route
   where
     chain = _nodeDataSource_chain dataSrc
     chainTXT = toBase58 chain
+    writeJSON' :: forall a. Aeson.ToJSON a => m (Either Text a) -> m ()
+    writeJSON' x = do
+        either sulk (Snap.writeLBS . Aeson.encode) =<< x
+
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
       liftIO (MVar.tryReadMVar (_nodeDataSource_parameters dataSrc)) >>= \case

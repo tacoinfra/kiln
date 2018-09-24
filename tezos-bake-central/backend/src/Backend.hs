@@ -167,33 +167,36 @@ backend = do
   let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
   cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
+  -- let emailFromAddress = "noreply@obsidian.systems"
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
       (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
-    (pure $
-      fromMaybe (error "invalid URL") . uriToRouteEnv <$>
-        (_opts_route =<< SnapServer.getOther cfg))
-    (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
+  -- !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
+  --   (pure $
+  --     fromMaybe (error "invalid URL") . uriToRouteEnv <$>
+  --       (_opts_route =<< SnapServer.getOther cfg))
+  --   (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
+  -- let chain = Config.defaultChain
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain =<< SnapServer.getOther cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
-  !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
-    (pure $ _opts_serveNodeCache =<< SnapServer.getOther cfg)
-    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
+  -- !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
+  --   (pure $ _opts_serveNodeCache =<< SnapServer.getOther cfg)
+  --   (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
 
-  !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
-    (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
-    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
+  -- !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
+  --   (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
+  --   (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
 
-  !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
-    (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
-    (getConfigFromFile Just $ configPath Config.upgradeBranch)
+  -- !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
+  --   (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
+  --   (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
+  -- let pgConnString = "postgresql://"
   !(pgConnString :: Maybe Text) <- liftA2 (<|>)
     (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
     (getConfigFromFile Just $ configPath Config.db)
@@ -247,58 +250,59 @@ backend = do
 
   say $ "Monitoring network " <> toBase58Text chainId
 
-  let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
-  !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-    [ Just headTag
-    , injectPure Config.route . encodeViaJson <$> routeEnv
-    , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
-    , Just $ injectPure Config.chain $ showChain chain
-    ]
+  -- let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
+  -- !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
+  --   [ Just headTag
+  --   , injectPure (T.pack Config.route) . encodeViaJson <$> routeEnv
+  --   , Just $ injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
+  --   , Just $ injectPure (T.pack Config.chain) $ showChain chain
+  --   ]
 
   withDb dbSpec $ \db -> do
-    runNoLoggingT $ runDb (Identity db) $ do
-      tableInfo <- getTableAnalysis
-      runMigration $ do
-        migrateAccount tableInfo
-        migrateQueuedEmail tableInfo
-        migrateSchema tableInfo
+    -- runNoLoggingT $ runDb (Identity db) $ do
+    --   tableInfo <- getTableAnalysis
+    --   runMigration $ do
+    --     migrateAccount tableInfo
+    --     migrateQueuedEmail tableInfo
+    --     migrateSchema tableInfo
 
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< workerWithDelay (pure 10) $ const $
-        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+      -- addFinalizer <=< workerWithDelay (pure 10) $ const $
+      --   runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
-      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
-        (notifyHandler dataSrc)
-        (viewSelectorHandler (leftToMaybe chain) dataSrc db)
-        (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
-      addFinalizer wsFinalizer
+      -- (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
+      --   (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
+      --   (notifyHandler dataSrc)
+      --   (viewSelectorHandler (leftToMaybe chain) dataSrc db)
+      --   (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
+      -- addFinalizer wsFinalizer
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc appConfig db publicDataSources
-      addFinalizer =<< nodeAlertWorker dataSrc appConfig db
-      addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< delegateWorker dataSrc
+      -- addFinalizer =<< nodeAlertWorker dataSrc appConfig db
+      -- addFinalizer =<< clientWorker appConfig dataSrc
+      -- addFinalizer =<< delegateWorker dataSrc
 
-      if checkForUpgrade then
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
-      else
-        runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
+      -- if checkForUpgrade then
+      --   addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
+      -- else
+      --   runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
 
       SnapServer.httpServe cfg (route $
-        [ ("", rootHandler staticHead)
-        , ("/listen", handleListen)
-        , ("static", serveAssets "static" "static")
-        , ("", serveDirectory "frontend.jsexe")
-        ] ++ [x | x <- [("/api/v1", v1PublicApi dataSrc)] , serveNodeCache ]
+      --   [ ("", rootHandler staticHead)
+      --   , ("/listen", handleListen)
+      --   , ("static", serveAssets "static" "static")
+      --   , ("", serveDirectory "frontend.jsexe")
+      --   ] ++ 
+         [("/api/v1", v1PublicApi dataSrc)]
         )
 
 rootHandler :: MonadSnap m => ByteString -> m ()

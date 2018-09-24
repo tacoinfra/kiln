@@ -42,7 +42,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Semigroup (First (..), Semigroup, (<>), Max(..))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -75,43 +75,43 @@ data NodeQuery a where
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
 
-data BranchData a = BranchData
-  { _branchData_fitness :: !Fitness
-  , _branchData_level :: !RawLevel
-  , _branchData_timestamp :: !UTCTime
-  , _branchData_info :: !(Maybe a)
-  } deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+--data BranchData a = BranchData
+--  { _branchData_fitness :: !Fitness
+--  , _branchData_level :: !RawLevel
+--  , _branchData_timestamp :: !UTCTime
+--  , _branchData_info :: !(Maybe a)
+--  } deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 -- not 100% sure i have the lawful combination of these.
-instance Applicative BranchData where
-  f <*> x = BranchData (_branchData_fitness fx) (_branchData_level fx) (_branchData_timestamp fx) (_branchData_info f <*> _branchData_info x)
-    where
-      fx = void f <> void x
-  pure a = mempty {_branchData_info = pure a}
+--instance Applicative BranchData where
+--  f <*> x = BranchData (_branchData_fitness fx) (_branchData_level fx) (_branchData_timestamp fx) (_branchData_info f <*> _branchData_info x)
+--    where
+--      fx = void f <> void x
+--  pure a = mempty {_branchData_info = pure a}
 
-instance Alternative BranchData where
-  (<|>) = (<>)
-  empty = mempty
+--instance Alternative BranchData where
+--  (<|>) = (<>)
+--  empty = mempty
 
-instance Semigroup (BranchData a) where
-  x <> y = BranchData (_branchData_fitness xy) (_branchData_level xy) (_branchData_timestamp xy) (_branchData_info xy)
-    where
-      xy | void x > void y = x
-         | otherwise = y
+--instance Semigroup (BranchData a) where
+--  x <> y = BranchData (_branchData_fitness xy) (_branchData_level xy) (_branchData_timestamp xy) (_branchData_info xy)
+--    where
+--      xy | void x > void y = x
+--         | otherwise = y
 
-instance Monoid (BranchData a) where
-  mempty = BranchData
-    { _branchData_fitness = toFitness mempty
-    , _branchData_level = 0
-    , _branchData_timestamp = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
-    , _branchData_info = Nothing
-    }
-  mappend = (<>)
+--instance Monoid (BranchData a) where
+--  mempty = BranchData
+--    { _branchData_fitness = toFitness mempty
+--    , _branchData_level = 0
+--    , _branchData_timestamp = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
+--    , _branchData_info = Nothing
+--    }
+--  mappend = (<>)
 
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
-type CachedHistory' = (CachedHistory (BranchData CachedBlockInfo))
+type CachedHistory' = CachedHistory Fitness -- (BranchData CachedBlockInfo))
 
 data CacheLine a = CacheLine
   { _cacheLine_value :: !a
@@ -155,7 +155,7 @@ lookupBlock x = do
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
-    f :: LCA.Path BlockHash (BranchData CachedBlockInfo) -> VeryBlockLike
+    f :: LCA.Path BlockHash Fitness -> VeryBlockLike
     f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
   return $ fmap f xPath
 
@@ -222,11 +222,15 @@ waitForNewHead nds = do
     pure newHead
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
-histToBlockLike :: RawLevel -> (BlockHash, BranchData CachedBlockInfo, LCA.Path BlockHash (BranchData CachedBlockInfo)) -> VeryBlockLike
-histToBlockLike minLevel (h, BranchData f _ t _, path) = VeryBlockLike h p f blockLevel t
+histToBlockLike :: RawLevel -> (BlockHash, Fitness, LCA.Path BlockHash Fitness) -> VeryBlockLike
+histToBlockLike minLevel (h, f, path) = VeryBlockLike h p f blockLevel utc0000
   where
     blockLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
+
+utc0000 :: UTCTime
+utc0000 = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
+{-# INLINE utc0000 #-}
 
 updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
 updateNodeDataSource nds nodeAddr blk =

@@ -39,7 +39,7 @@ import Tezos.Types
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
-import Backend.Graphs
+-- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getErrorLogs, getUpgradeNotice)
 import Common (tshow, whenJust, whenM)

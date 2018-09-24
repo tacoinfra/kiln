@@ -18,8 +18,8 @@ library
     , base
     , base16-bytestring
     , bytestring
-    , Chart
-    , Chart-diagrams
+    -- , Chart
+    -- , Chart-diagrams
     , clientsession
     , colour
     , common
@@ -28,9 +28,9 @@ library
     , data-default
     , dependent-map
     , dependent-sum-template
-    , diagrams-core
-    , diagrams-lib
-    , diagrams-svg
+    -- , diagrams-core
+    -- , diagrams-lib
+    -- , diagrams-svg
     , either
     , filepath
     , formatting
@@ -73,6 +73,7 @@ library
     , text
     , tezos-bake-monitor-lib
     , time
+    , unix
 
   exposed-modules:
     Backend
@@ -85,7 +86,7 @@ library
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    Backend.Graphs
+    -- Backend.Graphs
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
@@ -111,4 +112,4 @@ executable backend
       base
     , backend
 
-  ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+  ghc-options: -prof -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

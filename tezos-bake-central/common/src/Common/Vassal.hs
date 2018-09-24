@@ -75,39 +75,39 @@ import Common.WrappedShow1
 -- for ergonomics reasons, you can use the Query type in your code and the
 -- correct instances will compute a suitable
 
-mergeMapA :: forall f k a b c. (Applicative f, Ord k)
-  => (k -> a -> f (Maybe c))
-  -> (k -> b -> f (Maybe c))
-  -> (k -> a -> b -> f (Maybe c))
-  -> Map.Map k a -> Map.Map k b -> f (Map.Map k c)
-mergeMapA fx fy fxy mxs mys = Map.fromAscList <$> go (Map.toAscList mxs) (Map.toAscList mys)
-  where
-    step :: k -> Maybe c -> [(k, c)] -> [(k, c)]
-    step _ Nothing = id
-    step k (Just x) = ((k, x):)
-    go :: [(k, a)] -> [(k, b)] -> f [(k, c)]
-    go ((k1, x):xs) ((k2, y):ys)
-      | k1 < k2 = step k1 <$> fx k1 x <*> go xs ((k2, y): ys)
-      | k1 == k2 = step k1 <$> fxy k1 x y <*> go xs ys
-      | otherwise = step k2 <$> fy k1 y <*> go ((k1, x):xs) ys
-    go [] ((k, y):ys) = step k <$> fy k y <*> go [] ys
-    go ((k, x):xs) [] = step k <$> fx k x <*> go xs []
-    go [] [] = pure []
+-- mergeMapA :: forall f k a b c. (Applicative f, Ord k)
+--   => (k -> a -> f (Maybe c))
+--   -> (k -> b -> f (Maybe c))
+--   -> (k -> a -> b -> f (Maybe c))
+--   -> Map.Map k a -> Map.Map k b -> f (Map.Map k c)
+-- mergeMapA fx fy fxy mxs mys = Map.fromAscList <$> go (Map.toAscList mxs) (Map.toAscList mys)
+--   where
+--     step :: k -> Maybe c -> [(k, c)] -> [(k, c)]
+--     step _ Nothing = id
+--     step k (Just x) = ((k, x):)
+--     go :: [(k, a)] -> [(k, b)] -> f [(k, c)]
+--     go ((k1, x):xs) ((k2, y):ys)
+--       | k1 < k2 = step k1 <$> fx k1 x <*> go xs ((k2, y): ys)
+--       | k1 == k2 = step k1 <$> fxy k1 x y <*> go xs ys
+--       | otherwise = step k2 <$> fy k1 y <*> go ((k1, x):xs) ys
+--     go [] ((k, y):ys) = step k <$> fy k y <*> go [] ys
+--     go ((k, x):xs) [] = step k <$> fx k x <*> go xs []
+--     go [] [] = pure []
+-- 
+-- mergeMMapA :: forall f k a b c. (Applicative f, Ord k)
+--   => (k -> a -> f (Maybe c))
+--   -> (k -> b -> f (Maybe c))
+--   -> (k -> a -> b -> f (Maybe c))
+--   -> MMap.MonoidalMap k a -> MMap.MonoidalMap k b -> f (MMap.MonoidalMap k c)
+-- mergeMMapA fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalMap <$> mergeMapA fa fb fab xs ys
 
-mergeMMapA :: forall f k a b c. (Applicative f, Ord k)
-  => (k -> a -> f (Maybe c))
-  -> (k -> b -> f (Maybe c))
-  -> (k -> a -> b -> f (Maybe c))
-  -> MMap.MonoidalMap k a -> MMap.MonoidalMap k b -> f (MMap.MonoidalMap k c)
-mergeMMapA fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalMap <$> mergeMapA fa fb fab xs ys
-
-mergeMMap :: forall k a b c. Ord k
-  => (k -> a -> Maybe c)
-  -> (k -> b -> Maybe c)
-  -> (k -> a -> b -> Maybe c)
-  -> MMap.MonoidalMap k a -> MMap.MonoidalMap k b -> MMap.MonoidalMap k c
-mergeMMap fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalMap . runIdentity
-  $ mergeMapA (\k a -> Identity $ fa k a) (\k b -> Identity $ fb k b) (\k a b -> Identity $ fab k a b) xs ys
+-- mergeMMap :: forall k a b c. Ord k
+--   => (k -> a -> Maybe c)
+--   -> (k -> b -> Maybe c)
+--   -> (k -> a -> b -> Maybe c)
+--   -> MMap.MonoidalMap k a -> MMap.MonoidalMap k b -> MMap.MonoidalMap k c
+-- mergeMMap fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalMap . runIdentity
+--   $ mergeMapA (\k a -> Identity $ fa k a) (\k b -> Identity $ fb k b) (\k a b -> Identity $ fab k a b) xs ys
 
 -- TODO:
 -- i think i know how to fix the deletes issues for all of the selectors here,
@@ -128,25 +128,6 @@ mergeMMap fa fb fab (MMap.MonoidalMap xs) (MMap.MonoidalMap ys) = MMap.MonoidalM
 --    (as MaybeView/MapView above) with the extra side condition that the
 --    individual elements result interval cannot ever get smaller, even once
 --    they're deleted.
-
-instance Ord k => Eq1 (Map.Map k) where
-  liftEq f xs ys = getAll $ getConst $ mergeMapA
-    (\_ _ -> Const $ All False)
-    (\_ _ -> Const $ All False)
-    (\_ x y -> Const $ All $ f x y)
-    xs ys
-
-instance Ord k => Ord1 (Map.Map k) where
-  liftCompare f xs ys = getConst $ mergeMapA
-    (\_ _ -> Const LT)
-    (\_ _ -> Const GT)
-    (\_ x y -> Const $ f x y)
-    xs ys
-
-deriving instance (Ord k) => Eq1 (MMap.MonoidalMap k)
-deriving instance (Ord k) => Ord1 (MMap.MonoidalMap k)
--- deriving instance (Ord k, FromJSONKey k) => FromJSON1 (MMap.MonoidalMap k)
--- deriving instance (Ord k, ToJSONKey k) => ToJSON1 (MMap.MonoidalMap k)
 
 -- | this is the parametric replacement for *crop*.
 chop :: (Semigroup a, ViewSelector t) => (a -> b -> Maybe c) -> t a -> View t b -> View t c
@@ -610,7 +591,7 @@ deriveShow1Methods [d|instance (                Show e) => Show1       (Interval
 deriveShow1Methods [d|instance (Show v) => Show1 (View (MaybeSelector v))|]
 deriveShow1Methods [d|instance             Show1       (MaybeSelector v) |]
 
-deriveShow1Methods [d|instance (Show k) => Show1       (MMap.MonoidalMap k) |]
+-- deriveShow1Methods [d|instance (Show k) => Show1       (MMap.MonoidalMap k) |]
 
 instance (FromJSON e, Ord i, Ord e, FromJSON i, FromJSON v, Ord v, FromJSONKey i) => FromJSON1 (View (IntervalSelector e i v)) where
   liftParseJSON = $(mkLiftParseJSON defaultOptions 'IntervalView)
@@ -635,6 +616,9 @@ instance (ToJSON k, Ord k, ToJSON v, ToJSONKey k) => ToJSON1 (View (RangeSelecto
 instance (Ord k, Semigroup a, ToJSON k, ToJSON a, ToJSON v, ToJSONKey k) => ToJSON (View (RangeSelector k v) a) where
   toEncoding = $(mkToEncoding defaultOptions 'RangeView)
   toJSON = $(mkToJSON defaultOptions 'RangeView)
+
+deriving instance (Ord k, FromJSONKey k) => FromJSON1 (MonoidalMap k)
+deriving instance ToJSONKey k => ToJSON1 (MonoidalMap k)
 
 instance (FromJSON (View v a), FromJSON a, FromJSON1 (View w), ViewSelector v, ViewSelector w, Ord (ViewIndex v), FromJSONKey (ViewIndex v)) => FromJSON (View (Compose v w) a) where
   parseJSON = $(mkParseJSON defaultOptions 'ComposeView)
