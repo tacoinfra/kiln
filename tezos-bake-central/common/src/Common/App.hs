@@ -72,7 +72,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable (URI, Maybe Text)) a)
   , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
-  , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) Email a)
+  , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) (Deletable Email) a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
@@ -90,7 +90,7 @@ data BakeView a = BakeView
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable (URI, Maybe Text)) a)
   , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
-  , _bakeView_notificatees :: !(RangeView' (Id Notificatee) Email a)
+  , _bakeView_notificatees :: !(RangeView' (Id Notificatee) (Deletable Email) a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)

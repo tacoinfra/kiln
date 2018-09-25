@@ -118,7 +118,7 @@ getNodeChain :: forall e r m.
   , MonadReader r m, HasPublicNodeContext r
   )
   => m ChainId
-getNodeChain = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Nothing                    -> nodeRPC rChain
     Just PublicNode_Blockscale -> nodeRPC rChain
     Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest methodGet "/v2/head/"
@@ -130,7 +130,7 @@ getProtoConstants :: forall e r m.
   , MonadError e m, AsPublicNodeError e
   )
   => ChainId -> m ProtoInfo
-getProtoConstants chain = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+getProtoConstants chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ rAnyConstants chain
   Just PublicNode_Blockscale -> nodeRPC $ rAnyConstants chain
   Just PublicNode_TzScan     -> throwFeatureNotSupported
@@ -142,7 +142,7 @@ getCurrentHead :: forall e r m.
   , MonadReader r m, HasPublicNodeContext r
   )
   => ChainId -> m VeryBlockLike
-getCurrentHead chain = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead chain
   Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead chain
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest methodGet "/v2/head/"
@@ -159,7 +159,7 @@ obsidianLCA chain blk branches = plainNodeRequest methodGet $
 
 obsidianAncestors :: ChainId -> BlockHash -> RawLevel -> RpcQuery (Seq BlockHash)
 obsidianAncestors chain branch levels = plainNodeRequest methodGet $
-  "/v1/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&=level" <> (T.pack $ show levels)
+  "/v1/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&=level" <> T.pack (show levels)
 
 -- fetch some history, starting at head, for at most n levels, optionally stop at ancestors of branches
 getHistory :: forall blk e r m.
@@ -169,7 +169,7 @@ getHistory :: forall blk e r m.
   , BlockLike blk
   )
   => ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
-getHistory chain blk levels branches = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+getHistory chain blk levels branches = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> theNormalWay
   Just PublicNode_Blockscale -> theNormalWay
   Just PublicNode_TzScan
@@ -195,10 +195,10 @@ getBlock ::
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike
-getBlock chainId blockHash = (asks $ view (publicNodeContext . publicNodeContext_api)) >>= \case
+getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
   Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest methodGet ("/v2/block/" <> toBase58Text blockHash)
+  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest methodGet ("/v2/block/" <> toBase58Text blockHash)
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet
     ("/v1/" <> toBase58Text chainId <> "/block/" <> toBase58Text blockHash)

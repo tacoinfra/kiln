@@ -1,28 +1,28 @@
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Tezos.NodeRPC.Class where
 
-import Data.Map (Map)
 import Control.Lens (uncons)
 import Data.Foldable (toList)
+import Data.Map (Map)
+import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import Data.Word (Word64)
-import Data.Semigroup ((<>))
 
-import qualified Data.ByteString.Lazy as LBS
-import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
-import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Types

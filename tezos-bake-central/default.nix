@@ -19,7 +19,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       sha256 = "0lcvmzpmrg9d11h43f0v9pwkn6a0xi23j3kzq8hgfq3nhygjshs4";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
-    semantic-reflex-src = dep/semantic-reflex;
     semantic-reflex-src = pkgs.fetchFromGitHub {
       owner = "danbornside";
       # owner = "tomsmalley";
@@ -27,7 +26,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       rev = "26268b0236679ef5f7e762f7bd84d00b86c02545";
       sha256 = "0g8ilbhrp4i4pfxkayh9cprdx1yffiyh7zw3qming61p9pcyvpa1";
     };
-
   in {
     packages = {
       backend-db = ./backend-db;

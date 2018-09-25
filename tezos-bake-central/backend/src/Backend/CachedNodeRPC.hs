@@ -24,11 +24,13 @@ import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, makeLenses, re, uncons, view, (<&>), (^.), _1)
+import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
+import Data.Coerce (coerce)
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -40,6 +42,8 @@ import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Semigroup, (<>), Max(..))
@@ -51,10 +55,12 @@ import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
+import Reflex.FunctorMaybe (fmapMaybe)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Request.Class
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
+import Safe (headMay)
 import Safe.Foldable (maximumByMay)
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
@@ -74,6 +80,7 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
+deriving instance Show (NodeQuery a)
 
 --data BranchData a = BranchData
 --  { _branchData_fitness :: !Fitness
@@ -132,10 +139,10 @@ unpackCacheResult (CachedResult var) = join $ liftIO $ modifyMVar var $ either o
       return (Right result {_cacheLine_used = now}, return $ _cacheLine_value result)
 
 -- get lca between two blocks
-branchPoint ::
-  ( MonadIO m
-  , MonadReader a m, HasNodeDataSource a
-  )
+branchPoint
+  :: ( MonadIO m
+     , MonadReader a m, HasNodeDataSource a
+     )
   => BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
 branchPoint x y = do
   dsrc <- asks (^. nodeDataSource)
@@ -251,7 +258,7 @@ initParams nds theseNodes = do
           Left (_ :: PublicNodeError) -> Nothing
           Right params -> Just params
       l' -> return l'
-    onChainNodes = foldl step (return Nothing) $ theseNodes
+    onChainNodes = foldl step (return Nothing) theseNodes
 
   when needParams $ onChainNodes >>= \case
     Just params -> do
@@ -326,48 +333,51 @@ nodeQueryDataSource q' = do
 
   (qBranch, q) <- maybe (throwError $ RpcError_HttpException "NOT ENOUGH HISTORY" ^. re asRpcError) pure $ getKey protoInfo history q'
 
-  resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache ->
-    case DMap.lookup q cache of
-      Just avar -> do
-        -- sayShow "cache hit!"
-        pure (cache, avar)
-      Nothing -> do
-        -- sayShow ("cache miss!", q', qBranch, q)
-        newVar <- liftIO newEmptyMVar
-        let
-          mkResult now v = CacheLine
-            { _cacheLine_value = v
-            , _cacheLine_used = now
-            }
-        _ <- liftIO $ forkIO $ do
-          fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
-          case fromDB of
-            Just x -> do
-              -- sayShow ("found in db", q)
-              now <- getCurrentTime
-              putMVar newVar $ Right $ mkResult now x
+  resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache -> case DMap.lookup q cache of
+    Just avar -> pure (cache, avar) -- cache hit
+    Nothing -> do
+      newVar <- liftIO newEmptyMVar
+      let
+        mkResult now v = CacheLine
+          { _cacheLine_value = v
+          , _cacheLine_used = now
+          }
+      _ <- liftIO $ forkIO $ do
+        fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
+        case fromDB of
+          Just x -> do
+            now <- getCurrentTime
+            putMVar newVar $ Right $ mkResult now x
+          Nothing -> runReaderT (pickNode qBranch) dsrc >>= \case
             Nothing -> do
-              -- sayShow ("all nodes:", allNodes)
-              pickNode qBranch (_nodeDataSource_nodes dsrc) >>= \case
-                Nothing -> do
-                  putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
-                Just anyNode -> do
-                  let
-                    ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-                  do
-                    let
-                      unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-                      unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-                    res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
-                    now <- getCurrentTime
-                    putMVar newVar $ mkResult now <$> res'
-        pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
+              putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
+            Just anyNode -> do
+              let
+                ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+
+                unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
+                unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
+              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
+              now <- getCurrentTime
+              putMVar newVar $ mkResult now <$> res'
+      pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
 
   unpackCacheResult resultM
 
-
-pickNode :: BlockLike b => BlockHash -> MVar (Map URI (Maybe b)) -> IO (Maybe URI)
-pickNode _branch = readMVar >=> pure . fmap fst . maximumByMay (compare `on` view fitness . snd) . catMaybes . fmap sequence . Map.toList
+pickNode
+  :: forall b m a.
+  ( MonadIO m
+  , MonadReader a m, HasNodeDataSource a
+  )
+  => BlockHash -> m (Maybe URI)
+pickNode branch = do
+  dsrc <- asks (^. nodeDataSource)
+  nodeHeads <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
+  fmap (headMay . catMaybes) $ for (Map.toList $ Map.mapMaybe id nodeHeads) $ \(nodeUri, nodeHead) ->
+    containsBranch nodeHead >>= \isCanditate ->
+      pure $ if isCanditate then Just nodeUri else Nothing
+  where
+    containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
 nodeQueryDataSourceImpl
   :: forall a.
@@ -377,22 +387,18 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either RpcError b))
   -> NodeQuery a
   -> IO (Either RpcError a)
-nodeQueryDataSourceImpl chainId _proto ctx _self q = runExceptT $ do
-  let
-    -- self :: NodeQuery b -> ExceptT RpcError IO b
-    -- self = (>>= either throwError pure) . liftIO . self'
+nodeQueryDataSourceImpl chainId _proto ctx _self q = runExceptT $ case q of
+  NodeQuery_BakingRights branch targetLevel ->
+    nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
+  NodeQuery_EndorsingRights branch targetLevel ->
+    nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
+  NodeQuery_Account branch contractId ->
+    nodeRPC' $ rContract chainId branch contractId
+  NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
+  where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (nodeRPC q') ctx
-  case q of
 
-    NodeQuery_BakingRights branch targetLevel ->
-      nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
-    NodeQuery_EndorsingRights branch targetLevel ->
-      nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
-    NodeQuery_Account branch contractId ->
-      nodeRPC' $ rContract chainId branch contractId
-
-    NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
 
 withCache ::
   ( MonadReader r m , HasNodeDataSource r
@@ -492,8 +498,5 @@ tryFetchFromCache db q = do
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
-deriving instance Show (NodeQuery a)
-
 makeRequestForData ''NodeQuery
-
 makeLenses 'NodeDataSource

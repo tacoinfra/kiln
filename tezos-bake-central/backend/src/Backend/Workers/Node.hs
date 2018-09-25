@@ -9,7 +9,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 module Backend.Workers.Node where
 
@@ -22,8 +21,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (MonadReader, runReaderT, ReaderT)
 import Control.Monad.State (execStateT)
-import Data.Bifunctor (first, second)
-import Data.Either.Combinators (rightToMaybe)
+import Data.Bifunctor (first)
 import Data.Foldable (for_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -32,7 +30,6 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup ((<>))
-import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
@@ -42,7 +39,7 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
-import Rhyolite.Schema (Id (..), IdData, Json (..))
+import Rhyolite.Schema (Id (..), IdData)
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -52,7 +49,7 @@ import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, 
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (AsPublicNodeError, HasPublicNodeContext, PublicNode (..),
-                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead, getPublicNodeUri)
+                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleEndpointError, clearNodeWrongChainError,
@@ -99,16 +96,16 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
   oldHead <- runReaderT dataSourceHead nds
   newBlock <- modifyMVar cacheVar $ \cache -> do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $ flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ flip execStateT cache $ do
-      accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
-      sayShow (if newBlock then "new block" else "known block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
+      flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
+        flip execStateT cache $ do
+          _ <- accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
+          sayShow (if newBlock then "new block" else "known block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-    -- say $ "new block from node at " <> Uri.render nodeAddr
-    -- say $ T.pack $ show headBlockInfo
     updatedLevel <- atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
@@ -133,10 +130,7 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
     -- out "new" blocks that are already on the branch of `oldHead`?
     when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
       let now = headBlockInfo ^. timestamp
-      have :: Maybe (Id Parameters) <- listToMaybe . stripOnly <$> [queryQ|
-        SELECT c."id"
-        FROM "Parameters" c
-        WHERE c."chain" = ?chainId |]
+      have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
       case have of
         Just entryId ->
           updateAndNotify entryId
