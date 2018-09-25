@@ -6,22 +6,27 @@ let
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
-    bytestring-trie-src = ../../../contrib/bytestring-trie;
-    rhyolite-src = ../../../rhyolite;
-    # rhyolite-src = pkgs.fetchFromGitHub {
-    #   owner = "obsidiansystems";
-    #   repo = "rhyolite";
-    #   rev = "3ac3e40edec5354b773af55c142427714ce2ef71";
-    #   sha256 = "1d75r3hx6bbh3kgki1j6l3rldn2awgcmxwc878gi0rgpmv3gdynx";
-    # };
+    bytestring-trie-src = pkgs.fetchFromGitHub {
+      owner = "obsidiansystems";
+      repo = "bytestring-trie";
+      rev = "27117ef4f9f01f70904f6e8007d33785c4fe300b";
+      sha256 = "103fqr710pddys3bqz4d17skgqmwiwrjksn2lbnc3w7s01kal98a";
+    };
+    rhyolite-src = pkgs.fetchFromGitHub {
+      owner = "obsidiansystems";
+      repo = "rhyolite";
+      rev = "212e9898d464378270cd1e8b58f6e262d43f0aa3";
+      sha256 = "0lcvmzpmrg9d11h43f0v9pwkn6a0xi23j3kzq8hgfq3nhygjshs4";
+    };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = dep/semantic-reflex;
-    #semantic-reflex-src = pkgs.fetchFromGitHub {
-    #  owner = "tomsmalley";
-    #  repo = "semantic-reflex";
-    #  rev = "38fce7e4d08d46b8664768f1b7fe38846dbac1e2";
-    #  sha256 = "1s2p12r682wd8j2z63pjvbi4s9v02crh6nz8kjilwdsfs02yp5p2";
-    #};
+    semantic-reflex-src = pkgs.fetchFromGitHub {
+      owner = "danbornside";
+      # owner = "tomsmalley";
+      repo = "semantic-reflex";
+      rev = "26268b0236679ef5f7e762f7bd84d00b86c02545";
+      sha256 = "0g8ilbhrp4i4pfxkayh9cprdx1yffiyh7zw3qming61p9pcyvpa1";
+    };
 
   in {
     packages = {
@@ -33,7 +38,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
         sha256 = "0s32099nyk7pw44w9nsgi6q1w16f81sd57snc9gj131ymjp9nprv";
       };
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
-      bytestring-trie = bytestring-trie-src;
     };
 
     overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
@@ -53,6 +57,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       gargoyle-postgresql = pkgs.haskell.lib.doJailbreak super.gargoyle-postgresql;
       gargoyle-nix = pkgs.haskell.lib.doJailbreak super.gargoyle-nix;
 
+      bytestring-trie = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "bytestring-trie" bytestring-trie-src {});
 
       semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
 
