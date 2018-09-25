@@ -2,7 +2,7 @@
 module Backend.Supervisor where
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
-import Control.Monad (join, unless, void, when, (<=<))
+import Control.Monad (join)
 import Say
 
 withTermination :: ((IO a -> IO ()) -> IO b) -> IO b

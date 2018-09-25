@@ -460,14 +460,11 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             Just _ -> "Resolved: " <> txt
             Nothing -> txt
       in case specificLog of
-          ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ endpointType address alias) -> do
-            let endpointTypeName = case endpointType of
-                  EndpointType_Node -> "node"
-                  EndpointType_Client -> "client"
-            header $ "Unable to connect to " <> endpointTypeName <> (maybe "" (" " <>) alias) <> " at " <> Uri.render address
+          ErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> do
+            header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
 
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ address alias expectedChainId actualChainId) -> do
-            header $ "Node on wrong network: " <> maybe (Uri.render address) id alias
+          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) -> do
+            header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
             el "p" $
               text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
@@ -481,7 +478,7 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             nodeAddrDyn <- holdUniqDyn $ fmap (_node_address &&& _node_alias) <$> (MMap.lookup (_errorLogBadNodeHead_node l) <$> nodesDyn)
             dyn_ $ ffor nodeAddrDyn $ traverse_ $ \(addr,alias) -> do
               let (mkHeader, message) = badNodeHeadMessage text blockHashLink l
-              header $ mkHeader $ maybe (Uri.render addr) id alias
+              header $ mkHeader $ fromMaybe (Uri.render addr) alias
               el "p" message
 
           ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
@@ -697,13 +694,13 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMap (Either (Id Node) URI) (ErrorLog, ErrorLogView)
+errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMap (Id Node) (ErrorLog, ErrorLogView)
 errorsByNode xs = MMap.fromList [(k, (l, t)) | (l, t) <- MMap.elems xs, Just k <- [nodeKeyForErrorLogView t]]
   where
     nodeKeyForErrorLogView = \case
-      ErrorLogView_InaccessibleEndpoint (ErrorLogInaccessibleEndpoint _ EndpointType_Node url _) -> Just $ Right url
-      ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ url _ _ _) -> Just $ Right url
-      ErrorLogView_BadNodeHead (l@ErrorLogBadNodeHead{}) -> Just $ Left $ _errorLogBadNodeHead_node l
+      ErrorLogView_InaccessibleNode l@ErrorLogInaccessibleNode{} -> Just $ _errorLogInaccessibleNode_node l
+      ErrorLogView_NodeWrongChain l@ErrorLogNodeWrongChain{} -> Just $ _errorLogNodeWrongChain_node l
+      ErrorLogView_BadNodeHead l@ErrorLogBadNodeHead{} -> Just $ _errorLogBadNodeHead_node l
       _ -> Nothing
 
 nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
@@ -743,7 +740,7 @@ nodesTab = divClass "ui stackable grid" $ do
             divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
               let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
               let nodeTitle = case _publicNodeHead_source node of
-                    PublicNode_TzScan -> (either (urlLink . tzScanUri) (flip const) chain) $ text $ "tzscan (" <> showChain chain <> ")"
+                    PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) chain $ text $ "tzscan (" <> showChain chain <> ")"
                     PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
                     PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
               headBlockLevelHeader
@@ -757,7 +754,7 @@ nodesTab = divClass "ui stackable grid" $ do
                   , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
                   ]
 
-          void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \_ vDyn -> do
+          void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             vDyn'' <- holdUniqDyn vDyn
             vDyn'start <- sample $ current vDyn''
             vDyn'update <- throttle 0.2 (updated vDyn'')
@@ -772,7 +769,7 @@ nodesTab = divClass "ui stackable grid" $ do
                   holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
 
               headBlockLevelHeader
-                (text $ maybe (uriHostPortPath $ _node_address node) id $ _node_alias node)
+                (text $ fromMaybe (uriHostPortPath $ _node_address node) $ _node_alias node)
                 (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
                 fallingBehindBy
 
@@ -789,10 +786,10 @@ nodesTab = divClass "ui stackable grid" $ do
                   , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                   ]
 
-                hasAlert <- holdUniqDyn $ MMap.lookup (Right $ _node_address node) . errorsByNode <$> alerts
+                hasAlert <- holdUniqDyn $ MMap.lookup nodeId . errorsByNode <$> alerts
                 dyn_ $ ffor hasAlert $ \case
                   Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
-                    ErrorLogView_InaccessibleEndpoint{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
+                    ErrorLogView_InaccessibleNode{} -> divClass "ui error message" $ divClass "header" $ text "Unable to connect."
                     ErrorLogView_NodeWrongChain{} -> divClass "ui error message" $ divClass "header" $ text "On wrong network."
                     _ -> blank
                   _ -> blank
