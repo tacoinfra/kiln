@@ -14,6 +14,7 @@
 
 module Frontend where
 
+import Control.Monad.Primitive (PrimMonad)
 import Control.Applicative (liftA2)
 import Control.Lens (_1, _2)
 import Control.Monad (join, when, (<=<))
@@ -58,7 +59,7 @@ import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
+import Rhyolite.Frontend.App (MonadRhyoliteWidget, MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Request.Common (decodeValue')
 import Rhyolite.Route (RouteEnv)
 import Rhyolite.Schema (Email, Id, Json (..))
@@ -82,11 +83,30 @@ import Common.Schema hiding (Event)
 import Frontend.Common
 
 import Common.Vassal
+import Obelisk.Frontend
+import Obelisk.Route
+import Obelisk.Route.Frontend
+import Common.Route
 
-frontend :: (StaticWidget x (), Widget x ())
-frontend = (headTag,) $ void $ do
+frontend :: Frontend (R AppRoute)
+frontend = Frontend
+  { _frontend_head = headTag
+  , _frontend_body = prerender (return ()) $ frontendBody
+  , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
+  }
+
+-- frontend :: (StaticWidget x (), Widget x ())
+frontendBody ::
+  ( MonadWidget t m
+  , HasJS x m
+  , MonadFix (Performable m)
+  , PrimMonad m
+  )
+  => m ()
+frontendBody = void $ do
+  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
   let decodeViaJson = decodeValue' . LBS.fromStrict . T.encodeUtf8
-  route :: RouteEnv <- liftIO (Obelisk.ExecutableConfig.get $ T.pack Config.route) >>= \case
+  route :: RouteEnv <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ fromMaybe (error "Unable to parse injected route") (decodeViaJson r)
     Nothing -> do
       protocol <- getLocationProtocol
@@ -96,9 +116,9 @@ frontend = (headTag,) $ void $ do
 
   checkForUpgrade <-
     fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
-      liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.checkForUpgrade
+      liftIO $ getExecutableConfig $ T.pack Config.checkForUpgrade
 
-  chain :: Either NamedChain ChainId <- ffor (liftIO $ Obelisk.ExecutableConfig.get $ T.pack Config.chain) $ \r ->
+  chain :: Either NamedChain ChainId <- ffor (liftIO $ getExecutableConfig $ T.pack Config.chain) $ \r ->
     maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
   runRhyoliteWidget (Left $ websocketUrlFromRouteEnv route) $ runReaderT appMain Cfg

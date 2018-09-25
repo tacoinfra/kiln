@@ -1,5 +1,5 @@
 { system ? builtins.currentSystem
-, supportGargoyle ? false  # This must default to `true` for 'ob run' to work.
+, supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
 }:
 let
   obelisk = import .obelisk/impl { inherit system; };
@@ -47,6 +47,11 @@ obelisk.project ./. ({ pkgs, ... }@args:
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
+
+      # TODO Don't jailbreak.
+      gargoyle = pkgs.haskell.lib.doJailbreak super.gargoyle;
+      gargoyle-postgresql = pkgs.haskell.lib.doJailbreak super.gargoyle-postgresql;
+      gargoyle-nix = pkgs.haskell.lib.doJailbreak super.gargoyle-nix;
 
 
       semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));

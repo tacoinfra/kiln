@@ -74,6 +74,11 @@ library
     , tezos-bake-monitor-lib
     , time
     , unix
+    , obelisk-backend
+    , obelisk-route
+    , frontend
+    , obelisk-backend
+    , obelisk-frontend
 
   exposed-modules:
     Backend
@@ -112,4 +117,4 @@ executable backend
       base
     , backend
 
-  ghc-options: -prof -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+  ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

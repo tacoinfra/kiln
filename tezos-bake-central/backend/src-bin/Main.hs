@@ -1,4 +1,6 @@
+{-# LANGUAGE BangPatterns #-}
+
 import Backend
 
 main :: IO ()
-main = backend
+main = backendMain runBackend

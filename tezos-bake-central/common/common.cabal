@@ -47,6 +47,9 @@ library
     , time
     , transformers-compat
     , writer-cps-mtl
+    , static
+    , obelisk-route
+    , dependent-sum
 
   exposed-modules:
     Common
@@ -56,6 +59,7 @@ library
     Common.AppendIntervalMap
     Common.Config
     Common.HeadTag
+    Common.Route
     Common.Schema
     Common.URI
     Common.Vassal

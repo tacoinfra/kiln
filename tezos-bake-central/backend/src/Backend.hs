@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,6 +11,11 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+{-# OPTIONS_GHC -Wall -Werror
+ -Wno-unused-imports
+ -Wno-type-defaults
+ #-}
 
 module Backend where
 
@@ -31,7 +37,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Dependent.Map (DMap)
+import Data.Dependent.Map (DMap, DSum(..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, foldl', for_, toList, traverse_)
@@ -69,8 +75,12 @@ import qualified Network.HTTP.Simple as Http
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
+
+import Common.Route
+import Obelisk.Backend
+import Obelisk.Route
 import Prelude hiding ((.))
-import Reflex.Dom.Core (renderStatic)
+import Reflex.Dom.Core (renderStatic, DomBuilder)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, getTime, runDb, selectMap)
@@ -90,6 +100,7 @@ import Say (say, sayErr, sayShow)
 import Snap.Core (MonadSnap, route)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
+import qualified Snap.Http.Server.Config as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import System.Console.GetOpt (ArgDescr (ReqArg), OptDescr (Option))
 import System.FilePath ((</>))
@@ -130,6 +141,10 @@ import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 
 import Backend.WebApi (v1PublicApi)
+import Obelisk.Frontend
+import Frontend(frontend)
+import System.Environment (withArgs, getArgs, getProgName)
+import System.Console.GetOpt
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -160,45 +175,33 @@ timeit note errback action = do
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
 
-backend :: IO ()
-backend = do
+backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
+backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
 
-  let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
-  cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
-
-  -- let emailFromAddress = "noreply@obsidian.systems"
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
-      (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
+      (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  -- !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
-  --   (pure $
-  --     fromMaybe (error "invalid URL") . uriToRouteEnv <$>
-  --       (_opts_route =<< SnapServer.getOther cfg))
-  --   (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
-
-  -- let chain = Config.defaultChain
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
-    (pure $ _opts_chain =<< SnapServer.getOther cfg)
+    (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
-  -- !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
-  --   (pure $ _opts_serveNodeCache =<< SnapServer.getOther cfg)
-  --   (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
+  !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
+    (pure $ _opts_serveNodeCache cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
 
-  -- !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
-  --   (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
-  --   (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
+  !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
+    (pure $ _opts_checkForUpgrade cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
 
-  -- !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
-  --   (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
-  --   (getConfigFromFile Just $ configPath Config.upgradeBranch)
+  !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
+    (pure $ _opts_upgradeBranch cfg)
+    (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
-  -- let pgConnString = "postgresql://"
   !(pgConnString :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
+    (pure $ _opts_pgConnectionString cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
   let maybeNamedChain = either Just (const Nothing) chain
@@ -207,17 +210,17 @@ backend = do
     firstOption = (fmap.fmap) getFirst . fmap Semi.getOption . fold . (fmap.fmap) Semi.Option . (fmap.fmap.fmap) First
 
   !(tzscanApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_tzscanApiUri =<< SnapServer.getOther cfg)
+    [ (pure $ _opts_tzscanApiUri cfg)
     , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri)
     , pure $ (getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain)
     ]
   !(blockscaleApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_blockscaleApiUri =<< SnapServer.getOther cfg)
+    [ (pure $ _opts_blockscaleApiUri cfg)
     , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri)
     , pure $ (getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain)
     ]
   !(obsidianApi :: Maybe URI) <- firstOption
-    [ (pure $ _opts_obsidianApiUri =<< SnapServer.getOther cfg)
+    [ (pure $ _opts_obsidianApiUri cfg)
     , (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri)
     , pure $ (getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain)
     ]
@@ -250,66 +253,54 @@ backend = do
 
   say $ "Monitoring network " <> toBase58Text chainId
 
-  -- let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
-  -- !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-  --   [ Just headTag
-  --   , injectPure (T.pack Config.route) . encodeViaJson <$> routeEnv
-  --   , Just $ injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
-  --   , Just $ injectPure (T.pack Config.chain) $ showChain chain
-  --   ]
-
   withDb dbSpec $ \db -> do
-    -- runNoLoggingT $ runDb (Identity db) $ do
-    --   tableInfo <- getTableAnalysis
-    --   runMigration $ do
-    --     migrateAccount tableInfo
-    --     migrateQueuedEmail tableInfo
-    --     migrateSchema tableInfo
+    runNoLoggingT $ runDb (Identity db) $ do
+      tableInfo <- getTableAnalysis
+      runMigration $ do
+        migrateAccount tableInfo
+        migrateQueuedEmail tableInfo
+        migrateSchema tableInfo
 
     dataSrc <- blankNodeDataSource db chainId httpMgr
 
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      -- addFinalizer <=< workerWithDelay (pure 10) $ const $
-      --   runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+      addFinalizer <=< workerWithDelay (pure 10) $ const $
+        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
-      -- (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-      --   (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
-      --   (notifyHandler dataSrc)
-      --   (viewSelectorHandler (leftToMaybe chain) dataSrc db)
-      --   (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
-      -- addFinalizer wsFinalizer
+      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
+        (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
+        (notifyHandler dataSrc)
+        (viewSelectorHandler (leftToMaybe chain) dataSrc db)
+        (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
+      addFinalizer wsFinalizer
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc appConfig db publicDataSources
-      -- addFinalizer =<< nodeAlertWorker dataSrc appConfig db
-      -- addFinalizer =<< clientWorker appConfig dataSrc
-      -- addFinalizer =<< delegateWorker dataSrc
+      addFinalizer =<< nodeAlertWorker dataSrc appConfig db
+      addFinalizer =<< clientWorker appConfig dataSrc
+      addFinalizer =<< delegateWorker dataSrc
 
-      -- if checkForUpgrade then
-      --   addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
-      -- else
-      --   runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
+      if checkForUpgrade then
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
+      else
+        runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
+      liftIO $ serve $ \case
+        BackendRoute_Listen :=> _ -> handleListen
+        BackendRoute_PublicCacheApi :=> _
+          | serveNodeCache -> v1PublicApi dataSrc
+          | otherwise -> return ()
 
-      SnapServer.httpServe cfg (route $
-      --   [ ("", rootHandler staticHead)
-      --   , ("/listen", handleListen)
-      --   , ("static", serveAssets "static" "static")
-      --   , ("", serveDirectory "frontend.jsexe")
-      --   ] ++ 
-         [("/api/v1", v1PublicApi dataSrc)]
-        )
-
-rootHandler :: MonadSnap m => ByteString -> m ()
-rootHandler pageHead =
-  serveApp "" $ def
-    & appConfig_initialHead .~ Just pageHead
-
+backend :: Opts -> Backend BackendRoute AppRoute
+backend cfg = Backend
+  { _backend_run = backendImpl cfg
+  , _backend_routeEncoder = backendRouteEncoder
+  }
 
 clearMailQueueWithDynamicEmailEnv
   :: forall m f.
@@ -389,7 +380,7 @@ instance Monoid Opts where
   mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
-optsArgDescr :: MonadSnap m => [OptDescr (Maybe (SnapServer.Config m Opts))]
+optsArgDescr :: [OptDescr Opts]
 optsArgDescr =
   [ Option [] ["pg-connection"] (mkReqArg "CONNSTRING" $ \x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
@@ -419,10 +410,56 @@ optsArgDescr =
 
   ]
   where
-    mkReqArg var f = ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var
+    mkReqArg var f = ReqArg (\x -> f x) var
 
 configPath :: FilePath -> FilePath
 configPath = ("config" </>)
 
 mkRootUriOrError :: Text -> URI
 mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
+
+encodeViaJson :: Aeson.ToJSON a => a -> Text
+encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
+
+backendMain :: (Backend BackendRoute AppRoute -> Frontend (R AppRoute) -> IO ()) -> IO ()
+backendMain k = do
+  myArgs <- getArgs
+
+  let (opts', rest, errs) = getOpt RequireOrder optsArgDescr myArgs
+  case errs of
+    _:_ -> do
+      prog <- getProgName
+      let header = "Usage: " <> prog <> " [OPTION...] files..."
+      let msg = concat errs
+            ++ usageInfo header optsArgDescr
+            ++ usageInfo "\n\nadditional options for snap can be provided after a --\n" ( SnapServer.optDescrs @ Snap.Snap $ SnapServer.defaultConfig)
+
+      ioError $ userError msg
+    [] -> do
+      print errs
+      let cfg = fold opts'
+
+      !(routeEnv :: Maybe RouteEnv) <- liftA2 (<|>)
+        (pure $
+          fromMaybe (error "invalid URL") . uriToRouteEnv <$>
+            (_opts_route cfg))
+        (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
+
+      !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
+        (pure $ _opts_checkForUpgrade cfg)
+        (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
+
+      !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
+        (pure $ _opts_chain cfg)
+        (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
+
+      let
+        staticHead :: DomBuilder t m => m ()
+        !staticHead = do
+            headTag
+            for_ routeEnv $ injectPure (T.pack Config.route) . encodeViaJson
+            injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
+            injectPure (T.pack Config.chain) $ showChain chain
+
+      withArgs rest $ k (backend cfg) (frontend { _frontend_head = staticHead })
+

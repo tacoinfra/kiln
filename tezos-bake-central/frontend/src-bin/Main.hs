@@ -1,8 +1,12 @@
 module Main where
 
-import Reflex.Dom (mainWidget)
-
-import Frontend (frontend)
+import Frontend
+import Common.Route
+import Obelisk.Frontend
+import Obelisk.Route.Frontend
+import Reflex.Dom
 
 main :: IO ()
-main = mainWidget $ snd frontend
+main = do
+  let Right validFullEncoder = checkEncoder backendRouteEncoder
+  run $ runFrontend validFullEncoder frontend
