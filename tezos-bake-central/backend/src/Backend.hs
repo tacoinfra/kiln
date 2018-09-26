@@ -22,7 +22,7 @@ module Backend where
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
-import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right, _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -39,6 +39,8 @@ import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, for_, toList)
 import Data.Function ((&))
 import Data.Functor.Identity (Identity (..))
+import Data.List.NonEmpty(NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
@@ -118,6 +120,8 @@ import Backend.WebApi (v1PublicApi)
 import Obelisk.Frontend
 import Frontend(frontend)
 import System.Environment (withArgs, getArgs, getProgName)
+import qualified Data.Random as Random
+import qualified Data.Random.Extras as Random
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -187,19 +191,19 @@ backendImpl cfg serve = do
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
 
-  !(tzscanApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_tzscanApiUri cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri
+  !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $  _opts_tzscanApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
     , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
-  !(blockscaleApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri
+  !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_blockscaleApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
-  !(obsidianApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_obsidianApiUri cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri
+  !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_obsidianApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
@@ -208,12 +212,14 @@ backendImpl cfg serve = do
     (getConfigFromFile (Just . Config.parseNodes) $ configPath Config.nodes)
 
   let
-    publicDataSources :: [DataSource]
-    publicDataSources = catMaybes
+    publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
+    publicDataSources' = catMaybes
       [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
       , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
       , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
       ]
+
+  publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
   sayShow ("PUBLIC NODES:", publicDataSources)
 
   let
@@ -228,7 +234,7 @@ backendImpl cfg serve = do
     Right chainId -> pure chainId
     Left NamedChain_Mainnet -> pure mainnetChainId
 
-    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
+    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
@@ -333,9 +339,9 @@ data Opts = Opts
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
   , _opts_serveNodeCache :: !(Maybe Bool)
-  , _opts_tzscanApiUri :: !(Maybe URI)
-  , _opts_blockscaleApiUri :: !(Maybe URI)
-  , _opts_obsidianApiUri :: !(Maybe URI)
+  , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
+  , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
+  , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Set URI))
   }
 
@@ -355,7 +361,7 @@ instance Semigroup Opts where
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -379,11 +385,11 @@ optsArgDescr =
   , mkReqArg Config.serveNodeCache "BOOL" (\x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom tzscan API URL.  Default none."
-  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom Blockscale API URL.  Default none."
-  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom Obsidian API URL.  Default none."
 
   , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })

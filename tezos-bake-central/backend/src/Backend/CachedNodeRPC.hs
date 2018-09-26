@@ -82,43 +82,11 @@ data NodeQuery a where
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
 deriving instance Show (NodeQuery a)
 
---data BranchData a = BranchData
---  { _branchData_fitness :: !Fitness
---  , _branchData_level :: !RawLevel
---  , _branchData_timestamp :: !UTCTime
---  , _branchData_info :: !(Maybe a)
---  } deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
-
--- not 100% sure i have the lawful combination of these.
---instance Applicative BranchData where
---  f <*> x = BranchData (_branchData_fitness fx) (_branchData_level fx) (_branchData_timestamp fx) (_branchData_info f <*> _branchData_info x)
---    where
---      fx = void f <> void x
---  pure a = mempty {_branchData_info = pure a}
-
---instance Alternative BranchData where
---  (<|>) = (<>)
---  empty = mempty
-
---instance Semigroup (BranchData a) where
---  x <> y = BranchData (_branchData_fitness xy) (_branchData_level xy) (_branchData_timestamp xy) (_branchData_info xy)
---    where
---      xy | void x > void y = x
---         | otherwise = y
-
---instance Monoid (BranchData a) where
---  mempty = BranchData
---    { _branchData_fitness = toFitness mempty
---    , _branchData_level = 0
---    , _branchData_timestamp = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
---    , _branchData_info = Nothing
---    }
---  mappend = (<>)
 
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
-type CachedHistory' = CachedHistory Fitness -- (BranchData CachedBlockInfo))
+type CachedHistory' = CachedHistory Fitness
 
 data CacheLine a = CacheLine
   { _cacheLine_value :: !a

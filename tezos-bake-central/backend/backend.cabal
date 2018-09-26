@@ -79,6 +79,8 @@ library
     , frontend
     , obelisk-backend
     , obelisk-frontend
+    , random-extras
+    , random-fu
 
   exposed-modules:
     Backend
