@@ -34,6 +34,7 @@ library
     , either
     , filepath
     , formatting
+    , frontend
     , generic-deriving
     , groundhog
     , groundhog-postgresql
@@ -53,8 +54,14 @@ library
     , mtl
     , network
     , obelisk-asset-serve-snap
+    , obelisk-backend
+    , obelisk-backend
     , obelisk-executable-config-inject
+    , obelisk-frontend
+    , obelisk-route
     , postgresql-simple
+    , random-extras
+    , random-fu
     , reflex
     , reflex-dom-core
     , resource-pool
@@ -74,13 +81,6 @@ library
     , tezos-bake-monitor-lib
     , time
     , unix
-    , obelisk-backend
-    , obelisk-route
-    , frontend
-    , obelisk-backend
-    , obelisk-frontend
-    , random-extras
-    , random-fu
 
   exposed-modules:
     Backend
@@ -118,5 +118,6 @@ executable backend
   build-depends:
       base
     , backend
+    , obelisk-backend
 
   ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

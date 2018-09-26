@@ -1,5 +1,4 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -21,7 +20,6 @@ import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks)
 import Data.Text (Text)
 import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
-import GHC.Generics
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Method as Http
 import qualified Data.Text as T
