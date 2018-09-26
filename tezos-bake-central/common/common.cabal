@@ -25,6 +25,7 @@ library
     , cryptohash
     , cryptonite
     , data-default
+    , dependent-sum
     , either
     , file-embed
     , hashing
@@ -33,6 +34,7 @@ library
     , modern-uri
     , monoidal-containers
     , mtl
+    , obelisk-route
     , reflection
     , reflex
     , reflex-dom-core
@@ -40,6 +42,7 @@ library
     , rhyolite-datastructures
     , safe-exceptions
     , scientific
+    , static
     , template-haskell
     , text
     , tezos-bake-monitor-lib
@@ -47,9 +50,6 @@ library
     , time
     , transformers-compat
     , writer-cps-mtl
-    , static
-    , obelisk-route
-    , dependent-sum
 
   exposed-modules:
     Common

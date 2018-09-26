@@ -33,6 +33,9 @@ library
     , monoidal-containers
     , mtl
     , obelisk-executable-config
+    , obelisk-frontend
+    , obelisk-route
+    , primitive
     , reflex
     , reflex-dom-core
     , reflex-dom-forms
@@ -44,9 +47,6 @@ library
     , tezos-bake-monitor-lib
     , these
     , time
-    , primitive
-    , obelisk-frontend
-    , obelisk-route
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 

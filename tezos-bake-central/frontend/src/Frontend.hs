@@ -98,7 +98,6 @@ frontend = Frontend
   , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
   }
 
--- frontend :: (StaticWidget x (), Widget x ())
 frontendBody ::
   ( MonadWidget t m
   , HasJS x m
