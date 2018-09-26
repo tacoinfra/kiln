@@ -46,7 +46,7 @@ snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text 
 snapHead = maybe (Left "cache not ready") pure <$> dataSourceHead
 
 v1PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v1PublicApi dataSrc = route $ fmap (first ("api/" <>))
+v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
   , ( chainTXT <> "/params",    writeJSON $ pure . pure)
   , ( chainTXT <> "/head",      writeJSON $ const snapHead )
