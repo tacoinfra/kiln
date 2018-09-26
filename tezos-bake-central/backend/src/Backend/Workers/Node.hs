@@ -16,10 +16,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
-import Control.Monad.Except (MonadError, runExceptT)
+import Control.Monad.Except (MonadError, runExceptT, ExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT)
+import Control.Monad.Reader (MonadReader, runReaderT, ReaderT)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first)
 import Data.Foldable (for_)
@@ -99,8 +99,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
       flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
         flip execStateT cache $ do
-          acc <- accumHistory nodeMonitorBranchProgess chainId blockSummary headBlockInfo
-          sayShow ("new block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo, acc)
+          _ <- accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
+          sayShow (if newBlock then "new block" else "known block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
@@ -150,14 +150,6 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
       , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
       , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
       ]
-
-blockSummary :: BlockLike b => b -> BranchData a
-blockSummary blk = BranchData
-  { _branchData_info = Nothing
-  , _branchData_timestamp = blk ^. timestamp
-  , _branchData_level = blk ^. level
-  , _branchData_fitness = blk ^. fitness
-  }
 
 updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
 updateNetworkStats httpMgr db nid before = do
@@ -269,13 +261,11 @@ publicNodesWorker nds appConfig db = foldMap workerForSource
   where
     chain = _nodeDataSource_chain nds
 
-    queryPublicNode :: forall a.
-      (forall e r m.
-        ( MonadIO m
-        , MonadError e m , AsPublicNodeError e
-        , MonadReader r m, HasPublicNodeContext r
-        ) => m a) -> DataSource -> IO (Either PublicNodeError a)
+    queryPublicNode
+      :: forall a. ReaderT PublicNodeContext (ExceptT PublicNodeError IO) a
+      -> DataSource -> IO (Either PublicNodeError a)
     queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
+    {-# INLINE queryPublicNode #-}
 
     workerForSource :: DataSource -> IO (IO ())
     workerForSource source@(pn, _, uri) = worker' $ do
@@ -285,11 +275,13 @@ publicNodesWorker nds appConfig db = foldMap workerForSource
 
     getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ getCurrentHead chain
+    {-# INLINE getHeadFromSource #-}
 
     publicNodeEnabled :: PublicNode -> IO Bool
     publicNodeEnabled pn = fmap (fromMaybe False . listToMaybe) $
       runNoLoggingT $ runDb (Identity db) $
         project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
+    {-# INLINE publicNodeEnabled #-}
 
     updatePublicNodeInDb :: DataSource -> IO ()
     updatePublicNodeInDb dsrc@(source, chain, uri) = getHeadFromSource dsrc >>= \case
@@ -316,7 +308,8 @@ publicNodesWorker nds appConfig db = foldMap workerForSource
             RETURNING id
           |]
           for_ updatedRecord $ notifyEntityId NotificationType_Update
-
+    {-# INLINE updatePublicNodeInDb #-}
+{-# INLINE publicNodesWorker #-}
 
 nodeAlertWorker
   :: NodeDataSource

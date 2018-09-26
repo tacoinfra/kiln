@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -6,6 +8,7 @@
 
 module Backend.WebApi where
 
+import Data.Bifunctor
 import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
@@ -18,6 +21,7 @@ import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks)
 import Data.Text (Text)
 import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
+import GHC.Generics
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Method as Http
 import qualified Data.Text as T
@@ -41,9 +45,8 @@ import Tezos.Types
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapHead = maybe (Left "cache not ready") pure <$> dataSourceHead
 
-
 v1PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v1PublicApi dataSrc = route
+v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
   , ( chainTXT <> "/params",    writeJSON $ pure . pure)
   , ( chainTXT <> "/head",      writeJSON $ const snapHead )
@@ -54,6 +57,7 @@ v1PublicApi dataSrc = route
   where
     chain = _nodeDataSource_chain dataSrc
     chainTXT = toBase58 chain
+
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
       liftIO (MVar.tryReadMVar (_nodeDataSource_parameters dataSrc)) >>= \case

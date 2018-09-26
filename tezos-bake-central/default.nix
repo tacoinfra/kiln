@@ -6,13 +6,26 @@ let
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
+    bytestring-trie-src = pkgs.fetchFromGitHub {
+      owner = "obsidiansystems";
+      repo = "bytestring-trie";
+      rev = "27117ef4f9f01f70904f6e8007d33785c4fe300b";
+      sha256 = "103fqr710pddys3bqz4d17skgqmwiwrjksn2lbnc3w7s01kal98a";
+    };
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "ceb5334d0c80304d05b80d11830d880cdb1a3562";
-      sha256 = "0c658d17g7ax22v51djga6vdwxvl7p3axhbj2pf0l25hfvjjf7va";
+      rev = "212e9898d464378270cd1e8b58f6e262d43f0aa3";
+      sha256 = "0lcvmzpmrg9d11h43f0v9pwkn6a0xi23j3kzq8hgfq3nhygjshs4";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
+    semantic-reflex-src = pkgs.fetchFromGitHub {
+      owner = "danbornside";
+      # owner = "tomsmalley";
+      repo = "semantic-reflex";
+      rev = "26268b0236679ef5f7e762f7bd84d00b86c02545";
+      sha256 = "0g8ilbhrp4i4pfxkayh9cprdx1yffiyh7zw3qming61p9pcyvpa1";
+    };
   in {
     packages = {
       backend-db = ./backend-db;
@@ -25,19 +38,26 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
     };
 
-    overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: {
+    overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+      email-validate = dontCheck super.email-validate;
+      modern-uri = dontCheck super.modern-uri;
+      base58-bytestring = dontCheck super.base58-bytestring;
+      lens-aeson = dontCheck super.lens-aeson;
+      megaparsec = dontCheck super.megaparsec;
       backend-db = if supportGargoyle
         then
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
 
-      semantic-reflex = pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (pkgs.fetchFromGitHub {
-        owner = "tomsmalley";
-        repo = "semantic-reflex";
-        rev = "38fce7e4d08d46b8664768f1b7fe38846dbac1e2";
-        sha256 = "1s2p12r682wd8j2z63pjvbi4s9v02crh6nz8kjilwdsfs02yp5p2";
-      } + /semantic-reflex) {});
+      # TODO Don't jailbreak.
+      gargoyle = pkgs.haskell.lib.doJailbreak super.gargoyle;
+      gargoyle-postgresql = pkgs.haskell.lib.doJailbreak super.gargoyle-postgresql;
+      gargoyle-nix = pkgs.haskell.lib.doJailbreak super.gargoyle-nix;
+
+      bytestring-trie = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "bytestring-trie" bytestring-trie-src {});
+
+      semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
 
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
 

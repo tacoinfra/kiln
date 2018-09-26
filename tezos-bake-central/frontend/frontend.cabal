@@ -44,6 +44,9 @@ library
     , tezos-bake-monitor-lib
     , these
     , time
+    , primitive
+    , obelisk-frontend
+    , obelisk-route
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 
@@ -53,6 +56,9 @@ executable frontend
   build-depends:
       base
     , frontend
+    , common
+    , obelisk-frontend
+    , obelisk-route
     , reflex-dom
   ghc-options: -threaded
   if os(darwin)

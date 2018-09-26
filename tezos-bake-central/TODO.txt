@@ -1,0 +1,16 @@
+bakemonitor todos:
+* update pivotal
+* Fix O(n) queries in errors ViewSelectorHandler
+* bake rights caching
+* do sending emails with new errors
+* factor out JSON Deriving stuff.
+* cache protocol parameters properly instead of using ~/context/constatns since
+  that changes over time without ProtoHash Changes
+
+RPC/Schema stuff
+* parse rpc defns in haskell datatypes
+* parse schema defns in haskell datatypes (use existing hjsonschema)
+* factor out leaf types (b58check/fitness/etc.)
+* guided codegen from schema types
+* guided codegen from rpc directory
+

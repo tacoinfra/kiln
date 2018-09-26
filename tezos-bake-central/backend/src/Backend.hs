@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE EmptyCase #-}
@@ -11,12 +12,17 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+{-# OPTIONS_GHC -Wall -Werror
+ -Wno-unused-imports
+ -Wno-type-defaults
+ #-}
+
 module Backend where
 
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
-import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right)
+import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right, _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -27,10 +33,14 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
+import Data.Dependent.Map (DMap, DSum(..))
+import qualified Data.Dependent.Map as DMap
 import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, for_, toList)
 import Data.Function ((&))
 import Data.Functor.Identity (Identity (..))
+import Data.List.NonEmpty(NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
@@ -48,8 +58,12 @@ import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
 import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
+
+import Common.Route
+import Obelisk.Backend
+import Obelisk.Route
 import Prelude hiding ((.))
-import Reflex.Dom.Core (renderStatic)
+import Reflex.Dom.Core (renderStatic, DomBuilder)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
@@ -63,6 +77,7 @@ import Say (say, sayShow)
 import Snap.Core (MonadSnap)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
+import qualified Snap.Http.Server.Config as SnapServer
 import Snap.Util.FileServe (serveDirectory)
 import qualified System.Console.GetOpt as GetOpt
 import System.FilePath ((</>))
@@ -102,6 +117,11 @@ import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 
 import Backend.WebApi (v1PublicApi)
+import Obelisk.Frontend
+import Frontend(frontend)
+import System.Environment (withArgs, getArgs, getProgName)
+import qualified Data.Random as Random
+import qualified Data.Random.Extras as Random
 
 addNode
   :: (PostgresRaw m, Monad m, PersistBackend m)
@@ -132,40 +152,37 @@ timeit note errback action = do
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
 
-backend :: IO ()
-backend = do
+backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
+backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
-
-  let cfg0 = SnapServer.defaultConfig & SnapServer.setOther mempty
-  cfg <- SnapServer.extendedCommandLineConfig (SnapServer.optDescrs cfg0 <> optsArgDescr) (<>) cfg0
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
-      (pure $ _opts_emailFromAddress =<< SnapServer.getOther cfg)
+      (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
   !(route :: Maybe URI) <- liftA2 (<|>)
-    (pure $ _opts_route =<< SnapServer.getOther cfg)
+    (pure $ _opts_route cfg)
     (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
 
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
-    (pure $ _opts_chain =<< SnapServer.getOther cfg)
+    (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
   !(serveNodeCache :: Bool) <- fmap (fromMaybe False) $ liftA2 (<|>)
-    (pure $ _opts_serveNodeCache =<< SnapServer.getOther cfg)
+    (pure $ _opts_serveNodeCache cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
-    (pure $ _opts_checkForUpgrade =<< SnapServer.getOther cfg)
+    (pure $ _opts_checkForUpgrade cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
 
   !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
-    (pure $ _opts_upgradeBranch =<< SnapServer.getOther cfg)
+    (pure $ _opts_upgradeBranch cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
   !(pgConnString :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_pgConnectionString =<< SnapServer.getOther cfg)
+    (pure $ _opts_pgConnectionString cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
   let
@@ -174,33 +191,35 @@ backend = do
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
 
-  !(tzscanApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_tzscanApiUri =<< SnapServer.getOther cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.tzscanApiUri
+  !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $  _opts_tzscanApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
     , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
-  !(blockscaleApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_blockscaleApiUri =<< SnapServer.getOther cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.blockscaleApiUri
+  !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_blockscaleApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
-  !(obsidianApi :: Maybe URI) <- firstOption
-    [ pure $ _opts_obsidianApiUri =<< SnapServer.getOther cfg
-    , getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.obsidianApiUri
+  !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_obsidianApiUri cfg
+    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
   !(nodes :: Maybe (Set URI)) <- liftA2 (<|>)
-    (pure $ getOption . _opts_nodes =<< SnapServer.getOther cfg)
+    (pure $ getOption $ _opts_nodes cfg)
     (getConfigFromFile (Just . Config.parseNodes) $ configPath Config.nodes)
 
   let
-    publicDataSources :: [DataSource]
-    publicDataSources = catMaybes
+    publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
+    publicDataSources' = catMaybes
       [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
       , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
       , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
       ]
+
+  publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
   sayShow ("PUBLIC NODES:", publicDataSources)
 
   let
@@ -215,21 +234,13 @@ backend = do
     Right chainId -> pure chainId
     Left NamedChain_Mainnet -> pure mainnetChainId
 
-    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
+    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
   say $ "Monitoring network " <> toBase58Text chainId
   for_ route $ \r -> say $ "Using route " <> URI.render r
-
-  let encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
-  !staticHead <- fmap mconcat $ traverse (fmap snd . renderStatic) $ catMaybes
-    [ Just $ headTag route
-    , injectPure Config.route . encodeViaJson <$> route
-    , Just $ injectPure Config.checkForUpgrade (tshow checkForUpgrade)
-    , Just $ injectPure Config.chain $ showChain chain
-    ]
 
   withDb dbSpec $ \db -> do
     runNoLoggingT $ runDb (Identity db) $ do
@@ -277,19 +288,17 @@ backend = do
       else
         runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
 
-      SnapServer.httpServe cfg $ Snap.route $
-        [ ("", rootHandler staticHead)
-        , ("/listen", handleListen)
-        , ("/static", serveAssets "static" "static")
-        ]
-        ++ [("/api/v1", v1PublicApi dataSrc) | serveNodeCache]
-        ++ [("", serveDirectory "frontend.jsexe")]
+      liftIO $ serve $ \case
+        BackendRoute_Listen :=> _ -> handleListen
+        BackendRoute_PublicCacheApi :=> _
+          | serveNodeCache -> v1PublicApi dataSrc
+          | otherwise -> return ()
 
-rootHandler :: MonadSnap m => ByteString -> m ()
-rootHandler pageHead =
-  serveApp "" $ def
-    & appConfig_initialHead .~ Just pageHead
-
+backend :: Opts -> Backend BackendRoute AppRoute
+backend cfg = Backend
+  { _backend_run = backendImpl cfg
+  , _backend_routeEncoder = backendRouteEncoder
+  }
 
 clearMailQueueWithDynamicEmailEnv
   :: forall m f.
@@ -330,9 +339,9 @@ data Opts = Opts
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_upgradeBranch :: !(Maybe Text)
   , _opts_serveNodeCache :: !(Maybe Bool)
-  , _opts_tzscanApiUri :: !(Maybe URI)
-  , _opts_blockscaleApiUri :: !(Maybe URI)
-  , _opts_obsidianApiUri :: !(Maybe URI)
+  , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
+  , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
+  , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Set URI))
   }
 
@@ -352,10 +361,10 @@ instance Semigroup Opts where
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty
   mappend = (<>)
 
-optsArgDescr :: MonadSnap m => [GetOpt.OptDescr (Maybe (SnapServer.Config m Opts))]
+optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
   [ mkReqArg Config.pgConnectionString "CONNSTRING" (\x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
@@ -376,21 +385,65 @@ optsArgDescr =
   , mkReqArg Config.serveNodeCache "BOOL" (\x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom tzscan API URL.  Default none."
-  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom Blockscale API URL.  Default none."
-  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = Just $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
       "Custom Obsidian API URL.  Default none."
 
   , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
   ]
   where
-    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> Just $ SnapServer.setOther (f x) mempty) var)
+    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg f var)
 
 configPath :: FilePath -> FilePath
 configPath = ("config" </>)
 
 mkRootUriOrError :: Text -> URI
 mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
+
+encodeViaJson :: Aeson.ToJSON a => a -> Text
+encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
+
+backendMain :: (Backend BackendRoute AppRoute -> Frontend (R AppRoute) -> IO ()) -> IO ()
+backendMain k = do
+  myArgs <- getArgs
+
+  let (opts', rest, errs) = GetOpt.getOpt GetOpt.RequireOrder optsArgDescr myArgs
+  case errs of
+    _:_ -> do
+      prog <- getProgName
+      let header = "Usage: " <> prog <> " [OPTION...] files..."
+      let msg = concat errs
+            ++ GetOpt.usageInfo header optsArgDescr
+            ++ GetOpt.usageInfo "\n\nadditional options for snap can be provided after a --\n" ( SnapServer.optDescrs @ Snap.Snap $ SnapServer.defaultConfig)
+
+      ioError $ userError msg
+    [] -> do
+      print errs
+      let cfg = fold opts'
+
+      !(route :: Maybe URI) <- liftA2 (<|>)
+        (pure $ _opts_route cfg)
+        (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
+
+      !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
+        (pure $ _opts_checkForUpgrade cfg)
+        (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
+
+      !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
+        (pure $ _opts_chain cfg)
+        (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
+
+      let
+        staticHead :: DomBuilder t m => m ()
+        !staticHead = do
+            headTag
+            for_ route $ injectPure (T.pack Config.route) . encodeViaJson
+            injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
+            injectPure (T.pack Config.chain) $ showChain chain
+
+      withArgs rest $ k (backend cfg) (frontend { _frontend_head = staticHead })
+

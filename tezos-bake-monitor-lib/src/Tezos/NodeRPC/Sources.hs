@@ -23,6 +23,8 @@ import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import qualified Data.Map as Map
 import Data.Semigroup ((<>))
+import Data.Maybe (fromJust)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -30,7 +32,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Types.Method (methodGet)
-import Text.URI (URI)
+import Text.URI (URI, mkURI)
 import qualified Text.URI.QQ as Uri
 
 import Tezos.NodeRPC.Class
@@ -38,7 +40,8 @@ import Tezos.NodeRPC.Network (HasNodeRPC, NodeRPCContext (..), nodeRPC, nodeRPCC
 import Tezos.NodeRPC.Types (AsRpcError, RpcError (..), asRpcError)
 import Tezos.Types
 
-type DataSource = (PublicNode, Either NamedChain ChainId, URI)
+
+type DataSource = (PublicNode, Either NamedChain ChainId, NonEmpty URI)
 
 data PublicNode
   = PublicNode_Blockscale
@@ -58,16 +61,16 @@ canFetchHistory PublicNode_TzScan = False
 canFetchHistory PublicNode_Obsidian = True
 
 
-getPublicNodeUri :: PublicNode -> NamedChain -> URI
-getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet  = [Uri.uri|https://tezos-api.obsidian.systems/zeronet/api|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet = [Uri.uri|https://tezos-api.obsidian.systems/alphanet/api|]
-getPublicNodeUri PublicNode_Obsidian NamedChain_Mainnet  = [Uri.uri|https://tezos-api.obsidian.systems/api|]
-getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = [Uri.uri|https://rpczero.tzbeta.net|]
-getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = [Uri.uri|https://rpcalpha.tzbeta.net|]
-getPublicNodeUri PublicNode_Blockscale NamedChain_Mainnet  = [Uri.uri|https://rpc.tzbeta.net|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet  = [Uri.uri|https://zeronet-api.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Alphanet = [Uri.uri|https://alphanet-api.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Mainnet  = [Uri.uri|https://api.tzscan.io|]
+getPublicNodeUri :: PublicNode -> NamedChain -> NonEmpty URI
+getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet    = pure [Uri.uri|https://zeronet-tezos-api.obsidian.systems/api|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Alphanet   = pure [Uri.uri|https://alphanet-tezos-api.obsidian.systems/api|]
+getPublicNodeUri PublicNode_Obsidian NamedChain_Mainnet    = pure [Uri.uri|https://tezos-api.obsidian.systems/api|]
+getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = pure [Uri.uri|https://rpczero.tzbeta.net|]
+getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = pure [Uri.uri|https://rpcalpha.tzbeta.net|]
+getPublicNodeUri PublicNode_Blockscale NamedChain_Mainnet  = pure [Uri.uri|https://rpc.tzbeta.net|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet      = pure [Uri.uri|https://zeronet-api.tzscan.io|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Alphanet     = pure [Uri.uri|https://alphanet-api.tzscan.io|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Mainnet      = fromJust . mkURI . ("https://api" <>) . (<> ".tzscan.io") . T.pack . show <$> ((1 :: Int) :| [2..6])
 
 tzScanUri :: NamedChain -> URI
 tzScanUri = \case
