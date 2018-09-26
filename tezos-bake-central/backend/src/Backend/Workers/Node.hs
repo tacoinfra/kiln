@@ -151,14 +151,6 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
       , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
       ]
 
---blockSummary :: BlockLike b => b -> BranchData a
---blockSummary blk = BranchData
---  { _branchData_info = Nothing
---  , _branchData_timestamp = blk ^. timestamp
---  , _branchData_level = blk ^. level
---  , _branchData_fitness = blk ^. fitness
---  }
-
 updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
 updateNetworkStats httpMgr db nid before = do
   after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
