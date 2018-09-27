@@ -1,4 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE EmptyCase #-}
@@ -8,21 +7,16 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
-{-# OPTIONS_GHC -Wall -Werror
- -Wno-unused-imports
- -Wno-type-defaults
- #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
-import Control.Lens (to, (.~), (<&>), (^.), (^?), _Just, _Right, _3)
+import Control.Lens ((.~), (<&>))
 import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -33,13 +27,13 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Default (def)
-import Data.Dependent.Map (DMap, DSum(..))
+import Data.Dependent.Map (DMap, DSum (..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, for_, toList)
 import Data.Function ((&))
 import Data.Functor.Identity (Identity (..))
-import Data.List.NonEmpty(NonEmpty(..))
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
@@ -63,14 +57,12 @@ import Common.Route
 import Obelisk.Backend
 import Obelisk.Route
 import Prelude hiding ((.))
-import Reflex.Dom.Core (renderStatic, DomBuilder)
+import Reflex.Dom.Core (DomBuilder, renderStatic)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, queryQ)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Rhyolite.Backend.Listen (insertAndNotify, updateAndNotify)
 import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
 import Rhyolite.Schema (Id (..))
 import Say (say, sayShow)
@@ -117,28 +109,11 @@ import Common.URI (mkRootUri)
 import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 
 import Backend.WebApi (v1PublicApi)
-import Obelisk.Frontend
-import Frontend(frontend)
-import System.Environment (withArgs, getArgs, getProgName)
 import qualified Data.Random as Random
 import qualified Data.Random.Extras as Random
-
-addNode
-  :: (PostgresRaw m, Monad m, PersistBackend m)
-  => Node
-  -> m (Id Node)
-addNode node = do
-  let addr = _node_address node
-  [queryQ| SELECT id FROM "Node" WHERE address = ?addr |] >>= \case
-    (Only (nodeId :: Id Node):_) -> do
-      updateAndNotify nodeId
-        [ Node_addressField =. addr
-        , Node_headLevelField =. _node_headLevel node
-        , Node_peerCountField =. _node_peerCount node
-        , Node_networkStatField =. _node_networkStat node
-        ]
-      return nodeId
-    _ -> insertAndNotify node
+import Frontend (frontend)
+import Obelisk.Frontend
+import System.Environment (getArgs, getProgName, withArgs)
 
 
 timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
@@ -257,7 +232,7 @@ backendImpl cfg serve = do
         enabled <- project Node_addressField (Node_deletedField ==. False)
 
         let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress -> do
+        for_ needToAdd $ \newAddress ->
           insert $ mkNode newAddress Nothing
 
     dataSrc <- blankNodeDataSource db chainId httpMgr
@@ -316,9 +291,9 @@ clearMailQueueWithDynamicEmailEnv db = do
       Just (_, c) ->
         ( T.unpack $ _mailServerConfig_hostName c
         , case _mailServerConfig_smtpProtocol c of
-          SmtpProtocol_Plain -> RhyoliteEmail.SMTPProtocol_Plain
-          SmtpProtocol_Ssl -> RhyoliteEmail.SMTPProtocol_SSL
-          SmtpProtocol_Starttls -> RhyoliteEmail.SMTPProtocol_STARTTLS
+            SmtpProtocol_Plain -> RhyoliteEmail.SMTPProtocol_Plain
+            SmtpProtocol_Ssl -> RhyoliteEmail.SMTPProtocol_SSL
+            SmtpProtocol_Starttls -> RhyoliteEmail.SMTPProtocol_STARTTLS
         , fromIntegral (_mailServerConfig_portNumber c)
         , T.unpack $ _mailServerConfig_userName c
         , T.unpack $ _mailServerConfig_password c

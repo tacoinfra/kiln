@@ -28,7 +28,6 @@ import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Schema (Id, Json (..))
 import Text.URI (URI)
@@ -104,79 +103,80 @@ clearNoBakerHeartbeatError cid = do
       FROM "ErrorLogBakerNoHeartbeat" t
     WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notifyEntityId NotificationType_Update
+  for_ lids $ notify . mkDefaultNotify
 
-reportInaccessibleEndpointError
+reportInaccessibleNodeError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => EndpointType -> URI -> Maybe Text -> m ()
-reportInaccessibleEndpointError endpointType addr alias = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleEndpoint) <- listToMaybe <$> [queryQ|
+  => Id Node -> m ()
+reportInaccessibleNodeError nodeId = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
-      JOIN "ErrorLogInaccessibleEndpoint" t ON t.log = el.id
-     WHERE t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
+      JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
+     WHERE t.node = ?nodeId AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleEndpoint logId endpointType addr alias
-      let typeName = case endpointType of
-            EndpointType_Node -> "node"
-            EndpointType_Client -> "client"
-      now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = "Unable to connect to " <> typeName <> maybe "" (" " <>) alias <> " at " <> Uri.render addr
-        }]
+      node' <- get (fromId nodeId)
+      for_ node' $ \node -> do
+        _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
+        now <- getTime
+        queueAllEmails [Error
+          { _error_time = now
+          , _error_text = "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+          }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
-clearInaccessibleEndpointError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => EndpointType -> URI -> m ()
-clearInaccessibleEndpointError endpointType addr = do
-  lids :: [Id ErrorLogInaccessibleEndpoint] <- stripOnly <$> [queryQ|
+clearInaccessibleNodeError
+  :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+clearInaccessibleNodeError nodeId = do
+  lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
-      FROM "ErrorLogInaccessibleEndpoint" t
-    WHERE t.log = el.id AND t.type = ?endpointType AND t.address = ?addr AND el.stopped IS NULL
+      FROM "ErrorLogInaccessibleNode" t
+    WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notifyEntityId NotificationType_Update
+  for_ lids $ notify . mkDefaultNotify
 
 reportNodeWrongChainError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
-  => URI -> Maybe Text -> ChainId -> ChainId -> m ()
-reportNodeWrongChainError addr alias expectedChainId actualChainId = do
+  => Id Node -> ChainId -> ChainId -> m ()
+reportNodeWrongChainError nodeId expectedChainId actualChainId = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
-       AND t.address = ?addr
+       AND t.node = ?nodeId
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId addr alias expectedChainId actualChainId
-      now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = "Node" <> (maybe "" (" " <>) alias) <> " at " <> Uri.render addr <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
-        }]
+      node' <- get $ fromId nodeId
+      for_ node' $ \node -> do
+        _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
+        now <- getTime
+        queueAllEmails [Error
+          { _error_time = now
+          , _error_text = "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+          }]
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => URI -> m ()
-clearNodeWrongChainError addr = do
+  :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+clearNodeWrongChainError nodeId = do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeWrongChain" t
     WHERE t.log = el.id
-      AND t.address = ?addr
+      AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notifyEntityId NotificationType_Update
+  for_ lids $ notify . Notify_ErrorLogNodeWrongChain
 
 reportBadNodeHeadError
   :: ( Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
@@ -222,7 +222,7 @@ clearBadNodeHeadError nodeId = do
       FROM "ErrorLogBadNodeHead" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notifyEntityId NotificationType_Update
+  for_ lids $ notify . mkDefaultNotify
 
 reportUpgradeNotice
   :: (PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig r, MonadReader r m)
@@ -260,29 +260,32 @@ clearUpgradeNotice = do
       FROM "ErrorLogUpgradeNotice" t
     WHERE t.log = el.id AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notifyEntityId NotificationType_Update
+  for_ lids $ notify . mkDefaultNotify
 
+insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do
   now <- getTime
-  logId <- toId <$> insert ErrorLog
+  logId <- insert' ErrorLog
     { _errorLog_started = now
     , _errorLog_stopped = Nothing
     , _errorLog_lastSeen = now
     , _errorLog_noticeSentAt = Just now
     }
   let errLog = mkErrorLog logId
-  insertAndNotify_ errLog
+  notify . mkDefaultNotify =<< insert' errLog
   pure errLog
 
+updateErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
 updateErrorLog logId specificLogId = do
   updateErrorLogLastSeen logId
-  notifyEntityId NotificationType_Update specificLogId
+  notify $ mkDefaultNotify specificLogId
 
 updateErrorLogBy logId specificLogId updates = do
   updateErrorLogLastSeen logId
-  updateAndNotify specificLogId updates
+  updateId specificLogId updates
+  notify $ mkDefaultNotify specificLogId
 
 updateErrorLogLastSeen :: PersistBackend m => Id ErrorLog -> m ()
 updateErrorLogLastSeen logId = do
   now <- getTime
-  update [ErrorLog_lastSeenField =. now] (AutoKeyField ==. fromId logId)
+  updateId logId [ErrorLog_lastSeenField =. now]

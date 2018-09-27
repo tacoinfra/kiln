@@ -37,7 +37,6 @@ import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (Values (..), executeQ, queryQ)
-import Rhyolite.Backend.Listen (updateAndNotify)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
 import Say (say, sayErr, sayShow)
@@ -46,7 +45,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Types
 
-import Backend.Alerts
+import Backend.Alerts (clearNoBakerHeartbeatError, reportNoBakerHeartbeatError)
 import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
@@ -142,7 +141,7 @@ clientWorker appCfg nds =
           forkInfo <- scanForkInfo now report
           validateForkyBlocks sayShow forkInfo
 
-          updateAndNotify cid [Client_updatedField =. Just now]
+          updateIdNotify cid [Client_updatedField =. Just now]
 
           -- TODO: Add back errors reported by client RPC
           -- case sortBy (compare `on` _event_time) (_report_errors report) of
@@ -167,8 +166,9 @@ clientWorker appCfg nds =
               return ()
           return $ _clientConfig_delegates clientConfig
 
-        case result of
-          Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address alias
-          Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
+        --case result of
+        --  Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address alias
+        --  Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
+        pure []
 
       insertClientDelegates (Set.fromList $ concat clientDelegates)

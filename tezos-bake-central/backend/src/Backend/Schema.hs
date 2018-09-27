@@ -1,10 +1,12 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -15,36 +17,41 @@
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
+{-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
 module Backend.Schema where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.ByteString.Short (fromShort, toShort)
 import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Short (fromShort, toShort)
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
+import Data.Functor (void)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromJust, fromMaybe)
+import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
-import Data.Typeable
+import Data.Typeable (Typeable)
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
 import Database.Groundhog.Core
+import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
-import Database.Groundhog.Postgresql ()
+import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, select, update,
+                                      (&&.), (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
@@ -52,11 +59,13 @@ import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
+import GHC.Generics (Generic)
 import Rhyolite.Backend.Account ()
-import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
+import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Id, Json (..))
+import Rhyolite.Schema (Id, IdData, Json (..), SchemaName (..))
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -68,6 +77,95 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.Schema
+
+
+stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
+stripOnly = coerce
+
+data Notify
+  = Notify_Client !(Id Client)
+  | Notify_Delegate !(Id Delegate) --TODO: Use PublicKeyHash instead
+  | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
+  | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
+  | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
+  | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
+  | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogUpgradeNotice !(Id ErrorLogUpgradeNotice)
+  | Notify_MailServerConfig !(Id MailServerConfig)
+  | Notify_Node !(Id Node) !Node
+  | Notify_Notificatee !(Id Notificatee)
+  | Notify_Parameters !(Id Parameters) Parameters
+  | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
+  | Notify_PublicNodeHead !(Id PublicNodeHead)
+  deriving (Eq, Ord, Typeable, Generic, Show)
+instance ToJSON Notify
+instance FromJSON Notify
+
+class HasDefaultNotify f where
+  mkDefaultNotify :: f -> Notify
+
+instance HasDefaultNotify (Id Client) where
+  mkDefaultNotify = Notify_Client
+instance HasDefaultNotify (Id Delegate) where
+  mkDefaultNotify = Notify_Delegate
+instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
+  mkDefaultNotify = Notify_ErrorLogBadNodeHead
+instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
+  mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
+instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
+  mkDefaultNotify = Notify_ErrorLogInaccessibleNode
+instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
+  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
+instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
+  mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogUpgradeNotice) where
+  mkDefaultNotify = Notify_ErrorLogUpgradeNotice
+instance HasDefaultNotify (Id MailServerConfig) where
+  mkDefaultNotify = Notify_MailServerConfig
+instance HasDefaultNotify (Id Notificatee) where
+  mkDefaultNotify = Notify_Notificatee
+instance HasDefaultNotify (Id PublicNodeHead) where
+  mkDefaultNotify = Notify_PublicNodeHead
+
+notify :: (PersistBackend m) => Notify -> m ()
+notify n = do
+  schemaName <- getSchemaName
+  let
+    cmd = "NOTIFY " <> notifyChannel <> ", ?"
+    notification = NotifyMessage { _notifyMessage_schemaName = SchemaName . T.pack $ schemaName
+                                 , _notifyMessage_notificationType = NotificationType_Update
+                                 , _notifyMessage_entityName = ""
+                                 , _notifyMessage_value = toJSON n
+                                 }
+  void $ executeRaw False cmd [PersistString $ T.unpack $ T.decodeUtf8 $ LBS.toStrict $ Aeson.encode notification]
+
+
+type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, PersistEntity a, PrimitivePersistField (Key a BackendSpecific))
+
+getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
+getId = get . fromId
+
+updateId
+  :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
+updateId tid dt = update dt (AutoKeyField ==. fromId tid)
+
+insert' :: (EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insert' r = toId <$> insert r
+
+updateIdNotify
+  :: (HasDefaultNotify (Id a), EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
+updateIdNotify tid dt = do
+  updateId tid dt
+  notify $ mkDefaultNotify tid
+
+insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m ()
+insertNotify a = notify . mkDefaultNotify =<< insert' a
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -152,18 +250,6 @@ instance NeverNull TezosWord64
 instance NeverNull Version
 instance NeverNull VeryBlockLike
 instance NeverNull (Json VeryBlockLike)
-
--- unsafeParseBinary :: TezosBinary a => ByteString -> a
--- unsafeParseBinary = either error id . eitherBinary "unsafeParseBinary"
-
-stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
-stripOnly = coerce
-
-type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, PersistEntity a, PrimitivePersistField (Key a BackendSpecific))
-
-getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
-getId = get . fromId
-
 
 parseVersionOrError :: Text -> Version
 parseVersionOrError = fromMaybe (error "Invalid version") . parseVersion
@@ -305,11 +391,6 @@ instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
-instance ToField EndpointType where
-  toField = toField . show
-instance FromField EndpointType where
-  fromField f b = maybe (fail "Invalid value for EndpointType") pure . readMaybe =<< fromField f b
-
 instance ToField ClientWorker where
   toField = toField . show
 instance FromField ClientWorker where
@@ -407,13 +488,12 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_userName
               - _mailServerConfig_password
   - primitive: ClientWorker
-  - primitive: EndpointType
   - primitive: UpgradeCheckError
   - primitive: PublicNode
   - entity: ErrorLog
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
-  - entity: ErrorLogInaccessibleEndpoint
+  - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogUpgradeNotice
@@ -444,7 +524,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
-  , (''ErrorLogInaccessibleEndpoint, 'ErrorLogInaccessibleEndpointKey)
+  , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)

@@ -16,13 +16,13 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
-import Control.Monad.Except (MonadError, runExceptT, ExceptT)
+import Control.Monad.Except (ExceptT, MonadError, runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT, ReaderT)
+import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first)
-import Data.Foldable (for_)
+import Data.Foldable (for_, traverse_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
@@ -30,13 +30,13 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup ((<>))
+import Data.Text (Text)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
-import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
 import Rhyolite.Schema (Id (..), IdData)
@@ -52,8 +52,8 @@ import Tezos.NodeRPC.Sources (AsPublicNodeError, HasPublicNodeContext, PublicNod
                               PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
 import Tezos.Types
 
-import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleEndpointError, clearNodeWrongChainError,
-                       reportBadNodeHeadError, reportInaccessibleEndpointError, reportNodeWrongChainError)
+import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
+                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -86,7 +86,7 @@ minCachedBlockLevel :: RawLevel
 minCachedBlockLevel = 1
 
 nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
-nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up", branch, current, i, n)
+nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up" :: Text, branch, current, i, n)
 
 haveNewHead :: BlockLike blk => NodeDataSource -> Maybe PublicNode -> URI -> blk -> IO ()
 haveNewHead nds pn nodeAddr headBlockInfo = do
@@ -129,27 +129,29 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
     when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
-      let now = headBlockInfo ^. timestamp
       have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
       case have of
-        Just entryId ->
-          updateAndNotify entryId
-            [Parameters_headTimestampField =. now]
+        Just entryId -> do
+          updateId entryId [Parameters_headTimestampField =. headBlockInfo ^. timestamp]
+          getId entryId >>= traverse_ (notify . Notify_Parameters entryId)
         Nothing -> do
           params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
-          insertAndNotify_ Parameters
-            { _parameters_protoInfo = params
-            , _parameters_chain = chainId
-            , _parameters_headTimestamp = now
-            }
+          let entry = Parameters
+                { _parameters_protoInfo = params
+                , _parameters_chain = chainId
+                , _parameters_headTimestamp = headBlockInfo ^. timestamp
+                }
+          notify . flip Notify_Parameters entry =<< insert' entry
 
-    updateAndNotify nodeId
+    now <- getTime
+    updateId nodeId
       [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
       , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
       , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
       , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
-      , Node_lastHeartbeatField =. Just (headBlockInfo ^. monitorBlock_timestamp)
+      , Node_updatedField =. Just now
       ]
+    getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 
 updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
 updateNetworkStats httpMgr db nid before = do
@@ -166,11 +168,12 @@ updateNetworkStats httpMgr db nid before = do
     Left err -> pure $ Left err
     Right after -> do
       -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
-      when (before /= after) $ inDb $
-        updateAndNotify nid
+      when (before /= after) $ inDb $ do
+        updateId nid
           [ Node_peerCountField =. _node_peerCount after
           , Node_networkStatField =. _node_networkStat after
           ]
+        getId nid >>= traverse_ (notify . Notify_Node nid)
       pure $ Right ()
 
   where
@@ -196,7 +199,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
 
     ifor_ theseNodeRecords $ \nodeId node ->
       updateNetworkStats httpMgr db nodeId node >>= \case
-        Left _e -> inDb $ reportNodeInaccessible (_node_address node) (_node_alias node)
+        Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
@@ -226,19 +229,19 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
         chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           inDb $ do
-            clearNodeInaccessible nodeAddr
-            clearNodeWrongChainError nodeAddr
+            clearInaccessibleNodeError nodeId
+            clearNodeWrongChainError nodeId
 
           nodeMonitor chainId nds appConfig nodeAddr nodeId block
 
         nodeQuery rChain >>= inDb . \case
-          Left _e -> reportNodeInaccessible nodeAddr nodeAlias -- We have clear evidence that there are connectivity issues.
+          Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
           Right actualChainId
             | actualChainId == chainId -> do
                 -- Monitor stopped even though we're on the right chain, so we'll assume there was a connectivity issue.
-                clearNodeWrongChainError nodeAddr
-                reportNodeInaccessible nodeAddr nodeAlias
-            | otherwise -> reportNodeWrongChainError nodeAddr nodeAlias chainId actualChainId
+                clearNodeWrongChainError nodeId
+                reportInaccessibleNodeError nodeId
+            | otherwise -> reportNodeWrongChainError nodeId chainId actualChainId
 
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
@@ -247,8 +250,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
 
   where
     inDb = runNoLoggingT . runDb (Identity db) . flip runReaderT appConfig
-    reportNodeInaccessible = reportInaccessibleEndpointError EndpointType_Node
-    clearNodeInaccessible = clearInaccessibleEndpointError EndpointType_Node
+
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
 publicNodesWorker
@@ -307,9 +309,8 @@ publicNodesWorker nds appConfig db = foldMap workerForSource
               updated = NOW()
             RETURNING id
           |]
-          for_ updatedRecord $ notifyEntityId NotificationType_Update
+          for_ updatedRecord $ notify . mkDefaultNotify
     {-# INLINE updatePublicNodeInDb #-}
-{-# INLINE publicNodesWorker #-}
 
 nodeAlertWorker
   :: NodeDataSource

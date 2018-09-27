@@ -14,7 +14,7 @@ module Backend.RequestHandler where
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Foldable (for_)
+import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
@@ -30,7 +30,6 @@ import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify_, notifyEntityId, updateAndNotify)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
@@ -56,51 +55,58 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
         PublicRequest_AddNode addr alias nodeIdent -> do
           existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ (mkNode addr alias)
-            Just nids -> for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. False, Node_aliasField =. alias]
+            Nothing -> let node = mkNode addr alias in notify . flip Notify_Node node =<< insert' node
+            Just nids -> for_ nids $ \nid -> do
+              updateId nid [Node_deletedField =. False, Node_aliasField =. alias]
+              getId nid >>= traverse_ (notify . Notify_Node nid)
 
         PublicRequest_RemoveNode addr -> do
           nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
-          for_ nids $ \nid -> updateAndNotify nid [Node_deletedField =. True]
+          for_ nids $ \nid -> do
+            updateId nid [Node_deletedField =. True]
+            getId nid >>= traverse_ (notify . Notify_Node nid)
 
         PublicRequest_AddClient addr alias -> do
           existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ Client
+            Nothing -> insertNotify Client
               { _client_address = addr
               , _client_alias = alias
               , _client_updated = Nothing
               , _client_deleted = False
               }
-            Just cids -> for_ cids $ \cid -> updateAndNotify cid [Client_deletedField =. False, Client_aliasField =. alias]
+            Just cids -> for_ cids $ \cid ->
+              updateIdNotify cid [Client_deletedField =. False, Client_aliasField =. alias]
 
         PublicRequest_RemoveClient addr -> do
           cids :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
           let inCids = In cids
           _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
-          notifyEntitiesDeleted cids
+          for_ cids $ notify . mkDefaultNotify
 
         PublicRequest_AddDelegate pkh alias -> do
           existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
           case nonEmpty existingIds of
-            Nothing -> insertAndNotify_ Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
-            Just dids -> for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. False, Delegate_aliasField =. alias]
+            Nothing -> insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
+            Just dids -> for_ dids $ \did ->
+              updateIdNotify (did :: Id Delegate) [Delegate_deletedField =. False, Delegate_aliasField =. alias]
 
         PublicRequest_RemoveDelegate pkh -> do
           dids :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
           let inIds = In dids
           _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.delegate IN ?inIds |]
           _ <- [executeQ| DELETE FROM "DelegateStats" ds WHERE ds.delegate IN ?inIds |]
-          for_ dids $ \did -> updateAndNotify did [Delegate_deletedField =. True]
+          for_ dids $ \did ->
+            updateIdNotify did [Delegate_deletedField =. True]
 
         PublicRequest_AddNotificatee email ->
-          insertAndNotify_ Notificatee { _notificatee_email = email }
+          insertNotify Notificatee { _notificatee_email = email }
 
         PublicRequest_RemoveNotificatee email -> do
           nids :: [Id Notificatee] <- fmap toId <$> project AutoKeyField (Notificatee_emailField ==. email)
           let inIds = In nids
           _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.id IN ?inIds |]
-          notifyEntitiesDeleted nids
+          for_ nids $ notify . mkDefaultNotify
 
         PublicRequest_SendTestEmail email -> void $ queueEmail
           (simpleMail'
@@ -123,8 +129,8 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
                 }
           defaultMailServer <- getDefaultMailServer
           case defaultMailServer of
-            Nothing -> insertAndNotify_ updatedMailServer
-            Just (id_, _) -> updateAndNotify id_
+            Nothing -> insertNotify updatedMailServer
+            Just (id_, _) -> updateIdNotify id_
               [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
               , MailServerConfig_portNumberField =. _mailServerConfig_portNumber updatedMailServer
               , MailServerConfig_smtpProtocolField =. _mailServerConfig_smtpProtocol updatedMailServer
@@ -141,22 +147,24 @@ requestHandler upgradeBranch emailFromAddr httpMgr db appConfig =
             project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
           now <- getTime
           case cid' of
-            Nothing -> insertAndNotify_ PublicNodeConfig
-              { _publicNodeConfig_source = publicNode
-              , _publicNodeConfig_enabled = enabled
-              , _publicNodeConfig_updated = now
-              }
-            Just cid -> updateAndNotify cid
-              [ PublicNodeConfig_sourceField =. publicNode
-              , PublicNodeConfig_enabledField =. enabled
-              , PublicNodeConfig_updatedField =. now
-              ]
+            Nothing ->
+              let
+                pnc = PublicNodeConfig
+                  { _publicNodeConfig_source = publicNode
+                  , _publicNodeConfig_enabled = enabled
+                  , _publicNodeConfig_updated = now
+                  }
+              in notify . flip Notify_PublicNodeConfig pnc =<< insert' pnc
+            Just cid -> do
+              updateId cid
+                [ PublicNodeConfig_sourceField =. publicNode
+                , PublicNodeConfig_enabledField =. enabled
+                , PublicNodeConfig_updatedField =. now
+                ]
+              getId cid >>= traverse_ (notify . Notify_PublicNodeConfig cid)
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
-
-  where
-    notifyEntitiesDeleted ids = for_ ids $ void . notifyEntityId NotificationType_Delete
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

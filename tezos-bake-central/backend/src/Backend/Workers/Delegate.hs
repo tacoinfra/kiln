@@ -21,8 +21,6 @@ import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager, newManager)
 import Rhyolite.Backend.DB (runDb, selectMap)
-import Rhyolite.Backend.Listen (NotificationType (..), insertAndNotify, insertAndNotify_, notifyEntityId,
-                                updateAndNotify)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Concurrent (worker)
 import Rhyolite.Schema (Id (..), Json (..))

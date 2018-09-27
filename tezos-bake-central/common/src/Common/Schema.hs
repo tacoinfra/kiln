@@ -109,7 +109,7 @@ data Node = Node
   , _node_networkStat :: !NetworkStat
   , _node_fitness :: !(Maybe Fitness)
   , _node_deleted :: !Bool
-  , _node_lastHeartbeat :: !(Maybe UTCTime)
+  , _node_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
@@ -159,7 +159,7 @@ mkNode addr alias = Node
   , _node_networkStat = NetworkStat 0 0 0 0
   , _node_fitness = Nothing
   , _node_deleted = False
-  , _node_lastHeartbeat = Nothing
+  , _node_updated = Nothing
   }
 
 data Parameters = Parameters
@@ -313,19 +313,17 @@ data MailServerConfig = MailServerConfig
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
-data EndpointType = EndpointType_Node | EndpointType_Client
-  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
-
-data ErrorLogInaccessibleEndpoint = ErrorLogInaccessibleEndpoint
-  { _errorLogInaccessibleEndpoint_log :: !(Id ErrorLog)
-  , _errorLogInaccessibleEndpoint_type :: !EndpointType
-  , _errorLogInaccessibleEndpoint_address :: !URI
-  , _errorLogInaccessibleEndpoint_alias :: !(Maybe Text)
+data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
+  { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
+  , _errorLogInaccessibleNode_node :: !(Id Node)
+  , _errorLogInaccessibleNode_address :: !URI
+  , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogInaccessibleEndpoint
+instance HasId ErrorLogInaccessibleNode
 
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
+  , _errorLogNodeWrongChain_node :: !(Id Node)
   , _errorLogNodeWrongChain_address :: !URI
   , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
@@ -412,17 +410,17 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ClientWorker
   , ''Delegate
   , ''EndorseEvent
-  , ''EndpointType
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerNoHeartbeat
-  , ''ErrorLogInaccessibleEndpoint
+  , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
+  , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
@@ -443,11 +441,12 @@ concat <$> traverse makeLenses
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
   , 'ErrorLogBakerNoHeartbeat
-  , 'ErrorLogInaccessibleEndpoint
+  , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameDelegate
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
+  , 'Parameters
   , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report

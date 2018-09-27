@@ -115,7 +115,7 @@ instance FromJSON MailServerView
 instance ToJSON MailServerView
 
 data ErrorLogView
-  = ErrorLogView_InaccessibleEndpoint ErrorLogInaccessibleEndpoint
+  = ErrorLogView_InaccessibleNode ErrorLogInaccessibleNode
   | ErrorLogView_NodeWrongChain ErrorLogNodeWrongChain
   | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
   | ErrorLogView_BadNodeHead ErrorLogBadNodeHead
