@@ -1,6 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DoAndIfThenElse #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -16,7 +15,7 @@ module Backend where
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
-import Control.Lens ((.~), (<&>))
+import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -24,14 +23,10 @@ import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
-import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Default (def)
-import Data.Dependent.Map (DMap, DSum (..))
-import qualified Data.Dependent.Map as DMap
+import Data.Dependent.Map (DSum (..))
 import Data.Either.Combinators (leftToMaybe)
 import Data.Foldable (fold, for_, toList)
-import Data.Function ((&))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -50,47 +45,38 @@ import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
-import Obelisk.Asset.Serve.Snap (serveAssets)
 import Obelisk.ExecutableConfig.Inject (injectPure)
 
 import Common.Route
 import Obelisk.Backend
 import Obelisk.Route
 import Prelude hiding ((.))
-import Reflex.Dom.Core (DomBuilder, renderStatic)
+import Reflex.Dom.Core (DomBuilder)
 import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Rhyolite.Backend.Snap (appConfig_initialHead, serveApp)
-import Rhyolite.Schema (Id (..))
 import Say (say, sayShow)
-import Snap.Core (MonadSnap)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
-import qualified Snap.Http.Server.Config as SnapServer
-import Snap.Util.FileServe (serveDirectory)
 import qualified System.Console.GetOpt as GetOpt
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI as URI
-import qualified Text.URI.Lens as Uri
 
 import Backend.Db (gargoyleSupported, withDb)
 import Tezos.Chain (mainnetChainId)
-import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.Alerts (clearUpgradeNotice)
 import Backend.CachedNodeRPC
-import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (workerWithDelay)
-import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
+import Backend.Config (AppConfig (..))
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -106,7 +92,6 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Schema
 import Common.URI (mkRootUri)
-import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
 
 import Backend.WebApi (v1PublicApi)
 import qualified Data.Random as Random
@@ -269,8 +254,11 @@ backendImpl cfg serve = do
           | serveNodeCache -> v1PublicApi dataSrc
           | otherwise -> return ()
 
-backend :: Opts -> Backend BackendRoute AppRoute
-backend cfg = Backend
+backend :: Backend BackendRoute AppRoute
+backend = backend' mempty
+
+backend' :: Opts -> Backend BackendRoute AppRoute
+backend' cfg = Backend
   { _backend_run = backendImpl cfg
   , _backend_routeEncoder = backendRouteEncoder
   }
@@ -393,7 +381,7 @@ backendMain k = do
       let header = "Usage: " <> prog <> " [OPTION...] files..."
       let msg = concat errs
             ++ GetOpt.usageInfo header optsArgDescr
-            ++ GetOpt.usageInfo "\n\nadditional options for snap can be provided after a --\n" ( SnapServer.optDescrs @ Snap.Snap $ SnapServer.defaultConfig)
+            ++ GetOpt.usageInfo "\n\nadditional options for snap can be provided after a --\n" (SnapServer.optDescrs @Snap.Snap SnapServer.defaultConfig)
 
       ioError $ userError msg
     [] -> do
@@ -420,5 +408,4 @@ backendMain k = do
             injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
             injectPure (T.pack Config.chain) $ showChain chain
 
-      withArgs rest $ k (backend cfg) (frontend { _frontend_head = staticHead })
-
+      withArgs rest $ k (backend' cfg) (frontend { _frontend_head = staticHead })

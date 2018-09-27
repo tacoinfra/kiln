@@ -103,7 +103,7 @@ instance ToJSON k => ToJSON1 (AppendIntervalMap k) where
   liftToEncoding to tos (AppendIntervalMap xs) = (liftToEncodingList to tos :: [(k, a)] -> Aeson.Encoding ) $ IMap.toList xs
 
 
-singleton :: forall k v e. (Ord k, IsInterval k e) => k -> v -> AppendIntervalMap k v
+singleton :: forall k v. k -> v -> AppendIntervalMap k v
 singleton k = AppendIntervalMap . IMap.singleton k
 
 fromList :: forall k v e. (Ord k, IsInterval k e) => [(k, v)] -> AppendIntervalMap k v
@@ -118,28 +118,28 @@ intersectionWithKey f a b = AppendIntervalMap $ IMap.intersectionWithKey f (unAp
 unionWithKey :: forall k v e. (Ord k, IsInterval k e) => (k -> v -> v -> v) -> AppendIntervalMap k v -> AppendIntervalMap k v -> AppendIntervalMap k v
 unionWithKey f a b = AppendIntervalMap $ IMap.unionWithKey f (unAppendIntervalMap a) (unAppendIntervalMap b)
 
-mapMaybeWithKey :: forall k a b e. (Ord k, IsInterval k e) => (k -> a -> Maybe b) -> AppendIntervalMap k a -> AppendIntervalMap k b
+mapMaybeWithKey :: forall k a b e. (IsInterval k e) => (k -> a -> Maybe b) -> AppendIntervalMap k a -> AppendIntervalMap k b
 mapMaybeWithKey f = AppendIntervalMap . IMap.mapMaybeWithKey f . unAppendIntervalMap
 
-toList :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [(k, v)]
+toList :: forall k v. AppendIntervalMap k v -> [(k, v)]
 toList = IMap.toList . unAppendIntervalMap
 
-keys :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [k]
+keys :: forall k v. AppendIntervalMap k v -> [k]
 keys = IMap.keys . unAppendIntervalMap
 
-keysSet :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> Set k
+keysSet :: forall k v. AppendIntervalMap k v -> Set k
 keysSet = IMap.keysSet . unAppendIntervalMap
 
-elems :: forall k v e. (Ord k, IsInterval k e) => AppendIntervalMap k v -> [v]
+elems :: forall k v. AppendIntervalMap k v -> [v]
 elems = IMap.elems . unAppendIntervalMap
 
-lookup :: forall k v e. (Ord k, IsInterval k e) => k -> AppendIntervalMap k v -> Maybe v
+lookup :: forall k v. (Ord k) => k -> AppendIntervalMap k v -> Maybe v
 lookup k = IMap.lookup k . unAppendIntervalMap
 
-mapWithKey :: forall k a b e. (Ord k, IsInterval k e) => (k -> a -> b) -> AppendIntervalMap k a -> AppendIntervalMap k b
+mapWithKey :: forall k a b. (k -> a -> b) -> AppendIntervalMap k a -> AppendIntervalMap k b
 mapWithKey f = AppendIntervalMap . IMap.mapWithKey f . unAppendIntervalMap
 
-filterWithKey :: forall k v e. (Ord k, IsInterval k e) => (k -> v -> Bool) -> AppendIntervalMap k v -> AppendIntervalMap k v
+filterWithKey :: forall k v e. (IsInterval k e) => (k -> v -> Bool) -> AppendIntervalMap k v -> AppendIntervalMap k v
 filterWithKey f = AppendIntervalMap . IMap.filterWithKey f . unAppendIntervalMap
 
 intersectionWith :: forall k a b c e. (Ord k, IsInterval k e) => (a -> b -> c) -> AppendIntervalMap k a -> AppendIntervalMap k b -> AppendIntervalMap k c
@@ -171,7 +171,7 @@ flattenWithKey f a = AppendIntervalMap $ IMap.flattenWith f (unAppendIntervalMap
 
 -- | Like 'flattenWithKey' but assumes that the combining function produces new keys monotonically.
 flattenWithKeyMonotonic
-  :: forall k v e. (Ord k, IsInterval k e)
+  :: forall k v e. (IsInterval k e)
   => ((k, v) -> (k, v) -> Maybe (k, v)) -> AppendIntervalMap k v -> AppendIntervalMap k v
 flattenWithKeyMonotonic f a = AppendIntervalMap $ IMap.flattenWithMonotonic f (unAppendIntervalMap a)
 

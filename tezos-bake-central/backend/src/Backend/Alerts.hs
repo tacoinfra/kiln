@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
@@ -22,6 +23,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Data.Version (Version)
 import Database.Groundhog
+import Database.Groundhog.Core
+import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import Rhyolite.Backend.DB (getTime)
@@ -280,6 +283,12 @@ updateErrorLog logId specificLogId = do
   updateErrorLogLastSeen logId
   notify $ mkDefaultNotify specificLogId
 
+updateErrorLogBy
+  :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id ErrorLog
+  -> Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
 updateErrorLogBy logId specificLogId updates = do
   updateErrorLogLastSeen logId
   updateId specificLogId updates
