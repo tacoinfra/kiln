@@ -22,6 +22,7 @@ import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
+import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
@@ -107,9 +108,9 @@ frontendBody ::
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  let decodeViaJson = decodeValue' . LBS.fromStrict . T.encodeUtf8
+  let decodeViaJson = Aeson.eitherDecode . LBS.fromStrict . T.encodeUtf8 . T.strip
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ fromMaybe (error "Unable to parse injected route") (decodeViaJson r)
+    Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
     Nothing ->
       Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
 
@@ -676,11 +677,11 @@ mailServerForm frm0 = do
 
       divClass "two fields" $ do
         tellFieldErr (_1 . mailServerView_userName) <=< formItem
-          $ validatedInput Validator.validateText
+          $ validatedInput (Validator.optionalWith "" id Validator.validateText)
           $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
 
         tellFieldErr _2 <=< formItem
-          $ validatedInput validatePassword
+          $ validatedInput (Validator.optionalWith "" id validatePassword)
           $ defTxt "Password"
 
     validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
