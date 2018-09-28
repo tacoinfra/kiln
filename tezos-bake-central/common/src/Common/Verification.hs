@@ -64,7 +64,7 @@ showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.con
           , "\n"
           ]
 
-validateForkyBlocks :: Applicative f => ([ForkInfo] -> f ()) -> [ForkInfo] -> f ()
+validateForkyBlocks :: ([ForkInfo] -> f ()) -> [ForkInfo] -> f ()
 validateForkyBlocks f xs = case traverse (onBadForkState pure) xs of
   Success _ -> f []
   Failure bad -> f bad

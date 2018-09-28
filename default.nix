@@ -7,45 +7,39 @@ let
 
   tezos-bake-platform = import (pkgs.fetchgit {
     url = "https://gitlab.com/obsidian.systems/tezos-baking-platform.git";
-    rev = "82593a2148f8bb9895aaffe6208d852e2ef7ff2e";
-    sha256 = "1nsw5v67pjr74j65rhsnvri10hphgfnfimvrg0wf484kaj1kqj2j";
+    rev = "d9fce6eaa1401c981e5fc524a260892a21ed3335";
+    sha256 = "0svndkkibkygnzvjvybbxgiyw15kaiq4l9f5m4m1680fmrqwjdxi";
     fetchSubmodules = false;
   }) {};
 
   tezos = tezos-bake-platform.tezos;
 
-  nodeConfig = {
-    zeronet = rec {
+  nodeConfigOptions = {
+    zeronet = {
       network = "zeronet";
-      name = network;
       p2pPort = 29732;
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
-      monitorPath = "/admin/${name}";
     };
-    alphanet = rec {
+    alphanet = {
       network = "alphanet";
-      name = network;
       p2pPort = 19732;
       rpcPort = 18732;
       tzKit = tezos.alphanet.kit;
       monitorPort = 8001;
-      monitorPath = "/admin/${name}";
     };
-    mainnet = rec {
+    mainnet = {
       network = "mainnet";
-      name = network;
       p2pPort = 9732;
       rpcPort = 8732;
       tzKit = tezos.betanet.kit;
       monitorPort = 8000;
-      monitorPath = "/admin/${name}";
     };
   };
 
-  mkTezosNodeServiceModule = { p2pPort, rpcPort, name, tzKit, ... }: {...}:
-    let serviceName = "${name}-node"; user = serviceName; group = user;
+  mkTezosNodeServiceModule = { p2pPort, rpcPort, network, tzKit, ... }: {...}:
+    let serviceName = "${network}-node"; user = serviceName; group = user;
     in {
       networking.firewall.allowedTCPPorts = [p2pPort];
       systemd.services.${serviceName} = {
@@ -64,6 +58,8 @@ let
           WorkingDirectory = "~";
           Restart = "always";
           RestartSec = 5;
+          MemoryHigh = "7G";
+          MemoryMax = "12G";
         };
       };
       users = {
@@ -81,72 +77,127 @@ let
   mkMonitorModule =
     { enableHttps
     , routeHost
-    , name
-    , monitorName ? "${name}-monitor"
+    , network
+    , monitorName ? "${network}-monitor"
     , dbname ? monitorName
+    , user ? monitorName
     , rpcPort
     , monitorPort
-    , monitorPath
-    , ...}@args:
-    obelisk.serverModules.mkObeliskApp (args // {
-      exe = obApp.linuxExe;
-      name = monitorName;
-      internalPort = monitorPort;
-      baseUrl = null;
-      backendArgs = pkgs.lib.concatStringsSep " " (pkgs.lib.mapAttrsToList (name: value: "--${name}='${value}'") {
-        network = if name == "mainnet" then "betanet" else name;
-        serve-node-cache = "yes";
-        pg-connection = "dbname=${dbname}";
-        #route = ''http${if enableHttps then "s" else ""}://${routeHost}${monitorPath}'';
-        nodes = "http://127.0.0.1:${toString rpcPort}";
-      });
-    })
-  ;
+    , ...}@args: {config, ...}: {
+      imports = [
+        (obelisk.serverModules.mkObeliskApp (args // {
+          exe = obApp.linuxExe;
+          name = monitorName;
+          user = user;
+          internalPort = monitorPort;
+          baseUrl = null;
+          backendArgs = pkgs.lib.concatStringsSep " " [
+            ''--network=${network}''
+            ''--serve-node-cache=yes''
+            ''--pg-connection="dbname=${dbname}"''
+            ''--check-for-upgrade=no''
+            ''--nodes="http://127.0.0.1:${toString rpcPort}"''
+            ''--''
+            ''--port=${toString monitorPort}''
+          ];
+        }))
+      ];
 
-  monitoringModule = {config, ...}: {
-    environment.systemPackages = [ config.services.postgresql.package ];
-    services.postgresql = {
-      enable         = true;
-      authentication = ''
-        #      #db                #user               #auth-method  #auth-options
-        local  "zeronet-monitor"  "zeronet-monitor"   peer
-        local  "alphanet-monitor" "alphanet-monitor"  peer
-        local  "mainnet-monitor"  "mainnet-monitor"   peer
-      '';
-    };
+      systemd.services.${monitorName} = {
+        serviceConfig = {
+          MemoryHigh = "2G";
+          MemoryMax = "12G";
+        };
+      };
 
-    services.nginx = {
-      virtualHosts."tezos-api.obsidian.systems" = {
-        locations = {
-          "/zeronet/api" = {
-            proxyPass = "http://127.0.0.1:${toString nodeConfig.zeronet.monitorPort}/api";
-          };
-          "/alphanet/api" = {
-            proxyPass = "http://127.0.0.1:${toString nodeConfig.alphanet.monitorPort}/api";
-          };
-          "/mainnet/api" = {
-            proxyPass = "http://127.0.0.1:${toString nodeConfig.mainnet.monitorPort}/api";
-          };
-          "/api" = {
-            proxyPass = "http://127.0.0.1:${toString nodeConfig.mainnet.monitorPort}/api";
+      services.nginx = {
+        virtualHosts.${routeHost} = {
+          locations = {
+            "/api" = {
+              proxyPass = "http://127.0.0.1:${toString monitorPort}/api";
+            };
           };
         };
       };
-    };
+
+      environment.systemPackages = [ config.services.postgresql.package ];
+      services.postgresql = {
+        enable         = true;
+        authentication = ''
+          #      #db          #user     #auth-method  #auth-options
+          local  "${dbname}"  "${user}" peer
+        '';
+      };
+    }
+  ;
+
+  syslog-ngModule = {...}: {
+    services.openssh.extraConfig = ''
+      MaxAuthTries 3
+    '';
+
+    services.journald.rateLimitBurst = 0;
+
+    services.syslog-ng.enable = true;
+    services.syslog-ng.extraConfig = ''
+      source s_journald {
+        systemd-journal(prefix(".SDATA.journald."));
+      };
+
+      filter f_errors { "$LEVEL_NUM" lt "4" };
+      filter f_sshd_attacks_liberal {
+        not (
+          # and abuse-looking errors
+          message("PAM service\(sshd\) ignoring max retries")
+        )
+      };
+      filter f_sshd_attacks {
+        not (
+          # match program
+              (
+                "''${.SDATA.journald.SYSLOG_IDENTIFIER}" eq "sshd"
+              or "''${PROGRAM}" eq "sshd"
+          ) and (
+              # and abuse-looking errors
+              message("^PAM service\(sshd\) ignoring max retries")
+            or message("^error: maximum authentication attempts exceeded for")
+            or message("^error: PAM: Authentication failure for illegal user")
+            or message("^error: Received disconnect from")
+          )
+        )
+      };
+      template ops_friendlyname "$HOST Admin" ;
+
+      destination d_smtp {
+        smtp(
+          host("mail.obsidian.systems")
+          port(25)
+          from("syslog-ng alert service" "noreply@obsidian.systems")
+          to(ops_friendlyname "ops@obsidian.systems")
+          subject("[ALERT] $LEVEL $HOST $PROGRAM $MSG")
+          body("$MSG\\n$SDATA\n")
+        );
+      };
+
+      log {
+        source(s_journald);
+        filter(f_sshd_attacks_liberal);
+        filter(f_sshd_attacks);
+        filter(f_errors);
+        destination(d_smtp);
+      };
+    '';
   };
 
   usersModule = {config, pkgs, ...}: {
-    users.users = let
-      monitorGroups = pkgs.lib.mapAttrsToList (key: v: "${v.name}-monitor") nodeConfig;
-      nodeGroups = pkgs.lib.mapAttrsToList (key: v: "${v.name}-node") nodeConfig;
-    in {
+    users.users = {
       "elliot.cameron" = {
         description = "Elliot Cameron";
         isNormalUser = true;
         openssh.authorizedKeys.keys = [
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPsrDJrZRXpa6f5g+dfysfU4R/YSqOKRzu2zR99k9izE elliot@nixos"
         ];
-        extraGroups = ["wheel"] ++ monitorGroups ++ nodeGroups;
+        extraGroups = ["wheel"];
       };
       dbornside = {
         description = "Dan Bornside";
@@ -154,29 +205,35 @@ let
         openssh.authorizedKeys.keys = [
           "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD0ijHT/18Dbjq26bnh2KYndp5vMQXkdD66064xLvpqOVMaPDm9I2QYsEAwGdatnriAFLUhPVkTWTga7KIA37Z9XaTMhKRJb4koT4osIz1ikbVvbUsrLquRC1gulrMRKHjaA3QlPOnOy7pvIW6DYyl9vDhl143X8/7riW9O+pw5OJM8HBKxwIzNZ1XstE3E6VOXnhskU18EBDEqJBE+6+36RBOiGfeDfsV45O1ov4fEAwspV7qIbVirrLnqOyvNfPOCBAnhL5vK6C5Horci1u7hyHHCnV57UoF/fJzYTRKSCeObUNHrhyAlhMstqPhb9qCrtFRDKyBkvmGzntwi/eSv dbornside@localhost.localdomain"
         ];
-        extraGroups = ["wheel"] ++ monitorGroups ++ nodeGroups;
+        extraGroups = ["wheel"];
       };
     };
   };
 
 in obApp // {
-  server = args@{ hostName, adminEmail, routeHost, enableHttps }:
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, ... }:
     let
+      network =
+        if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
+        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
+        "mainnet";
+      nodeConfig = nodeConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
     in nixos {
       system = "x86_64-linux";
       configuration = {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
-          (mkTezosNodeServiceModule nodeConfig.zeronet)
-          (mkTezosNodeServiceModule nodeConfig.alphanet)
-          (mkTezosNodeServiceModule nodeConfig.mainnet)
-          (mkMonitorModule (args // nodeConfig.zeronet))
-          (mkMonitorModule (args // nodeConfig.alphanet))
-          (mkMonitorModule (args // nodeConfig.mainnet))
-          monitoringModule
+          (mkTezosNodeServiceModule nodeConfig)
+          (mkMonitorModule (args // nodeConfig))
+          syslog-ngModule
           usersModule
         ];
+
+        services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
+          CREATE USER "${network}-monitor";
+          CREATE DATABASE "${network}-monitor" OWNER "${network}-monitor";
+        '';
       };
     };
 }

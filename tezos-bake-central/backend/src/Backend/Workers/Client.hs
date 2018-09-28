@@ -16,7 +16,7 @@ module Backend.Workers.Client where
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Common (tshow)
 import Common.Schema
-import Common.Verification (ForkInfo (..), ForkStatus (..), validateForkyBlocks)
+import Common.Verification (validateForkyBlocks)
 import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
@@ -28,7 +28,7 @@ import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
-import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Semigroup (Sum (..), getSum, (<>))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
@@ -88,13 +88,13 @@ clientWorker appCfg nds =
         ORDER BY updated NULLS FIRST
       |]
 
-      clientDelegates <- for toUpdate $ \(cid, address, alias) -> do
+      clientDelegates <- for toUpdate $ \(cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> sayErr (tshow e) $> Nothing
               , Handler $ \(e :: Http.HttpException) -> sayErr (tshow e) $> Nothing
               ]
 
-        result <- handlingHttpExc $ do
+        _result <- handlingHttpExc $ do
           say $ "Updating client at " <> Uri.render address
 
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
@@ -156,11 +156,11 @@ clientWorker appCfg nds =
           --         queueAllEmails new
           -- TODO.  debounce below as above
           flip validateForkyBlocks forkInfo $ \errors -> case nonEmpty errors of
-            -- Nothing -> clearClientOnForkError cid
-            Just es -> for_ es $ \e -> do
-              let tooOld = case _forkInfo_forkStatus e of
-                    Left ForkStatus_TooOld -> True
-                    _ -> False
+            Nothing -> pure () --clearClientOnForkError cid
+            Just es -> for_ es $ \_e -> do
+              -- let tooOld = case _forkInfo_forkStatus e of
+              --       Left ForkStatus_TooOld -> True
+              --       _ -> False
               -- what this SHOULD be
               -- reportClientOnForkError cid tooOld (_forkInfo_hash e) (_forkInfo_time e)
               return ()

@@ -180,7 +180,6 @@ backendImpl cfg serve = do
       ]
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
-  sayShow ("PUBLIC NODES:", publicDataSources)
 
   let
     defaultDbSpec = if gargoyleSupported
@@ -238,7 +237,7 @@ backendImpl cfg serve = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< publicNodesWorker dataSrc appConfig db publicDataSources
+      addFinalizer =<< publicNodesWorker dataSrc db publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
@@ -403,9 +402,10 @@ backendMain k = do
       let
         staticHead :: DomBuilder t m => m ()
         !staticHead = do
-            headTag
-            for_ route $ injectPure (T.pack Config.route) . encodeViaJson
-            injectPure (T.pack Config.checkForUpgrade) (tshow checkForUpgrade)
-            injectPure (T.pack Config.chain) $ showChain chain
+          let injectIt cfg = injectPure (T.pack $ "config/" <> cfg)
+          headTag
+          for_ route $ injectIt Config.route . encodeViaJson
+          injectIt Config.checkForUpgrade (tshow checkForUpgrade)
+          injectIt Config.chain $ showChain chain
 
       withArgs rest $ k (backend' cfg) (frontend { _frontend_head = staticHead })

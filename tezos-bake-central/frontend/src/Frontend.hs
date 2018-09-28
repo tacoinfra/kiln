@@ -6,11 +6,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
---{-# OPTIONS_GHC -Werror -Wall #-}
 
 module Frontend where
 
@@ -64,8 +61,7 @@ import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteWidget, MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
-import Rhyolite.Request.Common (decodeValue')
+import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
 import Safe (maximumMay)
@@ -89,13 +85,12 @@ import Frontend.Common
 import Common.Vassal
 import Obelisk.Frontend
 import Obelisk.Route
-import Obelisk.Route.Frontend
 import Common.Route
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
-  , _frontend_body = prerender (return ()) $ frontendBody
+  , _frontend_body = prerender (return ()) frontendBody
   , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
   }
 
@@ -115,7 +110,7 @@ frontendBody = void $ do
       Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
 
   checkForUpgrade <-
-    fmap (Config.parseBool . fromMaybe (error $ "Missing " <> Config.checkForUpgrade <> " configuration")) $
+    fmap (maybe False Config.parseBool) $
       liftIO $ getExecutableConfig $ T.pack Config.checkForUpgrade
 
   chain :: Either NamedChain ChainId <- ffor (liftIO $ getExecutableConfig $ T.pack Config.chain) $ \r ->
@@ -355,7 +350,7 @@ whenJustDyn d f = dyn_ . ffor d $ \case
   Nothing -> blank
   Just x -> f x
 
-summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
+summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadReader Cfg m) => m ()
 summaryTab = divClass "ui grid" $ do
   dparameters <- watchProtoInfo
   summaryReport <- watchSummary
@@ -589,9 +584,9 @@ optionsTab = divClass "ui two column stackable grid" $ do
       elClass "table" "ui celled striped compact table" $ do
         nodes <- watchNodeAddresses
         _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
-          let dAddress = ffor node $ fst
-          let dName = ffor node $ snd
-          el "td" $ dynText $ ffor dAddress $ Uri.render
+          let dAddress = ffor node fst
+          let dName = ffor node snd
+          el "td" $ dynText $ ffor dAddress Uri.render
           el "td" $ dynText $ ffor dName $ fromMaybe ""
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
@@ -612,10 +607,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
         Right v -> divClass "ui success message" $ text $ "A new version is available: " <> T.pack (showVersion v)
 
     urlInputRow
-      :: (MonadRhyoliteFrontendWidget Bake t m
-         , Eq a
-         , Show a
-         )
+      :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
       => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
     urlInputRow validator label info placeholder = el "tr" $ do
       (tdEl1, address) <- el' "td" $ formItem
