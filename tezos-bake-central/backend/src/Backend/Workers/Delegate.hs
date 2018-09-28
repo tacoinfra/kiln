@@ -4,36 +4,26 @@
 module Backend.Workers.Delegate where
 
 import Control.Concurrent.MVar (readMVar)
-import Control.Lens (ifor, ifor_, ix, to, (.~), (<&>), (^.), (^?), _Just, _Right)
-import Control.Monad.Except (catchError, runExceptT, throwError)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
-import Control.Monad.Reader (MonadReader, runReaderT)
-import qualified Data.AppendMap as AppendMap
-import Data.Foldable (fold, foldl', for_, toList, traverse_)
+import Control.Lens ((^.))
+import Control.Monad.Except (catchError, runExceptT)
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Reader (runReaderT)
+import Data.Foldable (for_)
 import Data.Functor.Identity (Identity (..))
 import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
-import Data.Pool (Pool)
-import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
-import qualified Data.Set as Set
+import Data.Semigroup ((<>))
 import Database.Groundhog.Postgresql
-import qualified Network.HTTP.Client as Http (Manager, newManager)
 import Rhyolite.Backend.DB (runDb, selectMap)
-import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Concurrent (worker)
-import Rhyolite.Schema (Id (..), Json (..))
-import Say (say, sayErr, sayShow)
+import Rhyolite.Schema (Id (..))
+import Say (say, sayShow)
 
-import Tezos.Contract (ContractId (..))
 import Tezos.NodeRPC
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceHead, dataSourceNode, waitForNewHeadWithTimeout)
 import Backend.Common (worker')
 import Backend.Schema
-import Backend.Workers
 import Common (tshow)
 import Common.Schema
 
@@ -43,24 +33,20 @@ delegateWorker
   -> m (IO ())
 delegateWorker nds = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
   protoInfo <- readMVar $ _nodeDataSource_parameters nds
-  let chainId = _nodeDataSource_chain nds
-      httpMgr = _nodeDataSource_httpMgr nds
-      db = _nodeDataSource_pool nds
+  let db = _nodeDataSource_pool nds
   ctxM <- runReaderT dataSourceNode nds
   headM <- runReaderT dataSourceHead nds
-  for_  ((,) <$> ctxM <*> headM) $ \(ctx, head) -> flip runReaderT ctx  $ do
+  for_  ((,) <$> ctxM <*> headM) $ \(ctx, headBlock) -> flip runReaderT ctx  $ do
     say "Update delegate cycle."
     let
-      headLevel :: RawLevel = head ^. level
+      headLevel :: RawLevel = headBlock ^. level
       latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
-      levelRange = [max 0 (headLevel - 10) .. headLevel]
-      headBlockHash = head ^. hash
     say $ "Head level is " <> tshow (unRawLevel headLevel) <> " in cycle " <> tshow (unRawLevel latestCycle)
     delegates :: Map (Id Delegate) Delegate <- runNoLoggingT $ runDb (Identity db) $ selectMap DelegateConstructor (Delegate_deletedField ==. False)
-    let oops :: forall a m. MonadIO m => RpcError -> m ()
+    let oops :: forall m. MonadIO m => RpcError -> m ()
         oops = sayShow
     runExceptT $ flip catchError oops $ do
-      ifor_ delegates $ \dId delegate -> do
+      for_ delegates $ \delegate -> do
         let pkh = _delegate_publicKeyHash delegate
         say $ "Updating delegate " <> toPublicKeyHashText pkh
         -- accountStatus <- nodeRPC $ rContract chainId headBlockHash (Implicit $ _delegate_publicKeyHash delegate)

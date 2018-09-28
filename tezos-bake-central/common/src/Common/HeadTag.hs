@@ -5,12 +5,11 @@
 
 module Common.HeadTag where
 
-import Data.Foldable (for_, traverse_)
+import Data.Foldable (traverse_)
 import Data.Semigroup ((<>))
 import Reflex.Dom.Builder.Class
 import Reflex.Dom.Class ((=:))
 import Reflex.Dom.Widget.Basic
-import Text.URI as Uri
 
 import Static
 

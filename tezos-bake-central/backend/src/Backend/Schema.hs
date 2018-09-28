@@ -25,12 +25,11 @@ import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
 import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
-import Data.Foldable (toList, traverse_)
+import Data.Foldable (toList)
 import Data.Functor (void)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
@@ -41,7 +40,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.Encoding as LT
 import Data.Typeable (Typeable)
 import Data.Version (Version)
 import qualified Data.Version as Version
@@ -50,8 +48,7 @@ import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
-import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, select, update,
-                                      (&&.), (==.))
+import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
@@ -65,7 +62,7 @@ import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSc
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Id, IdData, Json (..), SchemaName (..))
+import Rhyolite.Schema (Id, Json (..), SchemaName (..))
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -340,7 +337,7 @@ instance PersistField PublicKeyHash where
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
   where
-    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex 10
+    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex (10 :: Int)
 
 unArray :: Groundhog.Array a -> [a]
 unArray (Groundhog.Array a) = a
@@ -361,9 +358,9 @@ instance (FromJSON a, ToJSON a) => PersistField (FitnessF a) where
   fromPersistValues vs = first (fromDBFitness . unArray) <$> fromPersistValues vs
   dbType p x = dbType p (Groundhog.Array $ toDBFitness x) -- p (Json (Seq.empty :: Seq.Seq (Base16ByteString a)))
 
-instance (ToJSON a, Typeable a) => ToField (FitnessF a) where
+instance (ToJSON a) => ToField (FitnessF a) where
   toField v = toField $ PGArray $ toDBFitness v
-instance (FromJSON a, Typeable a) => FromField (FitnessF a) where
+instance (FromJSON a) => FromField (FitnessF a) where
   fromField a b = fromDBFitness . fromPGArray <$> fromField a b
 
 instance PrimitivePersistField PublicKeyHash where

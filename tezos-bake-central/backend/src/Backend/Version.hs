@@ -2,7 +2,6 @@
 
 module Backend.Version (version, parseVersion) where
 
-import Data.Function (on)
 import qualified Data.List as List
 import Data.Text (Text)
 import qualified Data.Text as T

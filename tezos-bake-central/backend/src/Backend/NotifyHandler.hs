@@ -11,19 +11,18 @@ import Control.Arrow ((&&&))
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Aeson (FromJSON, ToJSON, fromJSON, toJSON)
+import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.AppendMap as Map
 import Data.Bool (bool)
-import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
-import Data.Semigroup (First (..), Semigroup, (<>))
+import Data.Semigroup (First (..), (<>))
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id, IdData)
+import Rhyolite.Schema (Id)
 import Say (sayErr)
 
 import Backend.BalanceTracking
@@ -38,7 +37,7 @@ import Common.Schema
 import Common.Vassal
 
 notifyHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
+  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
   => NodeDataSource
   -> NotifyMessage
   -> BakeViewSelector a
@@ -133,7 +132,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
 
     errorsVS = _bakeViewSelector_errors aggVS
     handleErrorLog
-      :: forall e m2. (EntityWithId e, FromJSON (IdData e), PersistBackend m2, MonadIO m2)
+      :: forall e m2. (EntityWithId e, PersistBackend m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
@@ -155,7 +154,7 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
               }
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
-    handlePublicNodeConfig cid pnc =
+    handlePublicNodeConfig _cid pnc =
       whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $
         pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
 
@@ -165,6 +164,6 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
       pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) node }
 
     upgradeVS = _bakeViewSelector_upgrade aggVS
-    handleUpgradeNotice specificLogId = whenM (viewSelects () upgradeVS) $ do
+    handleUpgradeNotice _specificLogId = whenM (viewSelects () upgradeVS) $ do
       n <- getUpgradeNotice
       pure $ mempty { _bakeView_upgrade = toMaybeView upgradeVS n }

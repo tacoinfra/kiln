@@ -17,15 +17,9 @@ module Common.App where
 
 import Control.Lens (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Align (Align, alignWith, nil)
-import Data.AppendMap (AppendMap)
-import qualified Data.AppendMap as MMap
-import Data.Bifunctor
-import Data.Foldable (fold)
-import Data.Functor.Compose
+import Data.Align (Align (alignWith, nil))
+import Data.Functor.Compose (Compose (..))
 import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
@@ -45,12 +39,6 @@ import Tezos.Types
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Schema
 import Common.Vassal
-
-restrictKeys :: Ord k => AppendMap k a -> Set k -> AppendMap k a
-restrictKeys m ks = MMap.filterWithKey (\k _ -> k `Set.member` ks) m
-
-summary :: Semigroup v => AppendMap k v -> Maybe v
-summary = MMap.lookup () . MMap.mapKeysWith (<>) (const ())
 
 data Bake = Bake
 

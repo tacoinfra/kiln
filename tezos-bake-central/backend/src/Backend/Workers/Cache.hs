@@ -9,17 +9,16 @@ import Control.Lens ((<&>))
 import Control.Monad.Logger (runNoLoggingT)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
-import Data.Dependent.Map (DMap, DSum (..))
+import Data.Dependent.Map (DSum (..))
+import Data.Text (Text)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
 import Data.Foldable (for_)
 import Data.Functor.Identity
 import Data.Maybe (catMaybes, listToMaybe)
-import Data.Pool (Pool)
-import Data.Ratio ((%))
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
-import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, Values (..), executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Say (sayShow)
 
 import Tezos.Types (ChainId)
@@ -28,11 +27,10 @@ import Backend.CachedNodeRPC (CacheLine (..), CachedResult (..), NodeDataSource 
 import Backend.Common (workerWithDelay)
 import Backend.Schema (Field (..), stripOnly)
 import Common.Schema (GenericCacheEntry (..))
-import Rhyolite.Backend.DB (RunDb, runDb)
-import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Concurrent (worker)
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)
-import Rhyolite.Schema (HasId, Id (..), Json (..))
+import Rhyolite.Schema (Id (..), Json (..))
 
 
 classifyCacheEntry :: ChainId -> UTCTime -> DSum NodeQuery CachedResult -> IO (Maybe (Either GenericCacheEntry (DSum NodeQuery CachedResult)))
@@ -71,7 +69,7 @@ cacheWorker delay dsrc = workerWithDelay (pure delay) $ \_ -> do
   modifyMVar (_nodeDataSource_cache dsrc) $ \cache -> do
     now <- addUTCTime maxTTL <$> getCurrentTime
     (writeBackThese, retainThese) <- fmap (partitionEithers . catMaybes) $ traverse (classifyCacheEntry chainId now) $ DMap.toAscList cache
-    sayShow ("flushing cache:", length writeBackThese, length retainThese)
+    sayShow ("flushing cache:" :: Text, length writeBackThese, length retainThese)
     runNoLoggingT $ runDb (Identity db) $ for_ writeBackThese $ \cacheEntry -> do
       let kJson = _genericCacheEntry_key cacheEntry
       have :: Maybe (Id GenericCacheEntry) <- listToMaybe . stripOnly <$> [queryQ|

@@ -7,7 +7,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -fno-warn-missing-signatures #-}
+{-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
 module Backend.Alerts where
 
@@ -31,9 +31,8 @@ import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
-import Rhyolite.Backend.Schema (fromId, toId)
+import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
-import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Types
@@ -61,7 +60,7 @@ queueAllEmails message = do
 
 
 reportNoBakerHeartbeatError
-  :: ( Monad m, PersistBackend m, PostgresRaw m, PostgresLargeObject m, MonadIO m
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a
      )
   => Id Client -> SeenEvent -> m ()
@@ -109,7 +108,7 @@ clearNoBakerHeartbeatError cid = do
   for_ lids $ notify . mkDefaultNotify
 
 reportInaccessibleNodeError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
@@ -143,7 +142,7 @@ clearInaccessibleNodeError nodeId = do
   for_ lids $ notify . mkDefaultNotify
 
 reportNodeWrongChainError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
@@ -182,7 +181,7 @@ clearNodeWrongChainError nodeId = do
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
 
 reportBadNodeHeadError
-  :: ( Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = do
@@ -205,10 +204,10 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
         }
       node <- get $ fromId nodeId
       for_ node $ \n -> do
-        let (mkSubject, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
         now <- getTime
         queueAllEmails [Error now $
-          mkSubject (maybe "" (\x -> "Node " <> x <> " at ") $ _node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message]
+          heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message]
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -227,7 +226,7 @@ clearBadNodeHeadError nodeId = do
   for_ lids $ notify . mkDefaultNotify
 
 reportUpgradeNotice
-  :: (PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig r, MonadReader r m)
+  :: (PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig r, MonadReader r m)
   => Either UpgradeCheckError Version -> m ()
 reportUpgradeNotice errorOrNewVersion = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogUpgradeNotice) <- listToMaybe <$> [queryQ|
@@ -277,13 +276,13 @@ insertErrorLog mkErrorLog = do
   notify . mkDefaultNotify =<< insert' errLog
   pure errLog
 
-updateErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
+updateErrorLog :: (HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
 updateErrorLog logId specificLogId = do
   updateErrorLogLastSeen logId
   notify $ mkDefaultNotify specificLogId
 
 updateErrorLogBy
-  :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  :: (EntityWithId a, HasDefaultNotify (Id a), GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
   => Id ErrorLog
   -> Id a
   -> [Update (PhantomDb m) (RestrictionHolder v c)]

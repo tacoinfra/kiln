@@ -1,43 +1,31 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.WebApi where
 
-import Data.Bifunctor
-import Text.URI (URI)
-import qualified Text.URI as Uri
-import qualified Text.URI.QQ as Uri
-import Data.Maybe (listToMaybe)
-import Control.Lens((^.))
+import Control.Monad ((<=<))
+import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class
-import Control.Monad
-import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks)
-import Data.Text (Text)
+import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
+import qualified Data.Aeson as Aeson
+import Data.Bifunctor (first)
+import qualified Data.Map as Map
+import Data.Maybe (listToMaybe)
 import Data.Semigroup ((<>))
-import Data.Sequence (Seq)
-import qualified Network.HTTP.Client as Http
-import qualified Network.HTTP.Types.Method as Http
+import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Aeson as Aeson
 import qualified Snap.Core as Snap
-import qualified Data.Map as Map
 
-import Snap.Core (MonadSnap, route)
-import Tezos.Block (VeryBlockLike(..))
 import Backend.CachedNodeRPC
 import qualified Control.Concurrent.MVar as MVar
 import qualified Data.ByteString.Lazy as LBS
+import Snap.Core (MonadSnap, route)
+import Tezos.Block (VeryBlockLike (..))
 
-
-import Tezos.NodeRPC.Network (NodeRPCContext (..), nodeRPCImpl, HasNodeRPC)
-import Tezos.NodeRPC
-import Tezos.Base58Check (toBase58, fromBase58)
+import Tezos.Base58Check (fromBase58, toBase58)
 import Tezos.Types
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
@@ -66,29 +54,29 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
     sulk msg = Snap.modifyResponse (Snap.setResponseCode 400) *> Snap.writeLBS (LBS.fromStrict $ T.encodeUtf8 msg)
 
 
-snapBranchPoint :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
+snapBranchPoint :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapBranchPoint = withCache (Left "nocache") $ \_proto -> do
   Map.lookup "block" <$> Snap.getQueryParams >>= \case
     Nothing -> return $ Left "bad param"
     Just blockBS -> case traverse fromBase58 blockBS of
       Left err -> return $ Left $ T.pack $ show err
-      Right (b1:b2:bs) -> branchPoint b1 b2 >>= \case
+      Right (b1:b2:_) -> branchPoint b1 b2 >>= \case
         Nothing -> return $ Left "not found"
         Just b' -> return $ Right b'
       Right _ -> return $ Left "not enough blocks requested"
 
 
-snapAncestors :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text [BlockHash])
+snapAncestors :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text [BlockHash])
 snapAncestors = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branchBS <- maybe (throwError "missing param:branch") return =<< (listToMaybe <=< Map.lookup "branch") <$> Snap.liftSnap Snap.getQueryParams
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- maybe (throwError "missing param:level") return =<< (listToMaybe <=< Map.lookup "level") <$> Snap.liftSnap Snap.getQueryParams
-  level :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
 
-  either (throwError . T.pack . show ) return =<< runExceptT (ancestors level branch)
+  either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
 
-snapBlock :: (MonadSnap m, MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
+snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapBlock = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   blockBS <- maybe (throwError "missing param:block") return =<< (listToMaybe <=< Map.lookup "block") <$> Snap.liftSnap Snap.getQueryParams
   block <- either (throwError . T.pack . show) return $ fromBase58 blockBS

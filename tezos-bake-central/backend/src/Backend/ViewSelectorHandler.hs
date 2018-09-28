@@ -9,43 +9,32 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Lens (imap, itraverse, (<&>))
-import Control.Monad.Except (runExceptT)
+import Control.Lens ((<&>))
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first, second)
-import Data.Foldable (fold)
+import Data.Bifunctor (first)
 import Data.Functor.Identity (Identity (..))
-import qualified Data.IntervalMap.Generic.Lazy as IMap
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (isJust, listToMaybe)
-import qualified Data.Monoid
+import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
-import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.Traversable (for)
 import Data.Version (Version)
-import Data.Word (Word64)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
-import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Email, Id, Json (..))
-import Say
-import Text.URI
+import Rhyolite.Schema (Id)
+import Text.URI (URI)
 
-import Tezos.Account
-import Tezos.Json (TezosWord64 (..))
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
-import Tezos.Tez
 import Tezos.Types
 
 import Backend.BalanceTracking
@@ -61,7 +50,7 @@ import Common.Vassal
 
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a, Semigroup a, Show a)
+  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
   => Maybe NamedChain
   -> NodeDataSource
   -> Pool Postgresql
@@ -116,7 +105,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, fitness, updated)) ->
+      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
         (Bounded nid, First $ Just Node
           { _node_address = addr
           , _node_alias = alias
@@ -126,7 +115,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
           , _node_headBlockBakedAt = headBlockBakedAt
           , _node_peerCount = peerCount
           , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
-          , _node_fitness = fitness
+          , _node_fitness = blockFitness
           , _node_deleted = False
           , _node_updated = updated
           })
@@ -139,8 +128,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
   maybeCurrentHead <- runReaderT dataSourceHead nds
 
   -- delegateStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
-  delegateStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
-    <- pure mempty
+  let delegateStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
+       = mempty
   --   <- whenJust maybeCurrentHead $ \currentHead -> do
   --   forRWT nds $ withCache mempty $ \_protoInfo -> do
   --     flip itraverse (_bakeViewSelector_delegateStats vs) $ \(i, j) -> _
@@ -156,7 +145,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
     let ms' = Just $ mailServerConfigToView <$> ms
     return $ toMaybeView (_bakeViewSelector_mailServer vs) ms'
 
-  summary <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
+  summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
   errors <- getErrorLogs $ unIntervalSelector errorsVS
@@ -175,7 +164,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
     , _bakeView_notificatees = notificatees
     , _bakeView_mailServer = mailServer
     -- , _bakeView_summaryGraph = summaryGraph
-    , _bakeView_summary = summary
+    , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
@@ -184,7 +173,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ ru
 
 
 getErrorLogs
-  :: (Monad m, PostgresRaw m, Semigroup a, MonadIO m)
+  :: (Monad m, PostgresRaw m, Semigroup a)
   => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
   -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
 getErrorLogs intervalMap = do
@@ -383,7 +372,5 @@ getUpgradeNotice = do
       }
     , case tError of
         Just e -> Left e
-        Nothing -> case tNewVersion of
-          Just tNewVersion -> Right tNewVersion
-          Nothing -> error "Bad upgrade notice record"
+        Nothing -> maybe (error "Bad upgrade notice record") Right tNewVersion
     )
