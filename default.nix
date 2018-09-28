@@ -171,7 +171,7 @@ let
       destination d_smtp {
         smtp(
           host("mail.obsidian.systems")
-          port(25)
+          port(2525)
           from("syslog-ng alert service" "noreply@obsidian.systems")
           to(ops_friendlyname "ops@obsidian.systems")
           subject("[ALERT] $LEVEL $HOST $PROGRAM $MSG")
