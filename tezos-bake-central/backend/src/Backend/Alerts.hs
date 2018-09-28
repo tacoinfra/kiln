@@ -208,8 +208,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
         let (mkSubject, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
         now <- getTime
         queueAllEmails [Error now $
-          mkSubject (maybe "" (\x -> "Node " <> x <> " at ") $ _node_alias n) <> (Uri.render $ _node_address n) <> "\n\n" <> message]
-      pure ()
+          mkSubject (maybe "" (\x -> "Node " <> x <> " at ") $ _node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message]
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId

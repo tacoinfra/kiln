@@ -1,5 +1,4 @@
 {-# LANGUAGE DoAndIfThenElse #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -16,10 +15,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
-import Control.Monad.Except (ExceptT, MonadError, runExceptT)
+import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
+import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
 import Data.Bifunctor (first)
 import Data.Foldable (for_, traverse_)
@@ -39,7 +38,7 @@ import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
-import Rhyolite.Schema (Id (..), IdData)
+import Rhyolite.Schema (Id (..))
 import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -48,7 +47,7 @@ import Tezos.History (CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
-import Tezos.NodeRPC.Sources (AsPublicNodeError, HasPublicNodeContext, PublicNode (..),
+import Tezos.NodeRPC.Sources (PublicNode (..),
                               PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
 import Tezos.Types
 
@@ -68,7 +67,7 @@ selectIds
      , ProjectionRestriction t (RestrictionHolder v c), DefaultKeyId v
      , Projection t v, EntityConstr v c
      , HasSelectOptions a (PhantomDb m) (RestrictionHolder v c)
-     , PersistBackend m, Ord (IdData v), AutoKey v ~ DefaultKey v)
+     , PersistBackend m, AutoKey v ~ DefaultKey v)
   => t -- ^ Constructor
   -> a -- ^ Select options
   -> m [(Id v, v)]
@@ -100,7 +99,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
       flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
         flip execStateT cache $ do
           _ <- accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
-          sayShow (if newBlock then "new block" else "known block", pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+          sayShow (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
     case newStateRsp of
       Left e -> sayShow e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
@@ -118,7 +117,6 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
 
 nodeMonitor :: ChainId -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
-  let httpMgr = _nodeDataSource_httpMgr nds
   oldHead <- runReaderT dataSourceHead nds
   updateNodeDataSource nds nodeAddr headBlockInfo
   haveNewHead nds Nothing nodeAddr headBlockInfo
@@ -205,7 +203,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
-    initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
+    _ <- initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
 
     thoseNodes <- readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
@@ -217,7 +215,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     let
       chainId = _nodeDataSource_chain nds
 
-    ifor_ newNodes $ \nodeAddr (nodeId, nodeAlias) -> do
+    ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
       let reconnectDelay = 5
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ do
         let
@@ -226,7 +224,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
+        _ <- chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           inDb $ do
             clearInaccessibleNodeError nodeId
@@ -255,28 +253,27 @@ type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
 publicNodesWorker
   :: NodeDataSource
-  -> AppConfig
   -> Pool Postgresql
   -> [DataSource]
   -> IO (IO ())
-publicNodesWorker nds appConfig db = foldMap workerForSource
+publicNodesWorker nds db = foldMap workerForSource
   where
-    chain = _nodeDataSource_chain nds
+    chainId = _nodeDataSource_chain nds
 
     queryPublicNode
       :: forall a. ReaderT PublicNodeContext (ExceptT PublicNodeError IO) a
       -> DataSource -> IO (Either PublicNodeError a)
-    queryPublicNode k (pn, nc, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
+    queryPublicNode k (pn, _, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
     {-# INLINE queryPublicNode #-}
 
     workerForSource :: DataSource -> IO (IO ())
-    workerForSource source@(pn, _, uri) = worker' $ do
+    workerForSource source@(pn, _, uri) = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
       enabled <- publicNodeEnabled pn
       -- TODO: prefer to get this from the database, or from private nodes before
       when enabled $ initParams nds (Identity (Just pn, uri)) *> updatePublicNodeInDb source *> waitForNewHeadWithTimeout nds
 
     getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
-    getHeadFromSource = queryPublicNode $ getCurrentHead chain
+    getHeadFromSource = queryPublicNode $ getCurrentHead chainId
     {-# INLINE getHeadFromSource #-}
 
     publicNodeEnabled :: PublicNode -> IO Bool

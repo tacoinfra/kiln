@@ -4,24 +4,18 @@
 
 module Backend.ChainHealth (scanForkInfo) where
 
-import Control.Lens (view, (^.))
-import Control.Monad (void)
-import Control.Monad.Except (MonadError, catchError, runExceptT, throwError)
+import Control.Lens ((^.))
+import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Reader (MonadReader, asks, runReaderT)
+import Control.Monad.Reader (MonadReader)
 import Data.Function (on)
 import Data.Maybe
-import Data.Semigroup ((<>))
-import Data.Time (UTCTime, addUTCTime)
-import qualified Network.HTTP.Client as Http
+import Data.Time (UTCTime)
 import Safe (maximumByMay)
-import Say (say)
 
 import Backend.CachedNodeRPC
-import Common (tshow)
 import Common.Schema
 import Common.Verification
-import Tezos.Lenses
 import Tezos.NodeRPC
 import Tezos.Types
 
@@ -42,13 +36,13 @@ checkChainHealth
   -> Int -- ^ max unseen age, in seconds
   -> b
   -> m ForkInfo
-checkChainHealth now delay seenBaked = do
+checkChainHealth _now _delay seenBaked = do
   seen <- runExceptT $ do
     -- try really hard to get seenBaked into history
     seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
     -- look for the head to give the newly seen block a chance to become the head
-    head :: VeryBlockLike <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure =<< dataSourceHead
-    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< branchPoint (head ^. hash) (seenBaked ^. hash)
+    headBlock :: VeryBlockLike <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure =<< dataSourceHead
+    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< branchPoint (headBlock ^. hash) (seenBaked ^. hash)
     -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}
     if (seen ^. predecessor) == (ancestor ^. predecessor)
       then return () -- ForkStatus_Good
