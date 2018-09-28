@@ -2,24 +2,20 @@
 
 module Backend.Common where
 
-import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Data.Fixed (Fixed (..))
 import Data.Functor (void)
 import Data.Ratio (denominator, numerator)
-import Data.Semigroup
-import Data.Time.Clock (NominalDiffTime (..))
+import Data.Time.Clock (NominalDiffTime)
 import Rhyolite.Concurrent (supervise)
 import System.Timeout (timeout)
-
-import Common (tshow)
 
 nominalDiffTimeToMicroseconds :: NominalDiffTime -> Integer
 nominalDiffTimeToMicroseconds n = numerator ratio * (microsecondsInSecond `div` denominator ratio)
   where
-    microsecondsInSecond = 10^6
+    microsecondsInSecond = 10^(6 :: Integer)
     ratio = toRational n
 
 workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ()) -> m (IO ())

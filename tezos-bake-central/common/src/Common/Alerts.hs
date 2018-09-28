@@ -18,7 +18,7 @@ badNodeHeadMessage
   => (Text -> f ())
   -> (BlockHash -> f ())
   -> ErrorLogBadNodeHead
-  -> (Text -> Text, f ())
+  -> (Text, f ())
 badNodeHeadMessage text blockHashLink l =
   case _errorLogBadNodeHead_lca l of
     Nothing ->
@@ -63,6 +63,6 @@ badNodeHeadMessage text blockHashLink l =
     Json nodeHead = _errorLogBadNodeHead_nodeHead l
     Json latestHead = _errorLogBadNodeHead_latestHead l
 
-    branchHeader nodeName = "Node is on a branch: " <> nodeName
-    behindHeader nodeName = "Node is behind: " <> nodeName
+    branchHeader = "Node is on a branch"
+    behindHeader = "Node is behind"
 

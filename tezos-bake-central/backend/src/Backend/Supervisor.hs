@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+
 module Backend.Supervisor where
+
 import Control.Concurrent.STM (atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (Handler (..), catch, catches, finally, throwIO)
+import Control.Exception.Safe (finally)
 import Control.Monad (join)
 import Say
 

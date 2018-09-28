@@ -402,7 +402,7 @@ backendMain k = do
       let
         staticHead :: DomBuilder t m => m ()
         !staticHead = do
-          let injectIt cfg = injectPure (T.pack $ "config/" <> cfg)
+          let injectIt config = injectPure (T.pack $ "config/" <> config)
           headTag
           for_ route $ injectIt Config.route . encodeViaJson
           injectIt Config.checkForUpgrade (tshow checkForUpgrade)

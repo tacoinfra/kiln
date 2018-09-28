@@ -7,11 +7,8 @@
 module Backend.Config where
 
 import Control.Lens (Lens', view)
-import Control.Monad.Reader (MonadReader, ReaderT, ask, asks, runReaderT)
-import Control.Monad.Trans (lift)
-import Database.Groundhog (DbPersist (..), PersistBackend)
+import Control.Monad.Reader (MonadReader, asks)
 import Network.Mail.Mime (Address)
-import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject (..))
 
 newtype AppConfig = AppConfig
   { _appConfig_emailFromAddress :: Address

@@ -13,8 +13,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -fmax-relevant-binds=20 -Wall #-}
-
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
@@ -23,14 +21,13 @@ import Prelude hiding (length)
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry)
+import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry, readTVarIO)
 import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
-import Data.Coerce (coerce)
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -42,20 +39,19 @@ import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Map.Monoidal (MonoidalMap)
-import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, (<>), Max(..))
+import Data.Semigroup (First (..))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
+import qualified Data.Time as Time
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
-import Reflex.FunctorMaybe (fmapMaybe)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Request.Class
 import Rhyolite.Request.TH (makeRequestForData)
@@ -190,7 +186,7 @@ waitForNewHeadWithTimeout nds = do
 
 waitForNewHead :: NodeDataSource -> IO VeryBlockLike
 waitForNewHead nds = do
-  oldHead <- atomically $ readTVar (_nodeDataSource_latestHead nds)
+  oldHead <- readTVarIO (_nodeDataSource_latestHead nds)
   atomically $ do
     newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
     when (oldHead == Just newHead) retry
@@ -198,14 +194,13 @@ waitForNewHead nds = do
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
 histToBlockLike :: RawLevel -> (BlockHash, Fitness, LCA.Path BlockHash Fitness) -> VeryBlockLike
-histToBlockLike minLevel (h, f, path) = VeryBlockLike h p f blockLevel utc0000
+histToBlockLike minLevel (h, f, path) = VeryBlockLike h p f blkLevel unixEpoch
   where
-    blockLevel = minLevel + fromIntegral (length path) + 1
+    blkLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
-utc0000 :: UTCTime
-utc0000 = fromMaybe (error "impossible") $ Aeson.decode "\"0000-01-01T00:00:00.000Z\""
-{-# INLINE utc0000 #-}
+unixEpoch :: UTCTime
+unixEpoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
 
 updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
 updateNodeDataSource nds nodeAddr blk =
@@ -333,7 +328,7 @@ nodeQueryDataSource q' = do
   unpackCacheResult resultM
 
 pickNode
-  :: forall b m a.
+  :: forall m a.
   ( MonadIO m
   , MonadReader a m, HasNodeDataSource a
   )
@@ -419,19 +414,19 @@ calculateBakeEfficiency ::
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency branch length delegate = do
-  sayShow (T.pack "bake efficiency requested", branch ^. hash, length, delegate)
+calculateBakeEfficiency branch len delegate = do
+  sayShow ("bake efficiency requested" :: Text, branch ^. hash, len, delegate)
 
   let
     branchLevel = branch ^. level
     branchHash = branch ^. hash
-    levels = [branchLevel - length..branchLevel]
-  branchHashes <- ancestors length branchHash
+    levels = [branchLevel - len..branchLevel]
+  branchHashes <- ancestors len branchHash
 
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
   bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
-  result <- pure $ fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  sayShow (T.pack "efficiency", delegate, result)
+  let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
+  sayShow ("efficiency" :: Text, delegate, result)
   return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
