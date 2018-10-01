@@ -620,8 +620,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
             requestingIdentity $ public . PublicRequest_RemoveNode . fst <$> tag (current node) eRemove
 
         addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-        let nodeIdent = Nothing -- either (const Nothing) Just . fromBase58 . T.encodeUtf8 <$> value idInput
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias nodeIdent)
+        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias)
 
     upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]

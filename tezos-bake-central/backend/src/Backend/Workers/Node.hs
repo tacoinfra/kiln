@@ -20,6 +20,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (($>))
@@ -47,8 +48,7 @@ import Tezos.History (CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
-import Tezos.NodeRPC.Sources (PublicNode (..),
-                              PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
+import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
@@ -87,13 +87,13 @@ minCachedBlockLevel = 1
 nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
 nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up" :: Text, branch, current, i, n)
 
-haveNewHead :: BlockLike blk => NodeDataSource -> Maybe PublicNode -> URI -> blk -> IO ()
+haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = do
   let httpMgr = _nodeDataSource_httpMgr nds
   let chainId = _nodeDataSource_chain nds
   let cacheVar = _nodeDataSource_history nds
   oldHead <- runReaderT dataSourceHead nds
-  newBlock <- modifyMVar cacheVar $ \cache -> do
+  newBlock <- liftIO $ modifyMVar cacheVar $ \cache -> do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
       flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
@@ -105,7 +105,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
       Right good -> return (good, Right newBlock)
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-    updatedLevel <- atomically $ do
+    updatedLevel <- liftIO $ atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
       if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
@@ -253,40 +253,50 @@ type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
 publicNodesWorker
   :: NodeDataSource
-  -> Pool Postgresql
   -> [DataSource]
   -> IO (IO ())
-publicNodesWorker nds db = foldMap workerForSource
+publicNodesWorker nds = foldMap workerForSource
   where
+    workerForSource :: DataSource -> IO (IO ())
+    workerForSource source = worker' $ updateDataSource nds source *> waitForNewHeadWithTimeout nds
+
+updateDataSource
+  :: forall m. (MonadIO m, MonadBaseControl IO m)
+  => NodeDataSource -> DataSource -> m ()
+updateDataSource nds (pn, chain, uri) = do
+  enabled <- publicNodeEnabled
+  -- TODO: prefer to get this from the database, or from private nodes before
+  when enabled $ do
+    _ <- liftIO $ initParams nds (Identity (Just pn, uri))
+    updatePublicNodeInDb
+
+  where
+    db = _nodeDataSource_pool nds
     chainId = _nodeDataSource_chain nds
 
     queryPublicNode
-      :: forall a. ReaderT PublicNodeContext (ExceptT PublicNodeError IO) a
-      -> DataSource -> IO (Either PublicNodeError a)
-    queryPublicNode k (pn, _, uri) = runExceptT $ runReaderT k $ PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
+      :: forall a. ReaderT PublicNodeContext (ExceptT PublicNodeError m) a
+      -> m (Either PublicNodeError a)
+    queryPublicNode k = runExceptT $
+      runReaderT k $
+        PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
     {-# INLINE queryPublicNode #-}
 
-    workerForSource :: DataSource -> IO (IO ())
-    workerForSource source@(pn, _, uri) = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
-      enabled <- publicNodeEnabled pn
-      -- TODO: prefer to get this from the database, or from private nodes before
-      when enabled $ initParams nds (Identity (Just pn, uri)) *> updatePublicNodeInDb source *> waitForNewHeadWithTimeout nds
-
-    getHeadFromSource :: DataSource -> IO (Either PublicNodeError VeryBlockLike)
+    getHeadFromSource :: m (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ getCurrentHead chainId
     {-# INLINE getHeadFromSource #-}
 
-    publicNodeEnabled :: PublicNode -> IO Bool
-    publicNodeEnabled pn = fmap (fromMaybe False . listToMaybe) $
+    publicNodeEnabled :: m Bool
+    publicNodeEnabled = fmap (fromMaybe False . listToMaybe) $
       runNoLoggingT $ runDb (Identity db) $
         project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
     {-# INLINE publicNodeEnabled #-}
 
-    updatePublicNodeInDb :: DataSource -> IO ()
-    updatePublicNodeInDb dsrc@(source, chain, uri) = getHeadFromSource dsrc >>= \case
+    updatePublicNodeInDb :: m ()
+    updatePublicNodeInDb = getHeadFromSource >>= \case
       Left e -> sayErr (tshow e)
       Right b -> do
-        haveNewHead nds (Just source) uri b
+        haveNewHead nds (Just pn) uri b
         let
           bChain = NamedChainOrChainId chain
           bLevel = b ^. level
@@ -297,7 +307,7 @@ publicNodesWorker nds db = foldMap workerForSource
           updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
             INSERT INTO "PublicNodeHead"
               ("source", "chain", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
-              VALUES (?source, ?bChain, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
+              VALUES (?pn, ?bChain, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
             ON CONFLICT ("source", "chain") DO UPDATE SET
               "headLevel" = ?bLevel,
               "headBlockHash" = ?bHash,

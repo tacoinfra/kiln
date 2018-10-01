@@ -12,12 +12,13 @@
 
 module Backend where
 
+import Common.Route
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
-import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
+import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
@@ -32,6 +33,8 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
+import qualified Data.Random as Random
+import qualified Data.Random.Extras as Random
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -39,16 +42,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
-import Obelisk.ExecutableConfig.Inject (injectPure)
-
-import Common.Route
 import Obelisk.Backend
+import Obelisk.ExecutableConfig.Inject (injectPure)
+import Obelisk.Frontend
 import Obelisk.Route
 import Prelude hiding ((.))
 import Reflex.Dom.Core (DomBuilder)
@@ -57,10 +58,11 @@ import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Say (say, sayShow)
+import Say (say)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
+import System.Environment (getArgs, getProgName, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -74,15 +76,16 @@ import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.Alerts (clearUpgradeNotice)
-import Backend.CachedNodeRPC
+import Backend.CachedNodeRPC (blankNodeDataSource)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
-import Backend.Supervisor
+import Backend.Supervisor (withTermination)
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
+import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client
 import Backend.Workers.Delegate
@@ -92,22 +95,7 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Schema
 import Common.URI (mkRootUri)
-
-import Backend.WebApi (v1PublicApi)
-import qualified Data.Random as Random
-import qualified Data.Random.Extras as Random
 import Frontend (frontend)
-import Obelisk.Frontend
-import System.Environment (getArgs, getProgName, withArgs)
-
-
-timeit :: MonadIO m => Text -> (e -> m a) -> ExceptT e m a -> m a
-timeit note errback action = do
-  !now <- liftIO getCurrentTime
-  !result <- either errback return =<< runExceptT action
-  !later <- liftIO getCurrentTime
-  sayShow (note, diffUTCTime later now)
-  return result
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -229,7 +217,7 @@ backendImpl cfg serve = do
       let appConfig = AppConfig emailFromAddress
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress httpMgr db appConfig)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig)
         (notifyHandler dataSrc)
         (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
@@ -237,7 +225,7 @@ backendImpl cfg serve = do
 
       addFinalizer =<< cacheWorker 30 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< publicNodesWorker dataSrc db publicDataSources
+      addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
