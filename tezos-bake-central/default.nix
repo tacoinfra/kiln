@@ -6,17 +6,11 @@ let
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
-    bytestring-trie-src = pkgs.fetchFromGitHub {
-      owner = "obsidiansystems";
-      repo = "bytestring-trie";
-      rev = "27117ef4f9f01f70904f6e8007d33785c4fe300b";
-      sha256 = "103fqr710pddys3bqz4d17skgqmwiwrjksn2lbnc3w7s01kal98a";
-    };
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "212e9898d464378270cd1e8b58f6e262d43f0aa3";
-      sha256 = "0lcvmzpmrg9d11h43f0v9pwkn6a0xi23j3kzq8hgfq3nhygjshs4";
+      rev = "bf5be49507f426a2d396476aa858f11adc051b09";
+      sha256 = "182zsm1zdibws679ndgyxyznqvhhlw59x3jrsh5mx658icnnzazb";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = pkgs.fetchFromGitHub {
@@ -49,13 +43,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
-
-      # TODO Don't jailbreak.
-      gargoyle = pkgs.haskell.lib.doJailbreak super.gargoyle;
-      gargoyle-postgresql = pkgs.haskell.lib.doJailbreak super.gargoyle-postgresql;
-      gargoyle-nix = pkgs.haskell.lib.doJailbreak super.gargoyle-nix;
-
-      bytestring-trie = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "bytestring-trie" bytestring-trie-src {});
 
       semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
 
