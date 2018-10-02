@@ -30,7 +30,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddNode
       :: URI
       -> Maybe Text
-      -> Maybe CryptoboxPublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_RemoveNode
       :: URI
