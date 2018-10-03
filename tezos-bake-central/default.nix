@@ -14,11 +14,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = pkgs.fetchFromGitHub {
-      owner = "danbornside";
-      # owner = "tomsmalley";
+      owner = "tomsmalley";
       repo = "semantic-reflex";
-      rev = "26268b0236679ef5f7e762f7bd84d00b86c02545";
-      sha256 = "0g8ilbhrp4i4pfxkayh9cprdx1yffiyh7zw3qming61p9pcyvpa1";
+      rev = "42bfede5e308bab4494e87ed0144f21134a4c5b3";
+      sha256 = "01rpf0vh5llx1hq4j55gmw36fvzhb95ngcykh34sgcxp5498p9f3";
     };
   in {
     packages = {
@@ -33,18 +32,18 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
-      email-validate = dontCheck super.email-validate;
-      modern-uri = dontCheck super.modern-uri;
-      base58-bytestring = dontCheck super.base58-bytestring;
-      lens-aeson = dontCheck super.lens-aeson;
-      megaparsec = dontCheck super.megaparsec;
       backend-db = if supportGargoyle
         then
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
-      semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
+      base58-bytestring = dontCheck super.base58-bytestring;
+      email-validate = dontCheck super.email-validate;
+      lens-aeson = dontCheck super.lens-aeson;
+      megaparsec = dontCheck super.megaparsec;
+      modern-uri = dontCheck super.modern-uri;
+      semantic-reflex = dontHaddock (dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (super.tezos-bake-monitor-lib);
+      tezos-bake-monitor-lib = dontHaddock (super.tezos-bake-monitor-lib);
     });
   })
