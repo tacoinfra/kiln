@@ -55,16 +55,15 @@ checkForUpgrade
   -> Http.Manager
   -> AppConfig
   -> (forall a. trx a -> m a)
-  -> m (Either UpgradeCheckError V.Version)
+  -> m (Maybe (Either UpgradeCheckError V.Version))
 checkForUpgrade upgradeBranch httpMgr appConfig withTransaction = do
   result <- runExceptT (getUpstreamVersion upgradeBranch httpMgr)
   withTransaction $ flip runReaderT appConfig $ case result of
-    e@(Left _) -> reportUpgradeNotice e
+    e@(Left _) -> Just e <$ reportUpgradeNotice e
     Right upstreamVersion -> if upstreamVersion > version then
-        reportUpgradeNotice (Right upstreamVersion)
+        Just (Right upstreamVersion) <$ reportUpgradeNotice (Right upstreamVersion)
       else
-        clearUpgradeNotice
-  pure result
+        Nothing <$ clearUpgradeNotice
 
 
 upstreamGitLab :: Text -> Text

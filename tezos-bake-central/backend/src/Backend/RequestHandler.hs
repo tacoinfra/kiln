@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -12,7 +12,7 @@ module Backend.RequestHandler where
 
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (runNoLoggingT, NoLoggingT)
+import Control.Monad.Logger (NoLoggingT, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
@@ -31,11 +31,12 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
-import Backend.Config (AppConfig)
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Config (AppConfig)
 import Backend.Schema
-import Backend.Workers.Node (DataSource, updateDataSource)
 import Backend.Upgrade (checkForUpgrade)
+import Backend.Version (version)
+import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -138,7 +139,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
             , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
             ]
 
-      PublicRequest_CheckForUpgrade -> inDb $
+      PublicRequest_CheckForUpgrade -> fmap ((,) version) $ inDb $
         checkForUpgrade upgradeBranch (_nodeDataSource_httpMgr nds) appConfig id
 
       PublicRequest_SetPublicNodeConfig publicNode enabled -> do

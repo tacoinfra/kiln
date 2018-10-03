@@ -628,9 +628,15 @@ optionsTab = divClass "ui two column stackable grid" $ do
         (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
         $ text "Check for New Version"
       result <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ checkUpgrade
-      widgetHold_ blank $ ffor result $ \case
-        Left _ -> divClass "ui error message" $ text "We had trouble checking for upgrades"
-        Right v -> divClass "ui success message" $ text $ "A new version is available: " <> T.pack (showVersion v)
+      widgetHold_ blank $ ffor result $ \(currentVersion, checkResult) -> do
+        let currentVersionText = "You're currently using version " <> T.pack (showVersion currentVersion)
+        case checkResult of
+          Nothing -> divClass "ui success message" $
+            text $ currentVersionText <> " which is the latest."
+          Just (Right newVersion) -> divClass "ui success message" $
+            text $ "A new version is available: " <> T.pack (showVersion newVersion) <> ". " <> currentVersionText <> "."
+          Just (Left _) -> divClass "ui error message" $
+            text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
 
     urlInputRow
       :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)

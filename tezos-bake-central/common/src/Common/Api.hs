@@ -62,7 +62,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: PublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
-      :: PublicRequest Bake (Either UpgradeCheckError Version)
+      :: PublicRequest Bake (Version, Maybe (Either UpgradeCheckError Version))
     PublicRequest_SetPublicNodeConfig
       :: PublicNode
       -> Bool
