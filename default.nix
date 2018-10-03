@@ -210,7 +210,57 @@ let
     };
   };
 
+  dockerExe = let exe = obApp.linuxExe; in pkgs.runCommand "dockerExe" {} ''
+    mkdir "$out"
+
+    cp '${exe}/backend' "$out/backend"
+    cp -r '${exe}/static.assets' "$out/static.assets"
+
+    mkdir "$out/frontend.jsexe.assets"
+    cp -r '${exe}/frontend.jsexe.assets'/*all.js "$out/frontend.jsexe.assets"
+  '';
+  dockerImage = let
+    bakeCentralSetupScript = pkgs.dockerTools.shellScript "dockersetup.sh" ''
+      set -ex
+
+      ${pkgs.dockerTools.shadowSetup}
+      echo 'nobody:x:99:99:Nobody:/:/sbin/nologin' >> /etc/passwd
+      echo 'nobody:*:17416:0:99999:7:::'           >> /etc/shadow
+      echo 'nobody:x:99:'                          >> /etc/group
+      echo 'nobody:::'                             >> /etc/gshadow
+
+      mkdir -p    /var/run/bake-monitor
+      chown 99:99 /var/run/bake-monitor
+    '';
+    bakeCentralEntrypoint = pkgs.dockerTools.shellScript "entrypoint.sh" ''
+      set -ex
+
+      mkdir -p /var/run/bake-monitor
+      ln -sft /var/run/bake-monitor '${dockerExe}'/*
+
+      cd /var/run/bake-monitor
+      exec ./backend "$@"
+    '';
+  in pkgs.dockerTools.buildImage {
+    name = "tezos-bake-monitor";
+    contents = [ pkgs.iana-etc pkgs.cacert ];
+    runAsRoot = bakeCentralSetupScript;
+    keepContentsDirlinks = true;
+    config = {
+     Env = [
+        ("PATH=" + builtins.concatStringsSep(":")([
+          "${pkgs.stdenv.shellPackage}/bin"
+          "${pkgs.coreutils}/bin"
+        ]))
+      ];
+      Expose = 8000;
+      Entrypoint = [bakeCentralEntrypoint];
+      User = "99:99";
+    };
+  };
+
 in obApp // {
+  inherit dockerExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, ... }:
     let
       network =
