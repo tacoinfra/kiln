@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend.Upgrade where
 
@@ -11,6 +12,7 @@ import Control.Exception.Safe (try)
 import Control.Monad (join)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (logInfo)
 import Control.Monad.Reader (runReaderT)
 import Data.Bifunctor (second)
 import qualified Data.ByteString.Lazy as Bz
@@ -29,7 +31,6 @@ import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Say (say)
 
 import Backend.Alerts (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Common (workerWithDelay)
@@ -46,8 +47,8 @@ upgradeCheckWorker
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker upgradeBranch delay logger appConfig httpMgr db = workerWithDelay (pure delay) $ const $ do
-    say "Checking for upgrades"
+upgradeCheckWorker upgradeBranch delay logger appConfig httpMgr db = workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
+    $(logInfo) "Checking for upgrades"
     void $ checkForUpgrade upgradeBranch httpMgr appConfig (runLoggingEnv logger . runDb (Identity db))
 
 checkForUpgrade

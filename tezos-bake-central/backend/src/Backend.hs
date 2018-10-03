@@ -21,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, LoggingT(..), runLoggingT)
+import Control.Monad.Logger (MonadLogger, LoggingT(..), logInfo, logDebug)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -59,7 +59,6 @@ import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Say (say)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -104,7 +103,8 @@ import qualified Data.Map as Map
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
 
-
+askLogger :: Monad m => LoggingT m LoggingEnv
+askLogger = LoggingT $ return . LoggingEnv
 
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
@@ -201,14 +201,12 @@ backendImpl cfg serve = do
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
-  say $ "Monitoring network " <> toBase58Text chainId
-  for_ route $ \r -> say $ "Using route " <> URI.render r
+  withDb dbSpec $ \db -> withLogging loggingConfig $ do
+    logger <- askLogger
+    $(logInfo) $ "Monitoring network " <> toBase58Text chainId
+    for_ route $ \r -> $(logDebug) $ "Using route " <> URI.render r
 
-  withLogging loggingConfig $ LoggingT $ \logger -> withDb dbSpec $ \db -> do
-    let
-      execLogging :: LoggingT m a -> m a
-      execLogging = flip runLoggingT logger
-    execLogging $ runDb (Identity db) $ do
+    runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
         migrateAccount tableInfo
@@ -225,12 +223,12 @@ backendImpl cfg serve = do
         for_ needToAdd $ \newAddress ->
           insert $ mkNode newAddress Nothing
 
-    dataSrc <- blankNodeDataSource db chainId httpMgr (LoggingEnv logger)
+    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
-        execLogging (clearMailQueueWithDynamicEmailEnv $ Identity db)
+        (runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
@@ -249,9 +247,9 @@ backendImpl cfg serve = do
       addFinalizer =<< delegateWorker dataSrc
 
       if checkForUpgrade then
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) (LoggingEnv logger) appConfig httpMgr db
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger appConfig httpMgr db
       else
-        execLogging $ runDb (Identity db) clearUpgradeNotice
+        runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
         BackendRoute_Listen :=> _ -> handleListen

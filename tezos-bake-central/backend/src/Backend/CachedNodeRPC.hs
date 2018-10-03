@@ -25,7 +25,7 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry, rea
 import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
-import Control.Monad.Logger (LoggingT(..))
+import Control.Monad.Logger (LoggingT(..), logInfo, logDebugSH, logWarnSH)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
@@ -58,7 +58,6 @@ import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
 import Safe (headMay)
 import Safe.Foldable (maximumByMay)
-import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -151,12 +150,12 @@ blankNodeDataSource db chain mgr logger = do
   cache <- newEmptyMVar
   protoInfo <- newEmptyMVar
   latestHead <- newTVarIO Nothing
-  _ <- forkIO $ do
+  _ <- forkIO $ runLoggingEnv logger $ do
     -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
-    _ <- readMVar protoInfo
-    putMVar hist emptyCache
-    putMVar cache mempty
-    say "Cache ready!"
+    _ <- liftIO $ readMVar protoInfo
+    liftIO $ putMVar hist emptyCache
+    liftIO $ putMVar cache mempty
+    $(logInfo) "Cache ready!"
 
   return NodeDataSource
     { _nodeDataSource_history = hist
@@ -175,6 +174,9 @@ class HasNodeDataSource a where
 
 instance HasNodeDataSource NodeDataSource where
   nodeDataSource = id
+
+withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
+withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
 
 calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
 calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
@@ -212,12 +214,12 @@ updateNodeDataSource nds nodeAddr blk =
 
 -- Make sure that the protocol parameters have been loaded and the datasource initialzied.
 initParams :: Foldable f => NodeDataSource -> f (Maybe PublicNode, URI) -> IO Bool
-initParams nds theseNodes = do
-  needParams <- isEmptyMVar $ _nodeDataSource_parameters nds
+initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
+  needParams <- liftIO $ isEmptyMVar $ _nodeDataSource_parameters nds
 
   let
     chainId = _nodeDataSource_chain nds
-    step :: IO (Maybe ProtoInfo) -> (Maybe PublicNode, URI) -> IO (Maybe ProtoInfo)
+    step :: LoggingT IO (Maybe ProtoInfo) -> (Maybe PublicNode, URI) -> LoggingT IO (Maybe ProtoInfo)
     step l (pn, someNode) = l >>= \case
       Nothing -> do
         let ctx = PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)) pn
@@ -230,9 +232,9 @@ initParams nds theseNodes = do
   when needParams $ onChainNodes >>= \case
     Just params -> do
       void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-    _ -> say "Still no params"
+    _ -> $(logInfo) "Still no params"
 
-  fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
+  liftIO $ fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
 
 
 -- | extrats the fittest known branch from cache
@@ -396,6 +398,7 @@ calculateDelegateStats pkhs = do
         return (efficiency, account)
       return (result, a)
 
+
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
   ( MonadIO m
@@ -420,7 +423,7 @@ calculateBakeEfficiency ::
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
 calculateBakeEfficiency branch len delegate = do
-  sayShow ("bake efficiency requested" :: Text, branch ^. hash, len, delegate)
+  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, delegate)
 
   let
     branchLevel = branch ^. level
@@ -431,7 +434,7 @@ calculateBakeEfficiency branch len delegate = do
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
   bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
   let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  sayShow ("efficiency" :: Text, delegate, result)
+  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, delegate, result)
   return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
@@ -460,7 +463,7 @@ tryFetchFromCache db q = do
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
         Aeson.Success v -> return $ Just v
         Aeson.Error bad -> do
-          sayErr $ T.pack $ show (T.pack "tryFetchFromCache failed to decode:", bad)
+          $(logWarnSH) (T.pack "tryFetchFromCache failed to decode:", bad)
           return Nothing
 
 deriveGEq ''NodeQuery

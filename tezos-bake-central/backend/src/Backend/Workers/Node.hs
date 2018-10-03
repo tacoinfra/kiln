@@ -8,6 +8,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend.Workers.Node where
 
@@ -17,6 +19,7 @@ import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (MonadLogger, LoggingT, logInfo, logInfoSH, logWarnSH, logDebug, logErrorSH)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -40,7 +43,6 @@ import Rhyolite.Backend.Logging (LoggingEnv(..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
 import Rhyolite.Schema (Id (..))
-import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -84,24 +86,24 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 minCachedBlockLevel :: RawLevel
 minCachedBlockLevel = 1
 
-nodeMonitorBranchProgess :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
-nodeMonitorBranchProgess branch current i n = liftIO $ when (i `mod` 1000 == 0) $ sayShow ("catching up" :: Text, branch, current, i, n)
+nodeMonitorBranchProgess :: (MonadLogger m) => BlockHash -> BlockHash -> Int -> Int -> m ()
+nodeMonitorBranchProgess branch current i n = when (i `mod` 1000 == 0) $ $(logInfoSH) ("catching up" :: Text, branch, current, i, n)
 
 haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
-haveNewHead nds pn nodeAddr headBlockInfo = do
+haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let httpMgr = _nodeDataSource_httpMgr nds
   let chainId = _nodeDataSource_chain nds
   let cacheVar = _nodeDataSource_history nds
   oldHead <- runReaderT dataSourceHead nds
-  newBlock <- liftIO $ modifyMVar cacheVar $ \cache -> do
+  newBlock <- liftIO $ modifyMVar cacheVar $ \cache -> runLoggingEnv (_nodeDataSource_logger nds) $ do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
       flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
         flip execStateT cache $ do
           _ <- accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
-          sayShow (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+          $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
     case newStateRsp of
-      Left e -> sayShow e $> (cache, Left e)
+      Left e -> $(logWarnSH) e $> (cache, Left e)
       Right good -> return (good, Right newBlock)
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
@@ -113,7 +115,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = do
         pure $ Just $ headBlockInfo ^. level
       else
         pure Nothing
-    for_ updatedLevel $ \lev -> say $ "Saw more recent head: " <> tshow (unRawLevel lev)
+    for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: ChainId -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
@@ -151,8 +153,8 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
       ]
     getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 
-updateNetworkStats :: LoggingEnv -> Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
-updateNetworkStats logger httpMgr db nid before = do
+updateNetworkStats :: (MonadIO m, MonadLogger m, MonadBaseControl IO m) => Http.Manager -> Pool Postgresql -> Id Node -> Node -> m (Either RpcError ())
+updateNetworkStats httpMgr db nid before = do
   after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
@@ -176,7 +178,7 @@ updateNetworkStats logger httpMgr db nid before = do
 
   where
     nodeAddr = _node_address before
-    inDb = runLoggingEnv logger . runDb (Identity db)
+    inDb = runDb (Identity db)
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -184,55 +186,56 @@ nodeWorker
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
+nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  workerWithDelay (pure delay) $ const $ do
-    say "Update node cycle."
+  -- IO
+  workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
+    $(logDebug) "Update node cycle."
 
     -- read the persistent list of nodes
-    theseNodeRecords :: Map (Id Node) Node <- runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
+    theseNodeRecords :: Map (Id Node) Node <- runDb (Identity db) $
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
 
     ifor_ theseNodeRecords $ \nodeId node ->
-      updateNetworkStats (_nodeDataSource_logger nds) httpMgr db nodeId node >>= \case
+      updateNetworkStats httpMgr db nodeId node >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
     let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
-    _ <- initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
+    _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
 
-    thoseNodes <- readMVar nodePool
+    thoseNodes <- liftIO $ readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
     let staleNodes = thoseNodes `Map.difference` theseNodes
 
     ifor_ staleNodes $ \nodeAddr killMonitor ->
-      say ("stop monitor on " <> Uri.render nodeAddr) *> killMonitor
+      $(logInfo) ("stop monitor on " <> Uri.render nodeAddr) *> liftIO killMonitor
 
     let
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
       let reconnectDelay = 5
-      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ do
+      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         let
           nodeQuery :: RpcQuery a -> IO (Either RpcError a)
           nodeQuery f = runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        _ <- chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
+        _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
-          inDb $ do
+          runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
             clearInaccessibleNodeError nodeId
             clearNodeWrongChainError nodeId
 
           nodeMonitor chainId nds appConfig nodeAddr nodeId block
 
-        nodeQuery rChain >>= inDb . \case
+        liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
           Right actualChainId
             | actualChainId == chainId -> do
@@ -244,10 +247,10 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
       liftIO $ addFinalizer cleanup
-      say $ "start monitor on " <> Uri.render nodeAddr
+      $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
 
   where
-    inDb = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig
+    inDb = runDb (Identity db) . flip runReaderT appConfig
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
@@ -293,8 +296,8 @@ updateDataSource nds (pn, chain, uri) = do
     {-# INLINE publicNodeEnabled #-}
 
     updatePublicNodeInDb :: m ()
-    updatePublicNodeInDb = getHeadFromSource >>= \case
-      Left e -> sayErr (tshow e)
+    updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
+      Left e -> $(logErrorSH) e
       Right b -> do
         haveNewHead nds (Just pn) uri b
         let
@@ -303,7 +306,7 @@ updateDataSource nds (pn, chain, uri) = do
           bHash = b ^. hash
           bFitness = b ^. fitness
           bBakedAt = b ^. timestamp
-        runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+        runDb (Identity db) $ do
           updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
             INSERT INTO "PublicNodeHead"
               ("source", "chain", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
@@ -350,8 +353,8 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
             else clearBadNodeHeadError nodeId
 
 updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
-updateLatestHead nds blk = liftIO $ do
-  latestBlock' <- atomically $ do
+updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
+  latestBlock' <- liftIO $ atomically $ do
     let latestHeadTVar = _nodeDataSource_latestHead nds
     latestHead <- readTVar latestHeadTVar
     if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
@@ -361,4 +364,4 @@ updateLatestHead nds blk = liftIO $ do
       pure Nothing
 
   for_ latestBlock' $ \latestBlock ->
-    say $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
+    $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)

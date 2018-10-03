@@ -14,13 +14,13 @@
 module Backend.Workers.Client where
 
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
-import Common (tshow)
 import Common.Schema
 import Common.Verification (validateForkyBlocks)
 import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
+import Control.Monad.Logger (logInfo, logErrorSH, logDebugSH)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
 import Data.Function (on)
@@ -39,7 +39,6 @@ import Rhyolite.Backend.DB.PsqlSimple (Values (..), executeQ, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
-import Say (say, sayErr, sayShow)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -74,7 +73,7 @@ clientWorker appCfg nds =
 
   where
     doUpdate protoInfo = do
-      say "Update client cycle."
+      $(logInfo) "Update client cycle."
       now <- getTime
       let delay = calcTimeBetweenBlocks protoInfo
       let maxTime = Just (addUTCTime (- delay) now)
@@ -90,12 +89,12 @@ clientWorker appCfg nds =
 
       clientDelegates <- for toUpdate $ \(cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
-              [ Handler $ \(e :: Http.JSONException) -> sayErr (tshow e) $> Nothing
-              , Handler $ \(e :: Http.HttpException) -> sayErr (tshow e) $> Nothing
+              [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
+              , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
               ]
 
         _result <- handlingHttpExc $ do
-          say $ "Updating client at " <> Uri.render address
+          $(logInfo) $ "Updating client at " <> Uri.render address
 
           -- TODO: abstract this into a ClientRPC like the way there's a NodeRPC
           clientConfig :: ClientConfig <- fmap Http.getResponseBody $ Http.httpJSON =<< Http.parseRequest (T.unpack (Uri.render address) <> "/config")
@@ -139,7 +138,7 @@ clientWorker appCfg nds =
                           , config = ?clientConfigJson
                           |]
           forkInfo <- scanForkInfo now report
-          validateForkyBlocks sayShow forkInfo
+          validateForkyBlocks ($(logDebugSH) . (,) ("validateForkyBlocks" :: String)) forkInfo
 
           updateIdNotify cid [Client_updatedField =. Just now]
 
