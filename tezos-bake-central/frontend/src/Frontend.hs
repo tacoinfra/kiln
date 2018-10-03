@@ -11,12 +11,12 @@
 
 module Frontend where
 
-import Control.Monad.Primitive (PrimMonad)
-import Control.Applicative (liftA2, (<|>), Const (..))
-import Control.Lens (_1, _2, _3, (.~), (%~))
+import Control.Applicative (Const (..), liftA2, (<|>))
+import Control.Lens ((%~), (.~), _1, _2, _3)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
@@ -29,7 +29,7 @@ import Data.Fixed (Micro)
 import Data.Foldable (for_, toList, traverse_)
 import Data.Functor (void)
 import Data.List (intersperse, sortBy)
-import Data.List.NonEmpty (nonEmpty)
+import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
@@ -81,10 +81,10 @@ import Common.HeadTag (headTag)
 import Common.Schema hiding (Event)
 import Frontend.Common
 
+import Common.Route
 import Common.Vassal
 import Obelisk.Frontend
 import Obelisk.Route
-import Common.Route
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
@@ -712,9 +712,6 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-errorsByNode :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView) -> MonoidalMap (Id Node) (ErrorLog, ErrorLogView)
-errorsByNode xs = MMap.fromList [(k, (l, t)) | (l, t) <- MMap.elems xs, Just k <- [nodeIdForErrorLogView t]]
-
 nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
 nodeIdForErrorLogView = \case
   ErrorLogView_InaccessibleNode l -> Just $ _errorLogInaccessibleNode_node l
@@ -805,15 +802,14 @@ nodesTab = divClass "ui stackable grid" $ do
                   , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                   ]
 
-                hasAlert <- holdUniqDyn $ MMap.lookup nodeId . errorsByNode <$> alerts
+                unresolvedAlertsForThisNode <-
+                  holdUniqDyn $ foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
                 let errorMessage = divClass "ui error message" . divClass "header"
-                dyn_ $ ffor hasAlert $ \case
-                  Just (ErrorLog { _errorLog_stopped = Nothing }, e) -> case e of
-                    ErrorLogView_InaccessibleNode{} ->  errorMessage $ text "Unable to connect."
-                    ErrorLogView_NodeWrongChain{} -> errorMessage $ text "On wrong network."
-                    ErrorLogView_BadNodeHead l -> errorMessage $ text $
-                      fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-                    _ -> blank
+                dyn_ $ ffor unresolvedAlertsForThisNode $ traverse_ $ \case
+                  ErrorLogView_InaccessibleNode{} ->  errorMessage $ text "Unable to connect."
+                  ErrorLogView_NodeWrongChain{} -> errorMessage $ text "On wrong network."
+                  ErrorLogView_BadNodeHead l -> errorMessage $ text $
+                    fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                   _ -> blank
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
@@ -838,6 +834,16 @@ nodesTab = divClass "ui stackable grid" $ do
       for_ rows $ \(heading, val) -> el "tr" $ do
         _ <- elAttr "th" ("style"=:"text-align:left") heading
         elAttr "td" ("style"=:"text-align:left") val
+
+    errorsByNode
+      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
+      -> MonoidalMap (Id Node) (NonEmpty ErrorLogView)
+    errorsByNode xs = MMap.fromListWith (<>)
+      [ (k, pure t)
+      | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+      , Just k <- [nodeIdForErrorLogView t]
+      ]
+
 
 delegateTab
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
