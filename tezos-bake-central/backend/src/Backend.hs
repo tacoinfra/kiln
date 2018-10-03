@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend where
 
@@ -20,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
+import Control.Monad.Logger (MonadLogger, runNoLoggingT, LoggingT(..), runLoggingT, logError)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -97,12 +98,26 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import Frontend (frontend)
 
+import Rhyolite.Backend.Logging
+import qualified Data.Map as Map
+
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
+
+
 
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
+
+  let defaultLoggingConfig = [LoggingConfig
+        { _loggingConfig_logger = RhyoliteLogAppender_Stderr
+        , _loggingConfig_filters = Map.fromList
+          [ ("SQL", RhyoliteLogLevel_Error)
+          ]
+        }]
+
+  !loggingConfig <- fromMaybe defaultLoggingConfig <$> getJSONConfigFromFile (configPath "loggers")
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
@@ -189,8 +204,11 @@ backendImpl cfg serve = do
   say $ "Monitoring network " <> toBase58Text chainId
   for_ route $ \r -> say $ "Using route " <> URI.render r
 
-  withDb dbSpec $ \db -> do
-    runNoLoggingT $ runDb (Identity db) $ do
+  withLogging loggingConfig $ LoggingT $ \logger -> withDb dbSpec $ \db -> do
+    let
+      execLogging :: LoggingT m a -> m a
+      execLogging = flip runLoggingT logger
+    execLogging $ runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
         migrateAccount tableInfo
@@ -212,7 +230,7 @@ backendImpl cfg serve = do
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
-        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+        execLogging (clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
@@ -233,7 +251,7 @@ backendImpl cfg serve = do
       if checkForUpgrade then
         addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
       else
-        runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
+        execLogging $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
         BackendRoute_Listen :=> _ -> handleListen
@@ -276,6 +294,9 @@ clearMailQueueWithDynamicEmailEnv db = do
 
   clearMailQueue db emailEnv
 
+getJSONConfigFromFile :: Aeson.FromJSON a => FilePath -> IO (Maybe a)
+getJSONConfigFromFile f = (either (error . (("JSON decode error while reading file " <> f <> ":") <>)) Just . Aeson.eitherDecode' <$> LBS.readFile f)
+  `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
 getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
 getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
