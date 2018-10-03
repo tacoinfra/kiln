@@ -21,7 +21,6 @@ import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
-import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
 import Data.Function (on)
@@ -37,6 +36,7 @@ import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (Values (..), executeQ, queryQ)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
 import Say (say, sayErr, sayShow)
@@ -69,7 +69,7 @@ clientWorker
 clientWorker appCfg nds =
   worker' $ (*> waitForNewHeadWithTimeout nds) $
     readMVar (_nodeDataSource_parameters nds) >>= \protoInfo ->
-      runNoLoggingT $ runDb (Identity (_nodeDataSource_pool nds)) $
+      runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
         runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 
   where

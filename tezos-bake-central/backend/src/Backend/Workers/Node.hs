@@ -17,7 +17,6 @@ import Control.Lens (ifor_, view, (^.), (^?), _Just)
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -37,6 +36,7 @@ import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
+import Rhyolite.Backend.Logging (LoggingEnv(..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Backend.Schema.Class
 import Rhyolite.Schema (Id (..))
@@ -122,7 +122,7 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
   haveNewHead nds Nothing nodeAddr headBlockInfo
 
   let db = _nodeDataSource_pool nds
-  runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $ do
+  runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
     -- This isn't very nuanced: old, stale nodes, even if they are catching
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
@@ -151,8 +151,8 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
       ]
     getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 
-updateNetworkStats :: Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
-updateNetworkStats httpMgr db nid before = do
+updateNetworkStats :: LoggingEnv -> Http.Manager -> Pool Postgresql -> Id Node -> Node -> IO (Either RpcError ())
+updateNetworkStats logger httpMgr db nid before = do
   after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
@@ -176,7 +176,7 @@ updateNetworkStats httpMgr db nid before = do
 
   where
     nodeAddr = _node_address before
-    inDb = runNoLoggingT . runDb (Identity db)
+    inDb = runLoggingEnv logger . runDb (Identity db)
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -191,12 +191,12 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
     say "Update node cycle."
 
     -- read the persistent list of nodes
-    theseNodeRecords :: Map (Id Node) Node <- runNoLoggingT $ runDb (Identity db) $
+    theseNodeRecords :: Map (Id Node) Node <- runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
       selectMap NodeConstructor (Node_deletedField ==. False)
     -- give them all a chance to
 
     ifor_ theseNodeRecords $ \nodeId node ->
-      updateNetworkStats httpMgr db nodeId node >>= \case
+      updateNetworkStats (_nodeDataSource_logger nds) httpMgr db nodeId node >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
@@ -247,7 +247,7 @@ nodeWorker delay nds appConfig db = withTermination $ \addFinalizer -> do
       say $ "start monitor on " <> Uri.render nodeAddr
 
   where
-    inDb = runNoLoggingT . runDb (Identity db) . flip runReaderT appConfig
+    inDb = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
 
@@ -288,7 +288,7 @@ updateDataSource nds (pn, chain, uri) = do
 
     publicNodeEnabled :: m Bool
     publicNodeEnabled = fmap (fromMaybe False . listToMaybe) $
-      runNoLoggingT $ runDb (Identity db) $
+      runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
         project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
     {-# INLINE publicNodeEnabled #-}
 
@@ -303,7 +303,7 @@ updateDataSource nds (pn, chain, uri) = do
           bHash = b ^. hash
           bFitness = b ^. fitness
           bBakedAt = b ^. timestamp
-        runNoLoggingT $ runDb (Identity db) $ do
+        runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
           updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
             INSERT INTO "PublicNodeHead"
               ("source", "chain", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
@@ -325,7 +325,7 @@ nodeAlertWorker
   -> Pool Postgresql
   -> IO (IO ())
 nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
-  nodeHeadHashes <- fmap (Map.mapMaybe _node_headBlockHash) $ runNoLoggingT $ runDb (Identity db) $
+  nodeHeadHashes <- fmap (Map.mapMaybe _node_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
     selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
@@ -335,7 +335,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
         bp <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
         pure (nodeHead, bp)
 
-    for_ nodeHeadAndLca $ \(nodeHead, lcaBlock') -> runNoLoggingT $ runDb (Identity db) $ flip runReaderT appConfig $
+    for_ nodeHeadAndLca $ \(nodeHead, lcaBlock') -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $
       case lcaBlock' of
         Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
         Just lcaBlock -> do

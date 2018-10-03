@@ -7,7 +7,6 @@ import Control.Concurrent.MVar (readMVar)
 import Control.Lens ((^.))
 import Control.Monad.Except (catchError, runExceptT)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_)
 import Data.Functor.Identity (Identity (..))
@@ -15,6 +14,7 @@ import Data.Map (Map)
 import Data.Semigroup ((<>))
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..))
 import Say (say, sayShow)
 
@@ -42,7 +42,7 @@ delegateWorker nds = worker' $ (*> waitForNewHeadWithTimeout nds) $ do
       headLevel :: RawLevel = headBlock ^. level
       latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
     say $ "Head level is " <> tshow (unRawLevel headLevel) <> " in cycle " <> tshow (unRawLevel latestCycle)
-    delegates :: Map (Id Delegate) Delegate <- runNoLoggingT $ runDb (Identity db) $ selectMap DelegateConstructor (Delegate_deletedField ==. False)
+    delegates :: Map (Id Delegate) Delegate <- (runLoggingEnv $ _nodeDataSource_logger nds) $ runDb (Identity db) $ selectMap DelegateConstructor (Delegate_deletedField ==. False)
     let oops :: forall m. MonadIO m => RpcError -> m ()
         oops = sayShow
     runExceptT $ flip catchError oops $ do

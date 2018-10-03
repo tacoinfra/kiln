@@ -25,7 +25,7 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry, rea
 import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
-import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Logger (LoggingT(..))
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
@@ -70,6 +70,8 @@ import Tezos.Types
 import Backend.Common (timeout')
 import Backend.Schema (Field (..))
 import Common.Schema
+import Rhyolite.Backend.Logging
+
 
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
@@ -139,10 +141,11 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_httpMgr :: !Http.Manager
   , _nodeDataSource_pool :: !(Pool Postgresql)
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
+  , _nodeDataSource_logger :: !LoggingEnv
   }
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> IO NodeDataSource
-blankNodeDataSource db chain mgr = do
+blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> LoggingEnv -> IO NodeDataSource
+blankNodeDataSource db chain mgr logger = do
   nodes <- newMVar mempty
   hist <- newEmptyMVar
   cache <- newEmptyMVar
@@ -164,6 +167,7 @@ blankNodeDataSource db chain mgr = do
     , _nodeDataSource_httpMgr = mgr
     , _nodeDataSource_pool = db
     , _nodeDataSource_latestHead = latestHead
+    , _nodeDataSource_logger = logger
     }
 
 class HasNodeDataSource a where
@@ -291,6 +295,7 @@ nodeQueryDataSource ::
   => NodeQuery a -> m a
 nodeQueryDataSource q' = do
   dsrc <- asks $ view nodeDataSource
+  let logger = _nodeDataSource_logger dsrc
   protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters dsrc
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
 
@@ -306,7 +311,7 @@ nodeQueryDataSource q' = do
           , _cacheLine_used = now
           }
       _ <- liftIO $ forkIO $ do
-        fromDB <- tryFetchFromCache (_nodeDataSource_pool dsrc) q
+        fromDB <- runLoggingEnv logger $ tryFetchFromCache (_nodeDataSource_pool dsrc) q
         case fromDB of
           Just x -> do
             now <- getCurrentTime
@@ -444,11 +449,11 @@ calculateBakeEfficiency branch len delegate = do
       | BakingRights _lvl d prio _ <- toList xs
       ]
 
-tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> IO (Maybe a)
+tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> LoggingT IO (Maybe a)
 tryFetchFromCache db q = do
   let
     qJson = Json $ requestToJSON q
-  resultM <- fmap listToMaybe $ runNoLoggingT $ runDb (Identity db) $ select $ GenericCacheEntry_keyField ==. qJson
+  resultM <- fmap listToMaybe $ runDb (Identity db) $ select $ GenericCacheEntry_keyField ==. qJson
   case resultM of
     Nothing -> return Nothing
     Just result -> case requestResponseFromJSON q of

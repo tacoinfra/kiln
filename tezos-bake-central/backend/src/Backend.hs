@@ -21,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, runNoLoggingT, LoggingT(..), runLoggingT, logError)
+import Control.Monad.Logger (MonadLogger, LoggingT(..), runLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -225,7 +225,7 @@ backendImpl cfg serve = do
         for_ needToAdd $ \newAddress ->
           insert $ mkNode newAddress Nothing
 
-    dataSrc <- blankNodeDataSource db chainId httpMgr
+    dataSrc <- blankNodeDataSource db chainId httpMgr (LoggingEnv logger)
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -249,7 +249,7 @@ backendImpl cfg serve = do
       addFinalizer =<< delegateWorker dataSrc
 
       if checkForUpgrade then
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) (LoggingEnv logger) appConfig httpMgr db
       else
         execLogging $ runDb (Identity db) clearUpgradeNotice
 
