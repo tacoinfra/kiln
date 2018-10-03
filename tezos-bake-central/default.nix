@@ -9,8 +9,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "42d37a40894a620d89d1241e144682698fdc5faa";
-      sha256 = "08d4rqikiisg789a8wdv4s79kbryrr620qkgm8j95gdxapb27zn4";
+      rev = "16af33aee7fbf77c69518964e88092b72efafc07";
+      sha256 = "0k457dbm9vi775ilcsh3bp6ldwwyxnhc9a3sxwpyyqjag1b7ckds";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = pkgs.fetchFromGitHub {
@@ -19,12 +19,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       repo = "semantic-reflex";
       rev = "26268b0236679ef5f7e762f7bd84d00b86c02545";
       sha256 = "0g8ilbhrp4i4pfxkayh9cprdx1yffiyh7zw3qming61p9pcyvpa1";
-    };
-    reflex-src = pkgs.fetchFromGitHub {
-      owner = "xplat";
-      repo = "reflex";
-      rev = "201970734c944a0cdb6654947f233c5bfe3e5bbb";
-      sha256 = "10rx4ajfp20l33bpbw2dss6i3s8ck8ny5zm6b2ams0bs17f8w17b";
     };
   in {
     packages = {
@@ -49,13 +43,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
-
-      reflex = pkgs.haskell.lib.dontCheck (self.callCabal2nix "reflex" reflex-src {});
-
       semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
-
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-
       tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (super.tezos-bake-monitor-lib);
     });
   })
