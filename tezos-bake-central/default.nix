@@ -9,8 +9,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "bf5be49507f426a2d396476aa858f11adc051b09";
-      sha256 = "182zsm1zdibws679ndgyxyznqvhhlw59x3jrsh5mx658icnnzazb";
+      rev = "16af33aee7fbf77c69518964e88092b72efafc07";
+      sha256 = "0k457dbm9vi775ilcsh3bp6ldwwyxnhc9a3sxwpyyqjag1b7ckds";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = pkgs.fetchFromGitHub {
@@ -43,11 +43,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
           pkgs.haskell.lib.enableCabalFlag (pkgs.haskell.lib.addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
         else
           super.backend-db;
-
       semantic-reflex = pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
-
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-
       tezos-bake-monitor-lib = pkgs.haskell.lib.dontHaddock (super.tezos-bake-monitor-lib);
     });
   })
