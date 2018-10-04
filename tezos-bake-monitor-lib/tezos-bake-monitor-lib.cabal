@@ -45,6 +45,8 @@ library
     Tezos.TestChainStatus
     Tezos.Tez
     Tezos.Types
+  other-modules:
+    Paths_tezos_bake_monitor_lib
   build-depends:
       aeson
     , async

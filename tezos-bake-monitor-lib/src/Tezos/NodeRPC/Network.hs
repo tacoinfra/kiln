@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -9,7 +8,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Network.Http.Client based request handler
 module Tezos.NodeRPC.Network where
 
 import Control.Exception.Safe (try)
@@ -28,22 +26,27 @@ import Data.Function (fix)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
+import Data.Version (showVersion)
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Header as Http
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 import qualified Network.HTTP.Types.Status as Http (Status (..))
 
+import Paths_tezos_bake_monitor_lib (version)
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Types
 
-nodeRPC :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
+nodeRPC
+  :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
   => RpcQuery a -> m a
-nodeRPC                         (RpcQuery decoder method resource) = nodeRPCImpl' decoder method resource
+nodeRPC                         (RpcQuery decoder method resource)    = nodeRPCImpl' decoder method resource
 
-nodeRPCChunked :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
+nodeRPCChunked
+  :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
   => PlainNodeStream a -> (a -> IO r) -> m r
 nodeRPCChunked (PlainNodeStream (RpcQuery decoder method resource)) k = nodeRPCChunkedImpl' decoder k method resource
 
@@ -81,20 +84,11 @@ nodeRPCImpl' decoder method_ rpcSelector = do
   let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
   liftIO $ T.putStrLn rpcUrl
 
-  let rpcBoilerplate req = req
-        { Http.method = method_
-        , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
-        , Http.requestHeaders =
-          [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
-          ++ [ (Http.hUserAgent, "tezos-bake-monitor")
-             , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
-             ]
-        }
   let
-    request = rpcBoilerplate $ Http.parseRequest_ $ T.unpack rpcUrl
+    request = rpcBoilerplate method_ $ Http.parseRequest_ $ T.unpack rpcUrl
     throwLoggedError e = {-sayErr ("NODERPC ERROR: " <> (T.pack $ show rpcUrl) <> " >> " <> (T.pack $ show e)) *>-} throwError e
 
-  liftIO (try @IO @Http.HttpException $ Http.httpLbs request mgr) >>= \case
+  liftIO (try @_ @Http.HttpException $ Http.httpLbs request mgr) >>= \case
     Left err -> throwLoggedError $ rpcResponse_HttpException (T.pack $ show err)
     Right result -> case Http.responseStatus result of
       Http.Status 200 _ -> do
@@ -138,16 +132,8 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
 
   let
     rpcUrl = node <> rpcSelector
-    rpcBoilerplate req = req
-      { Http.method = method_
-      , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
-      , Http.requestHeaders =
-           [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
-        ++ [ (Http.hUserAgent, "tezos-bake-monitor")
-           , (Http.hAccept, "*/*")
-           ]
-      }
-    request = rpcBoilerplate $ Http.parseRequest_ $ T.unpack rpcUrl
+
+    request = rpcBoilerplate method_ $ Http.parseRequest_ $ T.unpack rpcUrl
 
   res :: Either Http.HttpException (Either RpcError r) <- liftIO $ try @_ @Http.HttpException $
     Http.withResponse request mgr $ \response -> runExceptT $ do
@@ -175,3 +161,15 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
     Left (httpErr :: Http.HttpException) -> throwError $ rpcResponse_HttpException (T.pack $ show httpErr)
     Right (Left rpcError) -> throwError $ rpcError ^. re asRpcError
     Right (Right r) -> pure r
+
+
+rpcBoilerplate :: Http.Method -> Http.Request -> Http.Request
+rpcBoilerplate method_ req = req
+  { Http.method = method_
+  , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
+  , Http.requestHeaders =
+    [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
+    ++ [ (Http.hUserAgent, "tezos-bake-monitor-lib/" <> T.encodeUtf8 (T.pack $ showVersion version))
+       , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
+       ]
+  }
