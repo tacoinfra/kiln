@@ -18,6 +18,14 @@ This version (v0.1) is a very early version of our Monitoring Software. Near-ter
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
+#### Running a Node
+
+This Monitor assumes that you are running at least one Tezos node. Options for running a node include:
+
+* Building from Source - The best place to start is [Tezos’ Documentation](http://tezos.gitlab.io/master/introduction/howtoget.html#build-from-sources). There are also several community guides, some of which you can find [here](https://docs.google.com/document/d/1iu-5j8vnnK00-t0CIQcbMDSz5PbEHI09YsKp8utEaj0/edit).
+* Using Docker - The docker image for Tezos can be found on [DockerHub](https://hub.docker.com/r/tezos/tezos/). They also provide a [simple script](http://tezos.gitlab.io/master/introduction/howtoget.html#docker-images) for retrieving the images. We do not yet have instructions on connecting the Tezos node and baking monitor Docker containers, but you can either set this up yourself or connect our Docker container to a node you built from source.
+* Using Obsidian’s Tezos Baking Platform - See the Tezos Baking Platform's [UsingTezos.md](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/UsingTezos.md) for instructions.
+
 # Running a Pre-Built Monitor
 
 Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It works on Linux, macOS, and Windows.
@@ -46,17 +54,9 @@ docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-conne
 
 Replace `mysecretpassword` with your *actually secret* password.
 
-Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor!
+Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
 Check out `docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
-
-# Running a Node
-
-This Monitor assumes that you are running at least one Tezos node. Options for running a node include:
-
-* Building from Source - The best place to start is [Tezos’ Documentation](http://tezos.gitlab.io/master/introduction/howtoget.html#build-from-sources). There are also several community guides, some of which you can find [here](https://docs.google.com/document/d/1iu-5j8vnnK00-t0CIQcbMDSz5PbEHI09YsKp8utEaj0/edit).
-* Using Docker - The docker image for Tezos can be found on [DockerHub](https://hub.docker.com/r/tezos/tezos/). They also provide a [simple script](http://tezos.gitlab.io/master/introduction/howtoget.html#docker-images) for retrieving the images. We do not yet have instructions on connecting the Tezos node and baking monitor Docker containers, but you can either set this up yourself or connect our Docker container to a node you built from source.
-* Using Obsidian’s Tezos Baking Platform - See the Tezos Baking Platform's [UsingTezos.md](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/UsingTezos.md) for instructions.
 
 # Building the Monitor from Source
 
@@ -64,15 +64,15 @@ This Monitor assumes that you are running at least one Tezos node. Options for r
 
 These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently. Windows might work if you use WSL, but it has not been tested.
 
-### Gitlab SSH Keys
+##### Gitlab SSH Keys
 
 This project is hosted on Gitlab. If you have not already, you should make an account and [set up SSH keys with Gitlab](https://docs.gitlab.com/ee/gitlab-basics/create-your-ssh-keys.html).
 
-### Setting up Nix Caching (Recommended)
+##### Setting up Nix Caching (Recommended)
 
 If you have not already, we recommend you setup Nix caching to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md).
 
-### Cloning the Repo
+##### Cloning the Repo
 
 Clone the Tezos Bake Monitor repo and checkout the develop branch.
 
