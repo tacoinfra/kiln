@@ -37,7 +37,7 @@ You also need a [PostgreSQL](https://www.postgresql.org/) database that the moni
 The easiest way to get a database running is with Docker, like this:
 
 ```shell
-docker run --network host --name tezos-monitor-postgres -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+DOCKER_CONTENT_TRUST=1 docker run --name tezos-monitor-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
 (You'll want to pick a better password than `mysecretpassword`.)
@@ -48,15 +48,23 @@ This command also leaves the PostgreSQL database running in the background. You 
 
 Now you can run the monitor like this:
 
+On Linux:
+
 ```shell
-docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+```
+
+On macOS or Windows:
+
+```shell
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
 # Building the Monitor from Source
 
@@ -130,7 +138,9 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 ### Adding Monitored Nodes
 
-When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of 8732, you can enter http://127.0.01:8732 or http://127.0.01:8732. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
+When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of 8732, you can enter http://localhost:8732\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
+
+\* If you're running the monitor from Docker on macOS or Windows, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
 Once you’ve added at least one Monitored Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
 
