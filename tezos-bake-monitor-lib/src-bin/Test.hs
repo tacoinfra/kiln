@@ -8,6 +8,7 @@
 import Control.Lens ((^.))
 import Control.Monad.Except
 import Control.Monad.Reader
+import Control.Monad.Logger
 import Control.Monad.State.Strict
 import qualified Data.Map as Map
 import Data.Semigroup ((<>))
@@ -46,7 +47,7 @@ onRPCError = \case
   PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
 --     Right ok -> ok
 
-accum :: ChainId -> Block -> StateT (CachedHistory Fitness) (ExceptT PublicNodeError (ReaderT PublicNodeContext IO)) ()
+accum :: ChainId -> Block -> StateT (CachedHistory Fitness) (ExceptT PublicNodeError (ReaderT PublicNodeContext (LoggingT IO))) ()
 accum chainId = void . accumHistory scanProgress chainId (^. fitness) -- getBalanceChanges
 
 main :: IO ()
@@ -72,5 +73,5 @@ main = do
     liftIO $ putStrLn "constants"
     void $ nodeRPC $ rProtoConstants chainId (_block_hash headBlk)
 
-runTest :: NodeRPCContext -> ExceptT PublicNodeError (ReaderT PublicNodeContext IO) () -> IO ()
-runTest ctx action = either onRPCError id <$> runReaderT (runExceptT action) (PublicNodeContext ctx Nothing)
+runTest :: NodeRPCContext -> ExceptT PublicNodeError (ReaderT PublicNodeContext (LoggingT IO)) () -> IO ()
+runTest ctx action = runStderrLoggingT $ either onRPCError id <$> runReaderT (runExceptT action) (PublicNodeContext ctx Nothing)

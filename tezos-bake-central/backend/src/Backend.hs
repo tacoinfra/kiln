@@ -21,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, LoggingT(..), logInfo, logDebug)
+import Control.Monad.Logger (MonadLogger, LoggingT(..), logInfo, logDebug, runStderrLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -196,7 +196,10 @@ backendImpl cfg serve = do
     Right chainId -> pure chainId
     Left NamedChain_Mainnet -> pure mainnetChainId
 
-    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
+    -- We're doing some RPC here, which needs logging, but we haven't really
+    -- started yet so where it does log, we log to stderr instead of normally.
+    -- if there's issues, we exit immediately anyhow.
+    Left chainName -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId

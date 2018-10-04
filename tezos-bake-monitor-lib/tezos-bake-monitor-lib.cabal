@@ -65,6 +65,7 @@ library
     , lens
     , lens-aeson
     , memory
+    , monad-logger
     , modern-uri
     , mtl
     , process
@@ -90,6 +91,7 @@ executable tezos-lib-smoketest
     , http-client
     , http-client-tls
     , lens
+    , monad-logger
     , mtl
     , terminal-progress-bar
     , text

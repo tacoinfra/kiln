@@ -327,7 +327,7 @@ nodeQueryDataSource q' = do
 
                 unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
                 unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx unliftDataSrc q
+              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger unliftDataSrc q
               now <- getCurrentTime
               putMVar newVar $ mkResult now <$> res'
       pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
@@ -354,10 +354,11 @@ nodeQueryDataSourceImpl
      ChainId
   -> ProtoInfo
   -> NodeRPCContext
+  -> LoggingEnv
   -> (forall b. NodeQuery b -> IO (Either RpcError b))
   -> NodeQuery a
   -> IO (Either RpcError a)
-nodeQueryDataSourceImpl chainId _proto ctx _self q = runExceptT $ case q of
+nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -367,7 +368,7 @@ nodeQueryDataSourceImpl chainId _proto ctx _self q = runExceptT $ case q of
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
-    nodeRPC' q' = runReaderT (nodeRPC q') ctx
+    nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
 
 
 withCache ::

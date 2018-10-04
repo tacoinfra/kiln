@@ -19,6 +19,7 @@ import Control.Lens (Lens', Prism', re, view, (^.))
 import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Logger (MonadLogger)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -116,7 +117,7 @@ throwFeatureNotSupported :: forall e m a.  (MonadError e m, AsPublicNodeError e)
 throwFeatureNotSupported = throwError (PublicNodeError_FeatureNotSupported ^. re asPublicNodeError)
 
 getNodeChain :: forall e r m.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   )
@@ -128,7 +129,7 @@ getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet "/v1/chain"
 
 getProtoConstants :: forall e r m.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadReader r m, HasPublicNodeContext r
   , MonadError e m, AsPublicNodeError e
   )
@@ -140,7 +141,7 @@ getProtoConstants chain = asks (view (publicNodeContext . publicNodeContext_api)
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet $ "/v1/" <> toBase58Text chain <> "/params"
 
 getCurrentHead :: forall e r m.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   )
@@ -166,7 +167,7 @@ obsidianAncestors chain branch (RawLevel levels) = plainNodeRequest methodGet $
 
 -- fetch some history, starting at head, for at most n levels, optionally stop at ancestors of branches
 getHistory :: forall blk e r m.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadError e m , AsPublicNodeError e
   , MonadReader r m, HasPublicNodeContext r
   , BlockLike blk
@@ -194,7 +195,7 @@ getHistory chain blk levels branches = asks (view (publicNodeContext . publicNod
     theNormalWay = maybe throwBadResponse pure =<< nodeRPC (Map.lookup blkHash <$> rBlocks chain levels (Set.singleton blkHash))
 
 getBlock ::
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike

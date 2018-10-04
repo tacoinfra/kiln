@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -15,12 +16,12 @@ import Control.Exception.Safe (try)
 import Control.Lens (Lens', re, unsnoc, view, (^.))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (MonadLogger, logDebugS, logInfoS)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Char (ord)
 import Data.Foldable (fold)
 import Data.Function (fix)
@@ -28,7 +29,6 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import Data.Version (showVersion)
@@ -42,12 +42,12 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Types
 
 nodeRPC
-  :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
+  :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
   => RpcQuery a -> m a
 nodeRPC                         (RpcQuery decoder method resource)    = nodeRPCImpl' decoder method resource
 
 nodeRPCChunked
-  :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
+  :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
   => PlainNodeStream a -> (a -> IO r) -> m r
 nodeRPCChunked (PlainNodeStream (RpcQuery decoder method resource)) k = nodeRPCChunkedImpl' decoder k method resource
 
@@ -63,7 +63,7 @@ class HasNodeRPC s where
 instance HasNodeRPC NodeRPCContext where nodeRPCContext = id
 
 nodeRPCImpl :: forall m a s e.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , FromJSON a
   , MonadReader s m , HasNodeRPC s
   , MonadError e m , AsRpcError e
@@ -72,7 +72,7 @@ nodeRPCImpl :: forall m a s e.
 nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode
 
 nodeRPCImpl' :: forall m a s e.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   )
@@ -83,7 +83,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
   -- sayShow (node, method_, rpcSelector)
 
   let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
-  liftIO $ T.putStrLn rpcUrl
+  $(logDebugS) "NODERPC" $ rpcUrl
 
   let
     request = rpcBoilerplate method_ $ Http.parseRequest_ $ T.unpack rpcUrl
@@ -98,13 +98,13 @@ nodeRPCImpl' decoder method_ rpcSelector = do
           Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
       Http.Status code phrase -> do
-        liftIO $ print $ Http.responseStatus result
-        liftIO $ LBS8.putStrLn $ Http.responseBody result
+        $(logInfoS) "NODERPC" $ T.pack $ show $ Http.responseStatus result
+        $(logDebugS) "NODERPC" $ T.pack $ show $ Http.responseBody result -- TODO: find a better way to log this
 
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
 nodeRPCChunkedImpl :: forall a r s e m.
-  ( MonadIO m, FromJSON a
+  ( MonadIO m, MonadLogger m, FromJSON a
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   , Monoid r
@@ -117,7 +117,7 @@ nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode
 
 
 nodeRPCChunkedImpl' :: forall a r s e m.
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   , Monoid r
