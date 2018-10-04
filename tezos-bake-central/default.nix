@@ -9,8 +9,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite-src = pkgs.fetchFromGitHub {
       owner = "obsidiansystems";
       repo = "rhyolite";
-      rev = "16af33aee7fbf77c69518964e88092b72efafc07";
-      sha256 = "0k457dbm9vi775ilcsh3bp6ldwwyxnhc9a3sxwpyyqjag1b7ckds";
+      rev = "be2dd0488072342a25675bec71aba1d9c7acae99";
+      sha256 = "1q8pnp5cl77zc0avbw3mv38si43m3xps0g8whm6cjplg0p2a4ih6";
     };
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = pkgs.fetchFromGitHub {

@@ -111,8 +111,8 @@ backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
 
   let defaultLoggingConfig = [LoggingConfig
-        { _loggingConfig_logger = RhyoliteLogAppender_Stderr
-        , _loggingConfig_filters = Map.fromList
+        { _loggingConfig_logger = def @ RhyoliteLogAppender
+        , _loggingConfig_filters = Just $ Map.fromList
           [ ("SQL", RhyoliteLogLevel_Error)
           ]
         }]
