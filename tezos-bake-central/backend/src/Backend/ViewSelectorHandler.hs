@@ -220,7 +220,7 @@ getErrorLogs intervalMap = do
               , el.stopped AT TIME ZONE 'UTC'
               , el."lastSeen" AT TIME ZONE 'UTC'
               , el."noticeSentAt" AT TIME ZONE 'UTC'
-              , t.address, t.alias, t."expectedChainId", t."actualChainId"
+              , t.node, t.address, t.alias, t."expectedChainId", t."actualChainId"
             FROM "ErrorLog" el
             JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
             JOIN "Node" n ON n.id = t.node

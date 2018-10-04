@@ -8,6 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | 'Network.HTTP.Client' based implemention of 'RpcQuery'
 module Tezos.NodeRPC.Network where
 
 import Control.Exception.Safe (try)
