@@ -138,7 +138,7 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 ### Adding Monitored Nodes
 
-When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of 8732, you can enter http://localhost:8732\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
+When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
 
 \* If you're running the monitor from Docker on macOS or Windows, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
