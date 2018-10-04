@@ -161,8 +161,8 @@ obsidianLCA chain blk branches = plainNodeRequest methodGet $
   "/v1/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
 
 obsidianAncestors :: ChainId -> BlockHash -> RawLevel -> RpcQuery (Seq BlockHash)
-obsidianAncestors chain branch levels = plainNodeRequest methodGet $
-  "/v1/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&=level" <> T.pack (show levels)
+obsidianAncestors chain branch (RawLevel levels) = plainNodeRequest methodGet $
+  "/v1/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&level=" <> T.pack (show levels)
 
 -- fetch some history, starting at head, for at most n levels, optionally stop at ancestors of branches
 getHistory :: forall blk e r m.
@@ -204,4 +204,4 @@ getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_a
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest methodGet ("/v2/block/" <> toBase58Text blockHash)
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest methodGet
-    ("/v1/" <> toBase58Text chainId <> "/block/" <> toBase58Text blockHash)
+    ("/v1/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
