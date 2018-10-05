@@ -78,6 +78,7 @@ library
     , svg-builder
     , text
     , tezos-bake-monitor-lib
+    , tezos-noderpc
     , time
     , unix
 

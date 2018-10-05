@@ -25,14 +25,11 @@ library
     Tezos.Chain
     Tezos.Contract
     Tezos.Fitness
-    Tezos.History
     Tezos.Json
     Tezos.Lenses
     Tezos.Level
     Tezos.Micheline
-    Tezos.NodeRPC
     Tezos.NodeRPC.Class
-    Tezos.NodeRPC.Network
     Tezos.NodeRPC.Sources
     Tezos.NodeRPC.Types
     Tezos.Operation
@@ -48,9 +45,9 @@ library
   other-modules:
     Paths_tezos_bake_monitor_lib
   build-depends:
-      aeson
+      base
+    , aeson
     , async
-    , base
     , base16-bytestring
     , base58-bytestring
     , bytestring
@@ -60,12 +57,10 @@ library
     , cryptonite
     , groups
     , hashing
-    , http-client
     , http-types
     , lens
     , lens-aeson
     , memory
-    , monad-logger
     , modern-uri
     , mtl
     , process
@@ -82,19 +77,3 @@ library
   default-language: Haskell2010
   ghc-options: -Wall -Werror
 
-executable tezos-lib-smoketest
-  main-is: Test.hs
-  hs-source-dirs: src-bin
-  build-depends:
-      base
-    , containers
-    , http-client
-    , http-client-tls
-    , lens
-    , monad-logger
-    , mtl
-    , terminal-progress-bar
-    , text
-    , tezos-bake-monitor-lib
-  default-language: Haskell2010
-  ghc-options: -Wall -Werror

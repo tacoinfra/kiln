@@ -6,7 +6,6 @@ module Tezos.Lenses where
 
 import Control.Lens.TH (makeLenses)
 
-import Tezos.NodeRPC
 import Tezos.Operation
 import Tezos.Types
 
@@ -20,8 +19,6 @@ concat <$> traverse makeLenses
  , 'EndorsingRights
  , 'FreezerUpdate
  , 'Level
- , 'NetworkStat
- , 'NodeRPCContext
  , 'ProtoInfo
  ]
 

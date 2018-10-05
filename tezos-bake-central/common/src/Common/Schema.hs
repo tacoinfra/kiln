@@ -40,7 +40,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Json
-import Tezos.NodeRPC
+import Tezos.NodeRPC.Types (NetworkStat(..))
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 

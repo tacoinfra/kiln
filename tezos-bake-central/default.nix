@@ -29,6 +29,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
         sha256 = "0s32099nyk7pw44w9nsgi6q1w16f81sd57snc9gj131ymjp9nprv";
       };
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
+      tezos-noderpc = ../tezos-noderpc;
     };
 
     overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
@@ -45,5 +46,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = dontHaddock (dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
       tezos-bake-monitor-lib = dontHaddock (super.tezos-bake-monitor-lib);
+      tezos-noderpc = dontHaddock (super.tezos-noderpc);
     });
   })

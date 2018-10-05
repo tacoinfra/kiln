@@ -49,8 +49,8 @@ import qualified Text.URI as Uri
 import Tezos.History (CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat)
-import Tezos.NodeRPC.Network (nodeRPC, nodeRPCChunked)
-import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeContext (..), PublicNodeError (..), getCurrentHead)
+import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
+import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,

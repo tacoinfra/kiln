@@ -62,7 +62,9 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History
-import Tezos.NodeRPC
+import Tezos.NodeRPC.Network
+import Tezos.NodeRPC.Types
+import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Sources
 import Tezos.Types
 

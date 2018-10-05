@@ -29,6 +29,7 @@ import Data.Typeable
 import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Network
 import Tezos.Types
 import Tezos.NodeRPC.Sources
 

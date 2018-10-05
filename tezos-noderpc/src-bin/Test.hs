@@ -20,7 +20,9 @@ import System.Environment
 import System.ProgressBar
 
 import Tezos.History
-import Tezos.NodeRPC
+import Tezos.NodeRPC.Network
+import Tezos.NodeRPC.Types
+import Tezos.NodeRPC.Class
 import Tezos.Types
 import Tezos.NodeRPC.Sources
 
