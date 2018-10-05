@@ -21,10 +21,10 @@ import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
-import Data.Semigroup ((<>))
 import Data.Maybe (fromJust)
-import Data.List.NonEmpty (NonEmpty(..))
+import Data.Semigroup ((<>))
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -185,12 +185,12 @@ getHistory chain blk levels branches = asks (view (publicNodeContext . publicNod
         then pure levels
         else do
           lca <- nodeRPC $ obsidianLCA chain blk branches
-          pure $ min levels $ (blk ^. level) - (lca ^. level)
+          pure $ min levels $ (blk ^. level) - (lca ^. level) + 1
     nodeRPC $ obsidianAncestors chain blkHash levels'
 
   where
     blkHash = blk ^. hash
-    throwBadResponse = throwError (PublicNodeError_RpcError (RpcError_HttpException "not enough data")  ^. re asPublicNodeError)
+    throwBadResponse = throwError (PublicNodeError_RpcError (RpcError_HttpException "not enough data") ^. re asPublicNodeError)
     theNormalWay = maybe throwBadResponse pure =<< nodeRPC (Map.lookup blkHash <$> rBlocks chain levels (Set.singleton blkHash))
 
 getBlock ::
