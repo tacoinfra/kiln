@@ -34,19 +34,19 @@ To run the Docker image you need to have [Docker installed](https://www.docker.c
 
 You also need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
 
-The easiest way to get a database running is with Docker, like this:
+The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run --name tezos-monitor-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
-(You'll want to pick a better password than `mysecretpassword`.)
+(For anything serious you'll want to pick a better password than `mysecretpassword`.)
 
-Note that this runs the PostgreSQL instance on your host computer's network. For more advanced users, we recommend setting up a Docker network, or better yet, [Docker Compose](https://docs.docker.com/compose/).
+For more advanced users, we recommend setting up a Docker network, or better yet, using [Docker Compose](https://docs.docker.com/compose/).
 
-This command also leaves the PostgreSQL database running in the background. You can later stop it by running `docker container stop tezos-monitor-postgres`. If you remove it, your database state will be lost.
+You can stop this database by running `docker container stop tezos-monitor-postgres`. You can then remove it with `docker container rm tezos-monitor-postgres` but be aware your database state will be lost.
 
-Now you can run the monitor like this:
+Now you can download and run the monitor like this:
 
 On Linux:
 
