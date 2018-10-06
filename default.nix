@@ -92,13 +92,14 @@ let
           internalPort = monitorPort;
           baseUrl = null;
           backendArgs = pkgs.lib.concatStringsSep " " [
-            ''--network=${network}''
-            ''--serve-node-cache=yes''
-            ''--pg-connection="dbname=${dbname}"''
-            ''--check-for-upgrade=no''
-            ''--nodes="http://127.0.0.1:${toString rpcPort}"''
-            ''--''
-            ''--port=${toString monitorPort}''
+            "--network='${network}'"
+            "--serve-node-cache=yes"
+            "--pg-connection='dbname=${dbname}'"
+            "--check-for-upgrade=no"
+            "--nodes='http://127.0.0.1:${toString rpcPort}'"
+            "--email-from='${monitorName}@obsidian.systems'"
+            "--"
+            "--port=${toString monitorPort}"
           ];
         }))
       ];
