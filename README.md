@@ -1,6 +1,6 @@
 # Overview
 
-[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and/or OCamlPro (tzscan.io).
+[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and OCamlPro (tzscan.io).
 
 The Software alerts users within the GUI if a Monitored Node:
 
@@ -32,7 +32,7 @@ Obsidian Systems provides pre-built Docker images for each release on [Docker Hu
 
 To run the Docker image you need to have [Docker installed](https://www.docker.com/get-started).
 
-You also need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
+Before you download and run the monitor, you need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
 
 The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
 
@@ -142,7 +142,7 @@ When you open the Monitor in your browser, you will be taken to the Options Tab.
 
 \* If you're running the monitor from Docker on macOS or Windows, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
-Once you’ve added at least one Monitored Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
+Once you’ve added at least one Monitored or Public Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
 
 ### Adding Public Nodes
 
