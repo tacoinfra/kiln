@@ -32,7 +32,7 @@ Obsidian Systems provides pre-built Docker images for each release on [Docker Hu
 
 To run the Docker image you need to have [Docker installed](https://www.docker.com/get-started).
 
-Before you download and run the monitor, you need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
+Before you can download and run the monitor, you'll need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
 
 The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
 
