@@ -1,6 +1,6 @@
 # Overview
 
-[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and/or OCamlPro (tzscan.io).
+[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and OCamlPro (tzscan.io).
 
 The Software alerts users within the GUI if a Monitored Node:
 
@@ -28,25 +28,25 @@ This Monitor assumes that you are running at least one Tezos node. Options for r
 
 # Running a Pre-Built Monitor
 
-Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It works on Linux, macOS, and Windows.
+Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
 
 To run the Docker image you need to have [Docker installed](https://www.docker.com/get-started).
 
-You also need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
+Before you can download and run the monitor, you'll need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
 
-The easiest way to get a database running is with Docker, like this:
+The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run --name tezos-monitor-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
-(You'll want to pick a better password than `mysecretpassword`.)
+(For anything serious you'll want to pick a better password than `mysecretpassword`.)
 
-Note that this runs the PostgreSQL instance on your host computer's network. For more advanced users, we recommend setting up a Docker network, or better yet, [Docker Compose](https://docs.docker.com/compose/).
+For more advanced users, we recommend setting up a Docker network, or better yet, using [Docker Compose](https://docs.docker.com/compose/).
 
-This command also leaves the PostgreSQL database running in the background. You can later stop it by running `docker container stop tezos-monitor-postgres`. If you remove it, your database state will be lost.
+You can stop this database by running `docker container stop tezos-monitor-postgres`. You can then remove it with `docker container rm tezos-monitor-postgres` but be aware your database state will be lost.
 
-Now you can run the monitor like this:
+Now you can download and run the monitor like this:
 
 On Linux:
 
@@ -54,7 +54,7 @@ On Linux:
 DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
-On macOS or Windows:
+On macOS:
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
@@ -66,11 +66,15 @@ Now open a browser and navigate to `http://localhost:8000` to start configuring 
 
 Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
+# Known Issues
+
+  * If the frontend page loses connection to the server it will stop showing live data. This might happen if, for example, your computer goes to sleep with the page open. For now, you need to manually refresh the page to reconnect. This will be fixed in a future release.
+
 # Building the Monitor from Source
 
 ## Prerequisites
 
-These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently. Windows might work if you use WSL, but it has not been tested.
+These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently.
 
 ##### Gitlab SSH Keys
 
@@ -140,9 +144,9 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
 
-\* If you're running the monitor from Docker on macOS or Windows, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
+\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
-Once you’ve added at least one Monitored Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
+Once you’ve added at least one Monitored or Public Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
 
 ### Adding Public Nodes
 
