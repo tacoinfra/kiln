@@ -28,7 +28,7 @@ This Monitor assumes that you are running at least one Tezos node. Options for r
 
 # Running a Pre-Built Monitor
 
-Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It works on Linux, macOS, and Windows.
+Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
 
 To run the Docker image you need to have [Docker installed](https://www.docker.com/get-started).
 
@@ -54,7 +54,7 @@ On Linux:
 DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
-On macOS or Windows:
+On macOS:
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
@@ -70,7 +70,7 @@ Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for mo
 
 ## Prerequisites
 
-These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently. Windows might work if you use WSL, but it has not been tested.
+These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently.
 
 ##### Gitlab SSH Keys
 
@@ -140,7 +140,7 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
 
-\* If you're running the monitor from Docker on macOS or Windows, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
+\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
 Once you’ve added at least one Monitored or Public Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
 
