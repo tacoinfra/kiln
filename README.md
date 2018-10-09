@@ -66,6 +66,10 @@ Now open a browser and navigate to `http://localhost:8000` to start configuring 
 
 Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
+# Known Issues
+
+  * If the frontend page loses connection to the server it will stop showing live data. This might happen if, for example, your computer goes to sleep with the page open. For now, you need to manually refresh the page to reconnect. This will be fixed in a future release.
+
 # Building the Monitor from Source
 
 ## Prerequisites
