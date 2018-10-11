@@ -1,0 +1,3 @@
+packages:
+    ./tezos-bake-monitor-lib
+    ./tezos-noderpc

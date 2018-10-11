@@ -71,7 +71,6 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
-    , say
     , snap-core
     , snap-loader-static
     , snap-server
@@ -79,6 +78,7 @@ library
     , svg-builder
     , text
     , tezos-bake-monitor-lib
+    , tezos-noderpc
     , time
     , unix
 

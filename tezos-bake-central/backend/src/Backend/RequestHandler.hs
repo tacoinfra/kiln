@@ -12,7 +12,7 @@ module Backend.RequestHandler where
 
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (NoLoggingT, runNoLoggingT)
+import Control.Monad.Logger (LoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
@@ -28,6 +28,7 @@ import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
@@ -174,8 +175,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: DbPersist Postgresql (NoLoggingT m) a -> m a
-    inDb = runNoLoggingT . runDb (Identity $ _nodeDataSource_pool nds)
+    inDb :: DbPersist Postgresql (LoggingT m) a -> m a
+    inDb = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =
