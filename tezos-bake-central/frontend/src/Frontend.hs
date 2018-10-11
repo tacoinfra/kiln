@@ -288,10 +288,81 @@ data UITab = UITab_Summary
   deriving (Eq, Ord, Show)
 
 appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
+appMain = do
+  elClass "div" "app-frame" $ do
+    appSidebar
+    elClass "div" "app-right" $ do
+      appHeader
+      appContentArea
+
+appSidebar =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-sidebar"
+      & SemUi.segmentConfig_vertical SemUi.|~ True
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        appSideHeader
+        appGutter
+        appSideFooter
+
+appSideHeader =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-side-header"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        text "side header"
+        SemUi.divider def
+
+
+appGutter =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-gutter"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        text "gutter"
+
+appSideFooter =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-side-footer"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        SemUi.divider def
+        text "side footer"
+
+appHeader =
+  SemUi.segment
+    (def
+      & SemUi.segmentConfig_vertical SemUi.|~ True
+      )
+    $ do
+        text "header"
+        headerBell
+
+headerBell = do
+  SemUi.segment
+    (def
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
+      )
+    $ do
+        text "bell"
+
+appContentArea = do
+  elClass "div" "app-content" $ do
+    oldAppMain -- until we reimplement it
+
+oldAppMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
+oldAppMain = elAttr "div" ("style" =: "width: 90%; margin-left: auto; margin-right: auto;") $ do
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
-  el "h1" $ text "Node Monitor"
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
@@ -342,7 +413,6 @@ appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right:
               UITab_Options -> optionsTab
               UITab_Client cid addr -> clientTab cid addr
               UITab_Delegate pkh -> delegateTab pkh
-
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
