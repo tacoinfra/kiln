@@ -11,7 +11,6 @@ module Backend.ViewSelectorHandler where
 
 import Control.Lens ((<&>))
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (runNoLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
@@ -30,6 +29,7 @@ import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
+import Rhyolite.Backend.Logging(runLoggingEnv)
 import Rhyolite.Schema (Id)
 import Text.URI (URI)
 
@@ -55,7 +55,7 @@ viewSelectorHandler
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runNoLoggingT $ runDb (Identity db) $ do
+viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> query

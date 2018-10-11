@@ -13,6 +13,7 @@ module Tezos.History where
 import Control.Lens (Lens, ifor_, view, (%=), (^.))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
+import Control.Monad.Logger (MonadLogger)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable
@@ -28,6 +29,7 @@ import Data.Typeable
 import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.NodeRPC
+import Tezos.NodeRPC.Network
 import Tezos.Types
 import Tezos.NodeRPC.Sources
 
@@ -59,7 +61,7 @@ type ProgressFn f = BlockHash -> BlockHash -> Int -> Int -> f ()
 accumHistory
   ::
   ( BlockLike b
-  , MonadIO m
+  , MonadIO m, MonadLogger m
   , MonadState s m, Monoid a, HasCachedHistory s s a a
   , MonadReader r m, HasPublicNodeContext r
   , MonadError e m, AsPublicNodeError e
@@ -125,7 +127,7 @@ accumBalance :: MonadState Balances m => Block -> m ()
 accumBalance = modify . (<>) . getBalanceChanges
 
 scanBranch ::
-  ( MonadIO m
+  ( MonadIO m, MonadLogger m
   , MonadReader ctx m , HasNodeRPC ctx
   , MonadError e m, AsRpcError e
   )

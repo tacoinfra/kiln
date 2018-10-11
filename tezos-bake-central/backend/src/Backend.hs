@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend where
 
@@ -20,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, runNoLoggingT)
+import Control.Monad.Logger (MonadLogger, LoggingT(..), logInfo, logDebug, runStderrLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -58,7 +59,6 @@ import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
-import Say (say)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -97,12 +97,27 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import Frontend (frontend)
 
+import Rhyolite.Backend.Logging
+import qualified Data.Map as Map
+
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
+
+askLogger :: Monad m => LoggingT m LoggingEnv
+askLogger = LoggingT $ return . LoggingEnv
 
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
+
+  let defaultLoggingConfig = [LoggingConfig
+        { _loggingConfig_logger = def @ RhyoliteLogAppender
+        , _loggingConfig_filters = Just $ Map.fromList
+          [ ("SQL", RhyoliteLogLevel_Error)
+          ]
+        }]
+
+  !loggingConfig <- fromMaybe defaultLoggingConfig <$> getJSONConfigFromFile (configPath "loggers")
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
@@ -181,16 +196,20 @@ backendImpl cfg serve = do
     Right chainId -> pure chainId
     Left NamedChain_Mainnet -> pure mainnetChainId
 
-    Left chainName -> runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
+    -- We're doing some RPC here, which needs logging, but we haven't really
+    -- started yet so where it does log, we log to stderr instead of normally.
+    -- if there's issues, we exit immediately anyhow.
+    Left chainName -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
       Left (e :: RpcError) -> throwString $
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
-  say $ "Monitoring network " <> toBase58Text chainId
-  for_ route $ \r -> say $ "Using route " <> URI.render r
+  withDb dbSpec $ \db -> withLogging loggingConfig $ do
+    logger <- askLogger
+    $(logInfo) $ "Monitoring network " <> toBase58Text chainId
+    for_ route $ \r -> $(logDebug) $ "Using route " <> URI.render r
 
-  withDb dbSpec $ \db -> do
-    runNoLoggingT $ runDb (Identity db) $ do
+    runDb (Identity db) $ do
       tableInfo <- getTableAnalysis
       runMigration $ do
         migrateAccount tableInfo
@@ -207,12 +226,12 @@ backendImpl cfg serve = do
         for_ needToAdd $ \newAddress ->
           insert $ mkNode newAddress Nothing
 
-    dataSrc <- blankNodeDataSource db chainId httpMgr
+    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
-        runNoLoggingT (clearMailQueueWithDynamicEmailEnv $ Identity db)
+        (runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db)
 
       let appConfig = AppConfig emailFromAddress
 
@@ -231,9 +250,9 @@ backendImpl cfg serve = do
       addFinalizer =<< delegateWorker dataSrc
 
       if checkForUpgrade then
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) appConfig httpMgr db
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger appConfig httpMgr db
       else
-        runNoLoggingT $ runDb (Identity db) clearUpgradeNotice
+        runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
         BackendRoute_Listen :=> _ -> handleListen
@@ -276,6 +295,9 @@ clearMailQueueWithDynamicEmailEnv db = do
 
   clearMailQueue db emailEnv
 
+getJSONConfigFromFile :: Aeson.FromJSON a => FilePath -> IO (Maybe a)
+getJSONConfigFromFile f = (either (error . (("JSON decode error while reading file " <> f <> ":") <>)) Just . Aeson.eitherDecode' <$> LBS.readFile f)
+  `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
 getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
 getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)

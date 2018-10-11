@@ -3,13 +3,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Arrow ((&&&))
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
@@ -21,9 +22,9 @@ import Data.Semigroup (First (..), (<>))
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
-import Say (sayErr)
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
@@ -42,10 +43,10 @@ notifyHandler
   -> NotifyMessage
   -> BakeViewSelector a
   -> m (BakeView a)
-notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeDataSource_pool nds) $
+notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
   case fromJSON (_notifyMessage_value notifyMessage) of
     Aeson.Error e -> do
-      sayErr $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
+      $(logWarn) $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
