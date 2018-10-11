@@ -100,7 +100,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
       flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
         flip execStateT cache $ do
-          _ <- accumHistory nodeMonitorBranchProgess chainId (^. fitness) headBlockInfo
+          _ <- accumHistory nodeMonitorBranchProgess chainId (const ()) headBlockInfo
           $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
     case newStateRsp of
       Left e -> $(logWarnSH) e $> (cache, Left e)
