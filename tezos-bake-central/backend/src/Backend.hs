@@ -126,7 +126,7 @@ backendImpl cfg serve = do
 
   !(route :: Maybe URI) <- liftA2 (<|>)
     (pure $ _opts_route cfg)
-    (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
+    (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
 
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
@@ -156,17 +156,17 @@ backendImpl cfg serve = do
 
   !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
     , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
   !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_obsidianApiUri cfg
-    , getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
@@ -303,6 +303,10 @@ getConfigFromFile :: (Text -> Maybe a) -> FilePath -> IO (Maybe a)
 getConfigFromFile parser f = (parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
+getConfigFromFile' :: (Text -> Either String a) -> FilePath -> IO (Maybe a)
+getConfigFromFile' parser f = (either error Just . parser . T.strip <$> T.readFile f)
+  `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
+
 data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
@@ -399,7 +403,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile (Aeson.decodeStrict . T.encodeUtf8) $ configPath Config.route)
+        (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
 
       !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
         (pure $ _opts_checkForUpgrade cfg)
