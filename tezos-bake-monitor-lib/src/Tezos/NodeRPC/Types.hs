@@ -7,6 +7,7 @@
 module Tezos.NodeRPC.Types where
 
 import Control.Lens (Prism', re, (^.))
+import Control.Lens.TH (makeLenses)
 import Data.Int (Int32)
 #if !(MIN_VERSION_base(4,9,0))
 import Data.Semigroup
@@ -56,3 +57,8 @@ newtype BlockPrefix = BlockPrefix Text
 concat <$> traverse deriveTezosJson
   [ ''NetworkStat
   ]
+
+concat <$> traverse makeLenses
+ [ 'NetworkStat
+ ]
+
