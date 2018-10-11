@@ -90,7 +90,6 @@ frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
   , _frontend_body = prerender (return ()) frontendBody
-  , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
   }
 
 frontendBody ::

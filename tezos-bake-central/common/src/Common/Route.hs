@@ -16,51 +16,36 @@ import Prelude hiding (id, (.))
 
 import Control.Category
 import Control.Monad.Except
-import Data.Some (Some)
-import Data.Text
+import Data.Text (Text)
 import Data.Functor.Sum
 import Obelisk.Route
 import Obelisk.Route.TH
+import Data.Functor.Identity
 
 data AppRoute :: * -> * where
   AppRoute_Index :: AppRoute ()
 
-deriveRouteComponent ''AppRoute
-
-appRouteComponentEncoder :: (MonadError Text check, MonadError Text parse) => Encoder check parse (Some AppRoute) (Maybe Text)
-appRouteComponentEncoder = enum1Encoder $ \case
-  AppRoute_Index -> Nothing
-
-appRouteRestEncoder :: (Applicative check, MonadError Text parse) => AppRoute a -> Encoder check parse a PageName
-appRouteRestEncoder = \case
-  AppRoute_Index -> Encoder $ pure $ endValidEncoder mempty
+appRouteSegment :: (Applicative check, MonadError Text parse)
+  => AppRoute a -> SegmentResult check parse a
+appRouteSegment = \case
+  AppRoute_Index -> PathEnd $ unitEncoder mempty
 
 data BackendRoute :: * -> * where
+  BackendRoute_Missing :: BackendRoute () -- ^ Used to handle unparseable routes.
   BackendRoute_Listen :: BackendRoute ()
   BackendRoute_PublicCacheApi :: BackendRoute PageName
 
-deriveRouteComponent ''BackendRoute
-
 backendRouteEncoder
-  :: ( check ~ parse
-     , MonadError Text parse
-     )
-  => Encoder check parse (R (Sum BackendRoute (ObeliskRoute AppRoute))) PageName
-backendRouteEncoder = Encoder $ do
-  let myComponentEncoder = (backendRouteComponentEncoder `shadowEncoder` obeliskRouteComponentEncoder appRouteComponentEncoder) . someSumEncoder
-  myObeliskRestValidEncoder <- checkObeliskRouteRestEncoder appRouteRestEncoder
-  checkEncoder $ pathComponentEncoder myComponentEncoder $ \case
+  :: Encoder (Either Text) Identity (R (Sum BackendRoute (ObeliskRoute AppRoute))) PageName
+backendRouteEncoder = handleEncoder (const (InL BackendRoute_Missing :/ ())) $
+  pathComponentEncoder $ \case
     InL backendRoute -> case backendRoute of
-      BackendRoute_Listen -> endValidEncoder mempty
-      BackendRoute_PublicCacheApi -> id -- endValidEncoder mempty
-    InR obeliskRoute -> runValidEncoderFunc myObeliskRestValidEncoder obeliskRoute
+      BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
+      BackendRoute_Listen -> PathSegment "listen" $ unitEncoder mempty
+      BackendRoute_PublicCacheApi -> PathSegment "api" id
+    InR obeliskRoute -> obeliskRouteSegment obeliskRoute appRouteSegment
 
-backendRouteComponentEncoder :: (MonadError Text check, MonadError Text parse) => Encoder check parse (Some BackendRoute) (Maybe Text)
-backendRouteComponentEncoder = enum1Encoder $ \case
-  BackendRoute_Listen -> Just "listen"
-  BackendRoute_PublicCacheApi -> Just "api"
-
-backendRouteRestEncoder :: (Applicative check, MonadError Text parse) => BackendRoute a -> Encoder check parse a PageName
-backendRouteRestEncoder = Encoder . pure . \case
-  BackendRoute_Listen -> endValidEncoder mempty
-  BackendRoute_PublicCacheApi -> id
+concat <$> mapM deriveRouteComponent
+  [ ''BackendRoute
+  , ''AppRoute
+  ]
