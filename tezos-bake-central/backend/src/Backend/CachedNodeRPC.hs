@@ -85,7 +85,7 @@ deriving instance Show (NodeQuery a)
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
-type CachedHistory' = CachedHistory Fitness
+type CachedHistory' = CachedHistory ()
 
 data CacheLine a = CacheLine
   { _cacheLine_value :: !a
@@ -129,7 +129,7 @@ lookupBlock x = do
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
-    f :: LCA.Path BlockHash Fitness -> VeryBlockLike
+    f :: LCA.Path BlockHash () -> VeryBlockLike
     f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
   return $ fmap f xPath
 
@@ -201,8 +201,8 @@ waitForNewHead nds = do
     pure newHead
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
-histToBlockLike :: RawLevel -> (BlockHash, Fitness, LCA.Path BlockHash Fitness) -> VeryBlockLike
-histToBlockLike minLevel (h, f, path) = VeryBlockLike h p f blkLevel unixEpoch
+histToBlockLike :: RawLevel -> (BlockHash, (), LCA.Path BlockHash ()) -> VeryBlockLike
+histToBlockLike minLevel (h, f, path) = VeryBlockLike h p mempty blkLevel unixEpoch
   where
     blkLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
@@ -246,10 +246,8 @@ dataSourceHead
 dataSourceHead = withCache Nothing $ \_ -> do
   dsrc <- asks (^. nodeDataSource)
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
-  let branches = _cachedHistory_blocks history `Map.intersection` Map.fromSet (const ()) (_cachedHistory_branches history)
-  pure $ fmap (histToBlockLike (_cachedHistory_minLevel history))
-    $ (LCA.uncons =<<)
-    $ maximumByMay (compare `on` LCA.measure) $ toList branches
+  let branches = _cachedHistory_branches history
+  pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
 -- | extrats the fittest known node from cache
 dataSourceNode ::

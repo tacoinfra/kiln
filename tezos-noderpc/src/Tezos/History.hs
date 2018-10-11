@@ -37,7 +37,7 @@ data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
   -- a plausible alternative is to only keep the fittest n branches
   -- investigate: https://github.com/mikeizbicki/HLearn/blob/master/src/HLearn/Data/SpaceTree/CoverTree.hs
-  { _cachedHistory_branches :: !(Set BlockHash)
+  { _cachedHistory_branches :: !(Map BlockHash VeryBlockLike)
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
   } deriving (Show, Typeable)
@@ -45,7 +45,7 @@ data CachedHistory a = CachedHistory
 makeLenses 'CachedHistory
 
 emptyCache :: CachedHistory a
-emptyCache = CachedHistory Set.empty Map.empty 1
+emptyCache = CachedHistory Map.empty Map.empty 1
 
 class HasCachedHistory s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (CachedHistory a) (CachedHistory b)
@@ -86,7 +86,7 @@ accumHistory progress chainId f blk = do
       -- minLevel
       let levels = view level blk - minLevel
       branches <- gets $ _cachedHistory_branches . view cachedHistory
-      descendents <- getHistory chainId blk levels branches
+      descendents <- getHistory chainId blk levels $ Map.keysSet branches
       -- make sure we have a root node
       let rootHash = Seq.index (blkHash <| descendents) (length descendents) -- 1
       -- log ("got branch", length descendents, "expect", levels, rootHash)
@@ -103,11 +103,17 @@ accumHistory progress chainId f blk = do
 
   if view level blk >= minLevel
     then do
-      cachedHistory %= accumHistoryImpl blkHash predHash (f blk)
+      cachedHistory %= exposeBranch blk . accumHistoryImpl blkHash predHash (f blk)
       blkBranch <- gets $ (Map.! blkHash) . view (cachedHistory . cachedHistory_blocks)
       -- log ("after", length $ LCA.toList blkBranch)
       return $ LCA.measure blkBranch
     else return mempty
+
+exposeBranch :: BlockLike b => b -> CachedHistory a -> CachedHistory a
+exposeBranch blk c = c { _cachedHistory_branches
+  = Map.delete (blk ^. predecessor)
+  $ Map.insert (blk ^. hash) (mkVeryBlockLike blk)
+  $ _cachedHistory_branches c }
 
 accumHistoryImpl
   :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
@@ -115,7 +121,7 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
   Just _ -> c -- why dont we replace acc?  It'd have to be updated in every path that contains it, O(n log h) work.  this way we're only O(log n)
   Nothing -> CachedHistory
       { _cachedHistory_blocks = Map.insert blkHash newPath $ blocks
-      , _cachedHistory_branches = Set.delete predHash . Set.insert blkHash $ branches
+      , _cachedHistory_branches = Map.delete predHash branches
       , _cachedHistory_minLevel = _cachedHistory_minLevel c
       }
     where
