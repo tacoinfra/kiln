@@ -247,7 +247,6 @@ dataSourceHead = withCache Nothing $ \_ -> do
   dsrc <- asks (^. nodeDataSource)
   history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
   let branches = _cachedHistory_branches history
-  liftIO $ print branches
   pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
 -- | extrats the fittest known node from cache

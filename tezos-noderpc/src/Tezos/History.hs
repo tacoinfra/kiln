@@ -110,7 +110,10 @@ accumHistory progress chainId f blk = do
     else return mempty
 
 exposeBranch :: BlockLike b => b -> CachedHistory a -> CachedHistory a
-exposeBranch blk c = c { _cachedHistory_branches = Map.insert (blk ^. hash) (mkVeryBlockLike blk) $ _cachedHistory_branches c }
+exposeBranch blk c = c { _cachedHistory_branches
+  = Map.delete (blk ^. predecessor)
+  $ Map.insert (blk ^. hash) (mkVeryBlockLike blk)
+  $ _cachedHistory_branches c }
 
 accumHistoryImpl
   :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
