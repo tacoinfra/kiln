@@ -88,6 +88,7 @@ library
   other-modules:
     Paths_backend
     Backend.Alerts
+    Backend.Alerts.Common
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth

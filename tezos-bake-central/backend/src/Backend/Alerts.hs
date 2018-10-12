@@ -2,16 +2,17 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
 module Backend.Alerts where
 
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader)
 import Data.Either.Combinators (leftToMaybe, rightToMaybe)
 import Data.Foldable (for_)
@@ -20,6 +21,7 @@ import Data.Maybe (listToMaybe)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
 import Data.Version (Version)
 import Database.Groundhog
@@ -27,6 +29,7 @@ import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
 import Network.Mail.Mime (Address (..), Mail, simpleMail')
+import Reflex.Dom.Core (text)
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
@@ -41,23 +44,7 @@ import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
 import Common.Schema
-
-mailFor :: Address -> Text -> [Error] -> Mail
-mailFor fromAddr toAddr errs =
-  let
-    toA = Address Nothing toAddr
-    body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
-
-queueAllEmails ::
-  ( PersistBackend m, PostgresLargeObject m, MonadIO m
-  , MonadReader a m, HasAppConfig a) => [Error] -> m ()
-queueAllEmails message = do
-  ns <- select CondEmpty
-  fromAddr <- _appConfig_emailFromAddress <$> askAppConfig
-  for_ ns $ \n ->
-    queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
-
+import Backend.Alerts.Common (queueAlert, Alert (..))
 
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
@@ -87,10 +74,9 @@ reportNoBakerHeartbeatError cid eventDetail = do
 
       client :: Maybe Client <- get $ fromId cid
       now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
-        }]
+      queueAlert $
+        Alert "Baker has not seen block for a while" $
+        text $ "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
         [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
@@ -125,10 +111,8 @@ reportInaccessibleNodeError nodeId = do
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
         now <- getTime
-        queueAllEmails [Error
-          { _error_time = now
-          , _error_text = "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
-          }]
+        queueAlert $ Alert "Unable to connect to node"
+          $ text $ "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
@@ -162,10 +146,8 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = do
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
         now <- getTime
-        queueAllEmails [Error
-          { _error_time = now
-          , _error_text = "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
-          }]
+        queueAlert $ Alert "Node on wrong network" $
+          text $ "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
@@ -206,8 +188,8 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
       for_ node $ \n -> do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
         now <- getTime
-        queueAllEmails [Error now $
-          heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message]
+        queueAlert $ Alert heading
+          $ text $ heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -241,12 +223,11 @@ reportUpgradeNotice errorOrNewVersion = do
     Nothing -> do
       _ <- insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
       now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = case errorOrNewVersion of
-            Left _ -> "We were not able to contact the upgrade check endpoint. If this issue persists please check for an upgrade manually."
-            Right _ -> "We found a newer version of the monitor. Please consider upgrading."
-        }]
+      queueAlert $ Alert
+        (case errorOrNewVersion of Left _ -> "Unable to check for upgrade"; Right _ -> "New version available")
+        $ text $ case errorOrNewVersion of
+          Left _ -> "We were not able to contact the upgrade check endpoint. If this issue persists please check for an upgrade manually."
+          Right _ -> "We found a newer version of the monitor. Please consider upgrading."
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
