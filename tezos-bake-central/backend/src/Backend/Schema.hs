@@ -511,6 +511,9 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields:
            - _genericCacheEntry_chainId
            - _genericCacheEntry_key
+  - entity: TelegramConfig
+  - entity: TelegramMessageQueue
+  - entity: TelegramRecipient
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -533,4 +536,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''PendingReward, 'PendingRewardKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
+  , (''TelegramConfig, 'TelegramConfigKey)
+  , (''TelegramRecipient, 'TelegramRecipientKey)
+  , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
   ]
