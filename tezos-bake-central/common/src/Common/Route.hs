@@ -16,11 +16,11 @@ import Prelude hiding (id, (.))
 
 import Control.Category
 import Control.Monad.Except
-import Data.Text (Text)
+import Data.Functor.Identity
 import Data.Functor.Sum
+import Data.Text (Text)
 import Obelisk.Route
 import Obelisk.Route.TH
-import Data.Functor.Identity
 
 data AppRoute :: * -> * where
   AppRoute_Index :: AppRoute ()
@@ -31,8 +31,8 @@ appRouteSegment = \case
   AppRoute_Index -> PathEnd $ unitEncoder mempty
 
 data BackendRoute :: * -> * where
-  BackendRoute_Missing :: BackendRoute () -- ^ Used to handle unparseable routes.
   BackendRoute_Listen :: BackendRoute ()
+  BackendRoute_Missing :: BackendRoute () -- ^ Used to handle unparseable routes.
   BackendRoute_PublicCacheApi :: BackendRoute PageName
 
 backendRouteEncoder
@@ -40,8 +40,8 @@ backendRouteEncoder
 backendRouteEncoder = handleEncoder (const (InL BackendRoute_Missing :/ ())) $
   pathComponentEncoder $ \case
     InL backendRoute -> case backendRoute of
-      BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
       BackendRoute_Listen -> PathSegment "listen" $ unitEncoder mempty
+      BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
       BackendRoute_PublicCacheApi -> PathSegment "api" id
     InR obeliskRoute -> obeliskRouteSegment obeliskRoute appRouteSegment
 
