@@ -1,6 +1,6 @@
-{pkgs ? ((import ../.obelisk/impl {}).reflex-platform.nixpkgs)} :
+{pkgs ? (import ../.obelisk/impl {}).reflex-platform.nixpkgs} :
 let
-    semui = pkgs.callPackage ../semantic.nix {};
+    semui = pkgs.callPackage ./semantic-ui.nix {};
 in pkgs.stdenv.mkDerivation {
     name ="bakemonitor-staticFiles";
     src = ./.;
@@ -8,6 +8,6 @@ in pkgs.stdenv.mkDerivation {
       source "$stdenv/setup"
       mkdir -p $out
       cp -r $src/css $src/fonts $out
-      ln -s ${semui} $out/semantic-ui
+      ln -s ${semui.bakemonitor-semantic-ui} $out/semantic-ui
     '';
   }
