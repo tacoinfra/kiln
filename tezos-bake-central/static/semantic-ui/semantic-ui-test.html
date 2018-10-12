@@ -1,20 +1,28 @@
+<link rel="stylesheet" type="text/css" href="../css/font-awesome.min.css">
 <link rel="stylesheet" type="text/css" href="dist/semantic.min.css">
+<link rel="stylesheet" type="text/css" href="../css/main.css">
 <head>
-<div class="ui grid">
-<div class="sixteen wide column">
-    <h3>Typography</h3>
-    <h1>Header 1.
-    <h2>Header 2.
-    <h3>Header 3.
-    <h4>Header 4.
-    <h5>Header 5.
-    <h6>Header 6.  </h6>
-    <p>Body copy. Lorem Ipsum is simply dummy text of the printing and typesetting industry. Dolor sit amet!
-    <p>Small Header for Small Stuff
-    <p>Small copy. Small copy will be generally used for notes, tooltips and things that aren't as important. Line Height is smaller than the standard 1.5x.
-    <p> Aside Copy. For small notes, tips, etc. Same as Small Copy except for color.
+<div class="app-frame">
+<div class="app-right">
+<div class="app-content">
+<div class="ui one column grid">
+<div class="column">
+<div class="ui basic segment">
+    <h3 class="ui header">Typography</h3>
+    <h1 class="ui header">Header 1.</h1>
+    <h2 class="ui header">Header 2.</h2>
+    <h3 class="ui header">Header 3.</h3>
+    <h4 class="ui header">Header 4.</h4>
+    <h5 class="ui header">Header 5.</h5>
+    <!-- <h6 class="ui header">Header 6.</h6> -->
+    <p class="ui vertical segment basic">Body copy. Lorem Ipsum is simply dummy text of the printing and typesetting industry. Dolor sit amet!
+    <h6 class="ui header">Small Header for Small Stuff</h6>
+    <div class="ui vertical segment basic small">
+        <p >Small copy. Small copy will be generally used for notes, tooltips and things that aren't as important. Line Height is smaller than the standard 1.5x.
+        <p class="aside">Aside Copy. For small notes, tips, etc. Same as Small Copy except for color.
+    </div>
 </div>
-<div class="sixteen wide column">
+<div class="ui basic segment">
 
     <h3>Links</h3>
     <a href="example.com">Unvisited Link</a>
@@ -22,7 +30,7 @@
     <a href="example.com">Active Link</a>
     <a href="example.com">Visited Link</a>
 </div>
-<div class="sixteen wide column">
+<div class="ui basic segment">
     <h3>Colors</h3>
     <p>
     <button class="ui button blue">blue</button>
@@ -32,12 +40,34 @@
     <button class="ui button black">black</button>
     <button class="ui button grey">grey</button>
 </div>
-<div class="sixteen wide column">
+<div class="ui basic segment">
     <h3>Forms</h3>
+    <div class="ui form">
+        <div class="ui labeled input"><input placeholder="placeholder"></input></div>
+        <div class="ui labeled input"><input value="not placeholder"></input></div>
+        <br>
+        <div class="field">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+        <div class="field required">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+        <div class="required field">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+    </div>
 
-    <div class="ui labeled input"><input placeholder="placeholder"></input></div>
-    <div class="ui labeled input"><input value="not placeholder"></input></div>
-    <div class="ui labeled input"><a class="ui label">Label</a><input value="not placeholder"></input><a class="ui label">Label</a></div>
 
     <p> <button class="ui primary button">Primary Button</button><button class="ui button">Secondary Button</button>
+</div>
+</div>
+</div>
+</div>
+</div>
 </div>

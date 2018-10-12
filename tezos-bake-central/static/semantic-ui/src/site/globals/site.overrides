@@ -1,3 +1,25 @@
 /*******************************
          Site Overrides
 *******************************/
+
+a:link {
+    color:@blue;
+    text-decoration-line:none;
+}
+a:visited {
+    color:#5b9aff;
+    text-decoration-line:none;
+}
+a:hover {
+    text-decoration-line:underline;
+    color:#5b9aff;
+}
+a:active {
+    color: #0047b7;
+    text-decoration-line:none;
+}
+.aside {color:@grey;}
+
+h6.ui.header {
+    font-size:@relative13px;
+}
