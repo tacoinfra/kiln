@@ -82,6 +82,7 @@ import Common.Route
 import Common.Schema hiding (Event)
 import Common.Vassal
 import Frontend.Common
+import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Obelisk.Frontend
 import Obelisk.Route
 
@@ -137,7 +138,9 @@ frontendBody = void $ do
       }
 
   runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $
-    flip runReaderT appCfg appMain
+    flip runReaderT appCfg $
+      runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
+        appMain
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
