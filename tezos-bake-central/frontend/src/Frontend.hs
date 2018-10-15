@@ -90,7 +90,6 @@ frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
   , _frontend_body = prerender (return ()) frontendBody
-  , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
   }
 
 frontendBody ::
@@ -749,15 +748,15 @@ mailServerForm frm0 = do
   where
     fields = withFormFieldsErr (frm0, "") $ do
       divClass "three fields" $ do
-        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "eight wide"
+        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required eight wide"
           $ validatedInput Validator.validateText
           $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
 
-        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "four wide"
+        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required four wide"
           $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
           $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber frm0)
 
-        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "four wide"
+        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required four wide"
           $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
           $ do
             labeled "Protocol"

@@ -20,6 +20,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       sha256 = "01rpf0vh5llx1hq4j55gmw36fvzhb95ngcykh34sgcxp5498p9f3";
     };
   in {
+    staticFiles = pkgs.callPackage ./static {};
     packages = {
       backend-db = ./backend-db;
       reflex-dom-forms = pkgs.fetchFromGitHub {

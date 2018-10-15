@@ -1,0 +1,34 @@
+/*******************************
+     User Global Variables
+*******************************/
+@fontName: 'Helvetica Neue';
+@primaryColor:@blue;
+
+@blue: #1269F3;
+@green: #19D201;
+@orange: #FF6705;
+@red: #D00101;
+@grey: #898989;
+
+/*
+  Sizes are all expressed in terms of 14px/em (default em)
+  This ensures these "ratios" remain constant despite changes in EM
+*/
+
+@smallSize       : (12 / 14);
+/* medium is the default. */
+@mediumSize      : (14 / 14);
+
+@h1 : unit((48 / 14), rem);
+@h2 : unit((36 / 14), rem);
+@h3 : unit((28 / 14), rem);
+@h4 : unit((24 / 14), rem);
+@h5 : unit((20 / 14), rem);
+/* semui doesn't do anything with h6 and neither should you */
+/* @h6 : unit((16 / 14), rem); */
+
+@headerTopMargin: 0px;
+@headerBottomMargin: 0px;
+
+/* 1.5 */
+@headerLineHeight : unit((21 / 14), em);

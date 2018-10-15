@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "obelisk",
-  "branch": "routes",
-  "rev": "a9ef07b769a1c5dc30e981895df0d1ec7ca2ff0f",
-  "sha256": "004j1ipnds68pmcydkf13nq5zhlw86g8rp4fi1syq0b6z45dv5wj"
+  "branch": "overridable-static",
+  "rev": "a464d2d637d5639d4653c83b5f6c22442ac89585",
+  "sha256": "1id3j163093p3cqrh064qqx159f5k16lg3avpfj5p51zd1fx3px7"
 }
