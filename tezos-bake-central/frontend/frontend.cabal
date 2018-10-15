@@ -16,6 +16,8 @@ library
 
   other-modules:
     Frontend.Common
+    Frontend.Modal.Base
+    Frontend.Modal.Class
 
   build-depends:
       base
