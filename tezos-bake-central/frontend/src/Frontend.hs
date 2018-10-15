@@ -78,11 +78,10 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Schema hiding (Event)
-import Frontend.Common
-
 import Common.Route
+import Common.Schema hiding (Event)
 import Common.Vassal
+import Frontend.Common
 import Obelisk.Frontend
 import Obelisk.Route
 
@@ -132,10 +131,13 @@ frontendBody = void $ do
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
       <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
 
-  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ runReaderT appMain Cfg
-    { _cfg_checkForUpgrade = checkForUpgrade
-    , _cfg_chain = chain
-    }
+    appCfg = Cfg
+      { _cfg_checkForUpgrade = checkForUpgrade
+      , _cfg_chain = chain
+      }
+
+  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $
+    flip runReaderT appCfg appMain
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
@@ -287,7 +289,14 @@ data UITab = UITab_Summary
            | UITab_Options
   deriving (Eq, Ord, Show)
 
-appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
+appMain
+  :: forall t m.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader Cfg m
+    )
+  => m ()
 appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes

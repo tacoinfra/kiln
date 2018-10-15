@@ -21,11 +21,11 @@ import Prelude hiding (length)
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, retry, readTVarIO)
+import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, readTVarIO, retry)
 import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
-import Control.Monad.Logger (LoggingT(..), logInfo, logDebugSH, logWarnSH)
+import Control.Monad.Logger (LoggingT (..), logDebugSH, logInfo, logWarnSH)
 import Control.Monad.Reader
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
@@ -44,8 +44,8 @@ import Data.Pool (Pool)
 import Data.Semigroup (First (..))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import qualified Data.Text as T
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import qualified Data.Time as Time
 import Data.Traversable (for)
@@ -62,10 +62,10 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History
-import Tezos.NodeRPC.Network
-import Tezos.NodeRPC.Types
 import Tezos.NodeRPC.Class
+import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
+import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Backend.Common (timeout')
@@ -202,7 +202,7 @@ waitForNewHead nds = do
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike
 histToBlockLike :: RawLevel -> (BlockHash, (), LCA.Path BlockHash ()) -> VeryBlockLike
-histToBlockLike minLevel (h, f, path) = VeryBlockLike h p mempty blkLevel unixEpoch
+histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixEpoch
   where
     blkLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
