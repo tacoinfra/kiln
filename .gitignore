@@ -7,6 +7,4 @@ ghcid-output.txt
 .attr-cache/
 */.ghc.environment.*
 cabal.project.local
-tezos-bake-central/static/semantic-ui/semantic.js
-tezos-bake-central/static/semantic-ui/semantic.min.js
 node_modules
