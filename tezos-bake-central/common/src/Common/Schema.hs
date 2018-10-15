@@ -64,8 +64,11 @@ data Error = Error
   , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
--- type ClientAddress = URI
-
+mkErr :: Event ErrorEvent -> Error
+mkErr err = Error
+  { _error_time = _event_time err
+  , _error_text = _errorEvent_message $ _event_detail err
+  }
 
 -- TODO: move to ~-lib
 knownProtocols :: [ProtocolHash]
@@ -214,13 +217,6 @@ data EndorseEvent = EndorseEvent
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
   } deriving (Show, Eq, Typeable, Generic)
-
-
-mkErr :: Event ErrorEvent -> Error
-mkErr err = Error
-  { _error_time = _event_time err
-  , _error_text = _errorEvent_message $ _event_detail err
-  }
 
 data Report = Report
   { _report_baked :: [Event BakedEvent]
