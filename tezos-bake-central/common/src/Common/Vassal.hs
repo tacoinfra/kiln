@@ -33,8 +33,8 @@ import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWit
 import Control.Monad.Writer.CPS (Writer, WriterT, runWriter, runWriterT, tell)
 import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSON, ToJSON1, ToJSONKey, liftParseJSON,
                    liftToEncoding, liftToJSON, parseJSON, toEncoding, toJSON)
-import Data.Aeson.TH (defaultOptions, deriveJSON, mkLiftParseJSON, mkLiftToEncoding, mkLiftToJSON,
-                      mkParseJSON, mkToEncoding, mkToJSON)
+import Data.Aeson.TH (defaultOptions, mkLiftParseJSON, mkLiftToEncoding, mkLiftToJSON, mkParseJSON,
+                      mkToEncoding, mkToJSON)
 import Data.Align
 import Data.AppendMap ()
 import Data.Constraint

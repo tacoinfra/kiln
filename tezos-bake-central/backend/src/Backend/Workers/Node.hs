@@ -23,7 +23,6 @@ import Control.Monad.Logger (MonadLogger, LoggingT, logInfo, logInfoSH, logWarnS
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (execStateT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -41,7 +40,6 @@ import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv(..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Backend.Schema.Class
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -62,18 +60,6 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Common (tshow)
 import Common.Schema
-
-selectIds
-  :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.
-     ( ProjectionDb t (PhantomDb m)
-     , ProjectionRestriction t (RestrictionHolder v c), DefaultKeyId v
-     , Projection t v, EntityConstr v c
-     , HasSelectOptions a (PhantomDb m) (RestrictionHolder v c)
-     , PersistBackend m, AutoKey v ~ DefaultKey v)
-  => t -- ^ Constructor
-  -> a -- ^ Select options
-  -> m [(Id v, v)]
-selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
