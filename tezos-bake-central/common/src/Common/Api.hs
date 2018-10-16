@@ -23,7 +23,7 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (Bake, MailServerView)
-import Common.Schema (Id, TelegramConfig, UpgradeCheckError)
+import Common.Schema (UpgradeCheckError)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -71,8 +71,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: Text
       -> PublicRequest Bake ()
     PublicRequest_WaitForTelegramRecipient
-      :: Id TelegramConfig
-      -> PublicRequest Bake ()
+      :: PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()

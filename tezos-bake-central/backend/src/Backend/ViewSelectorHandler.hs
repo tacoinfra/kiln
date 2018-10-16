@@ -155,7 +155,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
     tcVS = _bakeViewSelector_telegramConfig vs
     trVS = _bakeViewSelector_telegramRecipients vs
   (telegramConfig, telegramRecipients) <-
-    whenM (not (null tcVS) && not (null trVS)) $ do
+    whenM (not (null tcVS) || not (null trVS)) $ do
       cfgs <- selectMap' TelegramConfigConstructor $ CondEmpty `limitTo` 1
 
       telegramConfig <- maybeViewHandler _bakeViewSelector_telegramConfig $

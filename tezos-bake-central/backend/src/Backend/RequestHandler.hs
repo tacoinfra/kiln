@@ -7,6 +7,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Backend.RequestHandler where
@@ -14,7 +15,7 @@ module Backend.RequestHandler where
 import Control.Exception.Safe (MonadCatch, SomeException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Logger (LoggingT)
+import Control.Monad.Logger (MonadLogger, logError)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
@@ -42,7 +43,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (checkForUpgrade)
 import Backend.Version (version)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Common (unixEpoch)
+import Common (tshow, unixEpoch)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -58,7 +59,7 @@ requestHandler
   -> RequestHandler Bake m
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig signalNewTelegramUser =
   RequestHandler $ \case
-    ApiRequest_Public r -> case r of
+    ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
         existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
         case nonEmpty existingIds of
@@ -179,9 +180,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig signa
       PublicRequest_AddTelegramConfig botApiKey -> do
         result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $ Telegram.getMe botApiKey
         case result' of
-          Left e -> pure () --TODO: Log error -- $(logError) "Failed to get metadata from Telegram about bot: " <> show e
+          Left e -> $(logError) $ "Failed to get metadata from Telegram about bot: " <> tshow e
           Right result
-            | Telegram._apiResult_ok result -> pure () -- TODO: Log error -- $(logError) "Failed to get metadata from Telegram about bot: result NOT ok"
+            | not $ Telegram._apiResult_ok result -> $(logError) "Failed to get metadata from Telegram about bot: result NOT ok"
             | otherwise -> updateTelegramCfg $ TelegramConfig
                 { _telegramConfig_botApiKey = botApiKey
                 , _telegramConfig_botName = Telegram._botGetMe_firstName $ Telegram._apiResult_result result
@@ -208,14 +209,14 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig signa
                   ]
                 getId cid >>= traverse_ (notify . Notify_TelegramConfig cid)
 
-      PublicRequest_WaitForTelegramRecipient _cid -> liftIO signalNewTelegramUser
+      PublicRequest_WaitForTelegramRecipient -> liftIO signalNewTelegramUser
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: DbPersist Postgresql (LoggingT m) a -> m a
-    inDb = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity $ _nodeDataSource_pool nds)
+    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseControl IO m') => DbPersist Postgresql m' a -> m' a
+    inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =
