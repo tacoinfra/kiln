@@ -17,9 +17,13 @@
 
 {-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
 
-module Common.Schema where
+module Common.Schema
+  ( module Common.Schema
 
-import qualified Cases
+  -- Re-exports
+  , Id
+  ) where
+
 import Control.Lens (views)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (runExcept)
@@ -40,9 +44,11 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Json
-import Tezos.NodeRPC.Types (NetworkStat(..))
 import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.NodeRPC.Types (NetworkStat (..))
 import Tezos.Types
+
+import Common (defaultTezosCompatJsonOptions)
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -391,12 +397,35 @@ data GenericCacheEntry = GenericCacheEntry
   } deriving (Eq, Generic, Show, Typeable)
 instance HasId GenericCacheEntry
 
+data TelegramConfig = TelegramConfig
+  { _telegramConfig_botName :: !Text
+  , _telegramConfig_botApiKey :: !Text
+  , _telegramConfig_created :: !UTCTime
+  , _telegramConfig_updated :: !UTCTime
+  , _telegramConfig_enabled :: !Bool
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramConfig
 
--- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
-concat <$> traverse (deriveJSON Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
-      , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
-      })
+data TelegramRecipient = TelegramRecipient
+  { _telegramRecipient_config :: !(Id TelegramConfig)
+  , _telegramRecipient_userId :: !Word64
+  , _telegramRecipient_chatId :: !Word64
+  , _telegramRecipient_firstName :: !Text
+  , _telegramRecipient_lastName :: !(Maybe Text)
+  , _telegramRecipient_username :: !(Maybe Text)
+  , _telegramRecipient_created :: !UTCTime
+  , _telegramRecipient_deleted :: !Bool
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramRecipient
+
+data TelegramMessageQueue = TelegramMessageQueue
+  { _telegramMessageQueue_recipient :: !(Id TelegramRecipient)
+  , _telegramMessageQueue_message :: !Text
+  , _telegramMessageQueue_created :: !UTCTime
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramMessageQueue
+
+concat <$> traverse (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
@@ -422,6 +451,9 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''Report
   , ''SeenEvent
   , ''SmtpProtocol
+  , ''TelegramConfig
+  , ''TelegramMessageQueue
+  , ''TelegramRecipient
   , ''UpgradeCheckError
   ]
 
@@ -447,6 +479,9 @@ concat <$> traverse makeLenses
   , 'PublicNodeHead
   , 'Report
   , 'SeenEvent
+  , 'TelegramConfig
+  , 'TelegramMessageQueue
+  , 'TelegramRecipient
   ]
 
 instance BlockLike (Event BakedEvent) where

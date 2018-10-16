@@ -19,7 +19,12 @@
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
-module Backend.Schema where
+module Backend.Schema
+  ( module Backend.Schema
+
+  -- Re-exports
+  , toId
+  ) where
 
 import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
@@ -94,6 +99,8 @@ data Notify
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
   | Notify_PublicNodeHead !(Id PublicNodeHead)
+  | Notify_TelegramConfig !(Id TelegramConfig) TelegramConfig
+  | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
   deriving (Eq, Ord, Typeable, Generic, Show)
 instance ToJSON Notify
 instance FromJSON Notify
@@ -163,6 +170,18 @@ updateIdNotify tid dt = do
 
 insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m ()
 insertNotify a = notify . mkDefaultNotify =<< insert' a
+
+selectIds
+  :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.
+     ( ProjectionDb t (PhantomDb m)
+     , ProjectionRestriction t (RestrictionHolder v c), DefaultKeyId v
+     , Projection t v, EntityConstr v c
+     , HasSelectOptions a (PhantomDb m) (RestrictionHolder v c)
+     , PersistBackend m, AutoKey v ~ DefaultKey v)
+  => t -- ^ Constructor
+  -> a -- ^ Select options
+  -> m [(Id v, v)]
+selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -511,6 +530,15 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields:
            - _genericCacheEntry_chainId
            - _genericCacheEntry_key
+  - entity: TelegramConfig
+    constructors:
+    - name: TelegramConfig
+      uniques:
+      - name: _telegramConfig_uniqueness
+        type: constraint
+        fields: [_telegramConfig_botApiKey]
+  - entity: TelegramMessageQueue
+  - entity: TelegramRecipient
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -533,4 +561,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''PendingReward, 'PendingRewardKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
+  , (''TelegramConfig, 'TelegramConfigKey)
+  , (''TelegramRecipient, 'TelegramRecipientKey)
+  , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
   ]

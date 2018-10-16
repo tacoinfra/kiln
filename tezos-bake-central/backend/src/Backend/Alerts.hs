@@ -12,35 +12,29 @@
 
 module Backend.Alerts where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader)
 import Data.Either.Combinators (leftToMaybe, rightToMaybe)
 import Data.Foldable (for_)
 import Data.Functor.Const (Const (..))
 import Data.Maybe (listToMaybe)
 import Data.Semigroup ((<>))
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Lazy as TL
 import Data.Version (Version)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
-import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import Reflex.Dom.Core (text)
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
-import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
 
 import Tezos.Types
 
-import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
+import Backend.Config (HasAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
 import Common.Schema
@@ -73,7 +67,6 @@ reportNoBakerHeartbeatError cid eventDetail = do
         }
 
       client :: Maybe Client <- get $ fromId cid
-      now <- getTime
       queueAlert $
         Alert "Baker has not seen block for a while" $
         text $ "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
@@ -110,7 +103,6 @@ reportInaccessibleNodeError nodeId = do
       node' <- get (fromId nodeId)
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
-        now <- getTime
         queueAlert $ Alert "Unable to connect to node"
           $ text $ "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
@@ -145,7 +137,6 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = do
       node' <- get $ fromId nodeId
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
-        now <- getTime
         queueAlert $ Alert "Node on wrong network" $
           text $ "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
@@ -187,7 +178,6 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
       node <- get $ fromId nodeId
       for_ node $ \n -> do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        now <- getTime
         queueAlert $ Alert heading
           $ text $ heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
@@ -222,7 +212,6 @@ reportUpgradeNotice errorOrNewVersion = do
   case existingLog of
     Nothing -> do
       _ <- insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
-      now <- getTime
       queueAlert $ Alert
         (case errorOrNewVersion of Left _ -> "Unable to check for upgrade"; Right _ -> "New version available")
         $ text $ case errorOrNewVersion of

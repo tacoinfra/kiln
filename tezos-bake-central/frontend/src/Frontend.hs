@@ -274,6 +274,12 @@ watchPublicNodeHeads =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
+watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
+watchTelegramRecipients =
+  (fmap . fmap) (fmap getFirst . getRangeView' . _bakeView_telegramRecipients) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
+
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
@@ -531,6 +537,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
     [ currentChain
     , publicNodeOptions
     , nodesOptions
+    , telegramOptions
     ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
@@ -550,6 +557,17 @@ optionsTab = divClass "ui two column stackable grid" $ do
         text " configuration. Run the server with "
         el "code" $ text "--help"
         text " for more information."
+
+    telegramOptions = do
+      botApiKey <- formItem
+        $ validatedInput Validator.validateText
+        $ def & Txt.setPlaceholder "Bot API Key" & Txt.setFluid
+      save <- button "Save"
+      responded <- requestingIdentity $ public . PublicRequest_AddTelegramConfig . either (const "") id <$> tag (current botApiKey) save
+      void $ requestingIdentity $ public PublicRequest_WaitForTelegramRecipient <$ responded
+
+      recips <- watchTelegramRecipients
+      display recips
 
     notificationOptions = do
       divClass "ui medium header" $ text "Notification Recipients"

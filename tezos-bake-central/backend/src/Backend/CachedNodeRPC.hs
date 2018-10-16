@@ -47,7 +47,6 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
-import qualified Data.Time as Time
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
@@ -69,9 +68,10 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Backend.Common (timeout')
-import Backend.Schema (Field (..))
+import Backend.Schema
 import Common.Schema
 import Rhyolite.Backend.Logging
+import Common (unixEpoch)
 
 
 data NodeQuery a where
@@ -206,9 +206,6 @@ histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixE
   where
     blkLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
-
-unixEpoch :: UTCTime
-unixEpoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
 
 updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
 updateNodeDataSource nds nodeAddr blk =
