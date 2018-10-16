@@ -76,21 +76,16 @@ telegramApiGetUpdatesUri cfg =
     , ("allowed_updates", "messages")
     ])
 
-data TelegramSendMessage = TelegramSendMessage
-  { _telegramSendMessage_botApiKey :: !Text
-  , _telegramSendMessage_chatId :: !Word64
-  , _telegramSendMessage_text :: !Text
+data SendMessageRequest = SendMessageRequest
+  { _sendMessageRequest_chatId :: !Word64
+  , _sendMessageRequest_text :: !Text
+  , _sendMessageRequest_parseMode :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
-telegramApiSendMessageUri :: TelegramSendMessage -> Maybe URI
-telegramApiSendMessageUri cfg  =
-  telegramApiBotUri (_telegramSendMessage_botApiKey cfg)
+telegramApiSendMessageUri :: Text -> SendMessageRequest -> Maybe URI
+telegramApiSendMessageUri botApiKey cfg =
+  telegramApiBotUri botApiKey
   >>= flip appendPaths ["sendMessage"]
-  >>= flip appendQueryParams
-    [ ("chat_id", T.pack $ UriEncode.encode $ show $ _telegramSendMessage_chatId cfg)
-    , ("text", UriEncode.encodeText $ _telegramSendMessage_text cfg)
-    ]
-
 
 newtype UnixTimestamp = UnixTimestamp { unUnixTimestamp :: UTCTime }
   deriving (Eq, Ord, Show)
@@ -156,11 +151,13 @@ getMe cfg = do
 
 sendMessage
   :: (MonadThrow m, HasHttp m, MonadLogger m)
-  => TelegramSendMessage -> m (ApiResult SendMessageResult)
-sendMessage cfg = do
+  => Text -> SendMessageRequest -> m (ApiResult SendMessageResult)
+sendMessage botApiKey cfg = do
   $(logDebug) $ "Sending a telegram message: " <> tshow cfg
   fmap Http.getResponseBody $
-    Http.req . Http.Request_JSON =<< Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri cfg)
+    Http.req . Http.Request_JSON =<<
+      Http.setRequestBodyJSON cfg . Http.setRequestMethod "POST" <$>
+        Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey cfg)
 
 getUpdates
   :: (MonadThrow m, HasHttp m, MonadLogger m)
@@ -277,21 +274,22 @@ emptyTelegramMessageQueue httpMgr logger db = workerWithDelay (pure 1) $ const $
   |]
   for_ messages $ \(tmqId :: Id TelegramMessageQueue, tmqMessage, trChatId, tcBotApiKey) -> do
     -- TODO: Logging
-    _ <- runHttpT httpMgr $ sendMessage TelegramSendMessage
-      { _telegramSendMessage_botApiKey = tcBotApiKey
-      , _telegramSendMessage_chatId = trChatId
-      , _telegramSendMessage_text = tmqMessage
+    _ <- runHttpT httpMgr $ sendMessage tcBotApiKey SendMessageRequest
+      { _sendMessageRequest_chatId = trChatId
+      , _sendMessageRequest_text = tmqMessage
+      , _sendMessageRequest_parseMode = Nothing
       }
     runDb (Identity db) [executeQ|DELETE FROM "TelegramMessageQueue" where id = ?tmqId|]
 
 
-concat <$> traverse (deriveJSON defaultTezosCompatJsonOptions)
+concat <$> traverse (deriveJSON $ defaultTezosCompatJsonOptions { Aeson.omitNothingFields = True })
   [ 'ApiResult
   , 'BotGetMe
   , 'BotGetUpdates
   , 'BotMessage
   , 'Chat
   , 'Sender
+  , 'SendMessageRequest
   , 'SendMessageResult
   ]
 
@@ -302,7 +300,7 @@ concat <$> traverse makeLenses
   , ''BotMessage
   , ''Chat
   , ''Sender
+  , ''SendMessageRequest
   , ''SendMessageResult
   , ''TelegramGetUpdates
-  , ''TelegramSendMessage
   ]
