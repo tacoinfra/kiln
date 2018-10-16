@@ -23,3 +23,4 @@ a:active {
 h6.ui.header {
     font-size:@relative13px;
 }
+/* vim: set syntax=less : */

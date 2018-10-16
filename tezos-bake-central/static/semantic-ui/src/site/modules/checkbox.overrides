@@ -156,3 +156,5 @@
 .ui.toggle.checkbox.huge input:checked ~ label:after {
   left: @toggleOnOffsetHuge;
 }
+
+/* vim: set syntax=less : */

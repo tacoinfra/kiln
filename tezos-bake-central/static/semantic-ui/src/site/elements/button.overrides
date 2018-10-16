@@ -1,3 +1,43 @@
 /*******************************
          Site Overrides
 *******************************/
+
+.ui.buttons {
+  height: @38px;
+  background-color: @transparentBlack;
+  border-radius: @circularRadius;
+  padding: @5px;
+}
+
+.ui.buttons .button.primary {
+  font-weight: Bold;
+}
+
+.ui.buttons .button {
+  height: @28px;
+  border-radius: @circularRadius;
+  background: @white;
+  margin-left: @5px;
+  padding: @8px;
+}
+
+.ui.primary.button {
+  background-color: @primaryColor;
+}
+
+.ui.primary.buttons .button {
+  font-weight: Bold;
+}
+
+.ui.buttons .button:first-child {
+  /* border-left: none; */
+  /* margin-left:  */
+  border-top-left-radius: @circularRadius;
+  border-bottom-left-radius: @circularRadius;
+}
+.ui.buttons .button:last-child {
+  border-top-right-radius: @circularRadius;
+  border-bottom-right-radius: @circularRadius;
+}
+
+/* vim: set syntax=less : */

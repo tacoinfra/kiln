@@ -1,6 +1,9 @@
 /*******************************
     User Variable Overrides
 *******************************/
+
+@handleBackground : @white;
+
 /* normal */
 @toggleHandleSize : @14px;
 @toggleLaneHeight : @18px;

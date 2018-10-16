@@ -1,3 +1,9 @@
 /*******************************
          Site Overrides
 *******************************/
+
+@itemFontWeight: Bold;
+@activeItemFontWeight: 500;
+@secondaryActiveItemColor: @white;
+
+/* vim: set syntax=less : */

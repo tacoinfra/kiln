@@ -41,3 +41,5 @@
   content: '*';
   color: @grey;
 }
+
+/* vim: set syntax=less : */
