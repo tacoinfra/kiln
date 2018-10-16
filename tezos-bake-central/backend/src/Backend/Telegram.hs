@@ -10,6 +10,7 @@
 
 module Backend.Telegram where
 
+import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Catch (MonadThrow)
@@ -51,6 +52,28 @@ import Common (defaultTezosCompatJsonOptions, tshow)
 import Common.Schema
 import Common.URI as Uri (appendPaths, appendQueryParams)
 
+data Env = Env
+  { _env_beginWaitingForNewRecipient :: IO ()
+  , _env_waitForNewRecipient :: IO ()
+  } deriving (Typeable, Generic)
+
+initState
+  :: (IO () -> IO ())
+  -> Http.Manager
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> IO Env
+initState addFinalizer httpMgr logger db = do
+  newRecipientChan <- newEmptyMVar
+  let
+    env = Env
+      { _env_beginWaitingForNewRecipient = putMVar newRecipientChan ()
+      , _env_waitForNewRecipient = takeMVar newRecipientChan
+      }
+  addFinalizer =<< telegramWorker httpMgr logger db (_env_waitForNewRecipient env)
+  addFinalizer =<< emptyTelegramMessageQueue httpMgr logger db
+  pure env
+
 telegramApiBotUri :: Text -> Maybe URI
 telegramApiBotUri botApiKey = appendPaths
   [Uri.uri|https://api.telegram.org|]
@@ -82,8 +105,8 @@ data SendMessageRequest = SendMessageRequest
   , _sendMessageRequest_parseMode :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
-telegramApiSendMessageUri :: Text -> SendMessageRequest -> Maybe URI
-telegramApiSendMessageUri botApiKey cfg =
+telegramApiSendMessageUri :: Text -> Maybe URI
+telegramApiSendMessageUri botApiKey =
   telegramApiBotUri botApiKey
   >>= flip appendPaths ["sendMessage"]
 
@@ -157,7 +180,7 @@ sendMessage botApiKey cfg = do
   fmap Http.getResponseBody $
     Http.req . Http.Request_JSON =<<
       Http.setRequestBodyJSON cfg . Http.setRequestMethod "POST" <$>
-        Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey cfg)
+        Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey)
 
 getUpdates
   :: (MonadThrow m, HasHttp m, MonadLogger m)

@@ -16,7 +16,6 @@ module Backend where
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
@@ -238,10 +237,10 @@ backendImpl cfg serve = do
 
       let appConfig = AppConfig emailFromAddress
 
-      signalNewTelegramUser <- newEmptyMVar
+      telegramEnv <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig (putMVar signalNewTelegramUser ()))
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig telegramEnv)
         (notifyHandler dataSrc)
         (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
@@ -253,9 +252,6 @@ backendImpl cfg serve = do
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
-
-      addFinalizer =<< Telegram.telegramWorker httpMgr logger db (takeMVar signalNewTelegramUser)
-      addFinalizer =<< Telegram.emptyTelegramMessageQueue httpMgr logger db
 
       if checkForUpgrade then
         addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger appConfig httpMgr db

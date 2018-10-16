@@ -280,8 +280,6 @@ watchTelegramRecipients =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
 
-
-
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
