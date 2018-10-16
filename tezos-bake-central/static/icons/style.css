@@ -1,10 +1,10 @@
 @font-face {
   font-family: 'tezos-icons';
-  src:  url('fonts/tezos-icons.eot?imrv1y');
-  src:  url('fonts/tezos-icons.eot?imrv1y#iefix') format('embedded-opentype'),
-    url('fonts/tezos-icons.ttf?imrv1y') format('truetype'),
-    url('fonts/tezos-icons.woff?imrv1y') format('woff'),
-    url('fonts/tezos-icons.svg?imrv1y#tezos-icons') format('svg');
+  src:  url('fonts/tezos-icons.eot?5urd7f');
+  src:  url('fonts/tezos-icons.eot?5urd7f#iefix') format('embedded-opentype'),
+    url('fonts/tezos-icons.ttf?5urd7f') format('truetype'),
+    url('fonts/tezos-icons.woff?5urd7f') format('woff'),
+    url('fonts/tezos-icons.svg?5urd7f#tezos-icons') format('svg');
   font-weight: normal;
   font-style: normal;
 }
@@ -24,6 +24,24 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+.icon-arrow-right:before {
+  content: "\e90e";
+}
+.icon-letter:before {
+  content: "\e90f";
+}
+.icon-pop-out:before {
+  content: "\e910";
+}
+.icon-telegram:before {
+  content: "\e911";
+}
+.icon-warning-circle:before {
+  content: "\e912";
+}
+.icon-x-thick:before {
+  content: "\e913";
+}
 .icon-arrow-down:before {
   content: "\e900";
 }
