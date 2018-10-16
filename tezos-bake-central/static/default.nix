@@ -7,7 +7,7 @@ in pkgs.stdenv.mkDerivation {
     builder = pkgs.writeScript "builder.sh" ''
       source "$stdenv/setup"
       mkdir -p $out
-      cp -r $src/css $src/fonts $out
+      cp -r $src/css $src/fonts $src/icons $src/logo.svg $out
       ln -s ${semui.bakemonitor-semantic-ui} $out/semantic-ui
     '';
   }
