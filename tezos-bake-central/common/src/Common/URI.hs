@@ -2,11 +2,13 @@
 
 module Common.URI where
 
+import Control.Applicative (liftA2)
 import Control.Lens ((%~), (.~))
 import Data.Function ((&))
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Traversable (for)
 import qualified Text.URI as Uri
 import qualified Text.URI.Lens as UriL
 
@@ -23,3 +25,8 @@ appendPaths :: Uri.URI -> [Text] -> Maybe Uri.URI
 appendPaths uri paths = do
   pieces <- traverse Uri.mkPathPiece paths
   Just $ uri & UriL.uriPath %~ (<> pieces)
+
+appendQueryParams :: Uri.URI -> [(Text, Text)] -> Maybe Uri.URI
+appendQueryParams uri qargs = do
+  qs <- for qargs $ \(k, v) -> liftA2 Uri.QueryParam (Uri.mkQueryKey k) (Uri.mkQueryValue v)
+  Just $ uri & UriL.uriQuery %~ (<> qs)

@@ -78,11 +78,11 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Schema hiding (Event)
-import Frontend.Common
-
 import Common.Route
+import Common.Schema hiding (Event)
 import Common.Vassal
+import Frontend.Common
+import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Obelisk.Frontend
 import Obelisk.Route
 
@@ -131,10 +131,15 @@ frontendBody = void $ do
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
       <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
 
-  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ runReaderT appMain Cfg
-    { _cfg_checkForUpgrade = checkForUpgrade
-    , _cfg_chain = chain
-    }
+    appCfg = Cfg
+      { _cfg_checkForUpgrade = checkForUpgrade
+      , _cfg_chain = chain
+      }
+
+  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $
+    flip runReaderT appCfg $
+      runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
+        appMain
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
@@ -268,6 +273,12 @@ watchPublicNodeHeads =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
+watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
+watchTelegramRecipients =
+  (fmap . fmap) (fmap getFirst . getRangeView' . _bakeView_telegramRecipients) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
+
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
@@ -286,7 +297,14 @@ data UITab = UITab_Summary
            | UITab_Options
   deriving (Eq, Ord, Show)
 
-appMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
+appMain
+  :: forall t m.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader Cfg m
+    )
+  => m ()
 appMain = do
   elClass "div" "app-frame" $ do
     appSidebar
@@ -588,6 +606,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
     [ currentChain
     , publicNodeOptions
     , nodesOptions
+    , telegramOptions
     ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
@@ -607,6 +626,17 @@ optionsTab = divClass "ui two column stackable grid" $ do
         text " configuration. Run the server with "
         el "code" $ text "--help"
         text " for more information."
+
+    telegramOptions = do
+      botApiKey <- formItem
+        $ validatedInput Validator.validateText
+        $ def & Txt.setPlaceholder "Bot API Key" & Txt.setFluid
+      save <- button "Save"
+      responded <- requestingIdentity $ public . PublicRequest_AddTelegramConfig . either (const "") id <$> tag (current botApiKey) save
+      void $ requestingIdentity $ public PublicRequest_WaitForTelegramRecipient <$ responded
+
+      recips <- watchTelegramRecipients
+      display recips
 
     notificationOptions = do
       divClass "ui medium header" $ text "Notification Recipients"

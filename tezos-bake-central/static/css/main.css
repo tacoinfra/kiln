@@ -46,3 +46,26 @@ body {
 .app-gutter {
   flex-grow: 1;
 }
+
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  background-color: rgba(0,0,0,0.5);
+}
+
+.modal-container {
+  width: 300px;
+  height: 200px;
+  line-height: 200px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-top: -100px;
+  margin-left: -150px;
+  background-color: #f1c40f;
+  border-radius: 5px;
+  text-align: center;
+}

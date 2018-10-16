@@ -8,12 +8,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend where
 
-import Common.Route
+import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Control.Applicative (liftA2, (<|>))
 import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
@@ -21,7 +21,7 @@ import Control.Lens ((<&>), _3)
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, LoggingT(..), logInfo, logDebug, runStderrLoggingT)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebug, logInfo, runStderrLoggingT)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -32,6 +32,7 @@ import Data.Foldable (fold, for_, toList)
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Random as Random
@@ -59,6 +60,8 @@ import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
+import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
+                                 RhyoliteLogLevel (..), runLoggingEnv, withLogging)
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -79,10 +82,12 @@ import Backend.Alerts (clearUpgradeNotice)
 import Backend.CachedNodeRPC (blankNodeDataSource)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
+import Backend.Http (runHttpT)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
+import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
@@ -96,9 +101,6 @@ import Common.HeadTag (headTag)
 import Common.Schema
 import Common.URI (mkRootUri)
 import Frontend (frontend)
-
-import Rhyolite.Backend.Logging
-import qualified Data.Map as Map
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -192,7 +194,7 @@ backendImpl cfg serve = do
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
-  chainId <- case chain of
+  chainId <- runHttpT httpMgr $ case chain of
     Right chainId -> pure chainId
     Left NamedChain_Mainnet -> pure mainnetChainId
 
@@ -231,12 +233,14 @@ backendImpl cfg serve = do
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
-        (runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db)
+        runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       let appConfig = AppConfig emailFromAddress
 
+      telegramEnv <- Telegram.initState addFinalizer httpMgr logger db
+
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig telegramEnv)
         (notifyHandler dataSrc)
         (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)

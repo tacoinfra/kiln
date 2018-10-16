@@ -14,7 +14,7 @@ import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
-import qualified Data.AppendMap as Map
+import qualified Data.Map.Monoidal as MMap
 import Data.Bool (bool)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
@@ -56,13 +56,15 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
       Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
-      Notify_ErrorLogUpgradeNotice eid -> handleUpgradeNotice eid
+      Notify_ErrorLogUpgradeNotice _eid -> handleUpgradeNotice
       Notify_MailServerConfig eid -> handleMailServer eid
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
-      Notify_PublicNodeConfig eid ent -> handlePublicNodeConfig eid ent
+      Notify_PublicNodeConfig _eid ent -> handlePublicNodeConfig ent
       Notify_PublicNodeHead eid -> handlePublicNodeHead eid
+      Notify_TelegramConfig _eid ent -> handleTelegramConfig ent
+      Notify_TelegramRecipient eid ent -> handleTelegramRecipient eid ent
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -151,11 +153,11 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
           whenM (viewSelects errorInterval errorsVS) $ pure mempty
               { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                  Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
+                  MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
               }
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
-    handlePublicNodeConfig _cid pnc =
+    handlePublicNodeConfig pnc =
       whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $
         pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
 
@@ -165,6 +167,15 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) node }
 
     upgradeVS = _bakeViewSelector_upgrade aggVS
-    handleUpgradeNotice _specificLogId = whenM (viewSelects () upgradeVS) $ do
+    handleUpgradeNotice = whenM (viewSelects () upgradeVS) $ do
       n <- getUpgradeNotice
       pure $ mempty { _bakeView_upgrade = toMaybeView upgradeVS n }
+
+    telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
+    handleTelegramConfig cfg = whenM (viewSelects () telegramConfigVS) $ do
+      pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS (Just cfg) }
+
+    telegramRecipientsVS = _bakeViewSelector_telegramRecipients aggVS
+    handleTelegramRecipient rid recipient = whenM (viewSelects (Bounded rid) telegramRecipientsVS) $ do
+      pure $ mempty
+        { _bakeView_telegramRecipients = toRangeView1 telegramRecipientsVS (Bounded rid) (Just $ First recipient) }
