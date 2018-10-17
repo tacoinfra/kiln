@@ -28,9 +28,11 @@ library
     , containers
     , data-default
     , either
+    , exceptions
     , file-embed
     , ghcjs-dom
     , IntervalMap
+    , jsaddle
     , lens
     , modern-uri
     , monoidal-containers
@@ -39,6 +41,7 @@ library
     , obelisk-frontend
     , obelisk-route
     , primitive
+    , ref-tf
     , reflex
     , reflex-dom-core
     , reflex-dom-forms

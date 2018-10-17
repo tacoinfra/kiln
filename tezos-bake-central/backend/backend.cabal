@@ -32,6 +32,7 @@ library
     -- , diagrams-lib
     -- , diagrams-svg
     , either
+    , exceptions
     , filepath
     , formatting
     , frontend
