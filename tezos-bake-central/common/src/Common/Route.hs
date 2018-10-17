@@ -32,7 +32,7 @@ appRouteSegment = \case
 
 data BackendRoute :: * -> * where
   BackendRoute_Listen :: BackendRoute ()
-  BackendRoute_Missing :: BackendRoute () -- ^ Used to handle unparseable routes.
+  BackendRoute_Missing :: BackendRoute () -- Used to handle unparseable routes.
   BackendRoute_PublicCacheApi :: BackendRoute PageName
 
 backendRouteEncoder
