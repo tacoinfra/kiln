@@ -11,7 +11,7 @@ import Reflex.Dom.Builder.Class
 import Reflex.Dom.Class ((=:))
 import Reflex.Dom.Widget.Basic
 
-import Static
+import Obelisk.Generated.Static
 
 headTag :: DomBuilder t m => m ()
 headTag = do

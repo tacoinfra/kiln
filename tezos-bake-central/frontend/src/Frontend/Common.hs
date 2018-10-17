@@ -13,7 +13,6 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
-import Tezos.ShortByteString (fromShort)
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
@@ -28,6 +27,7 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
+import Tezos.ShortByteString (fromShort)
 
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.Types (BlockHash, ChainId, Fitness, NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,

@@ -2,6 +2,8 @@
 
 module Common where
 
+import qualified Data.Aeson as Aeson
+import qualified Cases
 import Data.Foldable (toList)
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
@@ -9,6 +11,7 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Text.URI as Uri
+import qualified Data.Time as Time
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show
@@ -26,6 +29,9 @@ curryMap = MMap.fromAscList . fmap (\((a, b), c) -> (a, MMap.singleton b c)) . M
 maybeSomething :: Foldable f => f a -> Maybe (f a)
 maybeSomething as = if null as then Nothing else Just as
 
+unixEpoch :: Time.UTCTime
+unixEpoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
+
 uriHostPortPath :: Uri.URI -> Text
 uriHostPortPath uri = auth <> path
   where
@@ -35,3 +41,9 @@ uriHostPortPath uri = auth <> path
     path = case Uri.uriPath uri of
       Nothing -> ""
       Just (_, pieces) -> T.intercalate "/" $ toList $ Uri.unRText <$> pieces
+
+defaultTezosCompatJsonOptions :: Aeson.Options
+defaultTezosCompatJsonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
+  , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
+  }

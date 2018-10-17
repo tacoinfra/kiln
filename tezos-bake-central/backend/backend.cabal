@@ -32,6 +32,7 @@ library
     -- , diagrams-lib
     -- , diagrams-svg
     , either
+    , exceptions
     , filepath
     , formatting
     , frontend
@@ -81,6 +82,7 @@ library
     , tezos-noderpc
     , time
     , unix
+    , uri-encode
 
   exposed-modules:
     Backend
@@ -88,16 +90,19 @@ library
   other-modules:
     Paths_backend
     Backend.Alerts
+    Backend.Alerts.Common
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    -- Backend.Graphs
+    --Backend.Graphs
+    Backend.Http
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
     Backend.Supervisor
+    Backend.Telegram
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler

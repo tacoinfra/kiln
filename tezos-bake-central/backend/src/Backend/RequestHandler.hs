@@ -7,12 +7,16 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend.RequestHandler where
 
+import Control.Concurrent.Async (async)
+import Control.Exception.Safe (SomeException, try)
 import Control.Monad (when)
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (LoggingT)
+import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Logger (MonadLogger, logError)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
@@ -34,10 +38,13 @@ import Rhyolite.Schema (Id (..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Config (AppConfig)
+import Backend.Http (runHttpT)
 import Backend.Schema
+import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (checkForUpgrade)
 import Backend.Version (version)
 import Backend.Workers.Node (DataSource, updateDataSource)
+import Common (tshow, unixEpoch)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -49,10 +56,11 @@ requestHandler
   -> NodeDataSource
   -> [DataSource]
   -> AppConfig
+  -> Telegram.Env
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
+requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig telegramEnv =
   RequestHandler $ \case
-    ApiRequest_Public r -> case r of
+    ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
         existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
         case nonEmpty existingIds of
@@ -165,18 +173,52 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
                 ]
               getId cid >>= traverse_ (notify . Notify_PublicNodeConfig cid)
 
-        -- When turning something "on" touch the TVar for latest head to tell
-        -- public nodes to update again.
+        -- When turning something "on" immediately update the data source.
         when enabled $
           for_ (filter (\(pn, _, _) -> pn == publicNode) publicNodeSources) $
             updateDataSource nds
+
+      PublicRequest_AddTelegramConfig botApiKey -> void $
+        liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+          result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $ Telegram.getMe botApiKey
+          case result' of
+            Left e -> $(logError) $ "Failed to get metadata from Telegram about bot: " <> tshow e
+            Right result
+              | not $ Telegram._apiResult_ok result -> $(logError) "Failed to get metadata from Telegram about bot: result NOT ok"
+              | otherwise -> updateTelegramCfg $ TelegramConfig
+                  { _telegramConfig_botApiKey = botApiKey
+                  , _telegramConfig_botName = Telegram._botGetMe_firstName $ Telegram._apiResult_result result
+                  , _telegramConfig_created = unixEpoch
+                  , _telegramConfig_updated = unixEpoch
+                  , _telegramConfig_enabled = True
+                  }
+        where
+          updateTelegramCfg cfg = inDb $ do
+            cid' :: Maybe (Id TelegramConfig) <-
+              fmap toId . listToMaybe <$> project AutoKeyField
+                (TelegramConfig_enabledField ==. TelegramConfig_enabledField) -- Silliness to help types infer
+            now <- getTime
+            case cid' of
+              Nothing -> do
+                let newCfg = cfg { _telegramConfig_created = now, _telegramConfig_updated = now }
+                notify . flip Notify_TelegramConfig newCfg =<< insert' newCfg
+              Just cid -> do
+                updateId cid
+                  [ TelegramConfig_botNameField =. _telegramConfig_botName cfg
+                  , TelegramConfig_botApiKeyField =. _telegramConfig_botApiKey cfg
+                  , TelegramConfig_updatedField =. now
+                  , TelegramConfig_enabledField =. _telegramConfig_enabled cfg
+                  ]
+                getId cid >>= traverse_ (notify . Notify_TelegramConfig cid)
+
+      PublicRequest_WaitForTelegramRecipient -> liftIO $ Telegram._env_beginWaitingForNewRecipient telegramEnv
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: DbPersist Postgresql (LoggingT m) a -> m a
-    inDb = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity $ _nodeDataSource_pool nds)
+    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseControl IO m') => DbPersist Postgresql m' a -> m' a
+    inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

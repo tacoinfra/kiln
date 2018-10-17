@@ -26,7 +26,7 @@ import Tezos.Types (ChainId)
 
 import Backend.CachedNodeRPC (CacheLine (..), CachedResult (..), NodeDataSource (..), NodeQuery (..))
 import Backend.Common (workerWithDelay)
-import Backend.Schema (Field (..), stripOnly)
+import Backend.Schema
 import Common.Schema (GenericCacheEntry (..))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Schema (fromId)
