@@ -2,6 +2,8 @@
     User Variable Overrides
 *******************************/
 
+@toggleLaneBackground : #E1E6F0;
+@toggleHoverColor : #E1E6F0;
 @handleBackground : @white;
 
 /* normal */

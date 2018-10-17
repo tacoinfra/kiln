@@ -2,6 +2,32 @@
          Site Overrides
 *******************************/
 
+
+/* there's no obvious place to put the '+ add node' style buttons;  the closest is icon button, but that's more of a light modification of other button types.  so i'll just go with a one-off for now */
+
+.ui.modalopener.button ,
+.ui.buttons .modalopener.button {
+  background-color: @modalOpenerBackgroundColor;
+  color: @modalOpenerColor;
+  font-size:@modalOpenerFontSize;
+  font-weight:@modalOpenerFontWeight;
+  height:@28px;
+  padding: @7px @10px @7px @10px;
+}
+
+.ui.modalopener.button:active ,
+.ui.buttons .modalopener.button:active {
+  background-color: @modalOpenerBackgroundDownColor;
+}
+.ui.modalopener.button:hover ,
+.ui.buttons .modalopener.button:hover {
+  background-color: @modalOpenerBackgroundHoverColor;
+}
+.ui.modalopener.button .icon ,
+.ui.buttons .modalopener.button .icon {
+  font-size:10px;
+}
+
 .ui.buttons {
   height: @38px;
   background-color: @transparentBlack;
@@ -9,8 +35,43 @@
   padding: @5px;
 }
 
+.ui.buttons .button.primary:active {
+  color: @blue;
+}
+
+
+
+/* the line noise here is a specificity hack */
+.ui.buttons .button:hover@{moreMagic1},
+.ui.buttons .button.primary:hover@{moreMagic1} {
+  box-shadow: 0 4px 8px 0 rgba(0,0,0,0.3);
+  color: @blue;
+}
+
+.ui.buttons .button:active@{moreMagic2},
+.ui.buttons .button.primary:active@{moreMagic2} {
+  box-shadow: none;
+  color: @blue;
+}
+
+.ui.buttons .primary.button:hover@{moreMagic2},
+.ui.buttons .primary.button.primary:hover@{moreMagic2} {
+  box-shadow: 0 4px 8px 0 rgba(0,0,0,0.3);
+  background-color:@primaryColorHover;
+  color: @white;
+}
+
+.ui.buttons .primary.button:active@{moreMagic3},
+.ui.buttons .primary.button.primary:active@{moreMagic3} {
+  box-shadow: none;
+  background-color:@primaryColorDown;
+  color: @white;
+}
+
+
 .ui.buttons .button.primary {
   font-weight: Bold;
+  color: @white;
 }
 
 .ui.buttons .button {
@@ -19,14 +80,35 @@
   background: @white;
   margin-left: @5px;
   padding: @8px;
+  color: @black;
 }
 
+.ui.button {
+  background-color: @white;
+  color: @primaryColor;
+}
 .ui.primary.button {
   background-color: @primaryColor;
 }
 
-.ui.primary.buttons .button {
-  font-weight: Bold;
+.ui.button ,
+.ui.primary.button ,
+.ui.button.disabled ,
+.ui.primary.button.disabled {
+  box-shadow: 0 4px 8px 0 rgba(0,45,117,0.2);
+}
+
+/* sem-ui has some sketchy !important styles that ignore the normal means of
+ * styling customization. */
+.ui.button:disabled,
+/* .ui.buttons .disabled.button, */
+.ui.disabled.active.button,
+.ui.disabled.button,
+.ui.disabled.button:hover {
+  /* opacity: .45!important; */
+  /* background-image: none!important; */
+  /* box-shadow: none!important; */
+  box-shadow: 0 4px 8px 0 rgba(0,45,117,0.2)!important;
 }
 
 .ui.buttons .button:first-child {
