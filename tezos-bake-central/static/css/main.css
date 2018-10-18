@@ -27,11 +27,12 @@ body {
   width: 220px;
   height: 100%;
   display: flex;
-  background: #f5f5f5;
   flex-direction: column;
   flex-shrink: 0;
+  background: #f5f5f5;
 }
 
+/* .ui.basic.segment sets a transparent background */
 .ui.basic.segment.app-sidebar {
   background: #f5f5f5;
 }
@@ -45,4 +46,21 @@ body {
 
 .app-gutter {
   flex-grow: 1;
+}
+
+/* .ui.header > img sets a vertical-align */
+.ui.header > img.app-logo {
+  height: 0.74em;
+  vertical-align: baseline;
+}
+
+.app-welcome {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+img.credits-obsidian {
+  width: 100%;
 }
