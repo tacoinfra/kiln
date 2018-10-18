@@ -60,7 +60,6 @@ uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
   elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
 
-
 uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Bool) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
   "type"=:"submit" <> "class"=:("ui " <> stateClass s <> " primary button"))
@@ -74,11 +73,16 @@ uiDynButton :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m () -> m (E
 uiDynButton classes label = fmap (domEvent Click . fst) $
   elDynAttr' "button" (ffor classes $ \c -> "type"=:"button" <> "class"=:("ui " <> c <> " button")) label
 
-buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
-buttonWithInfo label t =
-  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: "ui button" <> "data-tooltip" =: t) $ do
-    text label
+modalOpeningButton :: (DomBuilder t m) => Text -> Text -> m (Event t ())
+modalOpeningButton = buttonWithInfoCls ""
 
+buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
+buttonWithInfo = buttonWithInfoCls ""
+
+buttonWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> m (Event t ())
+buttonWithInfoCls classes label t =
+  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
+    text label
 
 tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
