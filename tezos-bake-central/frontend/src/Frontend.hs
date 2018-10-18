@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -6,13 +7,14 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Frontend where
 
 import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((%~), (.~), _1, _2, _3)
+import Control.Lens ((<>~), (%~), (.~), _1, _2, _3)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
@@ -84,6 +86,7 @@ import Common.Vassal
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Obelisk.Frontend
+import Obelisk.Generated.Static
 import Obelisk.Route
 
 frontend :: Frontend (R AppRoute)
@@ -290,10 +293,9 @@ watchUpgradeNotice =
 
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
-data UITab = UITab_Summary
-           | UITab_Nodes
-           | UITab_Delegate PublicKeyHash
-           | UITab_Client (Id Client) URI
+data UITab = UITab_Nodes
+           -- | UITab_Delegate PublicKeyHash
+           -- | UITab_Client (Id Client) URI
            | UITab_Options
   deriving (Eq, Ord, Show)
 
@@ -307,22 +309,37 @@ appMain
   => m ()
 appMain = do
   elClass "div" "app-frame" $ do
-    appSidebar
+    rec selectTab <- appSidebar selectedTab
+        selectedTab <- holdDyn initialTab selectTab
     elClass "div" "app-right" $ do
       appHeader
-      appContentArea
+      appContentArea selectedTab
+  where
+    initialTab = UITab_Nodes
 
-appSidebar =
+appName = "Kiln"
+
+appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
   SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-sidebar"
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    $ do
+    $ flip runReaderT (demux selectedTab) $ do
         appSideHeader
         appGutter
         appSideFooter
+
+routeSelector' dest con cfg child = do
+  isAtDest <- asks (\selected -> demuxed selected dest)
+  let activated = ffor isAtDest $ \isAt ->
+        if isAt then "active" else ""
+  (e, a) <- con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
+  tellEvent $ First dest <$ domEvent Click e
+  return (e,a)
+
+routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
 appSideHeader =
   SemUi.segment
@@ -331,9 +348,19 @@ appSideHeader =
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
     $ do
-        text "side header"
+        SemUi.header def $ do
+          elAttr "img" ("src" =: static @ "images/logo.svg" <> "class" =: "app-logo") $ return ()
+          text appName
+        SemUi.menu
+          (def
+            & SemUi.menuConfig_vertical SemUi.|~ True
+            & SemUi.menuConfig_fluid SemUi.|~ True
+            )
+          $ do
+              routeSelector UITab_Nodes SemUi.menuItem' def $ do
+                SemUi.icon "icon-tiles" def
+                text "Dashboard"
         SemUi.divider def
-
 
 appGutter =
   SemUi.segment
@@ -352,7 +379,19 @@ appSideFooter =
       )
     $ do
         SemUi.divider def
-        text "side footer"
+        SemUi.menu
+          (def
+            & SemUi.menuConfig_secondary SemUi.|~ True
+            & SemUi.menuConfig_vertical SemUi.|~ True
+          )
+          $ do
+              routeSelector UITab_Options SemUi.menuItem' def $ do
+                SemUi.icon "icon-gear" def
+                text "Settings"
+              SemUi.menuItem def $ do
+                SemUi.icon "icon-question-mark" def
+                text "Help"
+        elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
 appHeader =
   SemUi.segment
@@ -372,64 +411,59 @@ headerBell = do
     $ do
         text "bell"
 
-appContentArea = do
-  elClass "div" "app-content" $ do
-    oldAppMain -- until we reimplement it
+appContentArea :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => Dynamic t UITab -> m ()
+appContentArea selectedTab = do
+  dyn_ $ ffor selectedTab $ \case
+    -- UITab_Summary -> summaryTab
+    UITab_Nodes -> nodesTabOrWelcome
+    UITab_Options -> optionsTab
+    -- UITab_Client cid addr -> clientTab cid addr
+    -- UITab_Delegate pkh -> delegateTab pkh
 
-oldAppMain :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-oldAppMain = elAttr "div" ("style" =: "width: 90%; margin-left: auto; margin-right: auto;") $ do
+upgradeRibbon = do
+  upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+  dyn_ $ ffor upgradeNotice $ \case
+    Nothing -> blank
+    Just (_log, upgrade) ->
+      case upgrade of
+        Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+        Right v -> do
+          let
+            versionText = T.pack (showVersion v)
+            versionAnchor = "anchor-" <> T.filter (/='.') versionText
+          elAttr "a"
+            (  "class"=:"ui green right ribbon label"
+            <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
+            <> "target"=:"_blank") $
+              text $ "New version available: " <> versionText
+
+nodesTabOrWelcome = do
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
-  let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
+  let haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-  initialSelection <- maybeDyn $
-        (fmap . fmap) (bool UITab_Options UITab_Nodes . isEnabled) nodesTabEnabledMaybe
-  dyn_ $ ffor initialSelection $ \case
-    Nothing -> divClass "column" waitingForResponse
-    Just aTab -> do
-      initialTab <- sample (current aTab) -- only needed for initial value, don't want it to steal your focus
-      rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ leftmost <$> sequenceA
-            [ semuiTab (text "Nodes") UITab_Nodes currentTabD (fmap (fromMaybe Disabled) nodesTabEnabledMaybe)
-            , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-              fmap leftmost . for (MMap.toList cs) $ \(cid, name) ->
-                semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTabD (pure Enabled)
-            , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
-              fmap leftmost $ for (Set.toList ds) $ \pkh ->
-                semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTabD (pure Enabled)
-            , semuiTab (text "Options") UITab_Options currentTabD (pure Enabled)
-            ]
-          currentTab <- holdDyn initialTab selection
-          let currentTabD = demux currentTab
+  dyn_ $ ffor haveNodesMaybe $ \case
+    Nothing -> divClass "app-content" waitingForResponse
+    Just False -> welcomeScreen
+    Just True -> nodesTab
 
-      divClass "ui bottom attached tab segment active" $
-        divClass "ui one column grid" $ do
-          upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
-          dyn_ $ ffor upgradeNotice $ \case
-            Nothing -> blank
-            Just (_log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
-              case upgrade of
-                Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-                Right v -> do
-                  let
-                    versionText = T.pack (showVersion v)
-                    versionAnchor = "anchor-" <> T.filter (/='.') versionText
-                  elAttr "a"
-                    (  "class"=:"ui green right ribbon label"
-                    <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-                    <> "target"=:"_blank") $
-                      text $ "New version available: " <> versionText
-
-          divClass "column" $
-            dyn_ $ ffor currentTab $ \case
-              UITab_Summary -> summaryTab
-              UITab_Nodes -> nodesTab
-              UITab_Options -> optionsTab
-              UITab_Client cid addr -> clientTab cid addr
-              UITab_Delegate pkh -> delegateTab pkh
+welcomeScreen =
+  divClass "app-content app-welcome"
+    $ do
+        SemUi.header
+          (def
+            & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
+            )
+          $ do
+              text $ "Welcome to " <> appName <> "."
+        divClass "" $ text $ appName <> " helps you monitor Tezos nodes to keep your system"
+        divClass "" $ text $ "running smoothly, with many more features to come."
+        divClass "" $ text $ "\160"
+        divClass "" $ text $ "Click \"Add Node\" on the left to get started."
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
@@ -533,6 +567,7 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
           el "p" $ do
+            return ()
             text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
             case _errorLog_stopped log of
               Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
@@ -599,7 +634,8 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       ]
 
 optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-optionsTab = divClass "ui two column stackable grid" $ do
+optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ do
+  upgradeRibbon
   enableUpgradeCheck <- asks _cfg_checkForUpgrade
 
   _ <- divClass "column" $ traverse (divClass "ui basic segment") $
@@ -825,7 +861,7 @@ nodeIdForErrorLogView = \case
   _ -> Nothing
 
 nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
-nodesTab = divClass "ui stackable grid" $ do
+nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
   alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
 
@@ -840,6 +876,7 @@ nodesTab = divClass "ui stackable grid" $ do
         liveErrorsWidget nonEmptyAlertsDyn nodesDyn
 
   where
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> Dynamic t (MonoidalMap (Id Node) Node) -> m ()
     nodeTilesWidget alerts nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -935,6 +972,7 @@ nodesTab = divClass "ui stackable grid" $ do
       where
         errorStyle = elClass "span" "block-level-error"
 
+    nodeDataTable :: [(m (), m ())] -> m ()
     nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
       for_ rows $ \(heading, val) -> el "tr" $ do
         _ <- elAttr "th" ("style"=:"text-align:left") heading
