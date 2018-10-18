@@ -7,15 +7,15 @@ a:link {
     text-decoration-line:none;
 }
 a:visited {
-    color:#5b9aff;
+    color: @visitedBlue;
     text-decoration-line:none;
 }
 a:hover {
     text-decoration-line:underline;
-    color:#5b9aff;
+    color: @hoverBlue;
 }
 a:active {
-    color: #0047b7;
+    color: @activeBlue;
     text-decoration-line:none;
 }
 .aside {color:@grey;}
@@ -23,4 +23,45 @@ a:active {
 h6.ui.header {
     font-size:@relative13px;
 }
+
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+}
+
+.modal-box {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 100%;
+    max-height: 100%;
+    background-color: #FFF;
+    box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
+
+    & .content {
+        padding: 50px;
+    }
+}
+
+.modal-box > .modal-close {
+    padding: @10px;
+    height: @30px;
+    width: @30px;
+    float: right;
+
+    &:hover {
+        color: @hoverBlue;
+    }
+    &:active {
+        color: @activeBlue;
+    }
+    & > i.fitted {
+        transform: translate(-2px, -2px);
+    }
+}
+
 /* vim: set syntax=less : */

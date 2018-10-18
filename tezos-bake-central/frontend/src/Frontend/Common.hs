@@ -142,3 +142,11 @@ maybeDynLazy
   :: (PostBuild t m, MonadHold t m, MonadFix m)
   => Dynamic t (Maybe a) -> m (Dynamic t (Maybe (Dynamic t a)))
 maybeDynLazy d = maybeDyn =<< holdDyn Nothing =<< updatedWithInit d
+
+basicModal :: DomBuilder t m => m a -> m a
+basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
+
+cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModal f close = elAttr "div" ("class"=:"modal-box") $ do
+  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+  divClass "content" (f $ leftmost [domEvent Click closeEl, close])
