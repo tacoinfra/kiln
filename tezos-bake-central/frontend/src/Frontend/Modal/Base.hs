@@ -27,11 +27,14 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (First (..))
 import Data.Text (Text)
+import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.EventM as EventM
+import qualified GHCJS.DOM.GlobalEventHandlers as Events
 import Language.Javascript.JSaddle (MonadJSM)
 import Reflex.Dom.Core
 import Reflex.Host.Class (MonadReflexCreateTrigger)
 
-import Frontend.Modal.Class (HasModal (tellModal, ModalM))
+import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 
 instance (Reflex t, Monad m) => HasModal t (ModalT t m) where
   type ModalM (ModalT t m) = m
@@ -81,7 +84,7 @@ instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t m
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjustWithMove (coerce f) dm0 dm'
 
 runModalT
-  :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m)
+  :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m, MonadJSM m, TriggerEvent t m)
   => ModalBackdropConfig -> ModalT t m a -> m a
 runModalT backdropCfg f = do
   rec
@@ -97,7 +100,7 @@ newtype ModalBackdropConfig = ModalBackdropConfig
 -- NB: This must wrap all other DOM building. This is because DOM for the modal
 -- must occur *after* all other DOM in order for it to appear on top of it.
 withModals
-  :: forall m a b t. (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m)
+  :: forall m a b t. (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, MonadJSM m, TriggerEvent t m)
   => ModalBackdropConfig
   -> Event t (Event t () -> m (Event t a))
   -- ^ Event to trigger a modal to open.
@@ -107,7 +110,12 @@ withModals
   -> m (b, Event t a)
 withModals backdropCfg open body = do
   b <- body
+  document <- DOM.currentDocumentUnchecked
   rec
+    escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
+      key <- getKeyEvent
+      pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
+
     isVisible <- holdDyn False $ leftmost [True <$ open, False <$ close]
     (backdropEl, _) <- elDynAttr' "div"
       (ffor isVisible $ \isVis ->
@@ -116,7 +124,7 @@ withModals backdropCfg open body = do
       blank
     close <- elDynAttr "div" (ffor isVisible $ \isVis -> "style" =: isVisibleStyle isVis) $
       fmap switchDyn $ widgetHold (pure never) $ leftmost
-        [ ($ domEvent Click backdropEl) <$> open
+        [ ($ leftmost [escPressed, domEvent Click backdropEl]) <$> open
         , pure never <$ close
         ]
   pure (b, close)
