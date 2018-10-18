@@ -606,8 +606,8 @@ optionsTab = divClass "ui two column stackable grid" $ do
     [ currentChain
     , publicNodeOptions
     , nodesOptions
-    , telegramOptions
     ]
+    ++ [ telegramOptions | False ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
     ++ [ upgradeOptions | enableUpgradeCheck ]
