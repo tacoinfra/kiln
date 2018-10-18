@@ -317,8 +317,10 @@ appMain = do
   where
     initialTab = UITab_Nodes
 
+appName :: Text
 appName = "Kiln"
 
+appSidebar :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t UITab -> m (Event t UITab)
 appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
   SemUi.segment
     (def
@@ -331,6 +333,7 @@ appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
         appGutter
         appSideFooter
 
+routeSelector' :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m (a,b)
 routeSelector' dest con cfg child = do
   isAtDest <- asks (\selected -> demuxed selected dest)
   let activated = ffor isAtDest $ \isAt ->
@@ -339,8 +342,10 @@ routeSelector' dest con cfg child = do
   tellEvent $ First dest <$ domEvent Click e
   return (e,a)
 
+routeSelector :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
+appSideHeader :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideHeader =
   SemUi.segment
     (def
@@ -362,6 +367,7 @@ appSideHeader =
                 text "Dashboard"
         SemUi.divider def
 
+appGutter :: MonadRhyoliteFrontendWidget Bake t m => m ()
 appGutter =
   SemUi.segment
     (def
@@ -371,6 +377,7 @@ appGutter =
     $ do
         text "gutter"
 
+appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -393,6 +400,7 @@ appSideFooter =
                 text "Help"
         elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
+appHeader :: MonadRhyoliteFrontendWidget Bake t m => m ()
 appHeader =
   SemUi.segment
     (def
@@ -402,6 +410,7 @@ appHeader =
         text "header"
         headerBell
 
+headerBell :: MonadRhyoliteFrontendWidget Bake t m => m ()
 headerBell = do
   SemUi.segment
     (def
@@ -420,6 +429,7 @@ appContentArea selectedTab = do
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 
+upgradeRibbon :: MonadRhyoliteFrontendWidget Bake t m => m ()
 upgradeRibbon = do
   upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
   dyn_ $ ffor upgradeNotice $ \case
@@ -437,6 +447,7 @@ upgradeRibbon = do
             <> "target"=:"_blank") $
               text $ "New version available: " <> versionText
 
+nodesTabOrWelcome :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTabOrWelcome = do
   clientAddresses <- watchClientAddresses
   delegates <- watchDelegatePublicKeyHashes
@@ -451,6 +462,7 @@ nodesTabOrWelcome = do
     Just False -> welcomeScreen
     Just True -> nodesTab
 
+welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen =
   divClass "app-content app-welcome"
     $ do
