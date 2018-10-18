@@ -80,7 +80,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
     rs :: [(Id Node, URI, Maybe Text)] <- [queryQ| SELECT n.id, n.address, n.alias from "Node" n WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,First (Just (y,z)))) rs
+    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,First (Just (NodeSummary y z 0)))) rs
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do

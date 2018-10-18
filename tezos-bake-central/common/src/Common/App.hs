@@ -51,6 +51,16 @@ getErrorInterval ei@(el, _) = First (ei, ClosedInterval
 
 type Deletable a = First (Maybe a)
 
+data NodeSummary = NodeSummary
+  { _nodeSummary_address :: URI
+  , _nodeSummary_alias :: Maybe Text
+  , _nodeSummary_alertCount :: Int
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON NodeSummary
+instance ToJSON NodeSummary
+
+
+
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
   , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
@@ -58,7 +68,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
   , _bakeViewSelector_errors :: !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
   , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
   , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) (Deletable Email) a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
@@ -78,7 +88,7 @@ data BakeView a = BakeView
   , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
   , _bakeView_errors :: !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
-  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
   , _bakeView_notificatees :: !(RangeView' (Id Notificatee) (Deletable Email) a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
@@ -345,4 +355,5 @@ concat <$> traverse makeLenses
   [ 'BakeView
   , 'BakeViewSelector
   , 'MailServerView
+  , 'NodeSummary
   ]

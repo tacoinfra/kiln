@@ -32,7 +32,7 @@ import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getUpgradeNotice)
 import Common (tshow, whenJust, whenM)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, NodeSummary(..))
 import Common.Schema
 
 import Common.Vassal
@@ -106,7 +106,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       let node = if _node_deleted node' then Nothing else Just node' in
       pure mempty
         { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
-        , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (_node_address &&& _node_alias) <$> node
+        , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (NodeSummary <$> _node_address <*> _node_alias <*> pure 0) <$> node
         }
 
     delegateVS = _bakeViewSelector_delegates aggVS

@@ -171,14 +171,14 @@ watchNodesValid nidsDyn = do
     }
   return $ ffor theView $ \v -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodes v)
 
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) (URI, Maybe Text)))
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
-watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) (URI, Maybe Text))))
+watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) NodeSummary)))
 watchNodeAddressesValid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
@@ -377,8 +377,7 @@ appGutter =
       & SemUi.classes SemUi.|~ "app-gutter"
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    $ do
-        text "gutter"
+    $ nodesOptions
 
 appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideFooter =
@@ -657,6 +656,37 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
+nodesOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
+nodesOptions = do
+  divClass "ui medium header" $ text "Monitored Nodes"
+  elClass "table" "ui celled striped compact table" $ do
+    nodes <- watchNodeAddresses
+    _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
+      let dAddress = ffor node _nodeSummary_address
+      let dName = ffor node _nodeSummary_alias
+      el "td" $ dynText $ ffor dAddress Uri.render
+      el "td" $ dynText $ ffor dName $ fromMaybe ""
+      el "td" $ do
+        eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+        requestingIdentity $ public . PublicRequest_RemoveNode . _nodeSummary_address <$> tag (current node) eRemove
+
+    addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+    void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias)
+
+urlInputRow
+  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+urlInputRow validator label info placeholder = el "tr" $ do
+  (tdEl1, address) <- el' "td" $ formItem
+    $ validatedInput validator
+    $ def & Txt.setPlaceholder placeholder & Txt.setFluid
+  (tdEl2, alias) <- el' "td" $ formItem
+    $ validatedInput (Validator.optional Validator.validateText)
+    $ def & Txt.setPlaceholder "alias" & Txt.setFluid
+  addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
+  let namedAddress = liftA2 (liftA2 (,)) address alias
+  return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
+
 optionsTab
   :: forall t m.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -674,7 +704,6 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
   _ <- divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
     , publicNodeOptions
-    , nodesOptions
     , telegramOptions
     ]
     ++ [ delegatesOptions | False ]
@@ -763,27 +792,11 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
           PublicNode_Obsidian -> "Obsidian"
 
       pncDyn <- watchPublicNodeConfig
-      for_ [minBound..maxBound] $ \pn -> do
-        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " button link")) $
+      divClass "ui buttons" $ for_ [minBound..maxBound] $ \pn -> do
+        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "primary" else "") <> " button link")) $
           text $ showPublicNode pn
         let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
         void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
-
-    nodesOptions = do
-      divClass "ui medium header" $ text "Monitored Nodes"
-      elClass "table" "ui celled striped compact table" $ do
-        nodes <- watchNodeAddresses
-        _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
-          let dAddress = ffor node fst
-          let dName = ffor node snd
-          el "td" $ dynText $ ffor dAddress Uri.render
-          el "td" $ dynText $ ffor dName $ fromMaybe ""
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveNode . fst <$> tag (current node) eRemove
-
-        addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias)
 
     upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
@@ -800,21 +813,6 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
             text $ "A new version is available: " <> T.pack (showVersion newVersion) <> ". " <> currentVersionText <> "."
           Just (Left _) -> divClass "ui error message" $
             text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
-
-    urlInputRow
-      :: (Eq a)
-      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a, Maybe Text))
-    urlInputRow validator label info placeholder = el "tr" $ do
-      (tdEl1, address) <- el' "td" $ formItem
-        $ validatedInput validator
-        $ def & Txt.setPlaceholder placeholder & Txt.setFluid
-      (tdEl2, alias) <- el' "td" $ formItem
-        $ validatedInput (Validator.optional Validator.validateText)
-        $ def & Txt.setPlaceholder "alias" & Txt.setFluid
-      addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
-      let namedAddress = liftA2 (liftA2 (,)) address alias
-      return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
-
 
 mailServerForm
   :: ( DomBuilder t m
