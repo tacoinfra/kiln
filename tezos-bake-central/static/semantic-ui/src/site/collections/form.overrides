@@ -25,7 +25,7 @@
 .ui.form .required.field > label:after {
   font-size: @small;
   margin: @requiredMargin;
-  content: '*Required';
+  content: 'Required';
   color: @grey;
   position: absolute;
   top:0;
@@ -41,3 +41,5 @@
   content: '*';
   color: @grey;
 }
+
+/* vim: set syntax=less : */

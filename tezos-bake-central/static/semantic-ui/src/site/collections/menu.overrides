@@ -1,3 +1,19 @@
 /*******************************
          Site Overrides
 *******************************/
+
+.ui.secondary.menu .item:not(.active):hover {
+  background : @white;
+}
+
+/* */
+.ui.secondary.menu .item:hover ,
+.ui.secondary.menu .active.item:hover {
+  box-shadow : 0 2px 8px 0 rgba(0,0,0,0.1);
+}
+
+.ui.secondary.menu .item:not(.active) .icon {
+  color: #98A0AD;
+}
+
+/* vim: set syntax=less : */

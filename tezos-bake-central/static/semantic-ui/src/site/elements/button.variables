@@ -1,3 +1,22 @@
 /*******************************
     User Variable Overrides
 *******************************/
+
+@blueBoxShadow :  0 4px 8px 0 rgba(0,45,117,0.2);
+@pillbuttonBoxShadow : 0 4px 8px 0 rgba(0,0,0,0.3);
+
+@fontWeight: 500;
+@primaryColorHover : #1C73FF;
+@primaryColorDown : #0F5AD4;
+@disabledOpacity : 0.35;
+@hoverBackgroundColor: @white;
+@downBackgroundColor: @white;
+
+@modalOpenerFontWeight : Bold;
+@modalOpenerFontSize : @12px;
+@modalOpenerColor : @black;
+@modalOpenerBackgroundColor : #d8d8d8;
+@modalOpenerBackgroundHoverColor : #e6e6e6;
+@modalOpenerBackgroundDownColor : #bfbfbf;
+
+/* vim: set syntax=less : */

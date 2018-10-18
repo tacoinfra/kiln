@@ -7,7 +7,7 @@ in pkgs.stdenv.mkDerivation {
     builder = pkgs.writeScript "builder.sh" ''
       source "$stdenv/setup"
       mkdir -p $out
-      cp -r $src/css $src/fonts $out
+      cp -r $src/css $src/fonts $src/icons $src/logo.svg $out
       # this "should" be a symlink, but the static build doesn't handle
       # symlinks properly when generating filehashes.  copying it is slightly
       # wasteful, it takes extra space in the nix store.

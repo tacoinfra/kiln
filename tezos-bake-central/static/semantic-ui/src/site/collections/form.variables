@@ -2,4 +2,4 @@
     User Variable Overrides
 *******************************/
 
-@requiredContent: 'required';
+/* vim: set syntax=less : */

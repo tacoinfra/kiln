@@ -2,6 +2,7 @@
      User Global Variables
 *******************************/
 @fontName: 'Helvetica Neue';
+@fontWeight: 500;
 @primaryColor:@blue;
 
 @blue: #1269F3;
@@ -9,6 +10,8 @@
 @orange: #FF6705;
 @red: #D00101;
 @grey: #898989;
+
+@transparentBlack: rgba(0,0,0,0.25);
 
 /*
   Sizes are all expressed in terms of 14px/em (default em)
@@ -32,3 +35,31 @@
 
 /* 1.5 */
 @headerLineHeight : unit((21 / 14), em);
+
+@borderRadius : @3px;
+
+
+
+/* specificity hack:  add some classes to not match on to increase speceficity.  The minimiser removes some other, less weird looking hacks */
+@moreMagic  :              ~':not(.ohk3AeZizoob6HooAeweg8oh)';
+@moreMagic1 : ~'@{moreMagic}:not(.ieleeg1RBe8un0poKi8Ahtha)';
+@moreMagic2 : ~'@{moreMagic1}:not(.IXeah2zaMe9eiV1yMaefaxa9)';
+@moreMagic3 : ~'@{moreMagic2}:not(.Oopheiw7wai8JeimohraaB0a)';
+@moreMagic4 : ~'@{moreMagic3}:not(.geeP7ieVhoo3IeHioth2Au3n)';
+@moreMagic5 : ~'@{moreMagic4}:not(.bu9ieTiexeiR2oonNah3joso)';
+@moreMagic6 : ~'@{moreMagic5}:not(.yiesee8TAtoh9ahMASheem2U)';
+@moreMagic7 : ~'@{moreMagic6}:not(.phie3ieHdeVitae2ieS8aeCh)';
+@moreMagic8 : ~'@{moreMagic7}:not(.eeShohb7hoMei7ahoDohri4d)';
+@moreMagic9 : ~'@{moreMagic8}:not(.teej2EiNxai8pieBEw4ohd1U)';
+@moreMagic10: ~'@{moreMagic9}:not(.Chie4mooaipoe9FuiM6Noh6i)';
+@moreMagic11: ~'@{moreMagic10}:not(.eet3GooyainiaV0johG1yahg)';
+@moreMagic12: ~'@{moreMagic11}:not(.xohp3Ohdro6AhW7cxahS0aiv)';
+@moreMagic13: ~'@{moreMagic12}:not(.og5Hie1xIejaing5she5Go0a)';
+@moreMagic14: ~'@{moreMagic13}:not(.eiJ4eed0aidohT5ubooy0Ou7)';
+@moreMagic15: ~'@{moreMagic14}:not(.Sequei2eaeBoh4iWOoG2rael)';
+@moreMagic16: ~'@{moreMagic15}:not(.Iej6aiguaZieR9toAingahd8)';
+@moreMagic17: ~'@{moreMagic16}:not(.eic0IwahPheyeir4Iewoan3l)';
+@moreMagic18: ~'@{moreMagic17}:not(.Dai9oaSuRahgha4ichieSh0n)';
+@moreMagic19: ~'@{moreMagic18}:not(.phi0eNgaAhsoa0ihaekoup4M)';
+
+/* vim: set syntax=less : */
