@@ -189,6 +189,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
 
       pure (telegramConfig, telegramRecipients)
 
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
+
   return BakeView
     { _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
@@ -208,6 +210,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
     , _bakeView_upgrade = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
+    , _bakeView_alertCount = alertCount
     }
 
 
@@ -413,3 +416,13 @@ getUpgradeNotice = do
         Just e -> Left e
         Nothing -> maybe (error "Bad upgrade notice record") Right tNewVersion
     )
+
+getAlertCount
+  :: (Monad m, PostgresRaw m)
+  => m (Maybe Int)
+getAlertCount =
+  fmap Pg.fromOnly . listToMaybe <$> [queryQ|
+    SELECT
+        count(*)
+    FROM "ErrorLog" el
+    WHERE el.stopped IS NULL|]

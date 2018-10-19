@@ -23,6 +23,7 @@ import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, se
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
 
@@ -30,7 +31,7 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getUpgradeNotice)
+import Backend.ViewSelectorHandler (getUpgradeNotice, getAlertCount)
 import Common (tshow, whenJust, whenM)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, NodeSummary(..))
 import Common.Schema
@@ -134,15 +135,21 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     errorsVS = _bakeViewSelector_errors aggVS
+    alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog
-      :: forall e m2. (EntityWithId e, PersistBackend m2)
+      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      whenJust specificLog' $ \specificLog -> do
+      newCount <- whenM (viewSelects () alertCountVS) $ do
+        alertCount <- getAlertCount
+        pure mempty
+          { _bakeView_alertCount = toMaybeView alertCountVS alertCount
+          }
+      newErrors <- whenJust specificLog' $ \specificLog -> do
         let logId = getLogId specificLog
         errorLog' :: Maybe ErrorLog <- get $ fromId logId
         whenJust errorLog' $ \errorLog -> do
@@ -155,6 +162,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
               { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
                   MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
               }
+      return $ newCount <> newErrors
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
     handlePublicNodeConfig pnc =
