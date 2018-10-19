@@ -16,6 +16,7 @@ import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
 import Data.Bool (bool)
+import Data.Foldable (fold)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (listToMaybe)
 import Data.Semigroup (First (..), (<>))
@@ -31,9 +32,9 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getUpgradeNotice, getAlertCount)
+import Backend.ViewSelectorHandler (getUpgradeNotice, getAlertCount, getNodeAddresses)
 import Common (tshow, whenJust, whenM)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, NodeSummary(..))
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, NodeSummary(..), errorLogView2NodeId)
 import Common.Schema
 
 import Common.Vassal
@@ -103,11 +104,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     nodesVS = _bakeViewSelector_nodes aggVS
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
-    handleNode nid node' = whenM (viewSelects (Bounded nid) nodesVS || viewSelects (Bounded nid) nodeAddressesVS) $
-      let node = if _node_deleted node' then Nothing else Just node' in
+    handleNode nid node' = whenM (viewSelects (Bounded nid) nodesVS || viewSelects (Bounded nid) nodeAddressesVS) $ do
+      let node = if _node_deleted node' then Nothing else Just node'
+      alerts <- getNodeAddresses $ Just nid
       pure mempty
         { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
-        , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (NodeSummary <$> _node_address <*> _node_alias <*> pure 0) <$> node
+        , _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts -- toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (NodeSummary <$> _node_address <*> _node_alias <*> pure 0) <$> node
         }
 
     delegateVS = _bakeViewSelector_delegates aggVS
@@ -144,6 +146,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
+      logNodeSummary <- flip traverse (errorLogView2NodeId . toView =<< specificLog') $ \logNodeId -> do
+        whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
+          newNodeCounts <- getNodeAddresses $ Just logNodeId
+          pure mempty
+            { _bakeView_nodeAddresses = toRangeView nodeAddressesVS newNodeCounts
+            }
       newCount <- whenM (viewSelects () alertCountVS) $ do
         alertCount <- getAlertCount
         pure mempty
@@ -162,7 +170,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
               { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
                   MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
               }
-      return $ newCount <> newErrors
+      return $ newCount <> newErrors <> fold logNodeSummary
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
     handlePublicNodeConfig pnc =

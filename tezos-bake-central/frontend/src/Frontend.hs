@@ -670,7 +670,7 @@ nodesOptions = do
     nodes <- watchNodeAddresses
     _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item" $ do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
-      SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle small " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
         let dAddress = Uri.render . _nodeSummary_address <$> node
         let dName = ffor node _nodeSummary_alias

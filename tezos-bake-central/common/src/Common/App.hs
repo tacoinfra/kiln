@@ -128,6 +128,14 @@ data ErrorLogView
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
+errorLogView2NodeId :: ErrorLogView -> Maybe (Id Node)
+errorLogView2NodeId = \case
+  ErrorLogView_InaccessibleNode ein -> Just $ _errorLogInaccessibleNode_node ein
+  ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
+  ErrorLogView_BakerNoHeartbeat _ -> Nothing
+  ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
+  ErrorLogView_MultipleBakersForSameDelegate _ -> Nothing
+
 mailServerConfigToView :: MailServerConfig -> MailServerView
 mailServerConfigToView x = MailServerView
   { _mailServerView_hostName = _mailServerConfig_hostName x

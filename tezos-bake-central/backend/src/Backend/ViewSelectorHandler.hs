@@ -79,29 +79,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
-    rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
-      SELECT n.id, n.address, n.alias,
-        (SELECT COUNT(ein.id)
-         FROM "ErrorLogInaccessibleNode" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-        + (SELECT COUNT(ein.id)
-         FROM "ErrorLogBadNodeHead" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-        + (SELECT COUNT(ein.id)
-         FROM "ErrorLogNodeWrongChain" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-      FROM "Node" n
-      WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs
+    -- TODO: nodeAddrVS is a RangeView.  select individual nodes upon request.
+    toRangeView nodeAddrVS <$> getNodeAddresses Nothing
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do
@@ -426,3 +405,35 @@ getAlertCount =
         count(*)
     FROM "ErrorLog" el
     WHERE el.stopped IS NULL|]
+
+getNodeAddresses :: forall m.
+  ( Monad m
+  , PostgresRaw m
+  )
+  => Maybe (Id Node)
+  -> m [(WithInfinity (Id Node), First (Maybe NodeSummary))]
+getNodeAddresses nid = do
+  rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
+      SELECT n.id, n.address, n.alias,
+        (SELECT COUNT(ein.id)
+         FROM "ErrorLogInaccessibleNode" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogBadNodeHead" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogNodeWrongChain" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+      FROM "Node" n
+      WHERE NOT n.deleted
+        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs
