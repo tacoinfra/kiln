@@ -13,6 +13,7 @@
   font-weight:@modalOpenerFontWeight;
   height:@28px;
   padding: @7px @10px @7px @10px;
+  box-shadow:none;
 }
 
 .ui.modalopener.button:active ,

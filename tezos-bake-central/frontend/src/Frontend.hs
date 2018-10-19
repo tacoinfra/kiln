@@ -89,6 +89,7 @@ import qualified Frontend.Settings.Telegram as Telegram
 import Obelisk.Frontend
 import Obelisk.Generated.Static
 import Obelisk.Route
+import Frontend.Modal.Class (HasModal, ModalM, tellModal)
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
@@ -303,6 +304,7 @@ data UITab = UITab_Nodes
 appMain
   :: forall t m.
     ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader Cfg m
@@ -323,7 +325,7 @@ appMain = do
 appName :: Text
 appName = "Kiln"
 
-appSidebar :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t UITab -> m (Event t UITab)
+appSidebar :: (MonadRhyoliteFrontendWidget Bake t m , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m)=> Dynamic t UITab -> m (Event t UITab)
 appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
   SemUi.segment
     (def
@@ -370,7 +372,7 @@ appSideHeader =
                 text "Dashboard"
         SemUi.divider def
 
-appGutter :: MonadRhyoliteFrontendWidget Bake t m => m ()
+appGutter :: (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
 appGutter =
   SemUi.segment
     (def
@@ -656,34 +658,53 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
-nodesOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
+nodesOptions ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , HasModal t m
+  )
+  => m ()
 nodesOptions = do
-  divClass "ui medium header" $ text "Monitored Nodes"
-  elClass "table" "ui celled striped compact table" $ do
+  divClass "ui header" $ text "Nodes"
+  divClass "ui list" $ do
     nodes <- watchNodeAddresses
-    _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
-      let dAddress = ffor node _nodeSummary_address
-      let dName = ffor node _nodeSummary_alias
-      el "td" $ dynText $ ffor dAddress Uri.render
-      el "td" $ dynText $ ffor dName $ fromMaybe ""
-      el "td" $ do
-        eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-        requestingIdentity $ public . PublicRequest_RemoveNode . _nodeSummary_address <$> tag (current node) eRemove
+    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item" $ do
+      let dHealth = (> 0) . _nodeSummary_alertCount <$> node
+      SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle small " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      divClass "content" $ do
+        let dAddress = Uri.render . _nodeSummary_address <$> node
+        let dName = ffor node _nodeSummary_alias
+        divClass "header" $      dynText $ fromMaybe <$> dAddress <*> dName
+        divClass "description" $ dynText $ fmap (fromMaybe "") $ (<$) <$> dAddress <*> dName
 
-    addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-    void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias)
+    openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener" "Add Node" "Configure Monitored Nodes"
+    tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
+      el "h3" $ text "Add Nodes"
+      divClass "ui grid" $ do
+        divClass "ten wide" $ do
+          el "h5" $ text "Connect to a Public Node"
+        divClass "six wide" $ do
+          el "h5" $ text "Connect via address"
+          divClass "ui segment" $ do
+            addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+            nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+            pure $ leftmost [nodeAddedE, close]
 
 urlInputRow
   :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
   => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-urlInputRow validator label info placeholder = el "tr" $ do
-  (tdEl1, address) <- el' "td" $ formItem
+urlInputRow validator label info placeholder = divClass "ui segment" $ divClass "ui form fields" $ do
+  (tdEl1, address) <- el' "div" $ formItem' "required"
     $ validatedInput validator
-    $ def & Txt.setPlaceholder placeholder & Txt.setFluid
-  (tdEl2, alias) <- el' "td" $ formItem
+    $ def & Txt.setPlaceholder placeholder
+          & Txt.setFluid
+          & Txt.addLabel (el "label" $ text "Address")
+  (tdEl2, alias) <- el' "div" $ formItem
     $ validatedInput (Validator.optional Validator.validateText)
-    $ def & Txt.setPlaceholder "alias" & Txt.setFluid
-  addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
+    $ def & Txt.setPlaceholder "alias"
+          & Txt.setFluid
+          & Txt.addLabel (el "label" $ text "Alias")
+  addButton <- elClass "div" "right aligned collapsing" $ buttonWithInfoCls "primary" label info
   let namedAddress = liftA2 (liftA2 (,)) address alias
   return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
 
@@ -969,7 +990,6 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
                   , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
                   , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                   ]
-
                 unresolvedAlertsForThisNode <-
                   holdUniqDyn $ foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
                 let errorMessage = divClass "ui error message" . divClass "header"
@@ -979,6 +999,10 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
                   ErrorLogView_BadNodeHead l -> errorMessage $ text $
                     fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                   _ -> blank
+              el "div" $ do
+                eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+                requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
+
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
     headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
