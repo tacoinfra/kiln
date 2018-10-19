@@ -79,8 +79,29 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
-    rs :: [(Id Node, URI, Maybe Text)] <- [queryQ| SELECT n.id, n.address, n.alias from "Node" n WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,First (Just (NodeSummary y z 0)))) rs
+    rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
+      SELECT n.id, n.address, n.alias,
+        (SELECT COUNT(ein.id)
+         FROM "ErrorLogInaccessibleNode" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogBadNodeHead" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogNodeWrongChain" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+      FROM "Node" n
+      WHERE NOT n.deleted |]
+    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do
