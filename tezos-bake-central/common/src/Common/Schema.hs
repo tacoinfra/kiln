@@ -398,11 +398,12 @@ data GenericCacheEntry = GenericCacheEntry
 instance HasId GenericCacheEntry
 
 data TelegramConfig = TelegramConfig
-  { _telegramConfig_botName :: !Text
+  { _telegramConfig_botName :: !(Maybe Text)
   , _telegramConfig_botApiKey :: !Text
   , _telegramConfig_created :: !UTCTime
   , _telegramConfig_updated :: !UTCTime
   , _telegramConfig_enabled :: !Bool
+  , _telegramConfig_validated :: !(Maybe Bool)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramConfig
 

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -58,6 +59,20 @@ localTimestamp timestamp = do
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
   elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+
+
+uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Bool) -> m () -> m ()
+uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
+  "type"=:"submit" <> "class"=:("ui " <> stateClass s <> " primary button"))
+  where
+    stateClass = \case
+      Just True -> ""
+      Just False -> "disabled"
+      Nothing -> "loading"
+
+uiDynButton :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m () -> m (Event t ())
+uiDynButton classes label = fmap (domEvent Click . fst) $
+  elDynAttr' "button" (ffor classes $ \c -> "type"=:"button" <> "class"=:("ui " <> c <> " button")) label
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo label t =

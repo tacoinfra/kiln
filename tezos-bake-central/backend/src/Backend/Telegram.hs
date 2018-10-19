@@ -10,17 +10,19 @@
 
 module Backend.Telegram where
 
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, logDebug, logWarn)
+import Control.Monad.Logger (MonadLogger, logDebug)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import Data.Foldable (for_)
+import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
+import Data.Int (Int64)
 import Data.Maybe (listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
@@ -39,16 +41,16 @@ import qualified Network.URI.Encode as UriEncode
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Safe (maximumMay, minimumByMay)
+import Safe (headMay, maximumMay, minimumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
-import Backend.Common (nominalDiffTimeToMicroseconds, threadDelay', worker', workerWithDelay)
+import Backend.Common (threadDelay', worker', workerWithDelay)
 import Backend.Http (HasHttp, runHttpT)
 import qualified Backend.Http as Http
 import Backend.Schema
-import Common (defaultTezosCompatJsonOptions, tshow)
+import Common
 import Common.Schema
 import Common.URI as Uri (appendPaths, appendQueryParams)
 
@@ -67,10 +69,10 @@ initState addFinalizer httpMgr logger db = do
   newRecipientChan <- newEmptyMVar
   let
     env = Env
-      { _env_beginWaitingForNewRecipient = putMVar newRecipientChan ()
+      { _env_beginWaitingForNewRecipient = void $ tryPutMVar newRecipientChan ()
       , _env_waitForNewRecipient = takeMVar newRecipientChan
       }
-  addFinalizer =<< telegramWorker httpMgr logger db (_env_waitForNewRecipient env)
+  -- addFinalizer =<< telegramWorker httpMgr logger db (_env_waitForNewRecipient env)
   addFinalizer =<< emptyTelegramMessageQueue httpMgr logger db
   pure env
 
@@ -84,8 +86,8 @@ telegramApiGetMeUri botApiKey = telegramApiBotUri botApiKey >>= flip appendPaths
 
 data TelegramGetUpdates = TelegramGetUpdates
   { _telegramGetUpdates_botApiKey :: !Text
-  , _telegramGetUpdates_offset :: !(Maybe Word64) -- ID of first message to show
-  , _telegramGetUpdates_timeout :: !NominalDiffTime -- Long-polling timeout
+  , _telegramGetUpdates_offset :: !(Maybe Int64) -- ID of first message to show
+  , _telegramGetUpdates_timeout :: !(Maybe NominalDiffTime) -- Long-polling timeout
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 telegramApiGetUpdatesUri :: TelegramGetUpdates -> Maybe URI
@@ -93,11 +95,10 @@ telegramApiGetUpdatesUri cfg =
   telegramApiBotUri (_telegramGetUpdates_botApiKey cfg)
   >>= flip appendPaths ["getUpdates"]
   >>= flip appendQueryParams
-    ([ ("offset", T.pack $ UriEncode.encode $ show offset) | Just offset <- [_telegramGetUpdates_offset cfg] ]
-    <>
-    [ ("timeout", T.pack $ UriEncode.encode $ show $ _telegramGetUpdates_timeout cfg)
-    , ("allowed_updates", "messages")
-    ])
+    (  [ ("offset", T.pack $ UriEncode.encode $ show offset) | Just offset <- [_telegramGetUpdates_offset cfg] ]
+    <> [ ("timeout", T.pack $ UriEncode.encode $ show $ nominalDiffTimeToSeconds timeout) | Just timeout <- [_telegramGetUpdates_timeout cfg]]
+    <> [ ("allowed_updates", "messages") ]
+    )
 
 data SendMessageRequest = SendMessageRequest
   { _sendMessageRequest_chatId :: !Word64
@@ -118,8 +119,18 @@ instance ToJSON UnixTimestamp where
   toJSON (UnixTimestamp t) = Aeson.toJSON $ utcTimeToPOSIXSeconds t
   toEncoding (UnixTimestamp t) = Aeson.toEncoding $ utcTimeToPOSIXSeconds t
 
+-- | Type that only succeeds JSON parsing if it is 'True', not 'False'.
+data OnlyTrue = OnlyTrue deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON OnlyTrue where
+  parseJSON a = do
+    bool <- Aeson.parseJSON a
+    if bool then pure OnlyTrue else fail "Value was false"
+instance ToJSON OnlyTrue where
+  toJSON OnlyTrue = Aeson.toJSON True
+  toEncoding OnlyTrue = Aeson.toEncoding True
+
 data ApiResult a = ApiResult
-  { _apiResult_ok :: !Bool
+  { _apiResult_ok :: !OnlyTrue
   , _apiResult_result :: !a
   } deriving (Eq, Ord, Show, Typeable, Generic, Functor, Foldable, Traversable)
 
@@ -189,11 +200,37 @@ getUpdates cfg = do
   $(logDebug) $ "Getting updates for Telegram starting at offset " <> tshow (_telegramGetUpdates_offset cfg)
   fmap Http.getResponseBody $
     Http.req . Http.Request_JSON
-      =<< setTimeout <$> Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
+      =<< maybe id setTimeout (_telegramGetUpdates_timeout cfg) <$> Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
   where
-    setTimeout req = req { Http.responseTimeout = Http.responseTimeoutMicro $
-      fromIntegral $ nominalDiffTimeToMicroseconds $ _telegramGetUpdates_timeout cfg + 1 }
+    setTimeout timeout req = req { Http.responseTimeout = Http.responseTimeoutMicro $
+      fromIntegral $ nominalDiffTimeToMicroseconds $ timeout + 1 }
 
+isCandidateMessage :: UTCTime -> BotMessage -> Bool
+isCandidateMessage oldestMessage msg =
+  unUnixTimestamp (_botMessage_date msg) >= oldestMessage &&
+  not (_sender_isBot (_botMessage_from msg))  -- Message cannot come from a bot
+
+-- | One-shot function for getting a bot and its first sender.
+getBotAndFirstSender
+  :: (MonadThrow m, HasHttp m, MonadLogger m)
+  => Text -> m (Maybe (BotGetMe, Chat, Sender))
+getBotAndFirstSender botApiKey = do
+  me <- _apiResult_result <$> getMe botApiKey
+  result <- getUpdates TelegramGetUpdates
+    { _telegramGetUpdates_botApiKey = botApiKey
+    , _telegramGetUpdates_offset = Nothing
+    , _telegramGetUpdates_timeout = Nothing
+    }
+  let
+    candidateMessages = filter (isCandidateMessage unixEpoch)
+      $ _botGetUpdates_message <$> _apiResult_result result
+    firstMessage = headMay candidateMessages
+
+  pure $ (,,) <$> Just me <*> (_botMessage_chat <$> firstMessage) <*> (_botMessage_from <$> firstMessage)
+
+
+-- | Repeatedly long-polls the Telegram Bot 'getUpdates' until it sees a sender.
+-- This ignores senders that sent messages to the bot before the 'TelegramConfig' was created.
 waitForFirstSender
   :: MonadIO m => (MonadThrow m, MonadLogger m)
   => Http.Manager
@@ -213,23 +250,20 @@ waitForFirstSender httpMgr getTelegramCfg = begin Nothing
       result <- runHttpT httpMgr $ getUpdates TelegramGetUpdates
         { _telegramGetUpdates_botApiKey = _telegramConfig_botApiKey telegramCfg
         , _telegramGetUpdates_offset = firstMessageId
-        , _telegramGetUpdates_timeout = 60
+        , _telegramGetUpdates_timeout = Just 60
         }
-      case _apiResult_ok result of
-        False -> $(logWarn) "Telegram API result NOT ok" *> startOver firstMessageId
-        True -> do
-          let
-            botUpdated = _telegramConfig_updated telegramCfg
-            messages = _botGetUpdates_message <$> _apiResult_result result
-            candidateMessages =
-              filter (\msg ->
-                  unUnixTimestamp (_botMessage_date msg) >= botUpdated && -- Message must occur after the bot config was changed
-                  not (_sender_isBot (_botMessage_from msg))  -- Message cannot come from a bot
-                ) messages
-          case null candidateMessages of
-            True -> startOver $ maximumMay $ map _botGetUpdates_updateId $ _apiResult_result result
-            False -> pure $
-              fmap ((,) cid) $ minimumByMay (comparing _botMessage_date) messages
+      let
+        allMessages = _botGetUpdates_message <$> _apiResult_result result
+        candidateMessages = filter
+          (isCandidateMessage $ _telegramConfig_updated telegramCfg)
+          allMessages
+
+      case null candidateMessages of
+        True -> startOver $
+          -- Calculate the maximum update ID that we just saw and use it for our offset next time.
+          fmap fromIntegral $ maximumMay $ map _botGetUpdates_updateId $ _apiResult_result result
+        False -> pure $
+          fmap ((,) cid) $ minimumByMay (comparing _botMessage_date) allMessages
 
 telegramWorker
   :: forall m. (MonadIO m)
@@ -244,7 +278,8 @@ telegramWorker httpMgr loggingEnv db signal = worker' $ do
 
   where
     getTelegramCfg = fmap listToMaybe $ runLoggingEnv loggingEnv $ runDb (Identity db) $ do
-      cfgs <- selectIds TelegramConfigConstructor ((TelegramConfig_enabledField ==. True) `limitTo` 1)
+      cfgs <- selectIds TelegramConfigConstructor
+        ((TelegramConfig_enabledField ==. True &&. TelegramConfig_validatedField ==. Just True) `limitTo` 1)
       recipients <- project TelegramRecipient_deletedField $
         (TelegramRecipient_configField `in_` map fst cfgs &&. TelegramRecipient_deletedField ==. False)
         `limitTo` 1
