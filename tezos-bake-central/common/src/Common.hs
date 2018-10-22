@@ -15,6 +15,7 @@ module Common
   , for
   , for_
   , fromMaybe
+  , isJust
   , isRight
   , toList
   , void
@@ -28,7 +29,7 @@ import Data.Foldable (for_, toList)
 import Data.Functor (void, ($>))
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Ratio (denominator, numerator)
 import Data.Semigroup ((<>))
 import Data.Text (Text)

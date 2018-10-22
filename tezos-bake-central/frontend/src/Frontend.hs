@@ -14,7 +14,7 @@
 module Frontend where
 
 import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((<>~), (%~), (.~), _1, _2, _3)
+import Control.Lens ((%~), (.~), (<>~), _1, _2, _3)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
@@ -71,7 +71,6 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import qualified Frontend.Settings.Telegram as Telegram
 import Common
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
@@ -85,6 +84,7 @@ import Common.Vassal
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
+import qualified Frontend.Settings.Telegram as Telegram
 import Obelisk.Frontend
 import Obelisk.Generated.Static
 import Obelisk.Route

@@ -46,14 +46,22 @@ settings = switchHold never <=< workflowView $ Workflow $ do
   divClass "telegram-setup" $ do
     heading $ text "Setup Telegram Notifications"
     rec
-      (botApiKey :: Dynamic t (Either Text Text), submitClick :: Event t ()) <- formWithSubmit $ do
+      (botApiKey, submitClick) <- formWithSubmit $ do
         botApiKey_ <- settingsForm cfg
 
         widgetHold_ blank $ ffor validated $ \isValid -> if isValid then blank else elClass "p" "error" $ do
           elClass "i" "icon-warning-circle red icon" blank
-          text " No conversations found. Make sure your API key is correct and you've recently sent a message to your bot before trying again."
+          text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
 
-        submitState <- holdUniqDyn <=< holdDyn (Just False) $ leftmost [Nothing <$ submit, Just True <$ validated, Just . isRight <$> updated botApiKey]
+        -- TODO: Abstract this somewhere.
+        rec
+          submitState <- holdUniqDyn <=< holdDyn (Just False) $ leftmost
+            [ Nothing <$ submit -- Loading
+            , Just . isRight <$> leftmost -- Revalidate when input changes or validation result comes back.
+                [ gate (isJust <$> current submitState) (updated botApiKey) -- Allow input changes only when not in loading state.
+                , tag (current botApiKey) validated -- This will exit loading state when validation comes in.
+                ]
+            ]
         horizontallyCentered $ do
           uiDynSubmit submitState $ text "Connect Telegram"
 
@@ -66,7 +74,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
     _ <- requestingIdentity $ public . PublicRequest_AddTelegramConfig <$> submit
 
     let
-      validatedRecipient :: Dynamic t (Maybe TelegramRecipient) = traceDyn "valrecip" $ zipDynWith
+      validatedRecipient :: Dynamic t (Maybe TelegramRecipient) = zipDynWith
         (\c recips -> if c ^? _Just . telegramConfig_validated . _Just == Just True
           then headMay $ fmapMaybe id $ toList recips
           else Nothing
