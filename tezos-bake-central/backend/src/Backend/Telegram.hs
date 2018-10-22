@@ -41,7 +41,7 @@ import qualified Network.URI.Encode as UriEncode
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Safe (headMay, maximumMay, minimumByMay)
+import Safe (maximumByMay, maximumMay, minimumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
@@ -181,7 +181,7 @@ getMe
 getMe cfg = do
   $(logDebug) "Getting Telegram bot metadata"
   fmap Http.getResponseBody $
-    Http.req . Http.Request_JSON =<< Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiGetMeUri cfg)
+    Http.req . Http.Request_JSON =<< Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiGetMeUri cfg)
 
 sendMessage
   :: (MonadThrow m, HasHttp m, MonadLogger m)
@@ -191,7 +191,7 @@ sendMessage botApiKey cfg = do
   fmap Http.getResponseBody $
     Http.req . Http.Request_JSON =<<
       Http.setRequestBodyJSON cfg . Http.setRequestMethod "POST" <$>
-        Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey)
+        Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey)
 
 getUpdates
   :: (MonadThrow m, HasHttp m, MonadLogger m)
@@ -200,7 +200,7 @@ getUpdates cfg = do
   $(logDebug) $ "Getting updates for Telegram starting at offset " <> tshow (_telegramGetUpdates_offset cfg)
   fmap Http.getResponseBody $
     Http.req . Http.Request_JSON
-      =<< maybe id setTimeout (_telegramGetUpdates_timeout cfg) <$> Http.parseRequest (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
+      =<< maybe id setTimeout (_telegramGetUpdates_timeout cfg) <$> Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
   where
     setTimeout timeout req = req { Http.responseTimeout = Http.responseTimeoutMicro $
       fromIntegral $ nominalDiffTimeToMicroseconds $ timeout + 1 }
@@ -211,10 +211,10 @@ isCandidateMessage oldestMessage msg =
   not (_sender_isBot (_botMessage_from msg))  -- Message cannot come from a bot
 
 -- | One-shot function for getting a bot and its first sender.
-getBotAndFirstSender
+getBotAndLastSender
   :: (MonadThrow m, HasHttp m, MonadLogger m)
   => Text -> m (Maybe (BotGetMe, Chat, Sender))
-getBotAndFirstSender botApiKey = do
+getBotAndLastSender botApiKey = do
   me <- _apiResult_result <$> getMe botApiKey
   result <- getUpdates TelegramGetUpdates
     { _telegramGetUpdates_botApiKey = botApiKey
@@ -224,7 +224,7 @@ getBotAndFirstSender botApiKey = do
   let
     candidateMessages = filter (isCandidateMessage unixEpoch)
       $ _botGetUpdates_message <$> _apiResult_result result
-    firstMessage = headMay candidateMessages
+    firstMessage = maximumByMay (comparing _botMessage_date) candidateMessages
 
   pure $ (,,) <$> Just me <*> (_botMessage_chat <$> firstMessage) <*> (_botMessage_from <$> firstMessage)
 

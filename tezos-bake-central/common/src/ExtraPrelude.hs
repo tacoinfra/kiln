@@ -12,6 +12,7 @@ module ExtraPrelude
   , for_
   , fromMaybe
   , isJust
+  , isNothing
   , isRight
   , toList
   , void
@@ -22,7 +23,7 @@ import Data.Either (isRight)
 import Data.Foldable (for_, toList)
 import Data.Functor (void, ($>))
 import Data.Map.Monoidal (MonoidalMap)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Semigroup ((<>))
 import Data.Text (Text)
 import Data.Traversable (for)

@@ -190,7 +190,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
         where
           connectTelegram botApiKey = do
             result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $
-              Telegram.getBotAndFirstSender botApiKey
+              Telegram.getBotAndLastSender botApiKey
             inDb $ case result' of
               Left e -> do
                 $(logError) $ "Failed to connect Telegram: " <> tshow e

@@ -259,6 +259,7 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
+        BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v1PublicApi dataSrc
