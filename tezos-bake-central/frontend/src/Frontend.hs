@@ -22,6 +22,7 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
+import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
 import Data.Either.Combinators (rightToMaybe)
