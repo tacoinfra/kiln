@@ -14,7 +14,7 @@
 module Frontend where
 
 import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((<>~), (%~), (.~), _1, _2, _3)
+import Control.Lens ((%~), (.~), (<>~), _1, _2, _3)
 import Control.Monad (join, when, (<=<))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (liftIO)
@@ -22,10 +22,8 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
-import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
-import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
 import Data.Foldable (for_, toList, traverse_)
@@ -73,7 +71,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (maybeSomething, tshow, uriHostPortPath)
+import ExtraPrelude
+import Common (tshow, maybeSomething, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
@@ -85,6 +84,8 @@ import Common.Schema hiding (Event)
 import Common.Vassal
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
+import Frontend.Modal.Class (HasModal (ModalM, tellModal))
+import qualified Frontend.Settings.Telegram as Telegram
 import Obelisk.Frontend
 import Obelisk.Generated.Static
 import Obelisk.Route
@@ -305,6 +306,8 @@ appMain
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader Cfg m
+    , HasModal t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 appMain = do
@@ -420,7 +423,16 @@ headerBell = do
     $ do
         text "bell"
 
-appContentArea :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => Dynamic t UITab -> m ()
+appContentArea
+  :: forall t m.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader Cfg m
+    , HasModal t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    )
+  => Dynamic t UITab -> m ()
 appContentArea selectedTab = do
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
@@ -449,8 +461,8 @@ upgradeRibbon = do
 
 nodesTabOrWelcome :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTabOrWelcome = do
-  clientAddresses <- watchClientAddresses
-  delegates <- watchDelegatePublicKeyHashes
+  _clientAddresses <- watchClientAddresses
+  _delegates <- watchDelegatePublicKeyHashes
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
@@ -645,7 +657,16 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
-optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
+optionsTab
+  :: forall t m.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader Cfg m
+    , HasModal t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    )
+  => m ()
 optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ do
   upgradeRibbon
   enableUpgradeCheck <- asks _cfg_checkForUpgrade
@@ -654,8 +675,8 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
     [ currentChain
     , publicNodeOptions
     , nodesOptions
+    , telegramOptions
     ]
-    ++ [ telegramOptions | False ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
     ++ [ upgradeOptions | enableUpgradeCheck ]
@@ -676,15 +697,10 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
         text " for more information."
 
     telegramOptions = do
-      botApiKey <- formItem
-        $ validatedInput Validator.validateText
-        $ def & Txt.setPlaceholder "Bot API Key" & Txt.setFluid
-      save <- button "Save"
-      responded <- requestingIdentity $ public . PublicRequest_AddTelegramConfig . either (const "") id <$> tag (current botApiKey) save
-      void $ requestingIdentity $ public PublicRequest_WaitForTelegramRecipient <$ responded
-
-      recips <- watchTelegramRecipients
-      display recips
+      openTelegramOptions <- uiButton "primary" "Configure Telegram"
+      tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
+        finish <- Telegram.settings
+        pure $ leftmost [finish, close]
 
     notificationOptions = do
       divClass "ui medium header" $ text "Notification Recipients"
@@ -786,8 +802,8 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
             text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
 
     urlInputRow
-      :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+      :: (Eq a)
+      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a, Maybe Text))
     urlInputRow validator label info placeholder = el "tr" $ do
       (tdEl1, address) <- el' "td" $ formItem
         $ validatedInput validator

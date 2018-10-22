@@ -7,16 +7,11 @@ import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Functor (void)
-import Data.Ratio (denominator, numerator)
 import Data.Time.Clock (NominalDiffTime)
 import Rhyolite.Concurrent (supervise)
 import System.Timeout (timeout)
 
-nominalDiffTimeToMicroseconds :: NominalDiffTime -> Integer
-nominalDiffTimeToMicroseconds n = numerator ratio * (microsecondsInSecond `div` denominator ratio)
-  where
-    microsecondsInSecond = 10^(6 :: Integer)
-    ratio = toRational n
+import Common (nominalDiffTimeToMicroseconds)
 
 workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ()) -> m (IO ())
 workerWithDelay getDelay f = worker' $ do

@@ -18,6 +18,7 @@ library
     Frontend.Common
     Frontend.Modal.Base
     Frontend.Modal.Class
+    Frontend.Settings.Telegram
 
   build-depends:
       base

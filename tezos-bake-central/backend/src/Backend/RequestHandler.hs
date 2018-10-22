@@ -16,7 +16,7 @@ import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Logger (MonadLogger, logError)
+import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (for_, traverse_)
 import Data.Functor (void)
@@ -44,7 +44,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (checkForUpgrade)
 import Backend.Version (version)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Common (tshow, unixEpoch)
+import Common (tshow)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -56,9 +56,8 @@ requestHandler
   -> NodeDataSource
   -> [DataSource]
   -> AppConfig
-  -> Telegram.Env
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig telegramEnv =
+requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
@@ -178,40 +177,106 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig teleg
           for_ (filter (\(pn, _, _) -> pn == publicNode) publicNodeSources) $
             updateDataSource nds
 
-      PublicRequest_AddTelegramConfig botApiKey -> void $
-        liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-          result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $ Telegram.getMe botApiKey
-          case result' of
-            Left e -> $(logError) $ "Failed to get metadata from Telegram about bot: " <> tshow e
-            Right result
-              | not $ Telegram._apiResult_ok result -> $(logError) "Failed to get metadata from Telegram about bot: result NOT ok"
-              | otherwise -> updateTelegramCfg $ TelegramConfig
-                  { _telegramConfig_botApiKey = botApiKey
-                  , _telegramConfig_botName = Telegram._botGetMe_firstName $ Telegram._apiResult_result result
-                  , _telegramConfig_created = unixEpoch
-                  , _telegramConfig_updated = unixEpoch
-                  , _telegramConfig_enabled = True
-                  }
+      PublicRequest_AddTelegramConfig apiKey -> do
+        -- Initialize the config to have NULL bot name and NULL enabled.
+        -- NULL enabled means the bot is not yet validated.
+        $(logInfo) "Adding a Telegram configuration"
+        inDb $ void $ updateTelegramCfg apiKey Nothing True Nothing
+
+        -- Fork a thread to collect meta info about this bot.
+        void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
+          connectTelegram apiKey
+
         where
-          updateTelegramCfg cfg = inDb $ do
+          connectTelegram botApiKey = do
+            result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $
+              Telegram.getBotAndLastSender botApiKey
+            inDb $ case result' of
+              Left e -> do
+                $(logError) $ "Failed to connect Telegram: " <> tshow e
+                void $ updateTelegramCfg botApiKey Nothing True (Just False)
+              Right Nothing -> do
+                $(logError) "Failed to connect Telegram: no bot or no senders"
+                void $ updateTelegramCfg botApiKey Nothing True (Just False)
+              Right (Just (botMeta, chat, sender)) -> do
+                let
+                  botName = Telegram._botGetMe_firstName botMeta
+                $(logInfo) $ "Telegram Bot found: " <> botName
+                cid <- updateTelegramCfg botApiKey (Just botName) True (Just True)
+                rid <- updateRecipient cid chat sender
+                now <- getTime
+                void $ insert' TelegramMessageQueue
+                  { _telegramMessageQueue_recipient = rid
+                  , _telegramMessageQueue_message = "Great! You'll receive alerts like this."
+                  , _telegramMessageQueue_created = now
+                  }
+
+          updateTelegramCfg botApiKey (botName :: Maybe Text) enabled validated = do
             cid' :: Maybe (Id TelegramConfig) <-
               fmap toId . listToMaybe <$> project AutoKeyField
                 (TelegramConfig_enabledField ==. TelegramConfig_enabledField) -- Silliness to help types infer
             now <- getTime
             case cid' of
               Nothing -> do
-                let newCfg = cfg { _telegramConfig_created = now, _telegramConfig_updated = now }
-                notify . flip Notify_TelegramConfig newCfg =<< insert' newCfg
+                let
+                  new = TelegramConfig
+                    { _telegramConfig_botApiKey = botApiKey
+                    , _telegramConfig_botName = botName
+                    , _telegramConfig_created = now
+                    , _telegramConfig_updated = now
+                    , _telegramConfig_enabled = enabled
+                    , _telegramConfig_validated = validated
+                    }
+                cid <- insert' new
+                notify $ Notify_TelegramConfig cid new
+                pure cid
+
               Just cid -> do
                 updateId cid
-                  [ TelegramConfig_botNameField =. _telegramConfig_botName cfg
-                  , TelegramConfig_botApiKeyField =. _telegramConfig_botApiKey cfg
+                  [ TelegramConfig_botNameField =. botName
+                  , TelegramConfig_botApiKeyField =. botApiKey
                   , TelegramConfig_updatedField =. now
-                  , TelegramConfig_enabledField =. _telegramConfig_enabled cfg
+                  , TelegramConfig_enabledField =. enabled
+                  , TelegramConfig_validatedField =. validated
                   ]
                 getId cid >>= traverse_ (notify . Notify_TelegramConfig cid)
+                pure cid
 
-      PublicRequest_WaitForTelegramRecipient -> liftIO $ Telegram._env_beginWaitingForNewRecipient telegramEnv
+          updateRecipient cid chat sender = inDb $ do
+            rid' :: Maybe (Id TelegramRecipient) <-
+              fmap toId . listToMaybe <$> project AutoKeyField
+                (TelegramRecipient_deletedField ==. False)
+            now <- getTime
+            case rid' of
+              Nothing -> do
+                let
+                  new = TelegramRecipient
+                    { _telegramRecipient_config = cid
+                    , _telegramRecipient_userId = Telegram._sender_id sender
+                    , _telegramRecipient_chatId = Telegram._chat_id chat
+                    , _telegramRecipient_firstName = Telegram._sender_firstName sender
+                    , _telegramRecipient_lastName = Telegram._sender_lastName sender
+                    , _telegramRecipient_username = Telegram._sender_username sender
+                    , _telegramRecipient_created = now
+                    , _telegramRecipient_deleted = False
+                    }
+                rid <- insert' new
+                notify $ Notify_TelegramRecipient rid (Just new)
+                pure rid
+
+              Just rid -> do
+                updateId rid
+                  [ TelegramRecipient_configField =. cid
+                  , TelegramRecipient_userIdField =. Telegram._sender_id sender
+                  , TelegramRecipient_chatIdField =. Telegram._chat_id chat
+                  , TelegramRecipient_firstNameField =. Telegram._sender_firstName sender
+                  , TelegramRecipient_lastNameField =. Telegram._sender_lastName sender
+                  , TelegramRecipient_usernameField =. Telegram._sender_username sender
+                  , TelegramRecipient_createdField =. now
+                  , TelegramRecipient_deletedField =. False
+                  ]
+                notify . Notify_TelegramRecipient rid =<< getId rid
+                pure rid
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

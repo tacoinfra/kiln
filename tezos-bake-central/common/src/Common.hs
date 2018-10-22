@@ -2,16 +2,16 @@
 
 module Common where
 
-import qualified Data.Aeson as Aeson
 import qualified Cases
-import Data.Foldable (toList)
-import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
-import Data.Semigroup ((<>))
-import Data.Text (Text)
+import Data.Ratio (denominator, numerator)
 import qualified Data.Text as T
-import qualified Text.URI as Uri
 import qualified Data.Time as Time
+import Data.Time.Clock (NominalDiffTime)
+import qualified Text.URI as Uri
+
+import ExtraPrelude
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show
@@ -22,6 +22,17 @@ whenJust (Just x) f = f x
 
 whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
 whenM x true = if x then true else pure mempty
+
+nominalDiffTimeToSeconds :: NominalDiffTime -> Integer
+nominalDiffTimeToSeconds n = numerator ratio * denominator ratio
+  where
+    ratio = toRational n
+
+nominalDiffTimeToMicroseconds :: NominalDiffTime -> Integer
+nominalDiffTimeToMicroseconds n = numerator ratio * (microsecondsInSecond `div` denominator ratio)
+  where
+    microsecondsInSecond = 10^(6 :: Integer)
+    ratio = toRational n
 
 curryMap :: (Eq a) => MonoidalMap (a, b) c -> MonoidalMap a (MonoidalMap b c)
 curryMap = MMap.fromAscList . fmap (\((a, b), c) -> (a, MMap.singleton b c)) . MMap.toAscList

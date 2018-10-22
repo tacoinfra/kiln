@@ -237,10 +237,10 @@ backendImpl cfg serve = do
 
       let appConfig = AppConfig emailFromAddress
 
-      telegramEnv <- Telegram.initState addFinalizer httpMgr logger db
+      _ <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig telegramEnv)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig)
         (notifyHandler dataSrc)
         (viewSelectorHandler (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
@@ -259,6 +259,7 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
+        BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v1PublicApi dataSrc
