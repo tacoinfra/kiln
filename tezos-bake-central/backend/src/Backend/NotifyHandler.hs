@@ -8,7 +8,6 @@
 module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Control.Arrow ((&&&))
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -34,7 +33,7 @@ import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getUpgradeNotice, getAlertCount, getNodeAddresses)
 import Common (tshow, whenJust, whenM)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, NodeSummary(..), errorLogView2NodeId)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, nodeIdForErrorLogView)
 import Common.Schema
 
 import Common.Vassal
@@ -109,7 +108,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       alerts <- getNodeAddresses $ Just nid
       pure mempty
         { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
-        , _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts -- toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (NodeSummary <$> _node_address <*> _node_alias <*> pure 0) <$> node
+        , _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts
         }
 
     delegateVS = _bakeViewSelector_delegates aggVS
@@ -146,7 +145,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      logNodeSummary <- flip traverse (errorLogView2NodeId . toView =<< specificLog') $ \logNodeId -> do
+      logNodeSummary <- flip traverse (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId
           pure mempty

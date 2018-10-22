@@ -670,7 +670,7 @@ nodesOptions = do
     nodes <- watchNodeAddresses
     _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item" $ do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
-      SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
         let dAddress = Uri.render . _nodeSummary_address <$> node
         let dName = ffor node _nodeSummary_alias
@@ -686,14 +686,14 @@ nodesOptions = do
         divClass "six wide" $ do
           el "h5" $ text "Connect via address"
           divClass "ui segment" $ do
-            addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+            addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
             nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
             pure $ leftmost [nodeAddedE, close]
 
-urlInputRow
+aliasedInputForm
   :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
   => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-urlInputRow validator label info placeholder = divClass "ui segment" $ divClass "ui form fields" $ do
+aliasedInputForm validator label info placeholder = divClass "ui segment" $ divClass "ui form fields" $ do
   (tdEl1, address) <- el' "div" $ formItem' "required"
     $ validatedInput validator
     $ def & Txt.setPlaceholder placeholder
@@ -787,7 +787,7 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     delegatesOptions = do
@@ -800,7 +800,7 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
             requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
-        addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
     publicNodeOptions = do
@@ -899,13 +899,6 @@ data NodeTile
   = NodeTile_PlainNode (Id Node) Node
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
-
-nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
-nodeIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode l -> Just $ _errorLogInaccessibleNode_node l
-  ErrorLogView_NodeWrongChain l -> Just $ _errorLogNodeWrongChain_node l
-  ErrorLogView_BadNodeHead l -> Just $ _errorLogBadNodeHead_node l
-  _ -> Nothing
 
 nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
 nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do

@@ -128,8 +128,8 @@ data ErrorLogView
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
-errorLogView2NodeId :: ErrorLogView -> Maybe (Id Node)
-errorLogView2NodeId = \case
+nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
+nodeIdForErrorLogView = \case
   ErrorLogView_InaccessibleNode ein -> Just $ _errorLogInaccessibleNode_node ein
   ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
   ErrorLogView_BakerNoHeartbeat _ -> Nothing
