@@ -65,5 +65,6 @@ library
     Common.Vassal
     Common.Verification
     Common.WrappedShow1
+    ExtraPrelude
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

@@ -1,45 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Common
-  ( module Common
-
-  -- Re-exports
-  , Generic
-  , Text
-  , Typeable
-
-  , (<=<)
-  , (<>)
-  , (>=>)
-  , ($>)
-  , for
-  , for_
-  , fromMaybe
-  , isJust
-  , isRight
-  , toList
-  , void
-  ) where
+module Common where
 
 import qualified Cases
-import Control.Monad ((<=<), (>=>))
 import qualified Data.Aeson as Aeson
-import Data.Either (isRight)
-import Data.Foldable (for_, toList)
-import Data.Functor (void, ($>))
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (fromMaybe, isJust)
 import Data.Ratio (denominator, numerator)
-import Data.Semigroup ((<>))
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time.Clock (NominalDiffTime)
-import Data.Traversable (for)
-import Data.Typeable (Typeable)
-import GHC.Generics (Generic)
 import qualified Text.URI as Uri
+
+import ExtraPrelude
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show

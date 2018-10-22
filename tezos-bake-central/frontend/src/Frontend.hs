@@ -71,7 +71,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common
+import ExtraPrelude
+import Common (tshow, maybeSomething, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App

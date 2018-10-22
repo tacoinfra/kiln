@@ -48,7 +48,6 @@ import Common (tshow)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
-import Backend.Alerts.Common (queueTelegramAlert)
 
 requestHandler
   :: forall m. (MonadBaseControl IO m, MonadIO m)
@@ -192,26 +191,25 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
           connectTelegram botApiKey = do
             result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $
               Telegram.getBotAndFirstSender botApiKey
-            case result' of
+            inDb $ case result' of
               Left e -> do
                 $(logError) $ "Failed to connect Telegram: " <> tshow e
-                inDb $ void $ updateTelegramCfg botApiKey Nothing True (Just False)
+                void $ updateTelegramCfg botApiKey Nothing True (Just False)
               Right Nothing -> do
                 $(logError) "Failed to connect Telegram: no bot or no senders"
-                inDb $ void $ updateTelegramCfg botApiKey Nothing True (Just False)
+                void $ updateTelegramCfg botApiKey Nothing True (Just False)
               Right (Just (botMeta, chat, sender)) -> do
                 let
                   botName = Telegram._botGetMe_firstName botMeta
                 $(logInfo) $ "Telegram Bot found: " <> botName
-                inDb $ do
-                  cid <- updateTelegramCfg botApiKey (Just botName) True (Just True)
-                  rid <- updateRecipient cid chat sender
-                  now <- getTime
-                  void $ insert' TelegramMessageQueue
-                    { _telegramMessageQueue_recipient = rid
-                    , _telegramMessageQueue_message = "Great! You'll receive alerts like this."
-                    , _telegramMessageQueue_created = now
-                    }
+                cid <- updateTelegramCfg botApiKey (Just botName) True (Just True)
+                rid <- updateRecipient cid chat sender
+                now <- getTime
+                void $ insert' TelegramMessageQueue
+                  { _telegramMessageQueue_recipient = rid
+                  , _telegramMessageQueue_message = "Great! You'll receive alerts like this."
+                  , _telegramMessageQueue_created = now
+                  }
 
           updateTelegramCfg botApiKey (botName :: Maybe Text) enabled validated = do
             cid' :: Maybe (Id TelegramConfig) <-

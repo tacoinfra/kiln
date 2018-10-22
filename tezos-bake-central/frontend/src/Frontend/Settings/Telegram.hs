@@ -22,7 +22,8 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Safe (headMay)
 
-import Common
+import ExtraPrelude
+import Common ()
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
