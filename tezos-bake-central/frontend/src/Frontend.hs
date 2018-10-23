@@ -293,6 +293,12 @@ watchUpgradeNotice =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
 
+watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
+watchAlertCount =
+  (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_alertCount = viewJust 1
+    }
+
 
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
@@ -413,9 +419,9 @@ appHeader =
       )
     $ do
         text "header"
-        headerBell
+        void $ headerBell
 
-headerBell :: MonadRhyoliteFrontendWidget Bake t m => m ()
+headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
   SemUi.segment
     (def
@@ -423,7 +429,23 @@ headerBell = do
       & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
       )
     $ do
-        text "bell"
+        alertCount <- fmap (fromMaybe 0) <$> watchAlertCount
+        (e,_) <- SemUi.ui' "span"
+          (def
+            & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+            )
+          $ do
+              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . T.pack . show
+              text $ T.pack " "
+              SemUi.icon "icon-bell"
+                (def
+                  & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
+                  & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
+                  & SemUi.iconConfig_link SemUi.|~ True
+                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount $ (>0))
+                  )
+        return $ domEvent Click e
+        
 
 appContentArea
   :: forall t m.
