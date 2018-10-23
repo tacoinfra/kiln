@@ -64,7 +64,7 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (maybeSomething, uriHostPortPath)
+import Common (uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
@@ -353,18 +353,53 @@ appMain
   => m ()
 appMain = do
   elClass "div" "app-frame" $ do
-    rec selectTab <- appSidebar selectedTab
-        selectedTab <- holdDyn initialTab selectTab
-    elClass "div" "app-right" $ do
-      appHeader
-      appContentArea selectedTab
+    rec
+      selectTab <- appSidebar selectedTab
+      selectedTab <- holdDyn initialTab selectTab
+
+    rec
+      let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
+      (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
+        (def
+          & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
+          & SemUi.sidebarConfig_dimming .~ pure False
+          & SemUi.sidebarConfig_closeOnClick .~ pure False)
+        -- Container for the content the sidebar accompanies. "app-right" must
+        -- be this and not a child div for flexbox's sake.
+        (\f -> SemUi.segment $ f $ def
+          & SemUi.classes SemUi.|~ "app-right")
+        -- Sidebar content
+        (\f -> SemUi.menu
+          (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
+          $ do
+            let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+            nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+            alertsDyn <- watchErrors (pure $ Set.singleton alertWindow)
+            -- TODO style icon better
+            e <- elClass "h3" "ui header" $ do
+              text "Notifications"
+              domEvent Click <$> SemUi.icon' "icon-arrow-right" def
+            liveErrorsWidget alertsDyn nodesDyn
+            pure e)
+        -- Accompanying content
+        $ do
+          e <- appHeader
+          appContentArea selectedTab
+          pure e
+    pure ()
   where
     initialTab = UITab_Nodes
 
 appName :: Text
 appName = "Kiln"
 
-appSidebar :: (MonadRhyoliteFrontendWidget Bake t m , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m)=> Dynamic t UITab -> m (Event t UITab)
+appSidebar
+  :: ( MonadRhyoliteFrontendWidget Bake t m
+     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+     , HasModal t m
+     )
+  => Dynamic t UITab
+  -> m (Event t UITab)
 appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
   SemUi.segment
     (def
@@ -448,7 +483,7 @@ appHeader
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
-  => m ()
+  => m (Event t ())
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
   divClass "ui stackable grid" $ do
     divClass "six wide column topbar" $ do
@@ -470,7 +505,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
           localHumanizedTimestamp $ pure $ b ^. timestamp
 
     divClass "ten wide column" $ do
-      void headerBell
+      headerBell
 
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
@@ -677,7 +712,7 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       (fmap (\(a, b) -> (a, b, Nothing)) `fmap` otherErrors)
       (fmap (_3 %~ Just) `fmap` nodeErrorsWithNode)
 
-  elAttr "div" ("style"=:"padding-top:1em; max-height: 60em; overflow-y: auto;") $
+  elAttr "div" ("style"=:"padding-top:1em; overflow-y: auto;") $
     listWithKey (errorsByTime Down <$> combinedErrors) $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \v@(log, _, _) -> do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
@@ -1020,22 +1055,15 @@ nodesTab
     )
   => m ()
 nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
-  let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-  alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
-
   nodesDyn <- watchNodes $ pure $ viewRangeAll ()
 
-  dyn_ $ ffor alertsDyn $ \case
-    Nothing -> divClass "column" $ nodeTilesWidget (constDyn MMap.empty) nodesDyn
-    Just nonEmptyAlertsDyn -> do
-      divClass "ten wide column" $ nodeTilesWidget nonEmptyAlertsDyn nodesDyn
-      divClass "six wide column" $ do
-        elClass "h3" "ui header" $ text "Alerts"
-        liveErrorsWidget nonEmptyAlertsDyn nodesDyn
+  divClass "column" $ nodeTilesWidget nodesDyn
 
   where
-    nodeTilesWidget :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> Dynamic t (MonoidalMap (Id Node) Node) -> m ()
-    nodeTilesWidget alerts nodesDyn = do
+    nodeTilesWidget
+      :: {- Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+      -> -} Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
       let
@@ -1070,6 +1098,9 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
                   , (text "Block Baked:", localTimestamp $ node ^. timestamp)
                   ]
 
+          let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+          alerts <- watchErrors (pure $ Set.singleton alertWindow)
+
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             vDyn'' <- holdUniqDyn vDyn
             vDyn'start <- sample $ current vDyn''
@@ -1101,8 +1132,10 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
                   , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
                   , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                   ]
+
                 unresolvedAlertsForThisNode <-
                   holdUniqDyn $ foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
+
                 let errorMessage = divClass "ui error message" . divClass "header"
                 dyn_ $ ffor unresolvedAlertsForThisNode $ traverse_ $ \case
                   ErrorLogView_InaccessibleNode{} ->  errorMessage $ text "Unable to connect."
