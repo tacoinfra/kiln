@@ -6,19 +6,9 @@ let
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
-    rhyolite-src = pkgs.fetchFromGitHub {
-      owner = "obsidiansystems";
-      repo = "rhyolite";
-      rev = "be2dd0488072342a25675bec71aba1d9c7acae99";
-      sha256 = "1q8pnp5cl77zc0avbw3mv38si43m3xps0g8whm6cjplg0p2a4ih6";
-    };
+    rhyolite-src = obelisk.reflex-platform.hackGet ./dep/rhyolite;
     rhyoliteLib = args: (import rhyolite-src).lib args;
-    semantic-reflex-src = pkgs.fetchFromGitHub {
-      owner = "tomsmalley";
-      repo = "semantic-reflex";
-      rev = "42bfede5e308bab4494e87ed0144f21134a4c5b3";
-      sha256 = "01rpf0vh5llx1hq4j55gmw36fvzhb95ngcykh34sgcxp5498p9f3";
-    };
+    semantic-reflex-src = obelisk.reflex-platform.hackGet ./dep/semantic-reflex;
   in {
     staticFiles = pkgs.callPackage ./static {};
     packages = {
