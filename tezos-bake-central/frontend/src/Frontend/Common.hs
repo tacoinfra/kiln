@@ -86,8 +86,14 @@ buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo = buttonWithInfoCls ""
 
 buttonWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> m (Event t ())
-buttonWithInfoCls classes label t =
-  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
+buttonWithInfoCls = typedButtonWithInfoCls "button"
+
+submitButtonWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> m (Event t ())
+submitButtonWithInfoCls = typedButtonWithInfoCls "submit"
+
+typedButtonWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> Text -> m (Event t ())
+typedButtonWithInfoCls typ classes label t =
+  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: typ <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
     text label
 
 tooltip :: (DomBuilder t m) => Text -> m a -> m a
