@@ -704,32 +704,34 @@ nodesOptions = do
     tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
       el "h3" $ text "Add Nodes"
       divClass "ui grid" $ do
-        divClass "ten wide" $ do
-          el "h5" $ text "Connect to a Public Node"
-        divClass "six wide" $ do
-          el "h5" $ text "Connect via address"
-          divClass "ui segment" $ do
-            addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-            nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
-            pure $ leftmost [nodeAddedE, close]
+        divClass "ten wide column" $ divClass "blue shaded" $ do
+          elClass "h5" "ui header" $ text "Connect to a Public Node"
+          publicNodeOptions
+        divClass "six wide column" $ divClass "blue shaded" $ do
+          elClass "h5" "ui header" $ text "Connect via address"
+          addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+          nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+          pure $ leftmost [nodeAddedE, close]
 
 aliasedInputForm
   :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
   => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-aliasedInputForm validator label info placeholder = divClass "ui segment" $ divClass "ui form fields" $ do
-  (tdEl1, address) <- el' "div" $ formItem' "required"
-    $ validatedInput validator
-    $ def & Txt.setPlaceholder placeholder
-          & Txt.setFluid
-          & Txt.addLabel (el "label" $ text "Address")
-  (tdEl2, alias) <- el' "div" $ formItem
-    $ validatedInput (Validator.optional Validator.validateText)
-    $ def & Txt.setPlaceholder "alias"
-          & Txt.setFluid
-          & Txt.addLabel (el "label" $ text "Alias")
-  addButton <- elClass "div" "right aligned collapsing" $ buttonWithInfoCls "primary" label info
-  let namedAddress = liftA2 (liftA2 (,)) address alias
-  return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
+aliasedInputForm validator label info placeholder = divClass "ui form fields" $ do
+  (namedAddress, submitEvt) <- formWithSubmit $ do
+    address <- formItem' "required"
+      $ validatedInput validator
+      $ def & Txt.setPlaceholder placeholder
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Address")
+    alias <- formItem
+      $ validatedInput (Validator.optional Validator.validateText)
+      $ def & Txt.setPlaceholder "alias"
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Alias")
+    submitButtonWithInfoCls "fluid primary" label info
+    let namedAddress = liftA2 (liftA2 (,)) address alias
+    return namedAddress
+  return $ filterRight $ tag (current namedAddress) submitEvt
 
 optionsTab
   :: forall t m.
@@ -747,7 +749,6 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
 
   _ <- divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
-    , publicNodeOptions
     , telegramOptions
     ]
     ++ [ delegatesOptions | False ]
@@ -826,21 +827,6 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
         addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
-    publicNodeOptions = do
-      divClass "ui medium header" $ text "Public Nodes"
-
-      let
-        showPublicNode = \case
-          PublicNode_TzScan -> "tzscan.io"
-          PublicNode_Blockscale -> "Foundation"
-          PublicNode_Obsidian -> "Obsidian"
-
-      pncDyn <- watchPublicNodeConfig
-      divClass "ui buttons" $ for_ [minBound..maxBound] $ \pn -> do
-        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "primary" else "") <> " button link")) $
-          text $ showPublicNode pn
-        let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
-        void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
     upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
@@ -857,6 +843,40 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
             text $ "A new version is available: " <> T.pack (showVersion newVersion) <> ". " <> currentVersionText <> "."
           Just (Left _) -> divClass "ui error message" $
             text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
+
+publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
+publicNodeOptions = do
+  let
+    publicNodesInOrder =
+      [ PublicNode_Obsidian
+      , PublicNode_Blockscale
+      , PublicNode_TzScan
+      ]
+    showPublicNode = \case
+      PublicNode_Obsidian -> "Obsidian Systems"
+      PublicNode_Blockscale -> "Foundation"
+      PublicNode_TzScan -> "tzscan.io"
+
+    describePublicNode = \case
+      PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
+      PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
+      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro."
+
+  pncDyn <- watchPublicNodeConfig
+  divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
+    let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+    (element', ()) <- SemUi.ui' "div"
+        (def & SemUi.elConfigClasses .~ "ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+      divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
+        SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
+        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+      divClass "twelve wide column" $ do
+        divClass "twelve wide column" $ do
+          divClass "header" $ text $ showPublicNode pn
+          divClass "description" $ text $ describePublicNode pn
+
+    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
+    void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 mailServerForm
   :: ( DomBuilder t m

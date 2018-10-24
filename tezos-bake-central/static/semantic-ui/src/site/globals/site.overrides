@@ -64,4 +64,51 @@ h6.ui.header {
     }
 }
 
+
+.shaded{
+    padding:@15px;
+}
+
+.shaded.grey { background-color:@blue; }
+.shaded.blue { background-color:#f8f9fc; }
+
+.ui.publicnodes .ui.icon.header > i.icon {
+    font-size:@25px;
+}
+
+.ui.publicnodes > .grid > .row {
+  align-items:center;
+}
+
+.ui.publicnodes > .grid {
+    border: 1px solid #CED4DA;
+    background:white;
+    border-radius: @borderRadius;
+}
+.ui.publicnodes > .grid@{moreMagic5} {
+    margin-bottom: @15px!important;
+}
+.ui.publicnodes > .active .ui.icon.header {
+    color:#a6a6a6;
+}
+
+.ui.publicnodes .ui.icon.header {
+    font-size:@14px;
+    font-weight:500;
+    color:@primaryColor;
+}
+
+.ui.publicnodes .header { 
+    font-weight:bold;
+}
+
+.ui.list.publicnodes > .item:not(.active) > .icon {
+    content:'Add Node';
+}
+.ui.list.publicnodes > .item.active > .icon {
+    content:'Added';
+}
+.ui.list.publicnodes > .item.active > .content {
+}
+
 /* vim: set syntax=less : */
