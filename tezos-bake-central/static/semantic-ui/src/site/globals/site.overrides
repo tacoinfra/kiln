@@ -41,7 +41,12 @@ h6.ui.header {
     max-height: 100%;
     background-color: #FFF;
     box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
-    z-index: 200;
+
+    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
+    // put overlays on the screen with z-index and we want to beat them.
+    // This is the smallest number that works for the following plugins:
+    //   * LastPass
+    z-index: 20;
 
     & .content {
         padding: 50px;

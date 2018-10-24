@@ -98,6 +98,7 @@ library
     Backend.Config
     --Backend.Graphs
     Backend.Http
+    Backend.Migrations
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema

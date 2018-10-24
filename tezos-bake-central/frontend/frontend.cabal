@@ -31,6 +31,7 @@ library
     , either
     , exceptions
     , file-embed
+    , friendly-time
     , ghcjs-dom
     , IntervalMap
     , jsaddle

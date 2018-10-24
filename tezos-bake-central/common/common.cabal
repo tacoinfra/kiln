@@ -49,6 +49,7 @@ library
     , these
     , time
     , transformers-compat
+    , uri-encode
     , writer-cps-mtl
 
   exposed-modules:

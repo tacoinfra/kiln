@@ -90,7 +90,7 @@ data Notify
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
-  | Notify_PublicNodeHead !(Id PublicNodeHead)
+  | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
   | Notify_TelegramConfig !(Id TelegramConfig) TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
   deriving (Eq, Ord, Typeable, Generic, Show)
@@ -120,8 +120,6 @@ instance HasDefaultNotify (Id MailServerConfig) where
   mkDefaultNotify = Notify_MailServerConfig
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
-instance HasDefaultNotify (Id PublicNodeHead) where
-  mkDefaultNotify = Notify_PublicNodeHead
 
 notify :: (PersistBackend m) => Notify -> m ()
 notify n = do

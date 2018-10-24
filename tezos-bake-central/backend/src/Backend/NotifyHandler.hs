@@ -57,12 +57,13 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
       Notify_PublicNodeConfig _eid ent -> handlePublicNodeConfig ent
-      Notify_PublicNodeHead eid -> handlePublicNodeHead eid
+      Notify_PublicNodeHead eid ent -> handlePublicNodeHead eid ent
       Notify_TelegramConfig _eid ent -> handleTelegramConfig ent
       Notify_TelegramRecipient eid ent -> handleTelegramRecipient eid ent
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
+    latestHeadVS = _bakeViewSelector_latestHead aggVS
 
     summaryVS = _bakeViewSelector_summary aggVS
     handleClient cid = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
@@ -97,13 +98,18 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     nodesVS = _bakeViewSelector_nodes aggVS
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
-    handleNode nid node' = whenM (viewSelects (Bounded nid) nodesVS || viewSelects (Bounded nid) nodeAddressesVS) $ do
-      let node = if _node_deleted node' then Nothing else Just node'
-      alerts <- getNodeAddresses $ Just nid
-      pure mempty
-        { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
-        , _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts
-        }
+    handleNode nid node' = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) nodesVS) $ do
+          let node = if _node_deleted node' then Nothing else Just node'
+          pure mempty
+            { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node)) }
+      , whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+          alerts <- getNodeAddresses $ Just nid
+          pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
+      , whenM (viewSelects () latestHeadVS) $ do
+          latestHead <- runReaderT dataSourceHead nds
+          pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
+      ]
 
     delegateVS = _bakeViewSelector_delegates aggVS
     handleDelegate dId = do
@@ -139,7 +145,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      logNodeSummary <- flip traverse (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
+      logNodeSummary <- for (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId
           pure mempty
@@ -171,9 +177,13 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
 
     publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
-    handlePublicNodeHead nid = whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
-      node <- get $ fromId nid
-      pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) node }
+    handlePublicNodeHead nid pnh = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
+          pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
+      , whenM (viewSelects () latestHeadVS) $ do
+          latestHead <- runReaderT dataSourceHead nds
+          pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
+      ]
 
     upgradeVS = _bakeViewSelector_upgrade aggVS
     handleUpgradeNotice = whenM (viewSelects () upgradeVS) $ do

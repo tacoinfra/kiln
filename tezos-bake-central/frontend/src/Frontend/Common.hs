@@ -1,47 +1,50 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Frontend.Common where
 
-import Control.Lens ((%~))
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
-import Data.Foldable (toList)
 import Data.Map (Map)
-import Data.Proxy (Proxy (..))
-import Data.Semigroup ((<>))
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
-import Data.Typeable (Typeable)
-import GHC.Generics (Generic)
+import qualified Data.Time.Format.Human as HumanTime
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
-import Tezos.ShortByteString (fromShort)
 
 import Tezos.NodeRPC.Sources (tzScanUri)
-import Tezos.Types (BlockHash, ChainId, Fitness, NamedChain (..), PublicKeyHash, Tez (..), toBase58Text,
-                    toPublicKeyHashText, unFitness)
+import Tezos.ShortByteString (fromShort)
+import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common (tshow)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain)
 import Common.URI (appendPaths, mkRootUri)
+import ExtraPrelude
 
+data FrontendContext t = FrontendContext
+  { _frontendContext_config :: !FrontendConfig
+  , _frontendContext_timeZone :: !TimeZone
+  , _frontendContext_oneSecondTimer :: !(Dynamic t UTCTime)
+  } deriving (Generic, Typeable)
 
-data Cfg = Cfg
-  { _cfg_checkForUpgrade :: !Bool
-  , _cfg_chain :: !(Either NamedChain ChainId)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+class HasTimeZone r where
+  timeZone :: Lens' r TimeZone
+
+class HasTimer t r where
+  timer :: Lens' r (Dynamic t UTCTime)
 
 data Enabled = Disabled | Enabled
   deriving (Eq, Ord, Show, Read, Enum)
@@ -60,11 +63,24 @@ urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
 
-localTimestamp :: (DomBuilder t m, MonadIO m) => Time.UTCTime -> m ()
-localTimestamp timestamp = do
-  tz <- liftIO Time.getCurrentTimeZone
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
+localTimestamp t = do
+  tz <- asks (^. timeZone)
   text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
-    Time.utcToZonedTime tz timestamp
+    Time.utcToZonedTime tz t
+
+localHumanizedTimestamp :: (DomBuilder t m, PostBuild t m, MonadReader r m, HasTimeZone r, HasTimer t r) => Dynamic t Time.UTCTime -> m ()
+localHumanizedTimestamp tDyn = do
+  tz <- asks (^. timeZone)
+  currentTime <- asks (^. timer)
+  dynText $ ffor2 currentTime tDyn $ \c t ->
+    T.pack $ HumanTime.humanReadableTimeI18N' HumanTime.defaultHumanTimeLocale { HumanTime.timeZone = tz } c t
+
+whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
+whenJustDyn d f = dyn_ . ffor d $ \case
+  Nothing -> blank
+  Just x -> f x
+
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
@@ -151,21 +167,21 @@ validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
-blockExplorerLink :: (MonadReader Cfg m, DomBuilder t m) => Text -> m a -> m a
+blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => Text -> m a -> m a
 blockExplorerLink path f = do
-  chain <- asks _cfg_chain
+  chain <- asks (^. frontendConfig . frontendConfig_chain)
   case chain of
     Right _chainId -> f
     Left namedChain ->
       elAttr "a" ("href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
 
-blockHashLink :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m ()
+blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m ()
 blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)
 
-blockHashLinkAs :: (MonadReader Cfg m, DomBuilder t m) => BlockHash -> m a -> m a
+blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m a -> m a
 blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
 
-publicKeyHashLink :: (MonadReader Cfg m, DomBuilder t m) => PublicKeyHash -> m ()
+publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink hash (text hash)
   where hash = toPublicKeyHashText pkh
 
@@ -191,3 +207,14 @@ cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t (
 cancelableModal f close = elAttr "div" ("class"=:"modal-box") $ do
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+
+makeLenses ''FrontendContext
+
+instance HasFrontendConfig (FrontendContext t) where
+  frontendConfig = frontendContext_config
+
+instance HasTimeZone (FrontendContext t) where
+  timeZone = frontendContext_timeZone
+
+instance HasTimer t (FrontendContext t) where
+  timer = frontendContext_oneSecondTimer

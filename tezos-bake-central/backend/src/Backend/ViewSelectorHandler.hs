@@ -36,17 +36,19 @@ import Backend.Schema
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
+import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
-  => Maybe NamedChain
+  => FrontendConfig
+  -> Maybe NamedChain
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> query
@@ -90,19 +92,20 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
       selNodes = In $ iMapSelectorKeys nodesVS
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockPred", n."headBlockBakedAt" AT TIME ZONE 'UTC'
         , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."updated" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
+      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
         (Bounded nid, First $ Just Node
           { _node_address = addr
           , _node_alias = alias
           , _node_identity = ident
           , _node_headLevel = headLevel
           , _node_headBlockHash = headBlockHash
+          , _node_headBlockPred = headBlockPred
           , _node_headBlockBakedAt = headBlockBakedAt
           , _node_peerCount = peerCount
           , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
@@ -159,9 +162,12 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
       pure (telegramConfig, telegramRecipients)
 
   alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
+  config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ runReaderT dataSourceHead nds
 
   return BakeView
-    { _bakeView_clients = mempty -- clients
+    { _bakeView_config = config
+    , _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
@@ -176,6 +182,7 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
     -- , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
+    , _bakeView_latestHead = latestHead
     , _bakeView_upgrade = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients

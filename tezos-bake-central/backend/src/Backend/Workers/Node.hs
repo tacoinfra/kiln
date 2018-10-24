@@ -29,7 +29,6 @@ import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
@@ -95,9 +94,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
         pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: ChainId -> NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
-nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
-  oldHead <- runReaderT dataSourceHead nds
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
   updateNodeDataSource nds nodeAddr headBlockInfo
   haveNewHead nds Nothing nodeAddr headBlockInfo
 
@@ -106,21 +104,6 @@ nodeMonitor chainId nds appConfig nodeAddr nodeId headBlockInfo = do
     -- This isn't very nuanced: old, stale nodes, even if they are catching
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
-    when ((view hash <$> oldHead) /= (Just $ view hash headBlockInfo)) $ do
-      have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
-      case have of
-        Just entryId -> do
-          updateId entryId [Parameters_headTimestampField =. headBlockInfo ^. timestamp]
-          getId entryId >>= traverse_ (notify . Notify_Parameters entryId)
-        Nothing -> do
-          params <- liftIO $ readMVar $ _nodeDataSource_parameters nds
-          let entry = Parameters
-                { _parameters_protoInfo = params
-                , _parameters_chain = chainId
-                , _parameters_headTimestamp = headBlockInfo ^. timestamp
-                }
-          notify . flip Notify_Parameters entry =<< insert' entry
-
     now <- getTime
     updateId nodeId
       [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
@@ -211,7 +194,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             clearInaccessibleNodeError nodeId
             clearNodeWrongChainError nodeId
 
-          nodeMonitor chainId nds appConfig nodeAddr nodeId block
+          nodeMonitor nds appConfig nodeAddr nodeId block
 
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
@@ -261,44 +244,41 @@ updateDataSource nds (pn, chain, uri) = do
     queryPublicNode k = runExceptT $
       runReaderT k $
         PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
-    {-# INLINE queryPublicNode #-}
 
     getHeadFromSource :: m (Either PublicNodeError VeryBlockLike)
     getHeadFromSource = queryPublicNode $ runLoggingEnv (_nodeDataSource_logger nds) $ getCurrentHead chainId
-    {-# INLINE getHeadFromSource #-}
 
     publicNodeEnabled :: m Bool
     publicNodeEnabled = fmap (fromMaybe False . listToMaybe) $
       runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
         project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
-    {-# INLINE publicNodeEnabled #-}
 
     updatePublicNodeInDb :: m ()
     updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
       Left e -> $(logErrorSH) e
       Right b -> do
         haveNewHead nds (Just pn) uri b
-        let
-          bChain = NamedChainOrChainId chain
-          bLevel = b ^. level
-          bHash = b ^. hash
-          bFitness = b ^. fitness
-          bBakedAt = b ^. timestamp
         runDb (Identity db) $ do
-          updatedRecord :: Maybe (Id PublicNodeHead) <- listToMaybe . stripOnly <$> [queryQ|
-            INSERT INTO "PublicNodeHead"
-              ("source", "chain", "headLevel", "headBlockHash", "headBlockFitness", "headBlockBakedAt", updated)
-              VALUES (?pn, ?bChain, ?bLevel, ?bHash, ?bFitness, ?bBakedAt, NOW())
-            ON CONFLICT ("source", "chain") DO UPDATE SET
-              "headLevel" = ?bLevel,
-              "headBlockHash" = ?bHash,
-              "headBlockFitness" = ?bFitness,
-              "headBlockBakedAt" = ?bBakedAt,
-              updated = NOW()
-            RETURNING id
-          |]
-          for_ updatedRecord $ notify . mkDefaultNotify
-    {-# INLINE updatePublicNodeInDb #-}
+          let chainField = NamedChainOrChainId chain
+          now <- getTime
+          eid' :: Maybe (Id PublicNodeHead) <-
+            fmap toId . listToMaybe <$> project AutoKeyField (PublicNodeHead_chainField ==. chainField &&. PublicNodeHead_sourceField ==. pn)
+          case eid' of
+            Nothing -> do
+              let
+                pnh = PublicNodeHead
+                  { _publicNodeHead_source = pn
+                  , _publicNodeHead_chain = chainField
+                  , _publicNodeHead_headBlock = b
+                  , _publicNodeHead_updated = now
+                  }
+              notify . flip Notify_PublicNodeHead (Just pnh) =<< insert' pnh
+            Just eid -> do
+              updateId eid
+                [ PublicNodeHead_headBlockField =. b
+                , PublicNodeHead_updatedField =. now
+                ]
+              notify . Notify_PublicNodeHead eid =<< getId eid
 
 nodeAlertWorker
   :: NodeDataSource
