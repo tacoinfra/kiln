@@ -10,10 +10,8 @@
 
 module Frontend.Settings.Telegram where
 
-import Control.Lens ((^?), _Just)
 import Control.Lens.TH (makePrisms)
 import Data.Map.Monoidal (MonoidalMap)
-import Data.Semigroup (First (..))
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
@@ -23,12 +21,11 @@ import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Safe (headMay)
 
 import ExtraPrelude
-import Common ()
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
-import Frontend.Common (formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
+import Frontend.Common (formWithSubmit, uiButton, uiDynSubmit, updatedWithInit, Enabled(..))
 
 data PageState v = PageState_Unsubmitted | PageState_Submitted | PageState_Success v
   deriving (Functor, Eq, Ord, Show, Generic, Typeable)
@@ -56,9 +53,9 @@ settings = switchHold never <=< workflowView $ Workflow $ do
 
         -- TODO: Abstract this somewhere.
         rec
-          submitState <- holdUniqDyn <=< holdDyn (Just False) $ leftmost
+          submitState <- holdUniqDyn <=< holdDyn (Just Disabled) $ leftmost
             [ Nothing <$ submit -- Loading
-            , Just . isRight <$> leftmost -- Revalidate when input changes or validation result comes back.
+            , Just . either (const Disabled) (const Enabled) <$> leftmost -- Revalidate when input changes or validation result comes back.
                 [ gate (isJust <$> current submitState) (updated botApiKey) -- Allow input changes only when not in loading state.
                 , tag (current botApiKey) validated -- This will exit loading state when validation comes in.
                 ]

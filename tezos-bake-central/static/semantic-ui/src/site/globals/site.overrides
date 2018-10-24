@@ -98,7 +98,7 @@ h6.ui.header {
     color:@primaryColor;
 }
 
-.ui.publicnodes .header { 
+.ui.publicnodes .header {
     font-weight:bold;
 }
 
@@ -109,6 +109,24 @@ h6.ui.header {
     content:'Added';
 }
 .ui.list.publicnodes > .item.active > .content {
+}
+
+.telegram-setup {
+    line-height: 19px;
+
+    & .error {
+        padding-left: 50px;
+        padding-right: 50px;
+        padding-top: 0px;
+    }
+
+    & li {
+        padding-bottom: 1.5em;
+    }
+
+    & p {
+        padding-top: 1em;
+    }
 }
 
 /* vim: set syntax=less : */

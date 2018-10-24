@@ -6,27 +6,22 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Common.App where
 
-import Control.Lens (makeLenses)
+import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Functor.Compose (Compose (..))
-import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Text (Text)
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
-import Data.Typeable (Typeable)
 import Data.Version (Version)
 import Data.Word (Word16)
-import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
@@ -39,15 +34,16 @@ import Tezos.Types
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Schema
 import Common.Vassal
+import ExtraPrelude
 
 data Bake = Bake
 
 type ErrorInfo = (ErrorLog, ErrorLogView)
+
 getErrorInterval :: (ErrorLog, ErrorLogView) -> First ((ErrorLog, ErrorLogView), ClosedInterval (WithInfinity UTCTime))
 getErrorInterval ei@(el, _) = First (ei, ClosedInterval
   (Bounded $ _errorLog_started el)
   (maybe UpperInfinity Bounded $ _errorLog_stopped el))
-
 
 type Deletable a = First (Maybe a)
 
@@ -102,11 +98,7 @@ data BakeView a = BakeView
   , _bakeView_alertCount :: !(MaybeView Int a)
   -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
-  } deriving (Functor, Generic, Typeable, Traversable, Foldable)
-
-deriving instance Show a => Show (BakeView a)
-deriving instance Eq a => Eq (BakeView a)
-deriving instance Ord a => Ord (BakeView a)
+  } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 
 data MailServerView = MailServerView

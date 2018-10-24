@@ -1,15 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Backend.Workers.Delegate where
 
 import Control.Concurrent.MVar (readMVar)
 import Control.Lens ((^.))
-import Control.Monad.Except (catchError, ExceptT(..), runExceptT)
+import Control.Monad.Except (ExceptT (..), catchError, runExceptT)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (logDebug, logErrorSH, LoggingT)
-import Control.Monad.Reader (ReaderT(..))
+import Control.Monad.Logger (LoggingT, logDebug, logErrorSH)
+import Control.Monad.Reader (ReaderT (..))
 import Data.Foldable (for_)
 import Data.Functor.Identity (Identity (..))
 import Data.Map (Map)
@@ -25,8 +25,8 @@ import Tezos.Types
 import Backend.CachedNodeRPC (NodeDataSource (..), dataSourceHead, dataSourceNode, waitForNewHeadWithTimeout)
 import Backend.Common (worker')
 import Backend.Schema
-import Common (tshow)
 import Common.Schema
+import ExtraPrelude
 
 delegateWorker
   :: forall m. MonadIO m

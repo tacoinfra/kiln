@@ -28,24 +28,16 @@ module Backend.Schema
 
 import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
-import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
-import Data.Foldable (toList)
-import Data.Functor (void)
 import Data.Int (Int64)
-import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (fromJust, fromMaybe)
-import Data.Semigroup ((<>))
+import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
-import Data.Typeable (Typeable)
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
@@ -55,13 +47,12 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
-import Database.Groundhog.TH
+import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
-import GHC.Generics (Generic)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
@@ -79,6 +70,7 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.Schema
+import ExtraPrelude
 
 
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a

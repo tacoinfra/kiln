@@ -14,17 +14,10 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad (when)
-import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Foldable (for_, traverse_)
-import Data.Functor (void)
-import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
-import Data.Maybe (listToMaybe)
-import Data.Text (Text)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
@@ -44,10 +37,10 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (checkForUpgrade)
 import Backend.Version (version)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Common (tshow)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
+import ExtraPrelude
 
 requestHandler
   :: forall m. (MonadBaseControl IO m, MonadIO m)

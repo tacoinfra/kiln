@@ -9,21 +9,12 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Arrow ((***))
-import Control.Lens ((<&>))
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
-import Data.Functor.Identity (Identity (..))
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Text (Text)
+import Data.Semigroup (First (..))
 import Data.Time (UTCTime)
-import Data.Traversable (for)
 import Data.Version (Version)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
@@ -42,13 +33,12 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Common
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Schema
 import Common.Vassal
-
+import ExtraPrelude
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
@@ -402,14 +392,12 @@ getAlertCount
 getAlertCount =
   fmap Pg.fromOnly . listToMaybe <$> [queryQ|
     SELECT
-        count(*)
+      COUNT(*)
     FROM "ErrorLog" el
     WHERE el.stopped IS NULL|]
 
-getNodeAddresses :: forall m.
-  ( Monad m
-  , PostgresRaw m
-  )
+getNodeAddresses
+  :: forall m. (Monad m, PostgresRaw m)
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), First (Maybe NodeSummary))]
 getNodeAddresses nid = do

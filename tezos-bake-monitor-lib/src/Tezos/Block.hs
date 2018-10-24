@@ -153,7 +153,6 @@ data VeryBlockLike = VeryBlockLike
   } deriving (Eq, Ord, Show, Typeable)
 
 
-
 concat <$> traverse deriveTezosJson
   [ ''Block
   , ''BlockMetadata
@@ -167,15 +166,15 @@ concat <$> traverse deriveTezosJson
   ]
 
 concat <$> traverse makeLenses
- [ 'Block
- , 'BlockMetadata
- , 'MaxOperationListLength --  "max_operation_list_length": {
- , 'MonitorBlock
- , 'TzScanBaker
- , 'TzScanBlock
- , 'TzScanProtocol
- , 'VeryBlockLike
- ]
+  [ 'Block
+  , 'BlockMetadata
+  , 'MaxOperationListLength --  "max_operation_list_length": {
+  , 'MonitorBlock
+  , 'TzScanBaker
+  , 'TzScanBlock
+  , 'TzScanProtocol
+  , 'VeryBlockLike
+  ]
 
 class BlockLike b where
   -- chain :: Lens' b ChainId

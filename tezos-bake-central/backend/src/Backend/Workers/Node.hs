@@ -15,30 +15,22 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
-import Control.Lens (ifor_, view, (^.), (^?), _Just)
-import Control.Monad (when)
 import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, LoggingT, logInfo, logInfoSH, logWarnSH, logDebug, logErrorSH)
-import Control.Monad.Reader (ReaderT, runReaderT)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.State (execStateT)
+import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Foldable (for_, traverse_)
-import Data.Functor (($>))
-import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
-import Data.Map.Strict (Map)
+import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup ((<>))
-import Data.Text (Text)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
-import Rhyolite.Backend.Logging (LoggingEnv(..), runLoggingEnv)
+import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
@@ -58,8 +50,8 @@ import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
-import Common (tshow)
 import Common.Schema
+import ExtraPrelude
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a

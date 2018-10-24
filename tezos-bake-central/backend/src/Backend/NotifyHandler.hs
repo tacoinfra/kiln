@@ -2,28 +2,22 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
-import Data.Bool (bool)
-import Data.Foldable (fold)
-import Data.Functor.Identity (Identity (..))
-import Data.Maybe (listToMaybe)
-import Data.Semigroup (First (..), (<>))
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.))
 import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
 
@@ -31,12 +25,12 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getUpgradeNotice, getAlertCount, getNodeAddresses)
-import Common (tshow, whenJust, whenM)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView, nodeIdForErrorLogView)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getUpgradeNotice)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
+                   nodeIdForErrorLogView)
 import Common.Schema
-
 import Common.Vassal
+import ExtraPrelude
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
@@ -166,9 +160,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
                   (Bounded $ _errorLog_started errorLog)
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
           whenM (viewSelects errorInterval errorsVS) $ pure mempty
-              { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                  MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
-              }
+            { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
+            }
       return $ newCount <> newErrors <> fold logNodeSummary
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS

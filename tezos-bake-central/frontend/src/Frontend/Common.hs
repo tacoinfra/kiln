@@ -43,6 +43,16 @@ data Cfg = Cfg
   , _cfg_chain :: !(Either NamedChain ChainId)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
+data Enabled = Disabled | Enabled
+  deriving (Eq, Ord, Show, Read, Enum)
+
+isDisabled :: Enabled -> Bool
+isDisabled Disabled = True
+isDisabled Enabled = False
+
+isEnabled :: Enabled -> Bool
+isEnabled Enabled = True
+isEnabled Disabled = False
 
 urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
 urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
@@ -60,13 +70,13 @@ uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
 uiButton classes label = fmap (domEvent Click . fst) $
   elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
 
-uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Bool) -> m () -> m ()
+uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Enabled) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
   "type"=:"submit" <> "class"=:("ui " <> stateClass s <> " primary button"))
   where
     stateClass = \case
-      Just True -> ""
-      Just False -> "disabled"
+      Just Enabled -> ""
+      Just Disabled -> "disabled"
       Nothing -> "loading"
 
 uiDynButton :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m () -> m (Event t ())

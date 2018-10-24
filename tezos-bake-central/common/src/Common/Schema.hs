@@ -24,7 +24,6 @@ module Common.Schema
   , Id
   ) where
 
-import Control.Lens (views)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
@@ -49,6 +48,7 @@ import Tezos.NodeRPC.Types (NetworkStat (..))
 import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
+import ExtraPrelude
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render

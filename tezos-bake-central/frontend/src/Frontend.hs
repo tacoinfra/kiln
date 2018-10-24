@@ -13,38 +13,26 @@
 
 module Frontend where
 
-import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((%~), (.~), (<>~), _1, _2, _3)
-import Control.Monad (join, when, (<=<))
+import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
-import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Coerce (coerce)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_)
-import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
-import Data.Semigroup (First (..), (<>))
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
+import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Traversable (for)
 import Data.Version (Version, showVersion)
 import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
@@ -53,6 +41,9 @@ import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
+import Obelisk.Frontend (Frontend (..))
+import Obelisk.Generated.Static (static)
+import Obelisk.Route (R)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
@@ -72,25 +63,21 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import ExtraPrelude
-import Common (tshow, maybeSomething, uriHostPortPath)
+import Common (maybeSomething, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route
+import Common.Route (AppRoute)
 import Common.Schema hiding (Event)
 import Common.Vassal
+import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 import qualified Frontend.Settings.Telegram as Telegram
-import Obelisk.Frontend
-import Obelisk.Generated.Static
-import Obelisk.Route
-import Frontend.Modal.Class (HasModal, ModalM, tellModal)
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
@@ -98,12 +85,13 @@ frontend = Frontend
   , _frontend_body = prerender (return ()) frontendBody
   }
 
-frontendBody ::
-  ( MonadWidget t m
-  , HasJS x m
-  , MonadFix (Performable m)
-  , PrimMonad m
-  )
+frontendBody
+  :: forall m t x.
+    ( MonadWidget t m
+    , HasJS x m
+    , MonadFix (Performable m)
+    , PrimMonad m
+    )
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
@@ -386,7 +374,7 @@ appGutter =
       & SemUi.classes SemUi.|~ "app-gutter"
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    $ nodesOptions
+    nodesOptions
 
 appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideFooter =
@@ -615,7 +603,6 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
           el "p" $ do
-            return ()
             text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
             case _errorLog_stopped log of
               Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
@@ -1177,17 +1164,6 @@ clientTab cid addr = do
 
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
-
-data Enabled = Disabled | Enabled
-  deriving (Eq, Ord, Show, Read, Enum)
-
-isDisabled :: Enabled -> Bool
-isDisabled Disabled = True
-isDisabled Enabled = False
-
-isEnabled :: Enabled -> Bool
-isEnabled Enabled = True
-isEnabled Disabled = False
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> Dynamic t Enabled -> m (Event t k)
 semuiTab label k currentTab enabled =
