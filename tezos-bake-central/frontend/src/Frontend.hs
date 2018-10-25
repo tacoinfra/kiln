@@ -700,9 +700,13 @@ nodesOptions = do
         divClass "header" $      dynText $ fromMaybe <$> dAddress <*> dName
         divClass "description" $ dynText $ fmap (fromMaybe "") $ (<$) <$> dAddress <*> dName
 
-    openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener" "Add Node" "Configure Monitored Nodes"
+    openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" "Add Node" "Configure Monitored Nodes"
     tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
       el "h3" $ text "Add Nodes"
+      divClass "basic small segment" $ text $ T.unlines
+        [ "Choose from public nodes on the left, connect to your own nodes on the right."
+        , "We recommend adding at least one public node."
+        ]
       divClass "ui grid" $ do
         divClass "ten wide column" $ divClass "blue shaded" $ do
           elClass "h5" "ui header" $ text "Connect to a Public Node"
