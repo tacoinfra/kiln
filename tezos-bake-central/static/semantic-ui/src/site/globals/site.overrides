@@ -42,6 +42,12 @@ h6.ui.header {
     background-color: #FFF;
     box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
 
+    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
+    // put overlays on the screen with z-index and we want to beat them.
+    // This is the smallest number that works for the following plugins:
+    //   * LastPass
+    z-index: 20;
+
     & .content {
         padding: 50px;
     }
@@ -52,6 +58,7 @@ h6.ui.header {
     height: @30px;
     width: @30px;
     float: right;
+    cursor: pointer;
 
     &:hover {
         color: @hoverBlue;
@@ -98,7 +105,7 @@ h6.ui.header {
     color:@primaryColor;
 }
 
-.ui.publicnodes .header { 
+.ui.publicnodes .header {
     font-weight:bold;
 }
 
@@ -110,5 +117,39 @@ h6.ui.header {
 }
 .ui.list.publicnodes > .item.active > .content {
 }
+
+.topbar {
+    padding-left: 30px;
+
+    & .ui.horizontal.list .item .content {
+        font-weight: bold;
+        padding-left: 30px;
+
+        & .item .content .header {
+            font-weight: normal;
+            color: rgba(0, 0, 0, .6);
+            padding-bottom: 4px;
+        }
+    }
+}
+
+.telegram-setup {
+    line-height: 19px;
+
+    & .error {
+        padding-left: 50px;
+        padding-right: 50px;
+        padding-top: 0px;
+    }
+
+    & li {
+        padding-bottom: 1.5em;
+    }
+
+    & p {
+        padding-top: 1em;
+    }
+}
+
 
 /* vim: set syntax=less : */

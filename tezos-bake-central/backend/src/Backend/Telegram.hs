@@ -50,9 +50,11 @@ import Backend.Common (threadDelay', worker', workerWithDelay)
 import Backend.Http (HasHttp, runHttpT)
 import qualified Backend.Http as Http
 import Backend.Schema
-import Common
+import Common (defaultTezosCompatJsonOptions, nominalDiffTimeToMicroseconds, nominalDiffTimeToSeconds,
+               unixEpoch)
 import Common.Schema
 import Common.URI as Uri (appendPaths, appendQueryParams)
+import ExtraPrelude
 
 data Env = Env
   { _env_beginWaitingForNewRecipient :: IO ()
@@ -122,9 +124,7 @@ instance ToJSON UnixTimestamp where
 -- | Type that only succeeds JSON parsing if it is 'True', not 'False'.
 data OnlyTrue = OnlyTrue deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON OnlyTrue where
-  parseJSON a = do
-    bool <- Aeson.parseJSON a
-    if bool then pure OnlyTrue else fail "Value was false"
+  parseJSON a = bool (fail "Value was false") (pure OnlyTrue) =<< Aeson.parseJSON a
 instance ToJSON OnlyTrue where
   toJSON OnlyTrue = Aeson.toJSON True
   toEncoding OnlyTrue = Aeson.toEncoding True

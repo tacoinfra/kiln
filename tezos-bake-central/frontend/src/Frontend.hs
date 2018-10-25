@@ -13,38 +13,26 @@
 
 module Frontend where
 
-import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((%~), (.~), (<>~), _1, _2, _3)
-import Control.Monad (join, when, (<=<))
+import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
-import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Coerce (coerce)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_)
-import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
-import Data.Semigroup (First (..), (<>))
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
+import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Traversable (for)
 import Data.Version (Version, showVersion)
 import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
@@ -53,6 +41,9 @@ import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
+import Obelisk.Frontend (Frontend (..))
+import Obelisk.Generated.Static (static)
+import Obelisk.Route (R)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
@@ -72,25 +63,23 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import ExtraPrelude
-import Common (tshow, maybeSomething, uriHostPortPath)
+import Common (maybeSomething, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain,
+                      frontendConfig_upgradeBranch)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route
+import Common.Route (AppRoute)
 import Common.Schema hiding (Event)
 import Common.Vassal
+import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 import qualified Frontend.Settings.Telegram as Telegram
-import Obelisk.Frontend
-import Obelisk.Generated.Static
-import Obelisk.Route
-import Frontend.Modal.Class (HasModal, ModalM, tellModal)
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
@@ -98,12 +87,13 @@ frontend = Frontend
   , _frontend_body = prerender (return ()) frontendBody
   }
 
-frontendBody ::
-  ( MonadWidget t m
-  , HasJS x m
-  , MonadFix (Performable m)
-  , PrimMonad m
-  )
+frontendBody
+  :: forall m t x.
+    ( MonadWidget t m
+    , HasJS x m
+    , MonadFix (Performable m)
+    , PrimMonad m
+    )
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
@@ -112,13 +102,6 @@ frontendBody = void $ do
     Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
     Nothing ->
       Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
-
-  checkForUpgrade <-
-    fmap (maybe False Config.parseBool) $
-      liftIO $ getExecutableConfig $ T.pack Config.checkForUpgrade
-
-  chain :: Either NamedChain ChainId <- ffor (liftIO $ getExecutableConfig $ T.pack Config.chain) $ \r ->
-    maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
@@ -137,15 +120,19 @@ frontendBody = void $ do
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
       <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
 
-    appCfg = Cfg
-      { _cfg_checkForUpgrade = checkForUpgrade
-      , _cfg_chain = chain
-      }
-
-  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $
-    flip runReaderT appCfg $
-      runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
-        appMain
+  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    cfg <- watchFrontendConfig
+    dyn_ $ ffor cfg $ \case
+      Nothing -> waitingForResponse
+      Just c -> do
+        tz <- liftIO Time.getCurrentTimeZone
+        t0 <- liftIO Time.getCurrentTime
+        everySecondTick <- fmap _tickInfo_lastUTC <$> tickLossyFromPostBuildTime 1
+        currentTime <- holdDyn t0 everySecondTick
+        let ctx = FrontendContext c tz currentTime
+        flip runReaderT ctx $
+          runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
+            appMain
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
@@ -153,10 +140,22 @@ validatingRange f v =
     then Nothing
     else Just $ f v
 
+watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
+watchFrontendConfig =
+  (fmap . fmap) (getMaybeView . _bakeView_config) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_config = viewJust 1
+    }
+
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
   (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_parameters = viewJust 1
+    }
+
+watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))
+watchLatestHead =
+  (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_latestHead = viewJust 1
     }
 
 watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
@@ -309,14 +308,12 @@ data UITab = UITab_Nodes
   deriving (Eq, Ord, Show)
 
 appMain
-  :: forall t m.
+  :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader Cfg m
-    , HasModal t m
-    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     )
   => m ()
 appMain = do
@@ -386,7 +383,7 @@ appGutter =
       & SemUi.classes SemUi.|~ "app-gutter"
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    $ nodesOptions
+    nodesOptions
 
 appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideFooter =
@@ -411,15 +408,35 @@ appSideFooter =
                 text "Help"
         elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
-appHeader :: MonadRhyoliteFrontendWidget Bake t m => m ()
-appHeader =
-  SemUi.segment
-    (def
-      & SemUi.segmentConfig_vertical SemUi.|~ True
-      )
-    $ do
-        text "header"
-        void $ headerBell
+appHeader
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
+appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
+  divClass "ui stackable grid" $ do
+    divClass "six wide column topbar" $ do
+      divClass "ui horizontal list" $ do
+        latestHead <- watchLatestHead
+        let info title body = divClass "item" $ divClass "content" $ do
+              divClass "header" $ text title
+              body
+
+        info "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+
+        protoInfo <- watchProtoInfo
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo $ (fmap.fmap) (view level) latestHead
+        whenJustDyn cyc $ \c -> info "Cycle" $
+          text $ tshow $ unCycle c
+
+        whenJustDyn latestHead $ \b -> info "Block" $ do
+          text $ tshow (unRawLevel $ b ^. level) <> " "
+          localHumanizedTimestamp $ pure $ b ^. timestamp
+
+    divClass "ten wide column" $ do
+      void headerBell
+
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -442,17 +459,17 @@ headerBell = do
                   & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
                   & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
                   & SemUi.iconConfig_link SemUi.|~ True
-                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount $ (>0))
+                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
                   )
         return $ domEvent Click e
-        
+
 
 appContentArea
-  :: forall t m.
+  :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader Cfg m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
@@ -465,25 +482,33 @@ appContentArea selectedTab = do
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 
-upgradeRibbon :: MonadRhyoliteFrontendWidget Bake t m => m ()
-upgradeRibbon = do
-  upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
-  dyn_ $ ffor upgradeNotice $ \case
-    Nothing -> blank
-    Just (_log, upgrade) ->
-      case upgrade of
-        Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-        Right v -> do
-          let
-            versionText = T.pack (showVersion v)
-            versionAnchor = "anchor-" <> T.filter (/='.') versionText
-          elAttr "a"
-            (  "class"=:"ui green right ribbon label"
-            <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-            <> "target"=:"_blank") $
-              text $ "New version available: " <> versionText
+upgradeRibbon
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => m ()
+upgradeRibbon =
+  (asks (^. frontendConfig . frontendConfig_upgradeBranch) >>=) $ traverse_ $ \upgradeBranch -> do
+    upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+    dyn_ $ ffor upgradeNotice $ traverse_ $ \(_log, upgrade) -> case upgrade of
+      Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+      Right v -> do
+        let
+          versionText = T.pack (showVersion v)
+          versionAnchor = "anchor-" <> T.filter (/='.') versionText
+        elAttr "a"
+          (  "class"=:"ui green right ribbon label"
+          <> "href"=:(Config.changelogUrl upgradeBranch <> "#" <> versionAnchor)
+          <> "target"=:"_blank") $
+            text $ "New version available: " <> versionText
 
-nodesTabOrWelcome :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
+nodesTabOrWelcome
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
 nodesTabOrWelcome = do
   _clientAddresses <- watchClientAddresses
   _delegates <- watchDelegatePublicKeyHashes
@@ -508,17 +533,22 @@ welcomeScreen =
             )
           $ do
               text $ "Welcome to " <> appName <> "."
-        divClass "" $ text $ appName <> " helps you monitor Tezos nodes to keep your system"
-        divClass "" $ text $ "running smoothly, with many more features to come."
-        divClass "" $ text $ "\160"
-        divClass "" $ text $ "Click \"Add Node\" on the left to get started."
+        divClass "" $ do
+          text $ appName <> " helps you monitor Tezos nodes to keep your system"
+          el "br" blank
+          text "running smoothly, with many more features to come."
+          el "br" blank
+          text "\160"
+          el "br" blank
+          text "Click \"Add Node\" on the left to get started."
 
-whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
-whenJustDyn d f = dyn_ . ffor d $ \case
-  Nothing -> blank
-  Just x -> f x
-
-summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadReader Cfg m) => m ()
+summaryTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => m ()
 summaryTab = divClass "ui grid" $ do
   dparameters <- watchProtoInfo
   summaryReport <- watchSummary
@@ -583,7 +613,10 @@ data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilte
 
 
 liveErrorsWidget
-  :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
   => Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
   -> Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
@@ -615,7 +648,6 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
           el "p" $ do
-            return ()
             text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
             case _errorLog_stopped log of
               Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
@@ -732,24 +764,23 @@ aliasedInputForm validator label info placeholder = divClass "ui form fields" $ 
       $ def & Txt.setPlaceholder "alias"
             & Txt.setFluid
             & Txt.addLabel (el "label" $ text "Alias")
-    submitButtonWithInfoCls "fluid primary" label info
+    _ <- submitButtonWithInfoCls "fluid primary" label info
     let namedAddress = liftA2 (liftA2 (,)) address alias
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
 optionsTab
-  :: forall t m.
+  :: forall r t m.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader Cfg m
-    , HasModal t m
-    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , MonadReader r m, HasFrontendConfig r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ do
   upgradeRibbon
-  enableUpgradeCheck <- asks _cfg_checkForUpgrade
+  enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
 
   _ <- divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
@@ -763,7 +794,7 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
     divClass "ui basic segment" notificationOptions
   where
     currentChain = do
-      chain <- asks _cfg_chain
+      chain <- asks (^. frontendConfig . frontendConfig_chain)
       elClass "h3" "ui header" $ do
         text "Network: "
         el "em" $ text $ showChain chain
@@ -947,7 +978,12 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
+nodesTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
 nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
   alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
@@ -975,7 +1011,7 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
 
       maxLevelOnPublicNodes <- holdUniqDyn $
-        maximumMay . map _publicNodeHead_headLevel . toList <$> publicNodesDyn
+        maximumMay . map (^. level) . toList <$> publicNodesDyn
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
@@ -990,13 +1026,13 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
                     PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
               headBlockLevelHeader
                 nodeTitle
-                (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
+                (Just (node ^. hash, node ^. level))
                 (pure Nothing)
               divClass "description" $
                 nodeDataTable
-                  [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
-                  , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
-                  , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
+                  [ (text "Block Hash:", blockHashLink $ node ^. hash)
+                  , (text "Block Fitness:", text $ fitnessText $ node ^. fitness)
+                  , (text "Block Baked:", localTimestamp $ node ^. timestamp)
                   ]
 
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
@@ -1079,7 +1115,10 @@ nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
 
 
 delegateTab
-  :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
   => PublicKeyHash
   -> m ()
 delegateTab pkh = do
@@ -1127,7 +1166,12 @@ delegateTab pkh = do
               text $ tshow (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
               text "%)"
 
-clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> URI -> m ()
+clientTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => Id Client -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
   dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
@@ -1177,17 +1221,6 @@ clientTab cid addr = do
 
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
-
-data Enabled = Disabled | Enabled
-  deriving (Eq, Ord, Show, Read, Enum)
-
-isDisabled :: Enabled -> Bool
-isDisabled Disabled = True
-isDisabled Enabled = False
-
-isEnabled :: Enabled -> Bool
-isEnabled Enabled = True
-isEnabled Disabled = False
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> Dynamic t Enabled -> m (Event t k)
 semuiTab label k currentTab enabled =

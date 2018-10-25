@@ -24,7 +24,6 @@ module Common.Schema
   , Id
   ) where
 
-import Control.Lens (views)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
@@ -49,6 +48,7 @@ import Tezos.NodeRPC.Types (NetworkStat (..))
 import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
+import ExtraPrelude
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -113,6 +113,7 @@ data Node = Node
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
+  , _node_headBlockPred :: !(Maybe BlockHash)
   , _node_headBlockBakedAt :: !(Maybe UTCTime)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
@@ -122,6 +123,13 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+getNodeHeadBlock :: Node -> Maybe VeryBlockLike
+getNodeHeadBlock n = VeryBlockLike
+  <$> _node_headBlockHash n
+  <*> _node_headBlockPred n
+  <*> _node_fitness n
+  <*> _node_headLevel n
+  <*> _node_headBlockBakedAt n
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -148,10 +156,7 @@ instance HasId PublicNodeConfig
 data PublicNodeHead = PublicNodeHead
   { _publicNodeHead_source :: !PublicNode
   , _publicNodeHead_chain :: !NamedChainOrChainId
-  , _publicNodeHead_headLevel :: !RawLevel
-  , _publicNodeHead_headBlockHash :: !BlockHash
-  , _publicNodeHead_headBlockFitness :: !Fitness
-  , _publicNodeHead_headBlockBakedAt :: !UTCTime
+  , _publicNodeHead_headBlock :: !VeryBlockLike
   , _publicNodeHead_updated :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
@@ -163,6 +168,7 @@ mkNode addr alias = Node
   , _node_identity = Nothing -- TODO
   , _node_headLevel = Nothing
   , _node_headBlockHash = Nothing
+  , _node_headBlockPred = Nothing
   , _node_headBlockBakedAt = Nothing
   , _node_peerCount = Nothing
   , _node_networkStat = NetworkStat 0 0 0 0
@@ -174,7 +180,6 @@ mkNode addr alias = Node
 data Parameters = Parameters
   { _parameters_chain :: !ChainId
   , _parameters_protoInfo :: !ProtoInfo
-  , _parameters_headTimestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
 
@@ -498,3 +503,10 @@ instance BlockLike (Event SeenEvent) where
   fitness = event_detail . seenEvent_fitness
   level = event_detail . seenEvent_level
   timestamp = event_time
+
+instance BlockLike PublicNodeHead where
+  hash = publicNodeHead_headBlock . hash
+  predecessor = publicNodeHead_headBlock . predecessor
+  fitness = publicNodeHead_headBlock . fitness
+  level = publicNodeHead_headBlock . level
+  timestamp = publicNodeHead_headBlock . timestamp

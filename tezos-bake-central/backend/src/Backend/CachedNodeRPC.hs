@@ -145,26 +145,38 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_logger :: !LoggingEnv
   }
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> LoggingEnv -> IO NodeDataSource
-blankNodeDataSource db chain mgr logger = do
+blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
+blankNodeDataSource db chain protoInfo' mgr logger = do
   nodes <- newMVar mempty
   hist <- newEmptyMVar
   cache <- newEmptyMVar
-  protoInfo <- newEmptyMVar
+  protoInfoVar <- newEmptyMVar
   latestHead <- newTVarIO Nothing
-  _ <- forkIO $ runLoggingEnv logger $ do
-    -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
-    _ <- liftIO $ readMVar protoInfo
-    liftIO $ putMVar hist emptyCache
-    liftIO $ putMVar cache mempty
-    $(logInfo) "Cache ready!"
+
+  let
+    fill = do
+      putMVar hist emptyCache
+      putMVar cache mempty
+
+  case protoInfo' of
+    Just protoInfo -> do
+      putMVar protoInfoVar protoInfo
+      fill
+      runLoggingEnv logger $ $(logInfo) "Cache pre-initialized"
+
+    Nothing ->
+      void $ forkIO $ do
+        -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
+        _ <- readMVar protoInfoVar
+        fill
+        runLoggingEnv logger $ $(logInfo) "Cache ready!"
 
   return NodeDataSource
     { _nodeDataSource_history = hist
     , _nodeDataSource_nodes = nodes
     , _nodeDataSource_cache = cache
     , _nodeDataSource_chain = chain
-    , _nodeDataSource_parameters = protoInfo
+    , _nodeDataSource_parameters = protoInfoVar
     , _nodeDataSource_httpMgr = mgr
     , _nodeDataSource_pool = db
     , _nodeDataSource_latestHead = latestHead
@@ -217,7 +229,6 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
   needParams <- liftIO $ isEmptyMVar $ _nodeDataSource_parameters nds
 
   let
-    chainId = _nodeDataSource_chain nds
     step :: LoggingT IO (Maybe ProtoInfo) -> (Maybe PublicNode, URI) -> LoggingT IO (Maybe ProtoInfo)
     step l (pn, someNode) = l >>= \case
       Nothing -> do
@@ -229,11 +240,25 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
     onChainNodes = foldl step (return Nothing) theseNodes
 
   when needParams $ onChainNodes >>= \case
+    Nothing -> $(logInfo) "Still no params"
     Just params -> do
       void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-    _ -> $(logInfo) "Still no params"
+      insertParams params
 
   liftIO $ fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
+  where
+    chainId = _nodeDataSource_chain nds
+    insertParams params = runDb (Identity $ _nodeDataSource_pool nds) $ do
+      have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
+      case have of
+        Just _entryId -> pure ()
+        Nothing -> do
+          let
+            entry = Parameters
+              { _parameters_protoInfo = params
+              , _parameters_chain = chainId
+              }
+          notify . flip Notify_Parameters entry =<< insert' entry
 
 
 -- | extrats the fittest known branch from cache
