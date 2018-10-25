@@ -1,0 +1,45 @@
+/*******************************
+         Site Overrides
+*******************************/
+
+.ui.form .fields:not(.grouped) > .field > label,
+.ui.form .fields.grouped > label,
+.ui.form .field > label {
+  position: relative;
+  font-size: @medium;
+  font-weight: normal;
+}
+
+.ui.form :not(.required).field > label:after {
+  font-size: @small;
+  margin: @requiredMargin;
+  content: 'Optional';
+  color: @grey;
+  position: absolute;
+  top:0;
+  right:0;
+}
+
+.ui.form .required.fields:not(.grouped) > .field > label:after,
+.ui.form .required.fields.grouped > label:after,
+.ui.form .required.field > label:after {
+  font-size: @small;
+  margin: @requiredMargin;
+  content: 'Required';
+  color: @grey;
+  position: absolute;
+  top:0;
+  right:0;
+}
+
+
+
+.ui.form .required.fields:not(.grouped) > .field > .checkbox:after,
+.ui.form .required.field > .checkbox:after {
+  font-size: @tiny;
+  margin: @requiredMargin;
+  content: '*';
+  color: @grey;
+}
+
+/* vim: set syntax=less : */

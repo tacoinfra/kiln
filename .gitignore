@@ -5,3 +5,6 @@ result
 result-*
 ghcid-output.txt
 .attr-cache/
+*/.ghc.environment.*
+cabal.project.local
+node_modules

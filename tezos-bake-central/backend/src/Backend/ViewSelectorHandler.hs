@@ -9,21 +9,12 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Arrow ((***))
-import Control.Lens ((<&>))
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
-import Data.Functor.Identity (Identity (..))
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Text (Text)
+import Data.Semigroup (First (..))
 import Data.Time (UTCTime)
-import Data.Traversable (for)
 import Data.Version (Version)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
@@ -42,21 +33,22 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Common
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
+import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
-
+import ExtraPrelude
 
 viewSelectorHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
-  => Maybe NamedChain
+  => FrontendConfig
+  -> Maybe NamedChain
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> query
@@ -79,8 +71,8 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
-    rs :: [(Id Node, URI, Maybe Text)] <- [queryQ| SELECT n.id, n.address, n.alias from "Node" n WHERE NOT n.deleted |]
-    return $ toRangeView nodeAddrVS $ fmap (first Bounded . \(x,y,z) -> (x,First (Just (y,z)))) rs
+    -- TODO: nodeAddrVS is a RangeView.  select individual nodes upon request.
+    toRangeView nodeAddrVS <$> getNodeAddresses Nothing
 
   let pncVS = _bakeViewSelector_publicNodeConfig vs
   publicNodeConfig <- whenM (not $ null pncVS) $ do
@@ -100,19 +92,20 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
       selNodes = In $ iMapSelectorKeys nodesVS
     rs <- [queryQ|
       SELECT n.id
-        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockBakedAt" AT TIME ZONE 'UTC'
+        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockPred", n."headBlockBakedAt" AT TIME ZONE 'UTC'
         , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
         , n."fitness", n."updated" AT TIME ZONE 'UTC'
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
+      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
         (Bounded nid, First $ Just Node
           { _node_address = addr
           , _node_alias = alias
           , _node_identity = ident
           , _node_headLevel = headLevel
           , _node_headBlockHash = headBlockHash
+          , _node_headBlockPred = headBlockPred
           , _node_headBlockBakedAt = headBlockBakedAt
           , _node_peerCount = peerCount
           , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
@@ -168,8 +161,13 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
 
       pure (telegramConfig, telegramRecipients)
 
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
+  config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ runReaderT dataSourceHead nds
+
   return BakeView
-    { _bakeView_clients = mempty -- clients
+    { _bakeView_config = config
+    , _bakeView_clients = mempty -- clients
     , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
@@ -184,9 +182,11 @@ viewSelectorHandler namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_no
     -- , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
+    , _bakeView_latestHead = latestHead
     , _bakeView_upgrade = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
+    , _bakeView_alertCount = alertCount
     }
 
 
@@ -392,3 +392,43 @@ getUpgradeNotice = do
         Just e -> Left e
         Nothing -> maybe (error "Bad upgrade notice record") Right tNewVersion
     )
+
+getAlertCount
+  :: (Monad m, PostgresRaw m)
+  => m (Maybe Int)
+getAlertCount =
+  fmap Pg.fromOnly . listToMaybe <$> [queryQ|
+    SELECT
+      COUNT(*)
+    FROM "ErrorLog" el
+    WHERE el.stopped IS NULL|]
+
+getNodeAddresses
+  :: forall m. (Monad m, PostgresRaw m)
+  => Maybe (Id Node)
+  -> m [(WithInfinity (Id Node), First (Maybe NodeSummary))]
+getNodeAddresses nid = do
+  rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
+      SELECT n.id, n.address, n.alias,
+        (SELECT COUNT(ein.id)
+         FROM "ErrorLogInaccessibleNode" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogBadNodeHead" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+        + (SELECT COUNT(ein.id)
+         FROM "ErrorLogNodeWrongChain" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+      FROM "Node" n
+      WHERE NOT n.deleted
+        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs

@@ -2,16 +2,13 @@
 
 module Common.Alerts where
 
-import Control.Lens ((^.))
 import Data.Foldable (sequenceA_)
-import Data.Semigroup ((<>))
-import Data.Text (Text)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
 
-import Common (tshow)
 import Common.Schema (ErrorLogBadNodeHead (..))
+import ExtraPrelude
 
 badNodeHeadMessage
   :: Applicative f

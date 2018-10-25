@@ -1,0 +1,138 @@
+/*******************************
+         Site Overrides
+*******************************/
+
+
+/* there's no obvious place to put the '+ add node' style buttons;  the closest is icon button, but that's more of a light modification of other button types.  so i'll just go with a one-off for now */
+
+.ui.modalopener.button ,
+.ui.buttons .modalopener.button {
+  background-color: @modalOpenerBackgroundColor;
+  color: @modalOpenerColor;
+  font-size:@modalOpenerFontSize;
+  font-weight:@modalOpenerFontWeight;
+  height:@28px;
+  padding: @7px @10px @7px @10px;
+  box-shadow:none;
+  text-align:left;
+}
+
+.ui.modalopener.button:active ,
+.ui.buttons .modalopener.button:active {
+  background-color: @modalOpenerBackgroundDownColor;
+}
+.ui.modalopener.button:hover ,
+.ui.buttons .modalopener.button:hover {
+  background-color: @modalOpenerBackgroundHoverColor;
+}
+.ui.modalopener.button .icon ,
+.ui.buttons .modalopener.button .icon {
+  font-size: @10px;
+  margin-left: @3px;
+  margin-right: @8px;
+}
+
+.ui.buttons {
+  height: @38px;
+  background-color: @transparentBlack;
+  border-radius: @circularRadius;
+  padding: @5px;
+}
+
+.ui.button:hover:not(.modalopener) {
+  box-shadow: @blueBoxShadow;
+}
+.ui.button:active:not(.primary) {
+  box-shadow:none;
+}
+
+/* '.ui.buttons .button' will mostly render as 'pill buttons', with rounded containers */
+
+.ui.buttons .button.primary:active {
+  color: @blue;
+}
+
+
+
+/* the line noise here is a specificity hack */
+.ui.buttons .button:hover@{moreMagic1},
+.ui.buttons .button.primary:hover@{moreMagic1} {
+  box-shadow: @pillbuttonBoxShadow;
+  color: @blue;
+}
+
+.ui.buttons .button:active@{moreMagic2},
+.ui.buttons .button.primary:active@{moreMagic2} {
+  box-shadow: none;
+  color: @blue;
+}
+
+.ui.buttons .primary.button:hover@{moreMagic2},
+.ui.buttons .primary.button.primary:hover@{moreMagic2} {
+  box-shadow: @pillbuttonBoxShadow;
+  background-color:@primaryColorHover;
+  color: @white;
+}
+
+.ui.buttons .primary.button:active@{moreMagic3},
+.ui.buttons .primary.button.primary:active@{moreMagic3} {
+  box-shadow: none;
+  background-color:@primaryColorDown;
+  color: @white;
+}
+
+
+.ui.buttons .button.primary {
+  font-weight: Bold;
+  color: @white;
+}
+
+.ui.buttons .button {
+  height: @28px;
+  border-radius: @circularRadius;
+  background: @white;
+  margin-left: @5px;
+  padding: @8px;
+  color: @black;
+}
+
+.ui.button {
+  background-color: @white;
+  color: @primaryColor;
+}
+.ui.primary.button {
+  background-color: @primaryColor;
+}
+
+.ui.button ,
+.ui.primary.button ,
+.ui.button.disabled ,
+.ui.primary.button.disabled {
+  box-shadow: @blueBoxShadow;
+}
+
+/* sem-ui has some sketchy !important styles that ignore the normal means of
+ * styling customization. */
+.ui.button:disabled,
+/* .ui.buttons .disabled.button, */
+.ui.disabled.active.button,
+.ui.disabled.button,
+.ui.disabled.button:hover {
+  /* opacity: .45!important; */
+  /* background-image: none!important; */
+  /* box-shadow: none!important; */
+  box-shadow: @blueBoxShadow!important;
+}
+
+.ui.buttons .button:first-child {
+  /* border-left: none; */
+  /* margin-left:  */
+  border-top-left-radius: @circularRadius;
+  border-bottom-left-radius: @circularRadius;
+}
+.ui.buttons .button:last-child {
+  border-top-right-radius: @circularRadius;
+  border-bottom-right-radius: @circularRadius;
+}
+
+/* vim: set syntax=less : */

@@ -34,6 +34,7 @@ library
     , modern-uri
     , monoidal-containers
     , mtl
+    , obelisk-generated-static
     , obelisk-route
     , reflection
     , reflex
@@ -42,13 +43,13 @@ library
     , rhyolite-datastructures
     , safe-exceptions
     , scientific
-    , static
     , template-haskell
     , text
     , tezos-bake-monitor-lib
     , these
     , time
     , transformers-compat
+    , uri-encode
     , writer-cps-mtl
 
   exposed-modules:
@@ -65,5 +66,6 @@ library
     Common.Vassal
     Common.Verification
     Common.WrappedShow1
+    ExtraPrelude
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

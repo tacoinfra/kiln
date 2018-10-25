@@ -70,8 +70,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddTelegramConfig
       :: Text
       -> PublicRequest Bake ()
-    PublicRequest_WaitForTelegramRecipient
-      :: PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()

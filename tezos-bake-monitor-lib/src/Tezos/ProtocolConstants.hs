@@ -39,3 +39,6 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_hardStorageLimitPerOperation :: !TezosWord64 -- "hard_storage_limit_per_operation": { "$ref": "#/definitions/bignum" }
   } deriving (Eq, Ord, Show, Typeable)
 deriveTezosJson ''ProtoInfo
+
+levelToCycle :: ProtoInfo -> RawLevel -> Cycle
+levelToCycle info (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (_protoInfo_blocksPerCycle info)

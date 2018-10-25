@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -6,44 +7,32 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Frontend where
 
-import Control.Applicative (Const (..), liftA2, (<|>))
-import Control.Lens ((%~), (.~), _1, _2, _3)
-import Control.Monad (join, when, (<=<))
+import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (MonadReader, asks, runReaderT)
 import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
-import Data.Bool (bool)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Coerce (coerce)
-import Data.Either (isRight)
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
-import Data.Foldable (for_, toList, traverse_)
-import Data.Functor (void)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
-import Data.Semigroup (First (..), (<>))
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
+import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Traversable (for)
 import Data.Version (Version, showVersion)
 import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
@@ -52,6 +41,9 @@ import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
+import Obelisk.Frontend (Frontend (..))
+import Obelisk.Generated.Static (static)
+import Obelisk.Route (R)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
@@ -71,34 +63,37 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (maybeSomething, tshow, uriHostPortPath)
+import Common (maybeSomething, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain,
+                      frontendConfig_upgradeBranch)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route
+import Common.Route (AppRoute)
 import Common.Schema hiding (Event)
 import Common.Vassal
+import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
-import Obelisk.Frontend
-import Obelisk.Route
+import Frontend.Modal.Class (HasModal (ModalM, tellModal))
+import qualified Frontend.Settings.Telegram as Telegram
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
   , _frontend_body = prerender (return ()) frontendBody
-  , _frontend_notFoundRoute = const $ AppRoute_Index :/ ()
   }
 
-frontendBody ::
-  ( MonadWidget t m
-  , HasJS x m
-  , MonadFix (Performable m)
-  , PrimMonad m
-  )
+frontendBody
+  :: forall m t x.
+    ( MonadWidget t m
+    , HasJS x m
+    , MonadFix (Performable m)
+    , PrimMonad m
+    )
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
@@ -107,13 +102,6 @@ frontendBody = void $ do
     Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
     Nothing ->
       Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
-
-  checkForUpgrade <-
-    fmap (maybe False Config.parseBool) $
-      liftIO $ getExecutableConfig $ T.pack Config.checkForUpgrade
-
-  chain :: Either NamedChain ChainId <- ffor (liftIO $ getExecutableConfig $ T.pack Config.chain) $ \r ->
-    maybe (error "No network name or ID provided") (parseChainOrError . T.strip) r
 
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
@@ -132,15 +120,19 @@ frontendBody = void $ do
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
       <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
 
-    appCfg = Cfg
-      { _cfg_checkForUpgrade = checkForUpgrade
-      , _cfg_chain = chain
-      }
-
-  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $
-    flip runReaderT appCfg $
-      runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
-        appMain
+  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    cfg <- watchFrontendConfig
+    dyn_ $ ffor cfg $ \case
+      Nothing -> waitingForResponse
+      Just c -> do
+        tz <- liftIO Time.getCurrentTimeZone
+        t0 <- liftIO Time.getCurrentTime
+        everySecondTick <- fmap _tickInfo_lastUTC <$> tickLossyFromPostBuildTime 1
+        currentTime <- holdDyn t0 everySecondTick
+        let ctx = FrontendContext c tz currentTime
+        flip runReaderT ctx $
+          runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
+            appMain
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
@@ -148,10 +140,22 @@ validatingRange f v =
     then Nothing
     else Just $ f v
 
+watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
+watchFrontendConfig =
+  (fmap . fmap) (getMaybeView . _bakeView_config) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_config = viewJust 1
+    }
+
 watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
 watchProtoInfo =
   (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_parameters = viewJust 1
+    }
+
+watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))
+watchLatestHead =
+  (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_latestHead = viewJust 1
     }
 
 watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
@@ -168,14 +172,14 @@ watchNodesValid nidsDyn = do
     }
   return $ ffor theView $ \v -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodes v)
 
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) (URI, Maybe Text)))
+watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
-watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) (URI, Maybe Text))))
+watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) NodeSummary)))
 watchNodeAddressesValid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
@@ -288,86 +292,263 @@ watchUpgradeNotice =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
 
+watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
+watchAlertCount =
+  (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_alertCount = viewJust 1
+    }
+
 
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
-data UITab = UITab_Summary
-           | UITab_Nodes
-           | UITab_Delegate PublicKeyHash
-           | UITab_Client (Id Client) URI
+data UITab = UITab_Nodes
+           -- | UITab_Delegate PublicKeyHash
+           -- | UITab_Client (Id Client) URI
            | UITab_Options
   deriving (Eq, Ord, Show)
 
 appMain
-  :: forall t m.
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    )
+  => m ()
+appMain = do
+  elClass "div" "app-frame" $ do
+    rec selectTab <- appSidebar selectedTab
+        selectedTab <- holdDyn initialTab selectTab
+    elClass "div" "app-right" $ do
+      appHeader
+      appContentArea selectedTab
+  where
+    initialTab = UITab_Nodes
+
+appName :: Text
+appName = "Kiln"
+
+appSidebar :: (MonadRhyoliteFrontendWidget Bake t m , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m)=> Dynamic t UITab -> m (Event t UITab)
+appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-sidebar"
+      & SemUi.segmentConfig_vertical SemUi.|~ True
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ flip runReaderT (demux selectedTab) $ do
+        appSideHeader
+        appGutter
+        appSideFooter
+
+routeSelector' :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m (a,b)
+routeSelector' dest con cfg child = do
+  isAtDest <- asks (\selected -> demuxed selected dest)
+  let activated = ffor isAtDest $ \isAt ->
+        if isAt then "active" else ""
+  (e, a) <- con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
+  tellEvent $ First dest <$ domEvent Click e
+  return (e,a)
+
+routeSelector :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
+routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
+
+appSideHeader :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
+appSideHeader =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-side-header"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        SemUi.header def $ do
+          elAttr "img" ("src" =: static @ "images/logo.svg" <> "class" =: "app-logo") $ return ()
+          text appName
+        SemUi.menu
+          (def
+            & SemUi.menuConfig_vertical SemUi.|~ True
+            & SemUi.menuConfig_fluid SemUi.|~ True
+            )
+          $ do
+              routeSelector UITab_Nodes SemUi.menuItem' def $ do
+                SemUi.icon "icon-tiles" def
+                text "Dashboard"
+        SemUi.divider def
+
+appGutter :: (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
+appGutter =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-gutter"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    nodesOptions
+
+appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
+appSideFooter =
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-side-footer"
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      )
+    $ do
+        SemUi.divider def
+        SemUi.menu
+          (def
+            & SemUi.menuConfig_secondary SemUi.|~ True
+            & SemUi.menuConfig_vertical SemUi.|~ True
+          )
+          $ do
+              routeSelector UITab_Options SemUi.menuItem' def $ do
+                SemUi.icon "icon-gear" def
+                text "Settings"
+              SemUi.menuItem def $ do
+                SemUi.icon "icon-question-mark" def
+                text "Help"
+        elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
+
+appHeader
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
+appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
+  divClass "ui stackable grid" $ do
+    divClass "six wide column topbar" $ do
+      divClass "ui horizontal list" $ do
+        latestHead <- watchLatestHead
+        let info title body = divClass "item" $ divClass "content" $ do
+              divClass "header" $ text title
+              body
+
+        info "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+
+        protoInfo <- watchProtoInfo
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo $ (fmap.fmap) (view level) latestHead
+        whenJustDyn cyc $ \c -> info "Cycle" $
+          text $ tshow $ unCycle c
+
+        whenJustDyn latestHead $ \b -> info "Block" $ do
+          text $ tshow (unRawLevel $ b ^. level) <> " "
+          localHumanizedTimestamp $ pure $ b ^. timestamp
+
+    divClass "ten wide column" $ do
+      void headerBell
+
+
+headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
+headerBell = do
+  SemUi.segment
+    (def
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
+      )
+    $ do
+        alertCount <- fmap (fromMaybe 0) <$> watchAlertCount
+        (e,_) <- SemUi.ui' "span"
+          (def
+            & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+            )
+          $ do
+              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . T.pack . show
+              text $ T.pack " "
+              SemUi.icon "icon-bell"
+                (def
+                  & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
+                  & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
+                  & SemUi.iconConfig_link SemUi.|~ True
+                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
+                  )
+        return $ domEvent Click e
+
+
+appContentArea
+  :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader Cfg m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    , HasModal t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    )
+  => Dynamic t UITab -> m ()
+appContentArea selectedTab = do
+  dyn_ $ ffor selectedTab $ \case
+    -- UITab_Summary -> summaryTab
+    UITab_Nodes -> nodesTabOrWelcome
+    UITab_Options -> optionsTab
+    -- UITab_Client cid addr -> clientTab cid addr
+    -- UITab_Delegate pkh -> delegateTab pkh
+
+upgradeRibbon
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
     )
   => m ()
-appMain = elAttr "div" ("style" =: "width: 80%; margin-left: auto; margin-right: auto;") $ do
-  clientAddresses <- watchClientAddresses
-  delegates <- watchDelegatePublicKeyHashes
-  el "h1" $ text "Node Monitor"
+upgradeRibbon =
+  (asks (^. frontendConfig . frontendConfig_upgradeBranch) >>=) $ traverse_ $ \upgradeBranch -> do
+    upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+    dyn_ $ ffor upgradeNotice $ traverse_ $ \(_log, upgrade) -> case upgrade of
+      Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
+      Right v -> do
+        let
+          versionText = T.pack (showVersion v)
+          versionAnchor = "anchor-" <> T.filter (/='.') versionText
+        elAttr "a"
+          (  "class"=:"ui green right ribbon label"
+          <> "href"=:(Config.changelogUrl upgradeBranch <> "#" <> versionAnchor)
+          <> "target"=:"_blank") $
+            text $ "New version available: " <> versionText
+
+nodesTabOrWelcome
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
+nodesTabOrWelcome = do
+  _clientAddresses <- watchClientAddresses
+  _delegates <- watchDelegatePublicKeyHashes
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
-  let nodesTabEnabledMaybe = (fmap.fmap) (\x -> if x then Enabled else Disabled) $
+  let haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-  initialSelection <- maybeDyn $
-        (fmap . fmap) (bool UITab_Options UITab_Nodes . isEnabled) nodesTabEnabledMaybe
-  dyn_ $ ffor initialSelection $ \case
-    Nothing -> divClass "column" waitingForResponse
-    Just aTab -> do
-      initialTab <- sample (current aTab) -- only needed for initial value, don't want it to steal your focus
-      rec selection <- elAttr "div" ("class" =: "ui top attached tabular menu") $ leftmost <$> sequenceA
-            [ semuiTab (text "Nodes") UITab_Nodes currentTabD (fmap (fromMaybe Disabled) nodesTabEnabledMaybe)
-            , fmap switch . hold never <=< dyn . ffor clientAddresses $ \cs ->
-              fmap leftmost . for (MMap.toList cs) $ \(cid, name) ->
-                semuiTab (text $ "B:" <> Uri.render name) (UITab_Client cid name) currentTabD (pure Enabled)
-            , fmap switch . hold never <=< dyn . ffor delegates $ \ds ->
-              fmap leftmost $ for (Set.toList ds) $ \pkh ->
-                semuiTab (text $ "tz:" <> toPublicKeyHashText pkh) (UITab_Delegate pkh) currentTabD (pure Enabled)
-            , semuiTab (text "Options") UITab_Options currentTabD (pure Enabled)
-            ]
-          currentTab <- holdDyn initialTab selection
-          let currentTabD = demux currentTab
+  dyn_ $ ffor haveNodesMaybe $ \case
+    Nothing -> divClass "app-content" waitingForResponse
+    Just False -> welcomeScreen
+    Just True -> nodesTab
 
-      divClass "ui bottom attached tab segment active" $
-        divClass "ui one column grid" $ do
-          upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
-          dyn_ $ ffor upgradeNotice $ \case
-            Nothing -> blank
-            Just (_log, upgrade) -> elAttr "div" ("class"=:"column"<>"style"=:"padding-bottom:0px;") $
-              case upgrade of
-                Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-                Right v -> do
-                  let
-                    versionText = T.pack (showVersion v)
-                    versionAnchor = "anchor-" <> T.filter (/='.') versionText
-                  elAttr "a"
-                    (  "class"=:"ui green right ribbon label"
-                    <> "href"=:(Config.changelogUrl <> "#" <> versionAnchor)
-                    <> "target"=:"_blank") $
-                      text $ "New version available: " <> versionText
+welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
+welcomeScreen =
+  divClass "app-content app-welcome"
+    $ do
+        SemUi.header
+          (def
+            & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
+            )
+          $ do
+              text $ "Welcome to " <> appName <> "."
+        divClass "" $ do
+          text $ appName <> " helps you monitor Tezos nodes to keep your system"
+          el "br" blank
+          text "running smoothly, with many more features to come."
+          el "br" blank
+          text "\160"
+          el "br" blank
+          text "Click \"Add Node\" on the left to get started."
 
-          divClass "column" $
-            dyn_ $ ffor currentTab $ \case
-              UITab_Summary -> summaryTab
-              UITab_Nodes -> nodesTab
-              UITab_Options -> optionsTab
-              UITab_Client cid addr -> clientTab cid addr
-              UITab_Delegate pkh -> delegateTab pkh
-
-
-whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
-whenJustDyn d f = dyn_ . ffor d $ \case
-  Nothing -> blank
-  Just x -> f x
-
-summaryTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadReader Cfg m) => m ()
+summaryTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => m ()
 summaryTab = divClass "ui grid" $ do
   dparameters <- watchProtoInfo
   summaryReport <- watchSummary
@@ -432,7 +613,10 @@ data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilte
 
 
 liveErrorsWidget
-  :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
   => Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
   -> Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
@@ -529,16 +713,79 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
-optionsTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m, MonadReader Cfg m) => m ()
-optionsTab = divClass "ui two column stackable grid" $ do
-  enableUpgradeCheck <- asks _cfg_checkForUpgrade
+nodesOptions ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , HasModal t m
+  )
+  => m ()
+nodesOptions = do
+  divClass "ui header" $ text "Nodes"
+  divClass "ui list" $ do
+    nodes <- watchNodeAddresses
+    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item" $ do
+      let dHealth = (> 0) . _nodeSummary_alertCount <$> node
+      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      divClass "content" $ do
+        let dAddress = Uri.render . _nodeSummary_address <$> node
+        let dName = ffor node _nodeSummary_alias
+        divClass "header" $      dynText $ fromMaybe <$> dAddress <*> dName
+        divClass "description" $ dynText $ fmap (fromMaybe "") $ (<$) <$> dAddress <*> dName
+
+    openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" "Add Node" "Configure Monitored Nodes"
+    tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
+      el "h3" $ text "Add Nodes"
+      divClass "basic small segment" $ text $ T.unlines
+        [ "Choose from public nodes on the left, connect to your own nodes on the right."
+        , "We recommend adding at least one public node."
+        ]
+      divClass "ui grid" $ do
+        divClass "ten wide column" $ divClass "blue shaded" $ do
+          elClass "h5" "ui header" $ text "Connect to a Public Node"
+          publicNodeOptions
+        divClass "six wide column" $ divClass "blue shaded" $ do
+          elClass "h5" "ui header" $ text "Connect via address"
+          addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+          nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+          pure $ leftmost [nodeAddedE, close]
+
+aliasedInputForm
+  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+aliasedInputForm validator label info placeholder = divClass "ui form fields" $ do
+  (namedAddress, submitEvt) <- formWithSubmit $ do
+    address <- formItem' "required"
+      $ validatedInput validator
+      $ def & Txt.setPlaceholder placeholder
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Address")
+    alias <- formItem
+      $ validatedInput (Validator.optional Validator.validateText)
+      $ def & Txt.setPlaceholder "alias"
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Alias")
+    _ <- submitButtonWithInfoCls "fluid primary" label info
+    let namedAddress = liftA2 (liftA2 (,)) address alias
+    return namedAddress
+  return $ filterRight $ tag (current namedAddress) submitEvt
+
+optionsTab
+  :: forall r t m.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (Performable m)
+    , MonadJSM m
+    , MonadReader r m, HasFrontendConfig r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    )
+  => m ()
+optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ do
+  upgradeRibbon
+  enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
 
   _ <- divClass "column" $ traverse (divClass "ui basic segment") $
     [ currentChain
-    , publicNodeOptions
-    , nodesOptions
+    , telegramOptions
     ]
-    ++ [ telegramOptions | False ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
     ++ [ upgradeOptions | enableUpgradeCheck ]
@@ -547,7 +794,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
     divClass "ui basic segment" notificationOptions
   where
     currentChain = do
-      chain <- asks _cfg_chain
+      chain <- asks (^. frontendConfig . frontendConfig_chain)
       elClass "h3" "ui header" $ do
         text "Network: "
         el "em" $ text $ showChain chain
@@ -559,15 +806,10 @@ optionsTab = divClass "ui two column stackable grid" $ do
         text " for more information."
 
     telegramOptions = do
-      botApiKey <- formItem
-        $ validatedInput Validator.validateText
-        $ def & Txt.setPlaceholder "Bot API Key" & Txt.setFluid
-      save <- button "Save"
-      responded <- requestingIdentity $ public . PublicRequest_AddTelegramConfig . either (const "") id <$> tag (current botApiKey) save
-      void $ requestingIdentity $ public PublicRequest_WaitForTelegramRecipient <$ responded
-
-      recips <- watchTelegramRecipients
-      display recips
+      openTelegramOptions <- uiButton "primary" "Configure Telegram"
+      tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
+        finish <- Telegram.settings
+        pure $ leftmost [finish, close]
 
     notificationOptions = do
       divClass "ui medium header" $ text "Notification Recipients"
@@ -604,7 +846,7 @@ optionsTab = divClass "ui two column stackable grid" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- urlInputRow validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     delegatesOptions = do
@@ -617,40 +859,9 @@ optionsTab = divClass "ui two column stackable grid" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
             requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
-        addE <- urlInputRow (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
-    publicNodeOptions = do
-      divClass "ui medium header" $ text "Public Nodes"
-
-      let
-        showPublicNode = \case
-          PublicNode_TzScan -> "tzscan.io"
-          PublicNode_Blockscale -> "Foundation"
-          PublicNode_Obsidian -> "Obsidian"
-
-      pncDyn <- watchPublicNodeConfig
-      for_ [minBound..maxBound] $ \pn -> do
-        (element', ()) <- elDynAttr' "a" (ffor pncDyn $ \pnc -> "class"=:("ui " <> (if isPublicNodeEnabled pn pnc then "blue" else "") <> " button link")) $
-          text $ showPublicNode pn
-        let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
-        void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
-
-    nodesOptions = do
-      divClass "ui medium header" $ text "Monitored Nodes"
-      elClass "table" "ui celled striped compact table" $ do
-        nodes <- watchNodeAddresses
-        _ <- listWithKey (coerce <$> nodes) $ \_ node -> el "tr" $ do
-          let dAddress = ffor node fst
-          let dName = ffor node snd
-          el "td" $ dynText $ ffor dAddress Uri.render
-          el "td" $ dynText $ ffor dName $ fromMaybe ""
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveNode . fst <$> tag (current node) eRemove
-
-        addE <- urlInputRow validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddNode addr alias)
 
     upgradeOptions = mdo
       isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
@@ -668,20 +879,39 @@ optionsTab = divClass "ui two column stackable grid" $ do
           Just (Left _) -> divClass "ui error message" $
             text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
 
-    urlInputRow
-      :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-      => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-    urlInputRow validator label info placeholder = el "tr" $ do
-      (tdEl1, address) <- el' "td" $ formItem
-        $ validatedInput validator
-        $ def & Txt.setPlaceholder placeholder & Txt.setFluid
-      (tdEl2, alias) <- el' "td" $ formItem
-        $ validatedInput (Validator.optional Validator.validateText)
-        $ def & Txt.setPlaceholder "alias" & Txt.setFluid
-      addButton <- elClass "td" "right aligned collapsing" $ buttonWithInfo label info
-      let namedAddress = liftA2 (liftA2 (,)) address alias
-      return $ filterRight $ tag (current namedAddress) $ leftmost [addButton, keypress Enter tdEl1, keypress Enter tdEl2]
+publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
+publicNodeOptions = do
+  let
+    publicNodesInOrder =
+      [ PublicNode_Obsidian
+      , PublicNode_Blockscale
+      , PublicNode_TzScan
+      ]
+    showPublicNode = \case
+      PublicNode_Obsidian -> "Obsidian Systems"
+      PublicNode_Blockscale -> "Foundation"
+      PublicNode_TzScan -> "tzscan.io"
 
+    describePublicNode = \case
+      PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
+      PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
+      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro."
+
+  pncDyn <- watchPublicNodeConfig
+  divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
+    let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+    (element', ()) <- SemUi.ui' "div"
+        (def & SemUi.elConfigClasses .~ "ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+      divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
+        SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
+        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+      divClass "twelve wide column" $ do
+        divClass "twelve wide column" $ do
+          divClass "header" $ text $ showPublicNode pn
+          divClass "description" $ text $ describePublicNode pn
+
+    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
+    void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 mailServerForm
   :: ( DomBuilder t m
@@ -709,15 +939,15 @@ mailServerForm frm0 = do
   where
     fields = withFormFieldsErr (frm0, "") $ do
       divClass "three fields" $ do
-        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "eight wide"
+        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required eight wide"
           $ validatedInput Validator.validateText
           $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
 
-        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "four wide"
+        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required four wide"
           $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
           $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber frm0)
 
-        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "four wide"
+        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required four wide"
           $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
           $ do
             labeled "Protocol"
@@ -748,15 +978,13 @@ data NodeTile
   | NodeTile_PublicNode PublicNodeHead
   deriving (Eq, Ord, Show)
 
-nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
-nodeIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode l -> Just $ _errorLogInaccessibleNode_node l
-  ErrorLogView_NodeWrongChain l -> Just $ _errorLogNodeWrongChain_node l
-  ErrorLogView_BadNodeHead l -> Just $ _errorLogBadNodeHead_node l
-  _ -> Nothing
-
-nodesTab :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => m ()
-nodesTab = divClass "ui stackable grid" $ do
+nodesTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    )
+  => m ()
+nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
   let alertWindow = ClosedInterval LowerInfinity UpperInfinity
   alertsDyn <- maybeDynLazy . fmap maybeSomething =<< watchErrors (pure $ Set.singleton alertWindow)
 
@@ -771,6 +999,7 @@ nodesTab = divClass "ui stackable grid" $ do
         liveErrorsWidget nonEmptyAlertsDyn nodesDyn
 
   where
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)) -> Dynamic t (MonoidalMap (Id Node) Node) -> m ()
     nodeTilesWidget alerts nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -782,7 +1011,7 @@ nodesTab = divClass "ui stackable grid" $ do
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
 
       maxLevelOnPublicNodes <- holdUniqDyn $
-        maximumMay . map _publicNodeHead_headLevel . toList <$> publicNodesDyn
+        maximumMay . map (^. level) . toList <$> publicNodesDyn
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
@@ -797,13 +1026,13 @@ nodesTab = divClass "ui stackable grid" $ do
                     PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
               headBlockLevelHeader
                 nodeTitle
-                (Just (_publicNodeHead_headBlockHash node, _publicNodeHead_headLevel node))
+                (Just (node ^. hash, node ^. level))
                 (pure Nothing)
               divClass "description" $
                 nodeDataTable
-                  [ (text "Block Hash:", blockHashLink $ _publicNodeHead_headBlockHash node)
-                  , (text "Block Fitness:", text $ fitnessText $ _publicNodeHead_headBlockFitness node)
-                  , (text "Block Baked:", localTimestamp $ _publicNodeHead_headBlockBakedAt node)
+                  [ (text "Block Hash:", blockHashLink $ node ^. hash)
+                  , (text "Block Fitness:", text $ fitnessText $ node ^. fitness)
+                  , (text "Block Baked:", localTimestamp $ node ^. timestamp)
                   ]
 
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
@@ -837,7 +1066,6 @@ nodesTab = divClass "ui stackable grid" $ do
                   , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
                   , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
                   ]
-
                 unresolvedAlertsForThisNode <-
                   holdUniqDyn $ foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
                 let errorMessage = divClass "ui error message" . divClass "header"
@@ -847,6 +1075,10 @@ nodesTab = divClass "ui stackable grid" $ do
                   ErrorLogView_BadNodeHead l -> errorMessage $ text $
                     fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                   _ -> blank
+              el "div" $ do
+                eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+                requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
+
 
     headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
     headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
@@ -866,6 +1098,7 @@ nodesTab = divClass "ui stackable grid" $ do
       where
         errorStyle = elClass "span" "block-level-error"
 
+    nodeDataTable :: [(m (), m ())] -> m ()
     nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
       for_ rows $ \(heading, val) -> el "tr" $ do
         _ <- elAttr "th" ("style"=:"text-align:left") heading
@@ -882,7 +1115,10 @@ nodesTab = divClass "ui stackable grid" $ do
 
 
 delegateTab
-  :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m)
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
   => PublicKeyHash
   -> m ()
 delegateTab pkh = do
@@ -930,7 +1166,12 @@ delegateTab pkh = do
               text $ tshow (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
               text "%)"
 
-clientTab :: (MonadRhyoliteFrontendWidget Bake t m, MonadReader Cfg m) => Id Client -> URI -> m ()
+clientTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => Id Client -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
   dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
@@ -980,17 +1221,6 @@ clientTab cid addr = do
 
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
-
-data Enabled = Disabled | Enabled
-  deriving (Eq, Ord, Show, Read, Enum)
-
-isDisabled :: Enabled -> Bool
-isDisabled Disabled = True
-isDisabled Enabled = False
-
-isEnabled :: Enabled -> Bool
-isEnabled Enabled = True
-isEnabled Disabled = False
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> Dynamic t Enabled -> m (Event t k)
 semuiTab label k currentTab enabled =

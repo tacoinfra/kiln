@@ -1,0 +1,155 @@
+/*******************************
+         Site Overrides
+*******************************/
+
+a:link {
+    color:@blue;
+    text-decoration-line:none;
+}
+a:visited {
+    color: @visitedBlue;
+    text-decoration-line:none;
+}
+a:hover {
+    text-decoration-line:underline;
+    color: @hoverBlue;
+}
+a:active {
+    color: @activeBlue;
+    text-decoration-line:none;
+}
+.aside {color:@grey;}
+
+h6.ui.header {
+    font-size:@relative13px;
+}
+
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+}
+
+.modal-box {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 100%;
+    max-height: 100%;
+    background-color: #FFF;
+    box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
+
+    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
+    // put overlays on the screen with z-index and we want to beat them.
+    // This is the smallest number that works for the following plugins:
+    //   * LastPass
+    z-index: 20;
+
+    & .content {
+        padding: 50px;
+    }
+}
+
+.modal-box > .modal-close {
+    padding: @10px;
+    height: @30px;
+    width: @30px;
+    float: right;
+    cursor: pointer;
+
+    &:hover {
+        color: @hoverBlue;
+    }
+    &:active {
+        color: @activeBlue;
+    }
+    & > i.fitted {
+        transform: translate(-2px, -2px);
+    }
+}
+
+
+.shaded{
+    padding:@15px;
+}
+
+.shaded.grey { background-color:@blue; }
+.shaded.blue { background-color:#f8f9fc; }
+
+.ui.publicnodes .ui.icon.header > i.icon {
+    font-size:@25px;
+}
+
+.ui.publicnodes > .grid > .row {
+  align-items:center;
+}
+
+.ui.publicnodes > .grid {
+    border: 1px solid #CED4DA;
+    background:white;
+    border-radius: @borderRadius;
+}
+.ui.publicnodes > .grid@{moreMagic5} {
+    margin-bottom: @15px!important;
+}
+.ui.publicnodes > .active .ui.icon.header {
+    color:#a6a6a6;
+}
+
+.ui.publicnodes .ui.icon.header {
+    font-size:@14px;
+    font-weight:500;
+    color:@primaryColor;
+}
+
+.ui.publicnodes .header {
+    font-weight:bold;
+}
+
+.ui.list.publicnodes > .item:not(.active) > .icon {
+    content:'Add Node';
+}
+.ui.list.publicnodes > .item.active > .icon {
+    content:'Added';
+}
+.ui.list.publicnodes > .item.active > .content {
+}
+
+.topbar {
+    padding-left: 30px;
+
+    & .ui.horizontal.list .item .content {
+        font-weight: bold;
+        padding-left: 30px;
+
+        & .item .content .header {
+            font-weight: normal;
+            color: rgba(0, 0, 0, .6);
+            padding-bottom: 4px;
+        }
+    }
+}
+
+.telegram-setup {
+    line-height: 19px;
+
+    & .error {
+        padding-left: 50px;
+        padding-right: 50px;
+        padding-top: 0px;
+    }
+
+    & li {
+        padding-bottom: 1.5em;
+    }
+
+    & p {
+        padding-top: 1em;
+    }
+}
+
+
+/* vim: set syntax=less : */

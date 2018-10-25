@@ -13,53 +13,36 @@
 
 module Backend where
 
-import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
-import Control.Applicative (liftA2, (<|>))
-import Control.Category ((.))
 import Control.Exception.Safe (catch, throwIO, throwString)
-import Control.Lens ((<&>), _3)
-import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebug, logInfo, runStderrLoggingT)
-import Control.Monad.Reader (runReaderT)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
 import Data.Either.Combinators (leftToMaybe)
-import Data.Foldable (fold, for_, toList)
-import Data.Functor.Identity (Identity (..))
-import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Random as Random
 import qualified Data.Random.Extras as Random
-import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import Database.Groundhog.Generic.Migration (getTableAnalysis)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
-import Obelisk.Backend
+import Obelisk.Backend (Backend (..))
 import Obelisk.ExecutableConfig.Inject (injectPure)
 import Obelisk.Frontend
-import Obelisk.Route
-import Prelude hiding ((.))
+import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
-import Rhyolite.Backend.Account (migrateAccount)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (RunDb, runDb)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
-import Rhyolite.Backend.EmailWorker (clearMailQueue, migrateQueuedEmail)
+import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
                                  RhyoliteLogLevel (..), runLoggingEnv, withLogging)
 import qualified Snap.Core as Snap
@@ -83,6 +66,7 @@ import Backend.CachedNodeRPC (blankNodeDataSource)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.Http (runHttpT)
+import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -95,11 +79,12 @@ import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client
 import Backend.Workers.Delegate
 import Backend.Workers.Node
-import Common (tshow)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
+import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
 import Common.URI (mkRootUri)
+import ExtraPrelude
 import Frontend (frontend)
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
@@ -125,10 +110,6 @@ backendImpl cfg serve = do
     liftA2 (<|>)
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
-
-  !(route :: Maybe URI) <- liftA2 (<|>)
-    (pure $ _opts_route cfg)
-    (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
 
   !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
@@ -209,14 +190,9 @@ backendImpl cfg serve = do
   withDb dbSpec $ \db -> withLogging loggingConfig $ do
     logger <- askLogger
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
-    for_ route $ \r -> $(logDebug) $ "Using route " <> URI.render r
 
     runDb (Identity db) $ do
-      tableInfo <- getTableAnalysis
-      runMigration $ do
-        migrateAccount tableInfo
-        migrateQueuedEmail tableInfo
-        migrateSchema tableInfo
+      migrateKiln
 
       -- Set nodes overrides based on configuration
       for_ nodes $ \ns -> do
@@ -228,22 +204,30 @@ backendImpl cfg serve = do
         for_ needToAdd $ \newAddress ->
           insert $ mkNode newAddress Nothing
 
-    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger
+    params <- runLoggingEnv logger $ runDb (Identity db) $
+      listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
-      let appConfig = AppConfig emailFromAddress
+      let
+        appConfig = AppConfig emailFromAddress
+        frontendConfig = Config.FrontendConfig
+          { Config._frontendConfig_chain = chain
+          , Config._frontendConfig_chainId = chainId
+          , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
+          }
 
-      telegramEnv <- Telegram.initState addFinalizer httpMgr logger db
+      _ <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig telegramEnv)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig)
         (notifyHandler dataSrc)
-        (viewSelectorHandler (leftToMaybe chain) dataSrc db)
-        (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap . RhyoliteApp.monoidMapQueryMorphism)
+        (viewSelectorHandler frontendConfig (leftToMaybe chain) dataSrc db)
+        (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
       addFinalizer =<< cacheWorker 30 dataSrc
@@ -259,6 +243,7 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
 
       liftIO $ serve $ \case
+        BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v1PublicApi dataSrc
@@ -387,6 +372,8 @@ mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRoo
 encodeViaJson :: Aeson.ToJSON a => a -> Text
 encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
 
+
+-- | This does *not* run in @ob run@.
 backendMain :: (Backend BackendRoute AppRoute -> Frontend (R AppRoute) -> IO ()) -> IO ()
 backendMain k = do
   myArgs <- getArgs
@@ -409,21 +396,12 @@ backendMain k = do
         (pure $ _opts_route cfg)
         (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
 
-      !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
-        (pure $ _opts_checkForUpgrade cfg)
-        (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
-
-      !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
-        (pure $ _opts_chain cfg)
-        (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
-
       let
         staticHead :: DomBuilder t m => m ()
         !staticHead = do
           let injectIt config = injectPure (T.pack $ "config/" <> config)
           headTag
-          for_ route $ injectIt Config.route . encodeViaJson
-          injectIt Config.checkForUpgrade (tshow checkForUpgrade)
-          injectIt Config.chain $ showChain chain
+          for_ route $ injectIt Config.route . URI.render
 
+      for_ route $ \r -> putStrLn $ "Using route " <> T.unpack (URI.render r)
       withArgs rest $ k (backend' cfg) (frontend { _frontend_head = staticHead })

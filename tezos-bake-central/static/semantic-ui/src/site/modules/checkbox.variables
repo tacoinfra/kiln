@@ -1,0 +1,48 @@
+/*******************************
+    User Variable Overrides
+*******************************/
+
+@toggleLaneBackground : #E1E6F0;
+@toggleHoverColor : #E1E6F0;
+@handleBackground : @white;
+
+/* normal */
+@toggleHandleSize : @14px;
+@toggleLaneHeight : @18px;
+@toggleLaneWidth : @40px;
+
+@toggleHandleOffset : (@toggleLaneHeight - @toggleHandleSize) / 2;
+@toggleOffOffset : @toggleHandleOffset;
+@toggleOnOffset: (@toggleLaneWidth - @toggleHandleSize - @toggleHandleOffset);
+@toggleLabelDistance: @toggleLaneWidth + 1rem;
+@toggleWidth: @toggleLaneWidth;
+@toggleHeight : @toggleLaneHeight;
+
+
+/* Big */
+@toggleLaneHeightBig : @28px;
+@toggleLaneWidthBig : @60px;
+@toggleHandleSizeBig : @18px;
+
+@toggleHandleOffsetBig : (@toggleLaneHeightBig - @toggleHandleSizeBig) / 2;
+@toggleOffOffsetBig : @toggleHandleOffsetBig;
+@toggleOnOffsetBig: (@toggleLaneWidthBig - @toggleHandleSizeBig - @toggleHandleOffsetBig);
+@toggleLabelDistanceBig: @toggleLaneWidthBig + 1rem;
+@toggleWidthBig: @toggleLaneWidthBig;
+@toggleHeightBig : @toggleLaneHeightBig;
+
+
+@toggleLaneHeightHuge : @38px;
+@toggleLaneWidthHuge : @60px;
+@toggleHandleSizeHuge : @28px;
+
+@toggleHandleOffsetHuge : (@toggleLaneHeightHuge - @toggleHandleSizeHuge) / 2;
+@toggleOffOffsetHuge : @toggleHandleOffsetHuge;
+@toggleOnOffsetHuge: (@toggleLaneWidthHuge - @toggleHandleSizeHuge - @toggleHandleOffsetHuge);
+@toggleLabelDistanceHuge: @toggleLaneWidthHuge + 1rem;
+@toggleWidthHuge: @toggleLaneWidthHuge;
+@toggleHeightHuge : @toggleLaneHeightHuge;
+
+@handleBoxShadow: 0 4px 8px 0 rgba(0,0,0,0.15);
+
+/* vim: set syntax=less : */

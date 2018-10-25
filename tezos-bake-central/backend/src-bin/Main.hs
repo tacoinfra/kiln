@@ -1,7 +1,8 @@
-{-# LANGUAGE BangPatterns #-}
+module Main where
 
-import Backend
-import Obelisk.Backend
+import Obelisk.Backend (runBackend)
+
+import Backend (backendMain)
 
 main :: IO ()
 main = backendMain runBackend

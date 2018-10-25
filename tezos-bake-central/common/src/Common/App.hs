@@ -6,27 +6,22 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Common.App where
 
-import Control.Lens (makeLenses)
+import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Functor.Compose (Compose (..))
-import Data.Semigroup (First (..), Semigroup, (<>))
-import Data.Text (Text)
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
-import Data.Typeable (Typeable)
 import Data.Version (Version)
 import Data.Word (Word16)
-import GHC.Generics (Generic)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
@@ -37,64 +32,75 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
+import ExtraPrelude
 
 data Bake = Bake
 
 type ErrorInfo = (ErrorLog, ErrorLogView)
+
 getErrorInterval :: (ErrorLog, ErrorLogView) -> First ((ErrorLog, ErrorLogView), ClosedInterval (WithInfinity UTCTime))
 getErrorInterval ei@(el, _) = First (ei, ClosedInterval
   (Bounded $ _errorLog_started el)
   (maybe UpperInfinity Bounded $ _errorLog_stopped el))
 
-
 type Deletable a = First (Maybe a)
 
+data NodeSummary = NodeSummary
+  { _nodeSummary_address :: URI
+  , _nodeSummary_alias :: Maybe Text
+  , _nodeSummary_alertCount :: Int
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON NodeSummary
+instance ToJSON NodeSummary
+
 data BakeViewSelector a = BakeViewSelector
-  { _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
+  { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
+  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
   , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
   , _bakeViewSelector_delegateStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
   , _bakeViewSelector_errors :: !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
   , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
   , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) (Deletable Email) a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
+  , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upgrade :: !(MaybeSelector (ErrorLog, Either UpgradeCheckError Version) a)
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector TelegramConfig a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
+  , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
-
 data BakeView a = BakeView
-  { _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
+  { _bakeView_config :: !(MaybeView FrontendConfig a)
+  , _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
   , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
   , _bakeView_delegateStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
   , _bakeView_errors :: !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
-  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable (URI, Maybe Text)) a)
+  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
   , _bakeView_notificatees :: !(RangeView' (Id Notificatee) (Deletable Email) a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
+  , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upgrade :: !(MaybeView (ErrorLog, Either UpgradeCheckError Version) a)
   , _bakeView_telegramConfig :: !(MaybeView TelegramConfig a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
+  , _bakeView_alertCount :: !(MaybeView Int a)
   -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
-  } deriving (Functor, Generic, Typeable, Traversable, Foldable)
-
-deriving instance Show a => Show (BakeView a)
-deriving instance Eq a => Eq (BakeView a)
-deriving instance Ord a => Ord (BakeView a)
+  } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 
 data MailServerView = MailServerView
@@ -116,6 +122,14 @@ data ErrorLogView
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
+nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
+nodeIdForErrorLogView = \case
+  ErrorLogView_InaccessibleNode ein -> Just $ _errorLogInaccessibleNode_node ein
+  ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
+  ErrorLogView_BakerNoHeartbeat _ -> Nothing
+  ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
+  ErrorLogView_MultipleBakersForSameDelegate _ -> Nothing
+
 mailServerConfigToView :: MailServerConfig -> MailServerView
 mailServerConfigToView x = MailServerView
   { _mailServerView_hostName = _mailServerConfig_hostName x
@@ -126,7 +140,8 @@ mailServerConfigToView x = MailServerView
 
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView b -> BakeView a
 cropBakeView vs v = BakeView
-  { _bakeView_clientAddresses = cropView (_bakeViewSelector_clientAddresses vs) (_bakeView_clientAddresses v)
+  { _bakeView_config = cropView (_bakeViewSelector_config vs) (_bakeView_config v)
+  , _bakeView_clientAddresses = cropView (_bakeViewSelector_clientAddresses vs) (_bakeView_clientAddresses v)
   , _bakeView_clients = cropView (_bakeViewSelector_clients vs) (_bakeView_clients v)
   , _bakeView_parameters = cropView (_bakeViewSelector_parameters vs) (_bakeView_parameters v)
   , _bakeView_nodeAddresses = cropView (_bakeViewSelector_nodeAddresses vs) (_bakeView_nodeAddresses v)
@@ -139,14 +154,17 @@ cropBakeView vs v = BakeView
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
   , _bakeView_errors = cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
+  , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
   , _bakeView_upgrade = cropView (_bakeViewSelector_upgrade vs) (_bakeView_upgrade v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
+  , _bakeView_alertCount = cropView (_bakeViewSelector_alertCount vs) (_bakeView_alertCount v)
   }
 
 instance FunctorMaybe BakeViewSelector where
   fmapMaybe f a = BakeViewSelector
-    { _bakeViewSelector_clientAddresses = fmapMaybe f $ _bakeViewSelector_clientAddresses a
+    { _bakeViewSelector_config = fmapMaybe f $ _bakeViewSelector_config a
+    , _bakeViewSelector_clientAddresses = fmapMaybe f $ _bakeViewSelector_clientAddresses a
     , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
     , _bakeViewSelector_publicNodeConfig = fmapMaybe f $ _bakeViewSelector_publicNodeConfig a
@@ -159,14 +177,17 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
+    , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = fmapMaybe f (_bakeViewSelector_telegramRecipients a)
+    , _bakeViewSelector_alertCount = fmapMaybe f (_bakeViewSelector_alertCount a)
     }
 
 instance Align BakeViewSelector where
   nil = BakeViewSelector
-    { _bakeViewSelector_clientAddresses = nil
+    { _bakeViewSelector_config = nil
+    , _bakeViewSelector_clientAddresses = nil
     , _bakeViewSelector_clients = nil
     , _bakeViewSelector_parameters = nil
     , _bakeViewSelector_publicNodeConfig = nil
@@ -179,14 +200,17 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_summary = nil
     , _bakeViewSelector_nodeAddresses = nil
     , _bakeViewSelector_errors = nil
+    , _bakeViewSelector_latestHead = nil
     , _bakeViewSelector_upgrade = nil
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
+    , _bakeViewSelector_alertCount = nil
     }
 
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
   alignWith f xs ys = BakeViewSelector
-    { _bakeViewSelector_clientAddresses = f' _bakeViewSelector_clientAddresses
+    { _bakeViewSelector_config = f' _bakeViewSelector_config
+    , _bakeViewSelector_clientAddresses = f' _bakeViewSelector_clientAddresses
     , _bakeViewSelector_clients = f' _bakeViewSelector_clients
     , _bakeViewSelector_parameters = f' _bakeViewSelector_parameters
     , _bakeViewSelector_publicNodeConfig = f' _bakeViewSelector_publicNodeConfig
@@ -199,9 +223,11 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_summary = f' _bakeViewSelector_summary
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
     , _bakeViewSelector_errors = f' _bakeViewSelector_errors
+    , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
     , _bakeViewSelector_upgrade = f' _bakeViewSelector_upgrade
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
+    , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
     }
     where
       f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
@@ -209,7 +235,8 @@ instance Align BakeViewSelector where
 
 instance FunctorMaybe BakeView where
   fmapMaybe f a = BakeView
-    { _bakeView_clientAddresses = fmapMaybe f $ _bakeView_clientAddresses a
+    { _bakeView_config = fmapMaybe f $ _bakeView_config a
+    , _bakeView_clientAddresses = fmapMaybe f $ _bakeView_clientAddresses a
     , _bakeView_clients = fmapMaybe f $ _bakeView_clients a
     , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
     , _bakeView_publicNodeConfig = fmapMaybe f $ _bakeView_publicNodeConfig a
@@ -222,9 +249,11 @@ instance FunctorMaybe BakeView where
     , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
     , _bakeView_errors = fmapMaybe f $ _bakeView_errors a
+    , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
     , _bakeView_upgrade = fmapMaybe f $ _bakeView_upgrade a
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = fmapMaybe f $ _bakeView_telegramRecipients a
+    , _bakeView_alertCount = fmapMaybe f $ _bakeView_alertCount a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -237,7 +266,8 @@ alignTheseWith f = these (fmap (f . This)) (fmap (f . That)) (alignWith f)
 
 instance Semigroup a => Semigroup (BakeViewSelector a) where
   u <> v = BakeViewSelector
-    { _bakeViewSelector_clientAddresses = (<>) (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
+    { _bakeViewSelector_config = (<>) (_bakeViewSelector_config u) (_bakeViewSelector_config v)
+    , _bakeViewSelector_clientAddresses = (<>) (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
     , _bakeViewSelector_summary = (<>) (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
     , _bakeViewSelector_clients = (<>) (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = (<>) (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
@@ -250,14 +280,17 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_mailServer = (<>) (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
+    , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
     , _bakeViewSelector_upgrade = (<>) (_bakeViewSelector_upgrade u) (_bakeViewSelector_upgrade v)
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
+    , _bakeViewSelector_alertCount = (<>) (_bakeViewSelector_alertCount u) (_bakeViewSelector_alertCount v)
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
   mempty = BakeViewSelector
-    { _bakeViewSelector_clientAddresses = mempty
+    { _bakeViewSelector_config = mempty
+    , _bakeViewSelector_clientAddresses = mempty
     , _bakeViewSelector_summary = mempty
     , _bakeViewSelector_clients = mempty
     , _bakeViewSelector_parameters = mempty
@@ -270,9 +303,11 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_mailServer = mempty
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_errors = mempty
+    , _bakeViewSelector_latestHead = mempty
     , _bakeViewSelector_upgrade = mempty
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
+    , _bakeViewSelector_alertCount = mempty
     }
   mappend = (<>)
 
@@ -284,7 +319,8 @@ instance Additive (BakeViewSelector SelectedCount)
 
 instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
   mempty = BakeView
-    { _bakeView_clientAddresses = mempty
+    { _bakeView_config = mempty
+    , _bakeView_clientAddresses = mempty
     , _bakeView_clients = mempty
     , _bakeView_parameters = mempty
     , _bakeView_publicNodeConfig = mempty
@@ -299,15 +335,18 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_summary = mempty
     , _bakeView_nodeAddresses = mempty
     , _bakeView_errors = mempty
+    , _bakeView_latestHead = mempty
     , _bakeView_upgrade = mempty
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
+    , _bakeView_alertCount = mempty
     }
   mappend u v = u <> v
 
 instance Semigroup a => Semigroup (BakeView a) where
   u <> v = BakeView
-    { _bakeView_clientAddresses = _bakeView_clientAddresses u <> _bakeView_clientAddresses v
+    { _bakeView_config = _bakeView_config u <> _bakeView_config v
+    , _bakeView_clientAddresses = _bakeView_clientAddresses u <> _bakeView_clientAddresses v
     , _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
     , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
@@ -322,9 +361,11 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_summary = _bakeView_summary u <> _bakeView_summary v
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
+    , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
     , _bakeView_upgrade = _bakeView_upgrade u <> _bakeView_upgrade v
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v
+    , _bakeView_alertCount = _bakeView_alertCount u <> _bakeView_alertCount v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where
@@ -345,4 +386,5 @@ concat <$> traverse makeLenses
   [ 'BakeView
   , 'BakeViewSelector
   , 'MailServerView
+  , 'NodeSummary
   ]

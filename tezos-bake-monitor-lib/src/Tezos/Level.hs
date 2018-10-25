@@ -11,6 +11,7 @@ import Tezos.Json
 -- Units of blocks, not neccesarily absolute level above genesis block
 newtype RawLevel = RawLevel {unRawLevel :: Int}
   deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey)
+
 -- Units of blocksPerCycle, not neccesarily absolute level above genesis block
 newtype Cycle = Cycle {unCycle :: Int}
   deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey)

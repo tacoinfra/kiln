@@ -18,6 +18,7 @@ library
     Frontend.Common
     Frontend.Modal.Base
     Frontend.Modal.Class
+    Frontend.Settings.Telegram
 
   build-depends:
       base
@@ -30,6 +31,7 @@ library
     , either
     , exceptions
     , file-embed
+    , friendly-time
     , ghcjs-dom
     , IntervalMap
     , jsaddle
@@ -39,6 +41,7 @@ library
     , mtl
     , obelisk-executable-config
     , obelisk-frontend
+    , obelisk-generated-static
     , obelisk-route
     , primitive
     , ref-tf
