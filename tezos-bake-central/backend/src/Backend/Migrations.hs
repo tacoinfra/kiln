@@ -32,6 +32,7 @@ autoMigrate tableAnalysis = runMigration $ do
 preMigrate :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 preMigrate ta = do
   migrateParameters ta
+  migratePublicNodeHead ta
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
