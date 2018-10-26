@@ -179,4 +179,10 @@ h6.ui.header {
     }
 }
 
+/* a little quirky way to get the positiion of the 'alert' icon placed a bit better. */
+.app-gutter .ui.list .item .icon {
+  line-height: 2.123456em;
+}
+
+
 /* vim: set syntax=less : */
