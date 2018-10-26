@@ -21,6 +21,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
+import Data.Function (on)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map as Map
@@ -69,8 +70,8 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain,
-                      frontendConfig_upgradeBranch)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
+                      frontendConfig_chain, frontendConfig_upgradeBranch)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute)
@@ -322,7 +323,7 @@ watchTelegramRecipients =
 watchUpgradeNotice
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
-watchUpgradeNotice =
+watchUpgradeNotice = holdUniqDyn <=<
   (fmap . fmap) (getMaybeView . _bakeView_upgrade) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upgrade = viewJust 1 }
@@ -560,7 +561,7 @@ upgradeRibbon
   => m ()
 upgradeRibbon =
   (asks (^. frontendConfig . frontendConfig_upgradeBranch) >>=) $ traverse_ $ \upgradeBranch -> do
-    upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
+    upgradeNotice <- watchUpgradeNotice
     dyn_ $ ffor upgradeNotice $ traverse_ $ \(_log, upgrade) -> case upgrade of
       Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
       Right v -> do
@@ -932,14 +933,18 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
         addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
+    upgradeOptions = do
+      notice <- watchUpgradeNotice
+      rec
+        let submit = gate (not <$> current isLoading) submitClick
+        (isLoading, gotResponse) <- formIsLoading ((<) `on` (^? _Just . _1 . errorLog_lastSeen)) notice submit
+        submitClick <- fmap (domEvent Click . fst) $ elDynAttr' "div"
+          (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
+          $ text "Check for New Version"
+      _ <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ submit
 
-    upgradeOptions = mdo
-      isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
-      checkUpgrade <- fmap (domEvent Click . fst) $ elDynAttr' "div"
-        (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
-        $ text "Check for New Version"
-      result <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ checkUpgrade
-      widgetHold_ blank $ ffor result $ \(currentVersion, checkResult) -> do
+      currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+      widgetHold_ blank $ ffor (fmap snd <$> tagPromptlyDyn notice gotResponse) $ \checkResult -> do
         let currentVersionText = "You're currently using version " <> T.pack (showVersion currentVersion)
         case checkResult of
           Nothing -> divClass "ui success message" $

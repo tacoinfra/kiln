@@ -9,6 +9,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
 import Text.URI as Uri
 import Text.URI (URI)
@@ -88,6 +89,7 @@ data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
   , _frontendConfig_chainId :: !ChainId
   , _frontendConfig_upgradeBranch :: !(Maybe Text)
+  , _frontendConfig_appVersion :: !Version
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 class HasFrontendConfig r where

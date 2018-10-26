@@ -35,7 +35,6 @@ import Backend.Http (runHttpT)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (checkForUpgrade)
-import Backend.Version (version)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -140,8 +139,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
             , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
             ]
 
-      PublicRequest_CheckForUpgrade -> fmap ((,) version) $ inDb $
-        checkForUpgrade upgradeBranch (_nodeDataSource_httpMgr nds) appConfig id
+      PublicRequest_CheckForUpgrade ->
+        void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ inDb $
+          void $ checkForUpgrade upgradeBranch (_nodeDataSource_httpMgr nds) appConfig id
 
       PublicRequest_SetPublicNodeConfig publicNode enabled -> do
         inDb $ do

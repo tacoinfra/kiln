@@ -73,12 +73,13 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
+import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client
-import Backend.Workers.Delegate
-import Backend.Workers.Node
+import Backend.Workers.Client (clientWorker)
+import Backend.Workers.Delegate (delegateWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
@@ -219,6 +220,7 @@ backendImpl cfg serve = do
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
+          , Config._frontendConfig_appVersion = version
           }
 
       _ <- Telegram.initState addFinalizer httpMgr logger db
