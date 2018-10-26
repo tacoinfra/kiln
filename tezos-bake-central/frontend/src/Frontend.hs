@@ -16,7 +16,7 @@ module Frontend where
 import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
-import Control.Monad.Reader (MonadReader, asks, runReaderT)
+import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators (rightToMaybe)
@@ -52,7 +52,8 @@ import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, runRhyoliteWidget, watchViewSelector)
+import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget,
+                              watchViewSelector)
 import Rhyolite.Schema (Email, Id, Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
 import Safe (maximumMay)
@@ -77,7 +78,7 @@ import Common.Schema hiding (Event)
 import Common.Vassal
 import ExtraPrelude
 import Frontend.Common
-import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT)
+import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 import qualified Frontend.Settings.Telegram as Telegram
 
@@ -120,19 +121,53 @@ frontendBody = void $ do
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
       <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
 
-  runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
-    cfg <- watchFrontendConfig
-    dyn_ $ ffor cfg $ \case
-      Nothing -> waitingForResponse
-      Just c -> do
-        tz <- liftIO Time.getCurrentTimeZone
-        t0 <- liftIO Time.getCurrentTime
-        everySecondTick <- fmap _tickInfo_lastUTC <$> tickLossyFromPostBuildTime 1
-        currentTime <- holdDyn t0 everySecondTick
-        let ctx = FrontendContext c tz currentTime
-        flip runReaderT ctx $
+  rec
+    (socketState, _) <- runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
+      withFrontendContext $
+        withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
             appMain
+  pure ()
+
+withConnectivityModal
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
+  => AppWebSocket t app -> m () -> m ()
+withConnectivityModal socketState f = do
+  connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected socketState)
+  let
+    wsConnected = ffilter id connectionChanged
+    wsDisconnected = ffilter not connectionChanged
+    mkDisconnectedModal _ = basicModal $ do
+      el "h3" $ elClass "i" "ui red icon-warning icon" blank *> text " Disconnected."
+      el "p" $ text "Kiln is not receiving data from the server but will continue attempting to reconnect. You will be able to proceed as soon as the connection is made."
+
+      divClass "suggested-fix" $ do
+        divClass "heading" $ text "Check your network"
+        divClass "content" $ text "You may want to check that your infrastructure and network connections are working and that your server is running or auto re-starting in the case that it crashed."
+
+      divClass "suggested-fix" $ do
+        divClass "heading" $ text "Leave page open"
+        divClass "content" $ text "If your server or network is down, refreshing this page will fail and will prevent Kiln from auto re-connecting if the issue is only temporary."
+
+      divClass "ui active tiny inline loader" blank *> text " Waiting for response from server…"
+      pure wsConnected
+
+  void $ withModals
+    (ModalBackdropConfig $ "class"=:"disconnected modal-backdrop")
+    (mkDisconnectedModal <$ wsDisconnected)
+    f
+
+withFrontendContext :: (MonadRhyoliteFrontendWidget Bake t m) => ReaderT (FrontendContext t) m () -> m ()
+withFrontendContext f = do
+  cfg <- watchFrontendConfig
+  dyn_ $ ffor cfg $ \case
+    Nothing -> waitingForResponse
+    Just c -> do
+      tz <- liftIO Time.getCurrentTimeZone
+      t0 <- liftIO Time.getCurrentTime
+      everySecondTick <- fmap _tickInfo_lastUTC <$> tickLossyFromPostBuildTime 1
+      currentTime <- holdDyn t0 everySecondTick
+      runReaderT f $ FrontendContext c tz currentTime
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =
