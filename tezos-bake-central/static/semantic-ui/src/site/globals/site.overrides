@@ -24,15 +24,31 @@ h6.ui.header {
     font-size:@relative13px;
 }
 
+.modalbase {
+    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
+    // put overlays on the screen with z-index and we want to beat them.
+    // This is the smallest number that works for the following plugins:
+    //   * LastPass
+    z-index: 20;
+}
+
 .modal-backdrop {
+    .modalbase;
+
     position: fixed;
     top: 0;
     left: 0;
     height: 100%;
     width: 100%;
+
+    &.disconnected {
+        background-color: rgba(0,0,0,0.2);
+    }
 }
 
 .modal-box {
+    .modalbase;
+
     position: fixed;
     top: 50%;
     left: 50%;
@@ -42,13 +58,7 @@ h6.ui.header {
     background-color: #FFF;
     box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
 
-    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
-    // put overlays on the screen with z-index and we want to beat them.
-    // This is the smallest number that works for the following plugins:
-    //   * LastPass
-    z-index: 20;
-
-    & .content {
+    & > .content {
         padding: 50px;
     }
 }
@@ -119,16 +129,16 @@ h6.ui.header {
 }
 
 .topbar {
-    padding-left: 30px;
+    padding-left: @30px;
 
     & .ui.horizontal.list .item .content {
         font-weight: bold;
-        padding-left: 30px;
+        padding-left: @30px;
 
         & .item .content .header {
             font-weight: normal;
             color: rgba(0, 0, 0, .6);
-            padding-bottom: 4px;
+            padding-bottom: @4px;
         }
     }
 }
@@ -137,8 +147,8 @@ h6.ui.header {
     line-height: 19px;
 
     & .error {
-        padding-left: 50px;
-        padding-right: 50px;
+        padding-left: @50px;
+        padding-right: @50px;
         padding-top: 0px;
     }
 
@@ -151,5 +161,22 @@ h6.ui.header {
     }
 }
 
+.suggested-fix {
+    color: #898989;
+    font-size: 90%;
+    padding-bottom: @12px;
+
+    & > .heading {
+        font-weight: bold;
+        display: inline;
+
+        &:after {
+            content: ": ";
+        }
+    }
+    & > .content {
+        display: inline;
+    }
+}
 
 /* vim: set syntax=less : */
