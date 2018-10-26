@@ -24,8 +24,8 @@ h6.ui.header {
     font-size:@relative13px;
 }
 
-.modalbase {
-    // This isn't necessary for our modals, but some common pesky plugins (like LastPass)
+._modal-base {
+    // This isn't necessary for our modals, but some common pesky plugins
     // put overlays on the screen with z-index and we want to beat them.
     // This is the smallest number that works for the following plugins:
     //   * LastPass
@@ -33,7 +33,7 @@ h6.ui.header {
 }
 
 .modal-backdrop {
-    .modalbase;
+    ._modal-base;
 
     position: fixed;
     top: 0;
@@ -47,7 +47,7 @@ h6.ui.header {
 }
 
 .modal-box {
-    .modalbase;
+    ._modal-base;
 
     position: fixed;
     top: 50%;
