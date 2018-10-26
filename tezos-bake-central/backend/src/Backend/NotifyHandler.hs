@@ -104,7 +104,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           pure mempty
             { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node)) }
       , whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
-          alerts <- getNodeAddresses $ Just nid
+          alerts <- case _node_deleted node' of
+            False -> getNodeAddresses $ Just nid
+            True -> pure [(Bounded nid, First Nothing)]
           pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
       , whenM (viewSelects () latestHeadVS) $ do
           latestHead <- runReaderT dataSourceHead nds
