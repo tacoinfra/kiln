@@ -28,7 +28,6 @@ library
     , common
     , containers
     , data-default
-    , either
     , exceptions
     , file-embed
     , friendly-time

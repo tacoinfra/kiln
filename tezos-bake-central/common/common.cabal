@@ -26,7 +26,6 @@ library
     , cryptonite
     , data-default
     , dependent-sum
-    , either
     , file-embed
     , hashing
     , lens

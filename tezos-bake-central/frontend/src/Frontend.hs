@@ -19,7 +19,6 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
-import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
 import Data.Function (on)
 import Data.List (intersperse, sortBy)
@@ -107,7 +106,7 @@ frontendBody = void $ do
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
     renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    routeAuthority = rightToMaybe $ Uri.uriAuthority route
+    routeAuthority = Uri.uriAuthority route ^? _Right
     wsPort = (Uri.authPort =<< routeAuthority)
       <|> ffor routeScheme (\case
         "http" -> 80
@@ -1278,14 +1277,14 @@ listInput ph validate itemWidget items rsp = divClass "list-input" $ do
   rec (i, addClick) <- divClass "item-input" $ do
         itemInput <- inputElement $ def
           & initialAttributes .~ ("placeholder" =: ph)
-          & inputElementConfig_setValue .~ ("" <$ fmapMaybe rightToMaybe rsp)
+          & inputElementConfig_setValue .~ ("" <$ fmapMaybe (^? _Right) rsp)
           & inputElementConfig_elementConfig . elementConfig_modifyAttributes .~ validationAttrs
         addItemClick <- fmap (domEvent Click . fst) $ elClass' "span" "add-button" $ elClass "i" "fa fa-plus-circle fa-fw" blank
         return (itemInput, addItemClick)
       let v = value i
           validationResults = leftmost
             [ (\v' -> if T.null v' then Left () else Right (validate v')) <$> updated v
-            , Right . isJust . rightToMaybe <$> rsp
+            , Right . isJust . preview _Right <$> rsp
             ]
           validationAttrs = ffor validationResults $ \r -> mapKeysToAttributeName $ case r of
             Left () -> "class" =: Nothing
