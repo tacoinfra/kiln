@@ -23,9 +23,8 @@ import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
 import Data.Function (on)
 import Data.List (intersperse, sortBy)
-import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down (..), comparing)
 import qualified Data.Set as Set
@@ -329,7 +328,7 @@ watchUpgradeNotice = holdUniqDyn <=<
       { _bakeViewSelector_upgrade = viewJust 1 }
 
 watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
-watchAlertCount =
+watchAlertCount = holdUniqDyn <=<
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }

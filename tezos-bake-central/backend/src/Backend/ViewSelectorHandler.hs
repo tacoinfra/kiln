@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -9,11 +8,9 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
-import Data.Semigroup (First (..))
 import Data.Time (UTCTime)
 import Data.Version (Version)
 import Database.Groundhog.Postgresql

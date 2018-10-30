@@ -12,13 +12,6 @@
 
 module Backend.Alerts where
 
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Reader (MonadReader)
-import Data.Either.Combinators (leftToMaybe, rightToMaybe)
-import Data.Foldable (for_)
-import Data.Functor.Const (Const (..))
-import Data.Maybe (listToMaybe)
-import Data.Semigroup ((<>))
 import Data.Version (Version)
 import Database.Groundhog
 import Database.Groundhog.Core
@@ -34,11 +27,12 @@ import qualified Text.URI as Uri
 
 import Tezos.Types
 
+import Backend.Alerts.Common (Alert (..), queueAlert)
 import Backend.Config (HasAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
 import Common.Schema
-import Backend.Alerts.Common (queueAlert, Alert (..))
+import ExtraPrelude
 
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m

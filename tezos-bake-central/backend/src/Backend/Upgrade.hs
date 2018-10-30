@@ -7,20 +7,11 @@
 
 module Backend.Upgrade where
 
-import Control.Arrow ((***))
 import Control.Exception.Safe (try)
-import Control.Monad (join)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (logInfo)
-import Control.Monad.Reader (runReaderT)
-import Data.Bifunctor (second)
 import qualified Data.ByteString.Lazy as Bz
-import Data.Functor (void)
-import Data.Functor.Identity (Identity (..))
 import Data.Pool (Pool)
-import Data.Semigroup ((<>))
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime)
@@ -37,6 +28,7 @@ import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig)
 import Backend.Version (parseVersion, version)
 import Common.Schema (UpgradeCheckError (..))
+import ExtraPrelude
 
 upgradeCheckWorker
   :: MonadIO m
