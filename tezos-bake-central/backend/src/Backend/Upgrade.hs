@@ -16,18 +16,16 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime)
 import qualified Data.Version as V
-import Database.Groundhog.Postgresql (PersistBackend, Postgresql)
+import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
-import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
+import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 
-import Backend.Alerts (clearUpgradeNotice, reportUpgradeNotice)
 import Backend.Common (workerWithDelay)
-import Backend.Config (AppConfig)
-import Backend.Version (parseVersion, version)
-import Common.Schema (UpgradeCheckError (..))
+import Backend.Schema
+import Backend.Version (parseVersion)
+import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..))
 import ExtraPrelude
 
 upgradeCheckWorker
@@ -35,30 +33,47 @@ upgradeCheckWorker
   => Text
   -> NominalDiffTime
   -> LoggingEnv
-  -> AppConfig
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker upgradeBranch delay logger appConfig httpMgr db = workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
-    $(logInfo) "Checking for upgrades"
-    void $ checkForUpgrade upgradeBranch httpMgr appConfig (runLoggingEnv logger . runDb (Identity db))
+upgradeCheckWorker upgradeBranch delay logger httpMgr db =
+  workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
+    $(logInfo) "Checking for newer version"
+    void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
 
-checkForUpgrade
-  :: (MonadIO m, PersistBackend trx, PostgresLargeObject trx, MonadIO trx)
+updateUpstreamVersion
+  :: (MonadIO m, PersistBackend db)
   => Text
   -> Http.Manager
-  -> AppConfig
-  -> (forall a. trx a -> m a)
-  -> m (Maybe (Either UpgradeCheckError V.Version))
-checkForUpgrade upgradeBranch httpMgr appConfig withTransaction = do
-  result <- runExceptT (getUpstreamVersion upgradeBranch httpMgr)
-  withTransaction $ flip runReaderT appConfig $ case result of
-    e@(Left _) -> Just e <$ reportUpgradeNotice e
-    Right upstreamVersion -> if upstreamVersion > version then
-        Just (Right upstreamVersion) <$ reportUpgradeNotice (Right upstreamVersion)
-      else
-        Nothing <$ clearUpgradeNotice
+  -> (forall a. db a -> m a)
+  -> m ()
+updateUpstreamVersion upgradeBranch httpMgr inDb =
+  inDb . setUpstreamVersion =<< runExceptT (getUpstreamVersion upgradeBranch httpMgr)
 
+setUpstreamVersion :: (PersistBackend m) => Either UpgradeCheckError V.Version -> m ()
+setUpstreamVersion v = do
+  now <- getTime
+  existingId' :: Maybe (Id UpstreamVersion) <-
+    fmap toId . listToMaybe <$> project AutoKeyField (
+      (UpstreamVersion_updatedField ==. UpstreamVersion_updatedField) -- help type inference
+      `limitTo` 1)
+
+  case existingId' of
+    Nothing -> do
+      let
+        new = UpstreamVersion
+          { _upstreamVersion_error = preview _Left v
+          , _upstreamVersion_version = preview _Right v
+          , _upstreamVersion_updated = now
+          }
+      notify . flip Notify_UpstreamVersion new =<< insert' new
+    Just existingId -> do
+      updateId existingId
+        [ UpstreamVersion_errorField =. preview _Left v
+        , UpstreamVersion_versionField =. preview _Right v
+        , UpstreamVersion_updatedField =. now
+        ]
+      getId existingId >>= traverse_ (notify . Notify_UpstreamVersion existingId)
 
 upstreamGitLab :: Text -> Text
 upstreamGitLab branch = "https://gitlab.com/api/v4/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch

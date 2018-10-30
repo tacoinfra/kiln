@@ -24,7 +24,7 @@ module Common.Schema
   , Id
   ) where
 
-import Control.Lens.TH (makeLenses)
+import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -366,19 +366,6 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead
 
-data UpgradeCheckError
-  = UpgradeCheckError_UpstreamUnreachable
-  | UpgradeCheckError_UpstreamMissing
-  | UpgradeCheckError_UpstreamUnparseable
-  deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
-
-data ErrorLogUpgradeNotice = ErrorLogUpgradeNotice
-  { _errorLogUpgradeNotice_log :: !(Id ErrorLog)
-  , _errorLogUpgradeNotice_error :: !(Maybe UpgradeCheckError)
-  , _errorLogUpgradeNotice_newVersion :: !(Maybe Version)
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogUpgradeNotice
-
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -401,6 +388,19 @@ data GenericCacheEntry = GenericCacheEntry
   , _genericCacheEntry_value :: !(Json Aeson.Value)
   } deriving (Eq, Generic, Show, Typeable)
 instance HasId GenericCacheEntry
+
+data UpgradeCheckError
+  = UpgradeCheckError_UpstreamUnreachable
+  | UpgradeCheckError_UpstreamMissing
+  | UpgradeCheckError_UpstreamUnparseable
+  deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
+
+data UpstreamVersion = UpstreamVersion
+  { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
+  , _upstreamVersion_version :: !(Maybe Version)
+  , _upstreamVersion_updated :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId UpstreamVersion
 
 data TelegramConfig = TelegramConfig
   { _telegramConfig_botName :: !(Maybe Text)
@@ -431,7 +431,7 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
-concat <$> traverse (deriveJSON defaultTezosCompatJsonOptions)
+fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
@@ -448,7 +448,6 @@ concat <$> traverse (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeWrongChain
-  , ''ErrorLogUpgradeNotice
   , ''Event
   , ''Node
   , ''Parameters
@@ -461,9 +460,8 @@ concat <$> traverse (deriveJSON defaultTezosCompatJsonOptions)
   , ''TelegramMessageQueue
   , ''TelegramRecipient
   , ''UpgradeCheckError
-  ]
-
-concat <$> traverse makeLenses
+  , ''UpstreamVersion
+  ] ++ map makeLenses
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BakeEfficiency
@@ -488,7 +486,11 @@ concat <$> traverse makeLenses
   , 'TelegramConfig
   , 'TelegramMessageQueue
   , 'TelegramRecipient
-  ]
+  , 'UpstreamVersion
+  ] ++ map makePrisms
+  [ ''UpgradeCheckError
+  ])
+
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

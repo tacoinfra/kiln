@@ -21,6 +21,7 @@ import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import qualified Data.Time.Format.Human as HumanTime
+import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
@@ -30,7 +31,8 @@ import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
+                      frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -187,6 +189,18 @@ publicKeyHashLink pkh = blockExplorerLink hash (text hash)
 
 fitnessText :: Fitness -> Text
 fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
+
+changelogLink :: (DomBuilder t m, MonadReader r m, HasFrontendConfig r) => Text -> Version -> m a -> m a
+changelogLink cls version f = do
+  asks (^. frontendConfig . frontendConfig_upgradeBranch) >>= \case
+    Nothing -> f
+    Just upgradeBranch -> elAttr "a"
+      (  "class"=:cls
+      <> "href"=:(changelogUrl upgradeBranch <> "#" <> versionAnchor)
+      <> "target"=:"_blank") f
+  where
+    versionText = T.pack (showVersion version)
+    versionAnchor = "anchor-" <> T.filter (/='.') versionText
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)

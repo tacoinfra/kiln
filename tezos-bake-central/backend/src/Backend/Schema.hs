@@ -84,7 +84,7 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
-  | Notify_ErrorLogUpgradeNotice !(Id ErrorLogUpgradeNotice)
+  | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig)
   | Notify_Node !(Id Node) !Node
   | Notify_Notificatee !(Id Notificatee)
@@ -114,8 +114,6 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
-instance HasDefaultNotify (Id ErrorLogUpgradeNotice) where
-  mkDefaultNotify = Notify_ErrorLogUpgradeNotice
 instance HasDefaultNotify (Id MailServerConfig) where
   mkDefaultNotify = Notify_MailServerConfig
 instance HasDefaultNotify (Id Notificatee) where
@@ -502,7 +500,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogNodeWrongChain
-  - entity: ErrorLogUpgradeNotice
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -529,6 +526,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         fields: [_telegramConfig_botApiKey]
   - entity: TelegramMessageQueue
   - entity: TelegramRecipient
+  - entity: UpstreamVersion
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -542,7 +540,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
-  , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
@@ -554,4 +551,5 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''TelegramConfig, 'TelegramConfigKey)
   , (''TelegramRecipient, 'TelegramRecipientKey)
   , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
+  , (''UpstreamVersion, 'UpstreamVersionKey)
   ]

@@ -20,7 +20,6 @@ import Data.Align (Align (alignWith, nil))
 import Data.Functor.Compose (Compose (..))
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
-import Data.Version (Version)
 import Data.Word (Word16)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
@@ -72,7 +71,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
-  , _bakeViewSelector_upgrade :: !(MaybeSelector (ErrorLog, Either UpgradeCheckError Version) a)
+  , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector TelegramConfig a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
@@ -94,7 +93,7 @@ data BakeView a = BakeView
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
-  , _bakeView_upgrade :: !(MaybeView (ErrorLog, Either UpgradeCheckError Version) a)
+  , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
   , _bakeView_telegramConfig :: !(MaybeView TelegramConfig a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
@@ -155,7 +154,7 @@ cropBakeView vs v = BakeView
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
   , _bakeView_errors = cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
-  , _bakeView_upgrade = cropView (_bakeViewSelector_upgrade vs) (_bakeView_upgrade v)
+  , _bakeView_upstreamVersion = cropView (_bakeViewSelector_upstreamVersion vs) (_bakeView_upstreamVersion v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
   , _bakeView_alertCount = cropView (_bakeViewSelector_alertCount vs) (_bakeView_alertCount v)
@@ -178,7 +177,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
-    , _bakeViewSelector_upgrade = fmapMaybe f $ _bakeViewSelector_upgrade a
+    , _bakeViewSelector_upstreamVersion = fmapMaybe f $ _bakeViewSelector_upstreamVersion a
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = fmapMaybe f (_bakeViewSelector_telegramRecipients a)
     , _bakeViewSelector_alertCount = fmapMaybe f (_bakeViewSelector_alertCount a)
@@ -201,7 +200,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = nil
     , _bakeViewSelector_errors = nil
     , _bakeViewSelector_latestHead = nil
-    , _bakeViewSelector_upgrade = nil
+    , _bakeViewSelector_upstreamVersion = nil
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
     , _bakeViewSelector_alertCount = nil
@@ -224,7 +223,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
     , _bakeViewSelector_errors = f' _bakeViewSelector_errors
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
-    , _bakeViewSelector_upgrade = f' _bakeViewSelector_upgrade
+    , _bakeViewSelector_upstreamVersion = f' _bakeViewSelector_upstreamVersion
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
     , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
@@ -250,7 +249,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
     , _bakeView_errors = fmapMaybe f $ _bakeView_errors a
     , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
-    , _bakeView_upgrade = fmapMaybe f $ _bakeView_upgrade a
+    , _bakeView_upstreamVersion = fmapMaybe f $ _bakeView_upstreamVersion a
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = fmapMaybe f $ _bakeView_telegramRecipients a
     , _bakeView_alertCount = fmapMaybe f $ _bakeView_alertCount a
@@ -281,7 +280,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
-    , _bakeViewSelector_upgrade = (<>) (_bakeViewSelector_upgrade u) (_bakeViewSelector_upgrade v)
+    , _bakeViewSelector_upstreamVersion = (<>) (_bakeViewSelector_upstreamVersion u) (_bakeViewSelector_upstreamVersion v)
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
     , _bakeViewSelector_alertCount = (<>) (_bakeViewSelector_alertCount u) (_bakeViewSelector_alertCount v)
@@ -304,7 +303,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_errors = mempty
     , _bakeViewSelector_latestHead = mempty
-    , _bakeViewSelector_upgrade = mempty
+    , _bakeViewSelector_upstreamVersion = mempty
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
     , _bakeViewSelector_alertCount = mempty
@@ -336,7 +335,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_nodeAddresses = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
-    , _bakeView_upgrade = mempty
+    , _bakeView_upstreamVersion = mempty
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
     , _bakeView_alertCount = mempty
@@ -362,7 +361,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
-    , _bakeView_upgrade = _bakeView_upgrade u <> _bakeView_upgrade v
+    , _bakeView_upstreamVersion = _bakeView_upstreamVersion u <> _bakeView_upstreamVersion v
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v
     , _bakeView_alertCount = _bakeView_alertCount u <> _bakeView_alertCount v

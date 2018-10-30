@@ -30,11 +30,10 @@ import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
-import Backend.Config (AppConfig)
 import Backend.Http (runHttpT)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
-import Backend.Upgrade (checkForUpgrade)
+import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -47,9 +46,8 @@ requestHandler
   -> Address
   -> NodeDataSource
   -> [DataSource]
-  -> AppConfig
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
+requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
@@ -140,8 +138,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources appConfig =
             ]
 
       PublicRequest_CheckForUpgrade ->
-        void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ inDb $
-          void $ checkForUpgrade upgradeBranch (_nodeDataSource_httpMgr nds) appConfig id
+        void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
+          void $ updateUpstreamVersion upgradeBranch (_nodeDataSource_httpMgr nds) inDb
 
       PublicRequest_SetPublicNodeConfig publicNode enabled -> do
         inDb $ do
