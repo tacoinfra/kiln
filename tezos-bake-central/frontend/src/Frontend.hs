@@ -645,11 +645,11 @@ summaryTab = divClass "ui grid" $ do
   return ()
 
 radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
-radioLabels k0 ks = mdo
+radioLabels k0 ks = divClass "ui buttons" $ mdo
   selectedDyn <- holdDyn k0 $ leftmost kClicks
   kClicks <- for ks $ \(k, label) -> do
-    (element', ()) <- elDynAttr' "a" (ffor selectedDyn $ \selected -> "class"=:("ui " <> (if selected == k then "blue" else "") <> " tiny label link")) label
-    pure $ k <$ domEvent Click element'
+    fmap (k <$) $ uiDynButton (ffor selectedDyn $ bool "" "primary" . (== k)) label
+
   pure selectedDyn
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
