@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -9,13 +8,10 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Monad.Reader (runReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
-import Data.Semigroup (First (..))
 import Data.Time (UTCTime)
-import Data.Version (Version)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
@@ -142,7 +138,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   let errorsVS = _bakeViewSelector_errors vs
   errors <- getErrorLogs $ unIntervalSelector errorsVS
 
-  upgrade <- maybeViewHandler _bakeViewSelector_upgrade getUpgradeNotice
+  upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $
+    fmap listToMaybe $ select $ CondEmpty `limitTo` 1
 
   let
     tcVS = _bakeViewSelector_telegramConfig vs
@@ -183,7 +180,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_delegates = delegates
     , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
     , _bakeView_latestHead = latestHead
-    , _bakeView_upgrade = upgrade
+    , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
     , _bakeView_alertCount = alertCount
@@ -364,34 +361,6 @@ getErrorLogs intervalMap = do
         ]
 
     leftBiasedUnions = MMap.unionsWith const
-
-getUpgradeNotice
-  :: (Monad m, PostgresRaw m, MonadIO m)
-  => m (Maybe (ErrorLog, Either UpgradeCheckError Version))
-getUpgradeNotice = do
-  row <- listToMaybe <$> [queryQ|
-    SELECT
-        el.started AT TIME ZONE 'UTC'
-      , el.stopped AT TIME ZONE 'UTC'
-      , el."lastSeen" AT TIME ZONE 'UTC'
-      , el."noticeSentAt" AT TIME ZONE 'UTC'
-      , t.error, t."newVersion"
-    FROM "ErrorLog" el
-    JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
-    WHERE el.stopped IS NULL
-    ORDER BY el.started DESC
-    LIMIT 1|]
-  pure $ row <&> \(elStarted, elStopped, elLastSeen, elNoticeSentAt, tError, tNewVersion) ->
-    (ErrorLog
-      { _errorLog_started = elStarted
-      , _errorLog_stopped = elStopped
-      , _errorLog_lastSeen = elLastSeen
-      , _errorLog_noticeSentAt = elNoticeSentAt
-      }
-    , case tError of
-        Just e -> Left e
-        Nothing -> maybe (error "Bad upgrade notice record") Right tNewVersion
-    )
 
 getAlertCount
   :: (Monad m, PostgresRaw m)

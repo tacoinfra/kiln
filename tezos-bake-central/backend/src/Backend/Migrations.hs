@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -30,9 +31,10 @@ autoMigrate tableAnalysis = runMigration $ do
   migrateSchema tableAnalysis
 
 preMigrate :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
-preMigrate ta = do
-  migrateParameters ta
-  migratePublicNodeHead ta
+preMigrate =
+      migrateParameters
+  >=> migratePublicNodeHead
+  >=> dropTableIfExists (Nothing, "ErrorLogUpgradeNotice")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -51,6 +53,12 @@ migratePublicNodeHead ta = do
     Nothing -> pure ta
     Just False -> dropTable table *> getTableAnalysis
     Just True -> pure ta
+
+dropTableIfExists :: (Migrate m) => QualifiedName -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIfExists table ta = do
+  analyzeTable ta table >>= \case
+    Nothing -> pure ta
+    Just _ -> dropTable table *> getTableAnalysis
 
 dropTable :: (Migrate m) => QualifiedName -> m ()
 dropTable (schema, tableName) = do

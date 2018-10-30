@@ -21,6 +21,7 @@ import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import qualified Data.Time.Format.Human as HumanTime
+import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
@@ -30,7 +31,8 @@ import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
+                      frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -188,6 +190,18 @@ publicKeyHashLink pkh = blockExplorerLink hash (text hash)
 fitnessText :: Fitness -> Text
 fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
 
+changelogLink :: (DomBuilder t m, MonadReader r m, HasFrontendConfig r) => Text -> Version -> m a -> m a
+changelogLink cls version f = do
+  asks (^. frontendConfig . frontendConfig_upgradeBranch) >>= \case
+    Nothing -> f
+    Just upgradeBranch -> elAttr "a"
+      (  "class"=:cls
+      <> "href"=:(changelogUrl upgradeBranch <> "#" <> versionAnchor)
+      <> "target"=:"_blank") f
+  where
+    versionText = T.pack (showVersion version)
+    versionAnchor = "anchor-" <> T.filter (/='.') versionText
+
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
 updatedWithInit d = do
@@ -199,6 +213,36 @@ maybeDynLazy
   :: (PostBuild t m, MonadHold t m, MonadFix m)
   => Dynamic t (Maybe a) -> m (Dynamic t (Maybe (Dynamic t a)))
 maybeDynLazy d = maybeDyn =<< holdDyn Nothing =<< updatedWithInit d
+
+-- | Folds over events and triggers a new event when a given transition is detected.
+transitionEvent
+  :: forall a b m t. (Reflex t, MonadHold t m, MonadFix m)
+  => (a -> a -> Maybe b) -- ^ Transition detection function.
+                         -- First argument is the older value, second argument is the new value.
+  -> a -- ^ Initial state for fold
+  -> Event t a -- ^ Event to fold over
+  -> m (Event t b)
+transitionEvent f a0 e =
+  fmap (fmapMaybe snd . updated) $
+    foldDyn ($) (a0, Nothing) $ e <&> \newA (oldA, _) -> (newA, f oldA newA)
+
+-- | Calculates the "loading" state of a form that is listening to a 'Dynamic' for its results.
+formIsLoading
+  :: forall state m t. (Reflex t, MonadHold t m, MonadFix m)
+  => (state -> state -> Bool) -- ^ Function from old and new state (in that order) to a Bool indicating that the new state indicates a submission.
+  -> Dynamic t state -- ^ Dynamic result
+  -> Event t () -- ^ Submit event
+  -> m (Dynamic t Bool, Event t ()) -- ^ 'Dynamic' for whether the form is loading, and an 'Event' for when the state changed after submit
+formIsLoading comp state submitted = do
+  isLoading <- (fmap.fmap) isJust $ foldDynMaybe ($) Nothing $ leftmost
+    [ tagPromptlyDyn state submitted <&> \s _ -> Just (Just s)
+    , updated state <&> \newState oldState ->
+        if liftA2 comp oldState (Just newState) == Just True
+          then Just Nothing
+          else Nothing
+    ]
+  gotResult <- transitionEvent (\wasLoading nowLoadding -> if wasLoading && not nowLoadding then Just () else Nothing) False (updated isLoading)
+  pure (isLoading, gotResult)
 
 basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"

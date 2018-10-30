@@ -61,7 +61,6 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.Alerts (clearUpgradeNotice)
 import Backend.CachedNodeRPC (blankNodeDataSource)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -73,12 +72,13 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
+import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client
-import Backend.Workers.Delegate
-import Backend.Workers.Node
+import Backend.Workers.Client (clientWorker)
+import Backend.Workers.Delegate (delegateWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
@@ -219,12 +219,13 @@ backendImpl cfg serve = do
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
+          , Config._frontendConfig_appVersion = version
           }
 
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources appConfig)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (leftToMaybe chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
@@ -237,10 +238,8 @@ backendImpl cfg serve = do
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< delegateWorker dataSrc
 
-      if checkForUpgrade then
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger appConfig httpMgr db
-      else
-        runLoggingEnv logger $ runDb (Identity db) clearUpgradeNotice
+      when checkForUpgrade $
+        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

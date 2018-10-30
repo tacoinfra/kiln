@@ -12,7 +12,6 @@
 module Common.Api where
 
 import Data.Text (Text)
-import Data.Version (Version)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.Class (Request)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
@@ -23,7 +22,6 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (Bake, MailServerView)
-import Common.Schema (UpgradeCheckError)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -62,7 +60,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: PublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
-      :: PublicRequest Bake (Version, Maybe (Either UpgradeCheckError Version))
+      :: PublicRequest Bake ()
     PublicRequest_SetPublicNodeConfig
       :: PublicNode
       -> Bool

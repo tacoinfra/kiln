@@ -31,7 +31,6 @@ library
     -- , diagrams-core
     -- , diagrams-lib
     -- , diagrams-svg
-    , either
     , exceptions
     , filepath
     , formatting

@@ -25,7 +25,7 @@ import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getUpgradeNotice)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
                    nodeIdForErrorLogView)
 import Common.Schema
@@ -51,7 +51,6 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
       Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
-      Notify_ErrorLogUpgradeNotice _eid -> handleUpgradeNotice
       Notify_MailServerConfig eid -> handleMailServer eid
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid
@@ -60,6 +59,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_PublicNodeHead eid ent -> handlePublicNodeHead eid ent
       Notify_TelegramConfig _eid ent -> handleTelegramConfig ent
       Notify_TelegramRecipient eid ent -> handleTelegramRecipient eid ent
+      Notify_UpstreamVersion _eid ent -> handleUpstreamVersion ent
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -187,11 +187,6 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
-    upgradeVS = _bakeViewSelector_upgrade aggVS
-    handleUpgradeNotice = whenM (viewSelects () upgradeVS) $ do
-      n <- getUpgradeNotice
-      pure $ mempty { _bakeView_upgrade = toMaybeView upgradeVS n }
-
     telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
     handleTelegramConfig cfg = whenM (viewSelects () telegramConfigVS) $ do
       pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS (Just cfg) }
@@ -200,3 +195,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     handleTelegramRecipient rid recipient = whenM (viewSelects (Bounded rid) telegramRecipientsVS) $ do
       pure $ mempty
         { _bakeView_telegramRecipients = toRangeView1 telegramRecipientsVS (Bounded rid) (Just $ First recipient) }
+
+    upgradeVS = _bakeViewSelector_upstreamVersion aggVS
+    handleUpstreamVersion ent = whenM (viewSelects () upgradeVS) $ do
+      pure $ mempty { _bakeView_upstreamVersion = toMaybeView upgradeVS (Just ent) }

@@ -19,12 +19,11 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
-import Data.Either.Combinators (rightToMaybe)
 import Data.Fixed (Micro)
+import Data.Function (on)
 import Data.List (intersperse, sortBy)
-import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down (..), comparing)
 import qualified Data.Set as Set
@@ -33,7 +32,7 @@ import qualified Data.Text.Encoding as T
 import Data.Time (UTCTime)
 import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Version (Version, showVersion)
+import Data.Version (showVersion)
 import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.Element (setInnerHTML)
@@ -69,8 +68,8 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain,
-                      frontendConfig_upgradeBranch)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
+                      frontendConfig_chain, frontendConfig_upgradeBranch)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute)
@@ -107,7 +106,7 @@ frontendBody = void $ do
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
     renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    routeAuthority = rightToMaybe $ Uri.uriAuthority route
+    routeAuthority = Uri.uriAuthority route ^? _Right
     wsPort = (Uri.authPort =<< routeAuthority)
       <|> ffor routeScheme (\case
         "http" -> 80
@@ -319,16 +318,14 @@ watchTelegramRecipients =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
 
-watchUpgradeNotice
-  :: MonadRhyoliteFrontendWidget Bake t m
-  => m (Dynamic t (Maybe (ErrorLog, Either UpgradeCheckError Version)))
-watchUpgradeNotice =
-  (fmap . fmap) (getMaybeView . _bakeView_upgrade) $
+watchUpstreamVersion :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe UpstreamVersion))
+watchUpstreamVersion = holdUniqDyn <=<
+  (fmap . fmap) (getMaybeView . _bakeView_upstreamVersion) $
     watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_upgrade = viewJust 1 }
+      { _bakeViewSelector_upstreamVersion = viewJust 1 }
 
 watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
-watchAlertCount =
+watchAlertCount = holdUniqDyn <=<
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
@@ -366,7 +363,7 @@ appMain = do
           & SemUi.sidebarConfig_closeOnClick .~ pure False)
         -- Container for the content the sidebar accompanies. "app-right" must
         -- be this and not a child div for flexbox's sake.
-        (\f -> SemUi.segment $ f $ def
+        (\f -> SemUi.ui "div" $ f $ def
           & SemUi.classes SemUi.|~ "app-right")
         -- Sidebar content
         (\f -> SemUi.menu
@@ -539,39 +536,18 @@ appContentArea
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => Dynamic t UITab -> m ()
-appContentArea selectedTab = do
+appContentArea selectedTab = divClass "app-content" $
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
     UITab_Options -> optionsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
-
-upgradeRibbon
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => m ()
-upgradeRibbon =
-  (asks (^. frontendConfig . frontendConfig_upgradeBranch) >>=) $ traverse_ $ \upgradeBranch -> do
-    upgradeNotice <- holdUniqDyn =<< watchUpgradeNotice
-    dyn_ $ ffor upgradeNotice $ traverse_ $ \(_log, upgrade) -> case upgrade of
-      Left _e -> divClass "ui red right ribbon label" $ text "Upgrade check failed"
-      Right v -> do
-        let
-          versionText = T.pack (showVersion v)
-          versionAnchor = "anchor-" <> T.filter (/='.') versionText
-        elAttr "a"
-          (  "class"=:"ui green right ribbon label"
-          <> "href"=:(Config.changelogUrl upgradeBranch <> "#" <> versionAnchor)
-          <> "target"=:"_blank") $
-            text $ "New version available: " <> versionText
 
 nodesTabOrWelcome
   :: forall r m t.
@@ -589,28 +565,26 @@ nodesTabOrWelcome = do
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
   dyn_ $ ffor haveNodesMaybe $ \case
-    Nothing -> divClass "app-content" waitingForResponse
-    Just False -> welcomeScreen
+    Nothing -> waitingForResponse
+    Just False -> divClass "app-welcome" welcomeScreen
     Just True -> nodesTab
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
-welcomeScreen =
-  divClass "app-content app-welcome"
+welcomeScreen = do
+  SemUi.header
+    (def
+      & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
+      )
     $ do
-        SemUi.header
-          (def
-            & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
-            )
-          $ do
-              text $ "Welcome to " <> appName <> "."
-        divClass "" $ do
-          text $ appName <> " helps you monitor Tezos nodes to keep your system"
-          el "br" blank
-          text "running smoothly, with many more features to come."
-          el "br" blank
-          text "\160"
-          el "br" blank
-          text "Click \"Add Node\" on the left to get started."
+        text $ "Welcome to " <> appName <> "."
+  divClass "" $ do
+    text $ appName <> " helps you monitor Tezos nodes to keep your system"
+    el "br" blank
+    text "running smoothly, with many more features to come."
+    el "br" blank
+    text "\160"
+    el "br" blank
+    text "Click \"Add Node\" on the left to get started."
 
 summaryTab
   :: forall r m t.
@@ -844,37 +818,28 @@ optionsTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
-optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ do
-  upgradeRibbon
-  enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
+optionsTab = do
+  divClass "version-section" $ do
+    currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+    divClass "heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
 
-  _ <- divClass "column" $ traverse (divClass "ui basic segment") $
-    [ currentChain
-    , telegramOptions
+    enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
+    when enableUpgradeCheck upgradeOptions
+
+  traverse_ (divClass "ui basic segment") $
+    [ telegramOptions
     ]
     ++ [ delegatesOptions | False ]
     ++ [ clientsOptions | False ]
-    ++ [ upgradeOptions | enableUpgradeCheck ]
-  divClass "column" $ do
-    divClass "ui basic segment" mailServerOptions
-    divClass "ui basic segment" notificationOptions
-  where
-    currentChain = do
-      chain <- asks (^. frontendConfig . frontendConfig_chain)
-      elClass "h3" "ui header" $ do
-        text "Network: "
-        el "em" $ text $ showChain chain
-      el "p" $ el "em" $ do
-        text "You can monitor a different network by setting the "
-        el "code" $ text $ T.pack Config.chain
-        text " configuration. Run the server with "
-        el "code" $ text "--help"
-        text " for more information."
 
+  divClass "ui basic segment" mailServerOptions
+  divClass "ui basic segment" notificationOptions
+
+  where
     telegramOptions = do
       openTelegramOptions <- uiButton "primary" "Configure Telegram"
       tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
@@ -932,22 +897,28 @@ optionsTab = divClass "app-content" $ divClass "ui two column stackable grid" $ 
         addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
+    upgradeOptions = do
+      currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+      upstreamVersion <- watchUpstreamVersion
 
-    upgradeOptions = mdo
-      isLoading <- holdDyn False $ leftmost [False <$ result, True <$ checkUpgrade]
-      checkUpgrade <- fmap (domEvent Click . fst) $ elDynAttr' "div"
-        (ffor isLoading $ \loading -> "class"=:("ui large button" <> (if loading then " loading" else "")))
-        $ text "Check for New Version"
-      result <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ checkUpgrade
-      widgetHold_ blank $ ffor result $ \(currentVersion, checkResult) -> do
-        let currentVersionText = "You're currently using version " <> T.pack (showVersion currentVersion)
-        case checkResult of
-          Nothing -> divClass "ui success message" $
-            text $ currentVersionText <> " which is the latest."
-          Just (Right newVersion) -> divClass "ui success message" $
-            text $ "A new version is available: " <> T.pack (showVersion newVersion) <> ". " <> currentVersionText <> "."
-          Just (Left _) -> divClass "ui error message" $
-            text $ "We had trouble checking for upgrades. " <> currentVersionText <> "."
+      elClass "p" "check-for-updates" $ do
+        (aEl, _) <- el' "a" $ text "Check for updates"
+        rec
+          let submit = gate (not <$> current isLoading) $ domEvent Click aEl
+          (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
+        _ <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ submit
+
+        dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
+          True -> divClass "ui tiny active inline loader" blank *> text " Checking for updates..."
+          False -> case v' of
+            Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
+            Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
+              if v > currentVersion
+              then changelogLink "" v $
+                text ("Version " <> T.pack (showVersion v) <> " Available ") *> SemUi.icon "icon-pop-out" def
+              else
+                text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
+            _ -> blank
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
@@ -1054,11 +1025,9 @@ nodesTab
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r
     )
   => m ()
-nodesTab = divClass "app-content" $ divClass "ui stackable grid" $ do
+nodesTab = do
   nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-
-  divClass "column" $ nodeTilesWidget nodesDyn
-
+  nodeTilesWidget nodesDyn
   where
     nodeTilesWidget
       :: {- Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
@@ -1308,14 +1277,14 @@ listInput ph validate itemWidget items rsp = divClass "list-input" $ do
   rec (i, addClick) <- divClass "item-input" $ do
         itemInput <- inputElement $ def
           & initialAttributes .~ ("placeholder" =: ph)
-          & inputElementConfig_setValue .~ ("" <$ fmapMaybe rightToMaybe rsp)
+          & inputElementConfig_setValue .~ ("" <$ fmapMaybe (^? _Right) rsp)
           & inputElementConfig_elementConfig . elementConfig_modifyAttributes .~ validationAttrs
         addItemClick <- fmap (domEvent Click . fst) $ elClass' "span" "add-button" $ elClass "i" "fa fa-plus-circle fa-fw" blank
         return (itemInput, addItemClick)
       let v = value i
           validationResults = leftmost
             [ (\v' -> if T.null v' then Left () else Right (validate v')) <$> updated v
-            , Right . isJust . rightToMaybe <$> rsp
+            , Right . isJust . preview _Right <$> rsp
             ]
           validationAttrs = ffor validationResults $ \r -> mapKeysToAttributeName $ case r of
             Left () -> "class" =: Nothing

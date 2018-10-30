@@ -1,16 +1,14 @@
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Frontend.Settings.Telegram where
 
-import Control.Lens.TH (makePrisms)
+import Data.Function (on)
 import Data.Map.Monoidal (MonoidalMap)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -20,71 +18,57 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Safe (headMay)
 
-import ExtraPrelude
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
-import Frontend.Common (formWithSubmit, uiButton, uiDynSubmit, updatedWithInit, Enabled(..))
-
-data PageState v = PageState_Unsubmitted | PageState_Submitted | PageState_Success v
-  deriving (Functor, Eq, Ord, Show, Generic, Typeable)
-makePrisms ''PageState
-
-setSuccess :: v -> PageState v -> PageState v
-setSuccess v PageState_Submitted = PageState_Success v
-setSuccess v PageState_Success{} = PageState_Success v
-setSuccess _ s = s
+import ExtraPrelude
+import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
 
 settings :: forall m t. MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 settings = switchHold never <=< workflowView $ Workflow $ do
   cfg <- watchTelegramConfig
   recipients <- watchTelegramRecipients
+  let
+    validated = _Just . telegramConfig_validated . _Just
+
+    validatedRecipient :: Dynamic t (Maybe TelegramRecipient) = zipDynWith
+      (\c recips -> if c ^? validated == Just True
+        then headMay $ fmapMaybe id $ toList recips
+        else Nothing
+      )
+      cfg recipients
 
   divClass "telegram-setup" $ do
     heading $ text "Setup Telegram Notifications"
+
     rec
-      (botApiKey, submitClick) <- formWithSubmit $ do
-        botApiKey_ <- settingsForm cfg
+      ((submit_, submitResult_), submitClick) <- formWithSubmit $ do
+        botApiKey <- settingsForm cfg
 
-        widgetHold_ blank $ ffor validated $ \isValid -> if isValid then blank else elClass "p" "error" $ do
-          elClass "i" "icon-warning-circle red icon" blank
-          text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
-
-        -- TODO: Abstract this somewhere.
         rec
-          submitState <- holdUniqDyn <=< holdDyn (Just Disabled) $ leftmost
-            [ Nothing <$ submit -- Loading
-            , Just . either (const Disabled) (const Enabled) <$> leftmost -- Revalidate when input changes or validation result comes back.
-                [ gate (isJust <$> current submitState) (updated botApiKey) -- Allow input changes only when not in loading state.
-                , tag (current botApiKey) validated -- This will exit loading state when validation comes in.
-                ]
-            ]
+          let submitResult = tagPromptlyDyn validatedRecipient gotResponse
+          widgetHold_ blank $ ffor (isJust <$> submitResult) $ \isValid -> if isValid then blank else elClass "p" "error" $ do
+            elClass "i" "icon-warning-circle red icon" blank
+            text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
+
+          let submit = filterRight $ tag (current botApiKey) $ gate (not <$> current isLoading) submitClick
+          (isLoading, gotResponse) <- formIsLoading
+            (\old new -> on (<) (^? _Just.telegramConfig_updated) old new && isJust (new ^? validated))
+            cfg
+            (void submit)
+          submitState <- holdUniqDyn $ zipDynWith
+            (\loading key -> if loading then Nothing else Just $ either (const Disabled) (const Enabled) key)
+            isLoading botApiKey
+
         horizontallyCentered $ do
           uiDynSubmit submitState $ text "Connect Telegram"
 
-        pure botApiKey_
+        pure (submit, submitResult)
 
-      let
-        submit = filterRight (tag (current botApiKey) submitClick)
-        validated = fmapMaybe (^? _Just . telegramConfig_validated . _Just) $ updated cfg
+    _ <- requestingIdentity $ public . PublicRequest_AddTelegramConfig <$> submit_
 
-    _ <- requestingIdentity $ public . PublicRequest_AddTelegramConfig <$> submit
-
-    let
-      validatedRecipient :: Dynamic t (Maybe TelegramRecipient) = zipDynWith
-        (\c recips -> if c ^? _Just . telegramConfig_validated . _Just == Just True
-          then headMay $ fmapMaybe id $ toList recips
-          else Nothing
-        )
-        cfg recipients
-
-    state :: Dynamic t (PageState TelegramRecipient) <- foldDyn ($) PageState_Unsubmitted $ leftmost
-      [ const PageState_Submitted <$ submit
-      , setSuccess <$> fmapMaybe id (updated validatedRecipient)
-      ]
-
-    pure (never, Workflow . successPage <$> fmapMaybe (^? _PageState_Success) (updated state))
+    pure (never, Workflow . successPage <$> fmapMaybe id submitResult_)
 
   where
     heading = el "h3"
