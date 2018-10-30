@@ -545,7 +545,7 @@ appContentArea selectedTab = divClass "app-content" $
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> optionsTab
+    UITab_Options -> settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 
@@ -813,7 +813,7 @@ aliasedInputForm validator label info placeholder = divClass "ui form fields" $ 
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
-optionsTab
+settingsTab
   :: forall r t m.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
@@ -822,7 +822,7 @@ optionsTab
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
-optionsTab = do
+settingsTab = do
   divClass "version-section" $ do
     currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
     divClass "heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
