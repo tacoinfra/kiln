@@ -11,6 +11,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     semantic-reflex-src = obelisk.reflex-platform.hackGet ./dep/semantic-reflex;
   in {
     staticFiles = pkgs.callPackage ./static {};
+    staticFilesImpure = toString ./result-static;
     packages = {
       backend-db = ./backend-db;
       reflex-dom-forms = pkgs.fetchFromGitHub {
