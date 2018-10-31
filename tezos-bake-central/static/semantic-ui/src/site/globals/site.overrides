@@ -218,6 +218,11 @@ body {
   background: #f5f5f5;
 }
 
+.pusher {
+  display: flex;
+  flex-direction: column
+}
+
 .app-header {
 }
 
@@ -225,15 +230,33 @@ body {
   flex-grow: 1;
   padding-left: @30px;
   padding-top: @35px;
+  overflow: auto;
+
+  & .ui.stackable.cards {
+    margin-left: 0;
+    margin-right: 0;
+  }
 }
 
-.app-gutter {
-    flex-grow: 1;
+.ui.segment.app-side-header {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
 
-    /* a little quirky way to get the positiion of the 'alert' icon placed a bit better. */
-    & .ui.list .item .icon {
-        line-height: 2.123456em;
-    }
+.ui.segment.app-gutter {
+  flex-grow: 1;
+  margin-top: 0;
+  margin-bottom: 0;
+  overflow: auto;
+  /* a little quirky way to get the positiion of the 'alert' icon placed a bit better. */
+  & .ui.list .item .icon {
+    line-height: 2.123456em;
+  }
+}
+
+.ui.segment.app-side-footer {
+  margin-top: 0;
+  padding-top: 0;
 }
 
 /* .ui.header > img sets a vertical-align */
