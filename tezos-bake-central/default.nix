@@ -10,7 +10,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyoliteLib = args: (import rhyolite-src).lib args;
     semantic-reflex-src = obelisk.reflex-platform.hackGet ./dep/semantic-reflex;
   in {
-    staticFiles = pkgs.callPackage ./static {};
+    staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     staticFilesImpure = toString ./result-static;
     packages = {
       backend-db = ./backend-db;
