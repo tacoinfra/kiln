@@ -34,7 +34,7 @@
 
 .ui.buttons {
   height: @38px;
-  background-color: @transparentBlack;
+  background-color: @groupBackgroundColor;
   border-radius: @circularRadius;
   padding: @5px;
 }
@@ -92,7 +92,7 @@
   border-radius: @circularRadius;
   background: @white;
   margin-left: @5px;
-  padding: @8px;
+  padding: @8px @14px;
   color: @black;
 }
 

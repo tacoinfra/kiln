@@ -12,6 +12,8 @@
 @hoverBackgroundColor: @white;
 @downBackgroundColor: @white;
 
+@groupBackgroundColor: #e1e6f0;
+
 @modalOpenerFontWeight : Bold;
 @modalOpenerFontSize : @12px;
 @modalOpenerColor : @black;
