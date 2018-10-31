@@ -20,7 +20,6 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
-import Data.Either.Combinators (leftToMaybe)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Pool (Pool)
@@ -227,7 +226,7 @@ backendImpl cfg serve = do
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
-        (viewSelectorHandler frontendConfig (leftToMaybe chain) dataSrc db)
+        (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
