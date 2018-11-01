@@ -243,9 +243,8 @@ body {
   padding-top: @35px;
   overflow: auto;
 
-  & .ui.stackable.cards {
-    margin-left: 0;
-    margin-right: 0;
+  h4 {
+      margin-bottom: @30px;
   }
 }
 
@@ -350,6 +349,142 @@ img.credits-obsidian {
 
     > .icon + .content {
         padding-left: 0;
+    }
+}
+
+.nodes-dashboard > .ui.cards {
+    margin-left: 0;
+
+    > .ui.card.node-tile {
+        width: unit(200 / @emSize, rem);
+        border-radius: @2px;
+        border: solid @1px #cacaca;
+        box-shadow: none;
+
+        margin-left: 0;
+        margin-right: @30px;
+
+        > .content {
+            padding-left: @15px;
+            padding-right: @15px;
+            padding-top: @2px;
+            padding-bottom: @17px;
+
+            font-size: @12px;
+            line-height: 1.5;
+
+            > .menu-section {
+                text-align: right;
+
+                > .icon {
+                    font-size: @20px;
+                    color: @grey;
+                    margin: 0;
+
+                    cursor: pointer;
+
+                    &:hover {
+                        color: @hoverBlue;
+                    }
+                    &:active {
+                        color: @activeBlue;
+                    }
+                }
+            }
+
+            > .title {
+                font-size: @14px;
+                font-weight: bold;
+                line-height: 1.3;
+
+                .circle.icon {
+                    font-size: @8px;
+                    vertical-align: 15%;
+                }
+
+                > .subtitle {
+                    font-size: @12px;
+                    font-weight: normal;
+                    color: @grey;
+                }
+            }
+
+            > .ui.error.message {
+                margin-top: @10px;
+                font-weight: bold;
+                font-size: @13px;
+                color: black;
+                line-height: 1;
+
+                padding-top: @12px;
+                padding-bottom: @11px;  // Because it doesn't look right without this.
+                padding-left: @12px;
+                padding-right: @12px;
+
+                border-radius: @3px;
+                border: solid @1px #ff0000;
+                box-shadow: none;
+                background-color: #fff5f5;
+            }
+
+            > .divider {
+                width: unit(170 / @emSize, rem);
+                height: @1px;
+                background-color: #eaeaea;
+                margin-top: @10px;
+                margin-bottom: @7px;
+            }
+
+            dl {
+                margin-block-start: 0;
+                margin-block-end: 0;
+
+                > dt {
+                    display: inline;
+                }
+                > dd {
+                    font-weight: bold;
+                    display: inline;
+                    margin-inline-start: @5px;
+                }
+            }
+
+            > .peer-count {
+                font-size: @16px;
+            }
+
+            > .stats {
+                display: flex;
+                flex-wrap: wrap;
+                flex-direction: row;
+                justify-content: space-between;
+                margin: 0;
+                padding: 0;
+
+                .icon {
+                    margin-right: 0;
+                    font-size: @9px;
+                    color: @grey;
+                }
+
+                > .column {
+                    display: flex;
+                    flex-direction: column;
+
+                    &.heading {
+                        color: @grey;
+                        text-align: right;
+                    }
+
+                    > .cell {
+                        box-sizing: border-box;
+                        overflow: hidden; // Or flex might break
+                        list-style: none;
+                        border: none;
+                    }
+                }
+            }
+        }
     }
 }
 
