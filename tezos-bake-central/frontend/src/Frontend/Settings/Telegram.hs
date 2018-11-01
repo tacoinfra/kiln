@@ -10,8 +10,8 @@
 module Frontend.Settings.Telegram where
 
 import Data.Function (on)
-import Data.Map.Monoidal (MonoidalMap, getMonoidalMap)
 import Data.Map (Map)
+import Data.Map.Monoidal (MonoidalMap, getMonoidalMap)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
@@ -27,7 +27,9 @@ import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
 import ExtraPrelude
 import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, icon, uiButton,
-import Frontend.Modal.Class (HasModal, ModalM, tellModal)
+                        uiDynSubmit, updatedWithInit)
+import Frontend.Modal.Class (HasModal (ModalM, tellModal))
+
 
 inlineSettings :: forall m t. (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
 inlineSettings = do
@@ -41,13 +43,13 @@ inlineSettings = do
       (reopener, _) <- elClass "p" "edit-link" $ do
         el' "a" $ text "Reconfigure Telegram"
       elClass "table" "telegram-recipients" $ do
-      el "tr" $ do
-        elClass "th" "telegram-recipient" $ text "Recipient"
-        elClass "th" "telegram-bot" $ text "Bot Name"
-      void $ listWithKey recipients $ \_ recipient -> do
         el "tr" $ do
-          elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
-          elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
+          elClass "th" "telegram-recipient" $ text "Recipient"
+          elClass "th" "telegram-bot" $ text "Bot Name"
+        void $ listWithKey recipients $ \_ recipient -> do
+          el "tr" $ do
+            elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
+            elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
       return $ domEvent Click reopener
 
   tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
