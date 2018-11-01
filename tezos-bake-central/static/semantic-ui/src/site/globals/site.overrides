@@ -28,10 +28,10 @@ a:active {
     color: @activeBlue;
     text-decoration-line:none;
 }
-.aside {color:@grey;}
+.aside {color: @grey;}
 
 h6.ui.header {
-    font-size:@relative13px;
+    font-size: @relative13px;
 }
 
 ._modal-base {
@@ -66,10 +66,10 @@ h6.ui.header {
     max-width: 100%;
     max-height: 100%;
     background-color: #FFF;
-    box-shadow: 0 15px 40px 0 rgba(0,0,0,0.2);
+    box-shadow: 0 @15px @40px 0 rgba(0,0,0,0.2);
 
-    & > .content {
-        padding: 50px;
+    > .content {
+        padding: @50px;
     }
 }
 
@@ -86,47 +86,47 @@ h6.ui.header {
     &:active {
         color: @activeBlue;
     }
-    & > i.fitted {
-        transform: translate(-2px, -2px);
+    > i.fitted {
+        transform: translate(-@2px, -@2px);
     }
 }
 
 
-.shaded{
-    padding:@15px;
+.shaded {
+    padding: @15px;
 }
 
-.shaded.grey { background-color:@blue; }
-.shaded.blue { background-color:#f8f9fc; }
+.shaded.grey { background-color: @blue; }
+.shaded.blue { background-color: #f8f9fc; }
 
 .ui.publicnodes .ui.icon.header > i.icon {
-    font-size:@25px;
+    font-size: @25px;
 }
 
 .ui.publicnodes > .grid > .row {
-  align-items:center;
+  align-items: center;
 }
 
 .ui.publicnodes > .grid {
-    border: 1px solid #CED4DA;
-    background:white;
+    border: @1px solid #CED4DA;
+    background: white;
     border-radius: @borderRadius;
 }
 .ui.publicnodes > .grid@{moreMagic5} {
-    margin-bottom: @15px!important;
+    margin-bottom: @15px !important;
 }
 .ui.publicnodes > .active .ui.icon.header {
-    color:#a6a6a6;
+    color: #a6a6a6;
 }
 
 .ui.publicnodes .ui.icon.header {
-    font-size:@14px;
-    font-weight:500;
-    color:@primaryColor;
+    font-size: @14px;
+    font-weight: 500;
+    color: @primaryColor;
 }
 
 .ui.publicnodes .header {
-    font-weight:bold;
+    font-weight: bold;
 }
 
 .ui.list.publicnodes > .item:not(.active) > .icon {
@@ -141,7 +141,7 @@ h6.ui.header {
 .topbar {
     padding-left: @30px;
 
-    & .ui.horizontal.list .item .content {
+    > .ui.horizontal.list .item .content {
         font-weight: bold;
         padding-left: @30px;
 
@@ -154,29 +154,29 @@ h6.ui.header {
 }
 
 .telegram-setup {
-    line-height: 19px;
+    line-height: @19px;
 
-    & .error {
+    .error {
         padding-left: @50px;
         padding-right: @50px;
-        padding-top: 0px;
+        padding-top: 0;
     }
 
-    & li {
-        padding-bottom: 1.5em;
+    li {
+        padding-bottom: 1.5em; // TODO: Don't use 'em'
     }
 
-    & p {
-        padding-top: 1em;
+    p {
+        padding-top: 1em; // TODO: Don't use 'em'
     }
 }
 
 .suggested-fix {
-    color: #898989;
+    color: @grey;
     font-size: 90%;
     padding-bottom: @12px;
 
-    & > .heading {
+    > .heading {
         font-weight: bold;
         display: inline;
 
@@ -184,7 +184,8 @@ h6.ui.header {
             content: ": ";
         }
     }
-    & > .content {
+
+    > .content {
         display: inline;
     }
 }
@@ -268,7 +269,7 @@ body {
 
 /* .ui.header > img sets a vertical-align */
 .ui.header > img.app-logo {
-  height: 0.74em;
+  height: 0.74em; // TODO: Don't use 'em'
   vertical-align: baseline;
 }
 
@@ -323,15 +324,14 @@ img.credits-obsidian {
 }
 
 .soft-heading {
-    font-size: @20px;
-    font-weight: normal;
+    .secondary-heading();
 }
 
 .version-section {
-    & > .check-for-updates {
+    > .check-for-updates {
         padding-top: @10px;
 
-        & > a {
+        > a {
             cursor: pointer;
             padding-right: @27px;
         }
