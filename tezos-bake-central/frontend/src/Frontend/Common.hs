@@ -65,11 +65,11 @@ urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
 
-localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
-    Time.utcToZonedTime tz t
+  dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .
+    Time.utcToZonedTime tz <$> t
 
 localHumanizedTimestamp :: (DomBuilder t m, PostBuild t m, MonadReader r m, HasTimeZone r, HasTimer t r) => Dynamic t Time.UTCTime -> m ()
 localHumanizedTimestamp tDyn = do
@@ -105,10 +105,10 @@ modalOpeningButton :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 modalOpeningButton = buttonWithInfoCls ""
 
 buttonIconWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> Text -> m (Event t ())
-buttonIconWithInfoCls icon classes label t =
+buttonIconWithInfoCls i classes label t =
   fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
-  elClass "i" ("icon " <> icon) blank
-  text label
+    icon i
+    text label
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo = buttonWithInfoCls ""
@@ -169,22 +169,22 @@ validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
-blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => Text -> m a -> m a
-blockExplorerLink path f = do
+blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
+blockExplorerLink dPath f = do
   chain <- asks (^. frontendConfig . frontendConfig_chain)
   case chain of
     Right _chainId -> f
     Left namedChain ->
-      elAttr "a" ("href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
+      elDynAttr "a" (ffor dPath $ \path -> "href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
 
-blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m ()
-blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)
+blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m ()
+blockHashLink blockHash = blockHashLinkAs blockHash (dynText $ T.take 14 . toBase58Text <$> blockHash)
 
-blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m a -> m a
-blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
+blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m a -> m a
+blockHashLinkAs blockHash = blockExplorerLink (toBase58Text <$> blockHash)
 
-publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => PublicKeyHash -> m ()
-publicKeyHashLink pkh = blockExplorerLink hash (text hash)
+publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => PublicKeyHash -> m ()
+publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)
   where hash = toPublicKeyHashText pkh
 
 fitnessText :: Fitness -> Text
@@ -201,6 +201,15 @@ changelogLink cls version f = do
   where
     versionText = T.pack (showVersion version)
     versionAnchor = "anchor-" <> T.filter (/='.') versionText
+
+iconClass :: Text -> Text
+iconClass i = "ui " <> i <> " icon"
+
+icon :: DomBuilder t m => Text -> m ()
+icon i = elClass "i" (iconClass i) blank
+
+iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
+iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)

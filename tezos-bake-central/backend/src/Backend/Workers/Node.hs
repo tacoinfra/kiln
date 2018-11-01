@@ -111,6 +111,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
       , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
       , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
       , Node_updatedField =. Just now
+      , Node_headBlockPredField =. Just (headBlockInfo ^. monitorBlock_predecessor)
       ]
     getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 

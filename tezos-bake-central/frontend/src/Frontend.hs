@@ -33,6 +33,7 @@ import Data.Time (UTCTime)
 import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Version (showVersion)
+import Data.Word (Word64)
 import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.Element (setInnerHTML)
@@ -53,9 +54,8 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget,
                               watchViewSelector)
-import Rhyolite.Schema (Email, Id, Json (..))
+import Rhyolite.Schema (Email, Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
-import Safe (maximumMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -63,7 +63,7 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (uriHostPortPath)
+import Common (humanBytes, uriHostPortPath)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
@@ -137,7 +137,7 @@ withConnectivityModal socketState f = do
     wsConnected = ffilter id connectionChanged
     wsDisconnected = ffilter not connectionChanged
     mkDisconnectedModal _ = basicModal $ do
-      el "h3" $ elClass "i" "ui red icon-warning icon" blank *> text " Disconnected."
+      el "h3" $ icon "red icon-warning" *> text " Disconnected."
       el "p" $ text "Kiln is not receiving data from the server but will continue attempting to reconnect. You will be able to proceed as soon as the connection is made."
 
       divClass "suggested-fix" $ do
@@ -325,12 +325,10 @@ watchUpstreamVersion = holdUniqDyn <=<
       { _bakeViewSelector_upstreamVersion = viewJust 1 }
 
 watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
-watchAlertCount = holdUniqDyn <=<
+watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
-
-
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Nodes
@@ -439,7 +437,7 @@ appSideHeader =
             )
           $ do
               routeSelector UITab_Nodes SemUi.menuItem' def $ do
-                SemUi.icon "icon-tiles" def
+                icon "icon-tiles"
                 text "Dashboard"
         SemUi.divider def
 
@@ -468,10 +466,10 @@ appSideFooter =
           )
           $ do
               routeSelector UITab_Options SemUi.menuItem' def $ do
-                SemUi.icon "icon-gear" def
+                icon "icon-gear"
                 text "Settings"
               SemUi.menuItem def $ do
-                SemUi.icon "icon-question-mark" def
+                icon "icon-question-mark"
                 text "Help"
         elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
@@ -513,14 +511,14 @@ headerBell = do
       & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
       )
     $ do
-        alertCount <- fmap (fromMaybe 0) <$> watchAlertCount
+        alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
         (e,_) <- SemUi.ui' "span"
           (def
             & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
             )
           $ do
-              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . T.pack . show
-              text $ T.pack " "
+              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+              text " "
               SemUi.icon "icon-bell"
                 (def
                   & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
@@ -552,7 +550,7 @@ appContentArea selectedTab = divClass "app-content" $
 nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
   => m ()
 nodesTabOrWelcome = do
@@ -637,7 +635,7 @@ summaryTab = divClass "ui grid" $ do
         for_ baked $ \b -> el "tr" $ do
           el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . blockHashLink $ _bakedEvent_hash $ _event_detail b
+          el "td" . blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
             Just protoInfo -> text . tez $ blockRewards b protoInfo
@@ -692,10 +690,10 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
           el "p" $ do
-            text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+            text "First seen: " *> localTimestamp (pure $ _errorLog_started log) *> text " | "
             case _errorLog_stopped log of
-              Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-              Just stopped -> text "Stopped: " *> localTimestamp stopped
+              Nothing -> text "Last seen: " *> localTimestamp (pure $ _errorLog_lastSeen log)
+              Just stopped -> text "Stopped: " *> localTimestamp (pure stopped)
 
   where
     passesFilter filterSelection log =
@@ -741,11 +739,11 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
-              blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+              blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
           ErrorLogView_BadNodeHead l ->
             for_ node' $ \node -> do
-            let (heading, message) = badNodeHeadMessage text blockHashLink l
+            let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
             header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address node) (_node_alias node)
             el "p" message
 
@@ -753,9 +751,13 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
-      [ (direction (_errorLog_started l, _errorLog_lastSeen l, elId), row)
+      [ (direction (_errorLog_started l, elId), row)
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
+
+nodeTitleSubtitle :: URI -> Maybe Text -> (Text, Maybe Text)
+nodeTitleSubtitle uri alias = (fromMaybe addr alias, addr <$ alias)
+  where addr = uriHostPortPath uri
 
 nodesOptions ::
   ( MonadRhyoliteFrontendWidget Bake t m
@@ -771,10 +773,10 @@ nodesOptions = do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
-        let dAddress = Uri.render . _nodeSummary_address <$> node
-        let dName = ffor node _nodeSummary_alias
-        divClass "header" $      dynText $ fromMaybe <$> dAddress <*> dName
-        divClass "description" $ dynText $ fmap (fromMaybe "") $ (<$) <$> dAddress <*> dName
+        let (title, subtitle) = splitDynPure $ ffor node $ \n ->
+              nodeTitleSubtitle (_nodeSummary_address n) (_nodeSummary_alias n)
+        divClass "header" $ dynText title
+        divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" "Add Node" "Configure Monitored Nodes"
     tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
@@ -825,7 +827,7 @@ settingsTab
 settingsTab = do
   divClass "version-section" $ do
     currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
-    divClass "heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
+    divClass "soft-heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
 
     enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
     when enableUpgradeCheck upgradeOptions
@@ -843,23 +845,23 @@ settingsTab = do
       ]
 
   where
-    notificationSection :: (Text,SemUi.Active t Text,m ()) -> m ()
+    notificationSection :: (Text, Text, m ()) -> m ()
     notificationSection (name, iconName, content) =
       divClass "notifications-subsection" $ do
-        toggle <- SemUi.header
+        toggleSwitch <- SemUi.header
           (def
             & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
             )
-          $ do 
+          $ do
               flip SemUi.checkbox
                 (def
                   & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
                   & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
                   )
                 $ do
-                    SemUi.icon ("icon-" <> iconName) def
+                    icon ("icon-" <> iconName)
                     text name
-        dyn_ $ ffor (toggle ^. SemUi.checkbox_value) $ \case
+        dyn_ $ ffor (toggleSwitch ^. SemUi.checkbox_value) $ \case
           False -> divClass "purpose" $ text $ name <> " notifications are turned off"
           True -> content
 
@@ -893,7 +895,7 @@ settingsTab = do
         requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
       notificationOptions
 
-    clientsOptions = void $ do
+    _clientsOptions = void $ do
       divClass "ui medium header" $ text "Clients"
       elClass "table" "ui celled striped compact table" $ do
         clients <- watchClientAddresses -- TODO
@@ -906,7 +908,7 @@ settingsTab = do
         addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
-    delegatesOptions = do
+    _delegatesOptions = do
       divClass "ui medium header" $ text "Delegates"
       elClass "table" "ui celled striped compact table" $ do
         delegates <- watchDelegatePublicKeyHashes
@@ -937,7 +939,7 @@ settingsTab = do
             Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
               if v > currentVersion
               then changelogLink "" v $
-                text ("Version " <> T.pack (showVersion v) <> " Available ") *> SemUi.icon "icon-pop-out" def
+                text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
               else
                 text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
             _ -> blank
@@ -958,7 +960,7 @@ publicNodeOptions = do
     describePublicNode = \case
       PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
       PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
-      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro."
+      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro"
 
   pncDyn <- watchPublicNodeConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
@@ -1035,25 +1037,19 @@ mailServerForm frm0 = do
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
     labeled = el "label" . text
 
-
-data NodeTile
-  = NodeTile_PlainNode (Id Node) Node
-  | NodeTile_PublicNode PublicNodeHead
-  deriving (Eq, Ord, Show)
-
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
   => m ()
-nodesTab = do
-  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-  nodeTilesWidget nodesDyn
+nodesTab =
+  divClass "nodes-dashboard" $ do
+    el "h4" $ text "Nodes"
+    nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+    nodeTilesWidget nodesDyn
   where
-    nodeTilesWidget
-      :: {- Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-      -> -} Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) Node) -> m ()
     nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -1064,104 +1060,134 @@ nodesTab = do
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
 
-      maxLevelOnPublicNodes <- holdUniqDyn $
-        maximumMay . map (^. level) . toList <$> publicNodesDyn
-
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
-          void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
-            vDyn' <- holdUniqDyn vDyn
-            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
-              let chain = getNamedChainOrChainId $ _publicNodeHead_chain node
-              let nodeTitle = case _publicNodeHead_source node of
-                    PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) chain $ text $ "tzscan (" <> showChain chain <> ")"
-                    PublicNode_Blockscale -> text $ "Foundation Nodes (" <> showChain chain <> ")"
-                    PublicNode_Obsidian -> text $ "Obsidian Systems (" <> showChain chain <> ")"
-              headBlockLevelHeader
-                nodeTitle
-                (Just (node ^. hash, node ^. level))
-                (pure Nothing)
-              divClass "description" $
-                nodeDataTable
-                  [ (text "Block Hash:", blockHashLink $ node ^. hash)
-                  , (text "Block Fitness:", text $ fitnessText $ node ^. fitness)
-                  , (text "Block Baked:", localTimestamp $ node ^. timestamp)
-                  ]
-
           let alertWindow = ClosedInterval LowerInfinity UpperInfinity
           alerts <- watchErrors (pure $ Set.singleton alertWindow)
-
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
-            vDyn'' <- holdUniqDyn vDyn
-            vDyn'start <- sample $ current vDyn''
-            vDyn'update <- throttle 0.2 (updated vDyn'')
-            vDyn' <- holdDyn vDyn'start vDyn'update
-            divClass "ui card" $ divClass "content" $ dyn_ $ ffor vDyn' $ \node -> do
-              fallingBehindBy <- case _node_headLevel node of
-                Nothing -> pure (pure Nothing)
-                Just nodeLevel -> do
-                  let calcBehindBy maxLevel = if behindBy >= 5 then Just behindBy else Nothing
-                        where behindBy = maxLevel - nodeLevel
+            unresolvedAlertsForThisNode <- holdUniqDyn $
+              foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
 
-                  holdUniqDyn $ (calcBehindBy =<<) <$> maxLevelOnPublicNodes
+            let
+              errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
+                ErrorLogView_InaccessibleNode{} -> text "Unable to connect."
+                ErrorLogView_NodeWrongChain{} -> text "On wrong network."
+                ErrorLogView_BadNodeHead l -> text $
+                  fst (badNodeHeadMessage Const (Const . const "") l) <> "."
+                _ -> blank
 
-              headBlockLevelHeader
-                (text $ fromMaybe (uriHostPortPath $ _node_address node) $ _node_alias node)
-                (liftA2 (,) (_node_headBlockHash node) (_node_headLevel node))
-                fallingBehindBy
+            nodeTile
+              (\n -> first text $ nodeTitleSubtitle (_node_address n) (_node_alias n))
+              getNodeHeadBlock
+              (Just errorMessages)
+              (Just _node_peerCount)
+              (Just _node_networkStat)
+              vDyn
 
-              divClass "description" $ do
-                let stat = _node_networkStat node
-                nodeDataTable
-                  [ (text "Block Hash:", maybe (text "N/A") blockHashLink $ _node_headBlockHash node)
-                  , (text "Block Fitness:", text $ maybe "N/A" fitnessText $ _node_fitness node)
-                  , (text "Block Baked:", maybe (text "N/A") localTimestamp $ _node_headBlockBakedAt node)
-                  , (text "Peer Count:", text $ maybe "N/A" tshow $ _node_peerCount node)
-                  , (text "Total Sent:", text $ tshow (unTezosWord64 $ _networkStat_totalSent stat) <> " bytes")
-                  , (text "Total Received:", text $ tshow (unTezosWord64 $ _networkStat_totalRecv stat) <> " bytes")
-                  , (text "Inflow:", text $ tshow (_networkStat_currentInflow stat) <> " bytes/sec")
-                  , (text "Outflow:", text $ tshow (_networkStat_currentOutflow stat) <> " bytes/sec")
-                  ]
+          void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
+            let
+              title node = case _publicNodeHead_source node of
+                PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) chain $ text "tzscan"
+                PublicNode_Blockscale -> text "Foundation Nodes"
+                PublicNode_Obsidian -> text "Obsidian Systems"
+                where chain = getNamedChainOrChainId $ _publicNodeHead_chain node
 
-                unresolvedAlertsForThisNode <-
-                  holdUniqDyn $ foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
-
-                let errorMessage = divClass "ui error message" . divClass "header"
-                dyn_ $ ffor unresolvedAlertsForThisNode $ traverse_ $ \case
-                  ErrorLogView_InaccessibleNode{} ->  errorMessage $ text "Unable to connect."
-                  ErrorLogView_NodeWrongChain{} -> errorMessage $ text "On wrong network."
-                  ErrorLogView_BadNodeHead l -> errorMessage $ text $
-                    fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-                  _ -> blank
-              el "div" $ do
-                eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-                requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
+            nodeTile
+              (\n -> (title n, Nothing))
+              (Just . mkVeryBlockLike)
+              Nothing
+              Nothing
+              Nothing
+              vDyn
 
 
-    headBlockLevelHeader :: m () -> Maybe (BlockHash, RawLevel) -> Dynamic t (Maybe RawLevel) -> m ()
-    headBlockLevelHeader title blockHashAndLevel blocksBehindDyn =
-      elClass "h3" "ui center aligned header" $ do
-        title
-        elAttr "div" ("class"=:"sub header"<>"style"=:"padding-top:1em") $ do
-          case blockHashAndLevel of
-            Nothing -> text "Connecting..."
-            Just (blockHash, lvl) -> dyn_ $ ffor blocksBehindDyn $ \blocksBehind -> do
-              let styled = if isJust blocksBehind then errorStyle else id
-              styled $ blockHashLinkAs blockHash $ text $ tshow $ unRawLevel lvl
-          divClass "sub header" $ do
-            text "Head Block Level"
-            dyn_ $ ffor blocksBehindDyn $ traverse_ $ \numBehind ->
-              elAttr "div" ("style"=:"padding-top:0.4em") $ errorStyle $
-                text $ tshow (unRawLevel numBehind) <> " Blocks Behind"
+          --el "div" $ do
+          --  eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
+          --  void $ requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
+
+    nodeTile
+      :: (a -> (m (), Maybe Text)) -- ^ Function to get title and subtitle of a node
+      -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
+      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
+      -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
+      -> Dynamic t a -- ^ Node
+      -> m ()
+    nodeTile getTitleSubtitle getBlock errors' getPeerCount' getNetworkStats' node = do
+      b <- maybeDyn $ getBlock <$> node
+      divClass "ui card node-tile" $ divClass "content" $ do
+        divClass "menu-section" $
+          icon "icon-ellipsis"
+
+        divClass "title" $ do
+          let (title, subtitle) = splitDynPure $ getTitleSubtitle <$> node
+
+          for_ errors' $ \errors -> do
+            errorsEmpty <- holdUniqDyn $ null <$> errors
+            iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
+          dyn_ title
+          divClass "subtitle" $ dynText $ fromMaybe nbsp <$> subtitle
+
+        for_ errors' $ \errors ->
+          dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+
+        divClass "divider" blank
+
+        divClass "soft-heading" $
+          withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
+        text "#"
+        withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
+
+        el "dl" $ do
+          el "dt" (text "Fitness")
+          el "dd" $
+            withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
+
+          el "br" blank
+
+          el "dt" (text "Baked")
+          el "dd" $ do
+            withPlaceholder $ withMaybeDyn b localHumanizedTimestamp (view timestamp)
+
+        when (isJust getPeerCount' || isJust getNetworkStats') $
+          divClass "divider" blank
+
+        for_ getPeerCount' $ \getPeerCount -> do
+          peerCount <- maybeDyn $ getPeerCount <$> node
+          elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
+          text " connected peers"
+
+        for_ getNetworkStats' $ \getNetworKStats -> do
+          let
+            stat = getNetworKStats <$> node
+            showSpeed n = dynText $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
+            showTotal n = dynText $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
+
+          divClass "stats" $ do
+            divClass "column heading" $ do
+              divClass "cell" $ text "Speed"
+              divClass "cell" $ text "Total"
+
+            divClass "column" $ do
+              divClass "cell" $ icon "icon-arrow-up" *> showSpeed (_networkStat_currentOutflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showTotal (_networkStat_totalSent <$> stat)
+
+            divClass "column" $ do
+              divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
       where
-        errorStyle = elClass "span" "block-level-error"
+        withPlaceholder = withPlaceholder' "-"
 
-    nodeDataTable :: [(m (), m ())] -> m ()
-    nodeDataTable rows = elAttr "table" ("class"=:"ui very basic compact stackable table") $
-      for_ rows $ \(heading, val) -> el "tr" $ do
-        _ <- elAttr "th" ("style"=:"text-align:left") heading
-        elAttr "td" ("style"=:"text-align:left") val
+        withPlaceholder' :: Text -> Dynamic t (Maybe (m ())) -> m ()
+        withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
+          Nothing -> text placeholder
+          Just f -> f
+
+        withMaybeDyn :: Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
+        withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget . fmap f) d
+
+        nbsp = "\x00A0"
 
     errorsByNode
       :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
@@ -1171,7 +1197,6 @@ nodesTab = do
       | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
       , Just k <- [nodeIdForErrorLogView t]
       ]
-
 
 delegateTab
   :: forall r m t.
@@ -1274,7 +1299,7 @@ clientTab cid addr = do
           for_ baked $ \b -> el "tr" $ do
             el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
             el "td" $ text $ tshow $ blockLevel b
-            el "td" $ blockHashLink $ _bakedEvent_hash $ _event_detail b
+            el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
             el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
               text $ tez $ blockRewards b protoInfo
 

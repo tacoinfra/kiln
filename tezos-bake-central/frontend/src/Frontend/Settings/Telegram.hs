@@ -10,8 +10,8 @@
 module Frontend.Settings.Telegram where
 
 import Data.Function (on)
-import Data.Map.Monoidal (MonoidalMap, getMonoidalMap)
 import Data.Map (Map)
+import Data.Map.Monoidal (MonoidalMap, getMonoidalMap)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
@@ -26,8 +26,10 @@ import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
-import Frontend.Modal.Class (HasModal, ModalM, tellModal)
+import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, icon, uiButton,
+                        uiDynSubmit, updatedWithInit)
+import Frontend.Modal.Class (HasModal (ModalM, tellModal))
+
 
 inlineSettings :: forall m t. (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
 inlineSettings = do
@@ -41,13 +43,13 @@ inlineSettings = do
       (reopener, _) <- elClass "p" "edit-link" $ do
         el' "a" $ text "Reconfigure Telegram"
       elClass "table" "telegram-recipients" $ do
-      el "tr" $ do
-        elClass "th" "telegram-recipient" $ text "Recipient"
-        elClass "th" "telegram-bot" $ text "Bot Name"
-      void $ listWithKey recipients $ \_ recipient -> do
         el "tr" $ do
-          elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
-          elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
+          elClass "th" "telegram-recipient" $ text "Recipient"
+          elClass "th" "telegram-bot" $ text "Bot Name"
+        void $ listWithKey recipients $ \_ recipient -> do
+          el "tr" $ do
+            elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
+            elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
       return $ domEvent Click reopener
 
   tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
@@ -80,7 +82,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
         rec
           let submitResult = tagPromptlyDyn validatedRecipient gotResponse
           widgetHold_ blank $ ffor (isJust <$> submitResult) $ \isValid -> if isValid then blank else elClass "p" "error" $ do
-            elClass "i" "icon-warning-circle red icon" blank
+            icon "red icon-warning-circle"
             text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
 
           let submit = filterRight $ tag (current botApiKey) $ gate (not <$> current isLoading) submitClick
@@ -127,7 +129,7 @@ settingsForm cfg = holdUniqDyn =<< do
       text "Send \"/newbot\" to the Telegram BotFather bot and create a bot that will be used to send you notifications regarding your Kiln systems. If you've already made a bot, skip to the next step."
       el "p" $
         elAttr "a" ("href"=:"https://telegram.me/BotFather" <> "target"=:"_blank") $ do
-          text "Start BotFather conversation " *> elClass "i" "icon-pop-out icon" blank
+          text "Start BotFather conversation " *> icon "icon-pop-out"
 
     el "li" $ text "Send \"/start\" to your new bot, or if you've already started your bot, just send any random message. This allows us to look up your recent conversation ID and use it to send you alerts."
     el "li" $ do

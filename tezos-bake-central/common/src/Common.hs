@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Common where
 
@@ -47,3 +48,13 @@ defaultTezosCompatJsonOptions = Aeson.defaultOptions
   { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
   , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
   }
+
+humanBytes :: Double -> Text
+humanBytes n = tshow (round n' :: Int) <> u
+  where
+    (n' :: Double, u :: Text)
+      | n >= 2^(40 :: Int) = (n / 2**40, "TB")
+      | n >= 2^(30 :: Int) = (n / 2**30, "GB")
+      | n >= 2^(20 :: Int) = (n / 2**20, "MB")
+      | n >= 2^(10 :: Int) = (n / 2**10, "KB")
+      | otherwise = (n, "B")

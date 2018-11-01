@@ -123,6 +123,22 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+mkNode :: URI -> Maybe Text -> Node
+mkNode addr alias = Node
+  { _node_address = addr
+  , _node_alias = alias
+  , _node_identity = Nothing -- TODO
+  , _node_headLevel = Nothing
+  , _node_headBlockHash = Nothing
+  , _node_headBlockPred = Nothing
+  , _node_headBlockBakedAt = Nothing
+  , _node_peerCount = Nothing
+  , _node_networkStat = NetworkStat 0 0 0 0
+  , _node_fitness = Nothing
+  , _node_deleted = False
+  , _node_updated = Nothing
+  }
+
 getNodeHeadBlock :: Node -> Maybe VeryBlockLike
 getNodeHeadBlock n = VeryBlockLike
   <$> _node_headBlockHash n
@@ -160,22 +176,6 @@ data PublicNodeHead = PublicNodeHead
   , _publicNodeHead_updated :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
-
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockPred = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
-  }
 
 data Parameters = Parameters
   { _parameters_chain :: !ChainId
