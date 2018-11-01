@@ -26,7 +26,7 @@ import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
+import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, icon, uiButton,
 import Frontend.Modal.Class (HasModal, ModalM, tellModal)
 
 inlineSettings :: forall m t. (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
@@ -80,7 +80,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
         rec
           let submitResult = tagPromptlyDyn validatedRecipient gotResponse
           widgetHold_ blank $ ffor (isJust <$> submitResult) $ \isValid -> if isValid then blank else elClass "p" "error" $ do
-            elClass "i" "icon-warning-circle red icon" blank
+            icon "red icon-warning-circle"
             text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
 
           let submit = filterRight $ tag (current botApiKey) $ gate (not <$> current isLoading) submitClick
@@ -127,7 +127,7 @@ settingsForm cfg = holdUniqDyn =<< do
       text "Send \"/newbot\" to the Telegram BotFather bot and create a bot that will be used to send you notifications regarding your Kiln systems. If you've already made a bot, skip to the next step."
       el "p" $
         elAttr "a" ("href"=:"https://telegram.me/BotFather" <> "target"=:"_blank") $ do
-          text "Start BotFather conversation " *> elClass "i" "icon-pop-out icon" blank
+          text "Start BotFather conversation " *> icon "icon-pop-out"
 
     el "li" $ text "Send \"/start\" to your new bot, or if you've already started your bot, just send any random message. This allows us to look up your recent conversation ID and use it to send you alerts."
     el "li" $ do

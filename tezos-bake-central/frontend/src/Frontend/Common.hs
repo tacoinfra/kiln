@@ -105,10 +105,10 @@ modalOpeningButton :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 modalOpeningButton = buttonWithInfoCls ""
 
 buttonIconWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> Text -> m (Event t ())
-buttonIconWithInfoCls icon classes label t =
+buttonIconWithInfoCls i classes label t =
   fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
-  elClass "i" ("icon " <> icon) blank
-  text label
+    icon i
+    text label
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo = buttonWithInfoCls ""
@@ -201,6 +201,15 @@ changelogLink cls version f = do
   where
     versionText = T.pack (showVersion version)
     versionAnchor = "anchor-" <> T.filter (/='.') versionText
+
+iconClass :: Text -> Text
+iconClass i = "ui " <> i <> " icon"
+
+icon :: DomBuilder t m => Text -> m ()
+icon i = elClass "i" (iconClass i) blank
+
+iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
+iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)

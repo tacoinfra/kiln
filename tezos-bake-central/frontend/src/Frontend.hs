@@ -137,7 +137,7 @@ withConnectivityModal socketState f = do
     wsConnected = ffilter id connectionChanged
     wsDisconnected = ffilter not connectionChanged
     mkDisconnectedModal _ = basicModal $ do
-      el "h3" $ elClass "i" "ui red icon-warning icon" blank *> text " Disconnected."
+      el "h3" $ icon "red icon-warning" *> text " Disconnected."
       el "p" $ text "Kiln is not receiving data from the server but will continue attempting to reconnect. You will be able to proceed as soon as the connection is made."
 
       divClass "suggested-fix" $ do
@@ -437,7 +437,7 @@ appSideHeader =
             )
           $ do
               routeSelector UITab_Nodes SemUi.menuItem' def $ do
-                SemUi.icon "icon-tiles" def
+                icon "icon-tiles"
                 text "Dashboard"
         SemUi.divider def
 
@@ -466,10 +466,10 @@ appSideFooter =
           )
           $ do
               routeSelector UITab_Options SemUi.menuItem' def $ do
-                SemUi.icon "icon-gear" def
+                icon "icon-gear"
                 text "Settings"
               SemUi.menuItem def $ do
-                SemUi.icon "icon-question-mark" def
+                icon "icon-question-mark"
                 text "Help"
         elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
@@ -841,21 +841,21 @@ settingsTab = do
       ]
 
   where
-    notificationSection :: (Text,SemUi.Active t Text,m ()) -> m ()
+    notificationSection :: (Text, Text, m ()) -> m ()
     notificationSection (name, iconName, content) =
       divClass "notifications-subsection" $ do
         toggleSwitch <- SemUi.header
           (def
             & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
             )
-          $ do 
+          $ do
               flip SemUi.checkbox
                 (def
                   & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
                   & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
                   )
                 $ do
-                    SemUi.icon ("icon-" <> iconName) def
+                    icon ("icon-" <> iconName)
                     text name
         dyn_ $ ffor (toggleSwitch ^. SemUi.checkbox_value) $ \case
           False -> divClass "purpose" $ text $ name <> " notifications are turned off"
@@ -935,7 +935,7 @@ settingsTab = do
             Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
               if v > currentVersion
               then changelogLink "" v $
-                text ("Version " <> T.pack (showVersion v) <> " Available ") *> SemUi.icon "icon-pop-out" def
+                text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
               else
                 text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
             _ -> blank
