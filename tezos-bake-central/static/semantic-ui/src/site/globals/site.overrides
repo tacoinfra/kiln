@@ -244,15 +244,11 @@ body {
 }
 
 .ui.segment.app-gutter {
-  padding-left: 1.5em;
+  padding-left: @30px;
   flex-grow: 1;
   margin-top: 0;
   margin-bottom: 0;
   overflow: auto;
-  /* a little quirky way to get the positiion of the 'alert' icon placed a bit better. */
-  & .ui.list .item .icon {
-    line-height: 2.123456em;
-  }
 }
 
 .ui.segment.app-side-footer {
@@ -294,18 +290,18 @@ img.credits-obsidian {
 }
 
 .ui.list > .item.bullet-before {
-  position: relative;
+    position: relative;
 
-  > .icon.circle.tiny {
-    position: absolute;
-    right: 100%;
-    margin-left: 0.5em;
-    margin-right: 0.5em;
-  }
+    > .icon.circle.tiny {
+        position: absolute;
+        right: 100%;
+        margin-right: @7px;
+        line-height: 2.4em; // To position the dot correctly.
+    }
 
-  > .icon + .content {
-    padding-left: 0px;
-  }
+    > .icon + .content {
+        padding-left: 0;
+    }
 }
 
 /* vim: set syntax=less : */
