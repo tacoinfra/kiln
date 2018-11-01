@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,6 +15,7 @@ import Data.Map (Map)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
+import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
@@ -24,7 +26,33 @@ import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
+import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
+import Frontend.Modal.Class (HasModal, ModalM, tellModal)
+
+inlineSettings :: forall m t. (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
+inlineSettings = do
+  cfg <- watchTelegramConfig
+  hasValidated <- holdUniqDyn $ preview (_Just . telegramConfig_validated . _Just) <$> cfg
+  openTelegramOptions <- (switchHold never =<<) $ dyn $ ffor hasValidated $ \case
+    Nothing -> uiButton "primary" "Connect Telegram"
+    Just False -> uiButton "primary" "Connect Telegram"
+    Just True -> do
+      recipients <- watchTelegramRecipients
+      (reopener, _) <- elClass "p" "edit-link" $ do
+        el' "a" $ text "Reconfigure Telegram"
+      elClass "table" "telegram-recipients" $ do
+      el "tr" $ do
+        elClass "th" "telegram-recipient" $ text "Recipient"
+        elClass "th" "telegram-bot" $ text "Bot Name"
+      void $ listWithKey recipients $ \_ recipient -> do
+        el "tr" $ do
+          elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
+          elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
+      return $ domEvent Click reopener
+
+  tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
+    finish <- settings
+    pure $ leftmost [finish, close]
 
 _telegramRecipient_fullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
