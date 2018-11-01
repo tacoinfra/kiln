@@ -2,6 +2,16 @@
          Site Overrides
 *******************************/
 
+.fine-print() {
+  line-height: @16px;
+  font-size: @12px;
+}
+
+.secondary-heading() {
+  font-size: @20px;
+  font-weight: normal;
+}
+
 a:link {
     color:@blue;
     text-decoration-line:none;
@@ -274,6 +284,38 @@ body {
 
 img.credits-obsidian {
   width: 100%;
+}
+
+.notifications-subsection {
+  > .ui.header > .ui.toggle label {
+    > .icon {
+      margin-left: 1em;
+      margin-right: 1em;
+    }
+    .secondary-heading();
+    margin-top: @20px;
+    margin-bottom: @20px;
+  }
+  > .purpose {
+    .fine-print();
+    margin-top: @10px;
+    margin-bottom: @10px;
+  }
+  > .edit-link {
+    margin-top: @15px;
+    margin-bottom: @15px;
+  }
+  margin-top: @30px;
+  margin-bottom: @30px;
+}
+
+.telegram-recipients {
+  td, th {
+    text-align: left;
+  }
+  .telegram-recipient {
+    padding-right: @40px;
+  }
 }
 
 .version-section {
