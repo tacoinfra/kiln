@@ -322,12 +322,12 @@ img.credits-obsidian {
   }
 }
 
-.version-section {
-    & > .heading {
-        font-size: 20px;
-        font-weight: normal;
-    }
+.soft-heading {
+    font-size: @20px;
+    font-weight: normal;
+}
 
+.version-section {
     & > .check-for-updates {
         padding-top: @10px;
 

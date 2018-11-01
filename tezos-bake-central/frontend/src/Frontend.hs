@@ -823,7 +823,7 @@ settingsTab
 settingsTab = do
   divClass "version-section" $ do
     currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
-    divClass "heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
+    divClass "soft-heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
 
     enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
     when enableUpgradeCheck upgradeOptions
