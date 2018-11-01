@@ -244,14 +244,11 @@ body {
 }
 
 .ui.segment.app-gutter {
+  padding-left: @30px;
   flex-grow: 1;
   margin-top: 0;
   margin-bottom: 0;
   overflow: auto;
-  /* a little quirky way to get the positiion of the 'alert' icon placed a bit better. */
-  & .ui.list .item .icon {
-    line-height: 2.123456em;
-  }
 }
 
 .ui.segment.app-side-footer {
@@ -289,6 +286,21 @@ img.credits-obsidian {
             cursor: pointer;
             padding-right: @27px;
         }
+    }
+}
+
+.ui.list > .item.bullet-before {
+    position: relative;
+
+    > .icon.circle.tiny {
+        position: absolute;
+        right: 100%;
+        margin-right: @7px;
+        line-height: 2.4em; // To position the dot correctly.
+    }
+
+    > .icon + .content {
+        padding-left: 0;
     }
 }
 

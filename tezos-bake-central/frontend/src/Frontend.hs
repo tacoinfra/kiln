@@ -767,9 +767,9 @@ nodesOptions = do
   divClass "ui header" $ text "Nodes"
   divClass "ui list" $ do
     nodes <- watchNodeAddresses
-    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item" $ do
+    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item bullet-before" $ do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
-      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny " <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
         let dAddress = Uri.render . _nodeSummary_address <$> node
         let dName = ffor node _nodeSummary_alias
