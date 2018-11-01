@@ -53,7 +53,7 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget,
                               watchViewSelector)
-import Rhyolite.Schema (Email, Id, Json (..))
+import Rhyolite.Schema (Email, Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
 import Safe (maximumMay)
 import Text.URI (URI)
@@ -325,12 +325,10 @@ watchUpstreamVersion = holdUniqDyn <=<
       { _bakeViewSelector_upstreamVersion = viewJust 1 }
 
 watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
-watchAlertCount = holdUniqDyn <=<
+watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
-
-
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Nodes
@@ -513,14 +511,14 @@ headerBell = do
       & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
       )
     $ do
-        alertCount <- fmap (fromMaybe 0) <$> watchAlertCount
+        alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
         (e,_) <- SemUi.ui' "span"
           (def
             & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
             )
           $ do
-              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . T.pack . show
-              text $ T.pack " "
+              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+              text " "
               SemUi.icon "icon-bell"
                 (def
                   & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
@@ -846,7 +844,7 @@ settingsTab = do
     notificationSection :: (Text,SemUi.Active t Text,m ()) -> m ()
     notificationSection (name, iconName, content) =
       divClass "notifications-subsection" $ do
-        toggle <- SemUi.header
+        toggleSwitch <- SemUi.header
           (def
             & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
             )
@@ -859,7 +857,7 @@ settingsTab = do
                 $ do
                     SemUi.icon ("icon-" <> iconName) def
                     text name
-        dyn_ $ ffor (toggle ^. SemUi.checkbox_value) $ \case
+        dyn_ $ ffor (toggleSwitch ^. SemUi.checkbox_value) $ \case
           False -> divClass "purpose" $ text $ name <> " notifications are turned off"
           True -> content
 
@@ -893,7 +891,7 @@ settingsTab = do
         requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
       notificationOptions
 
-    clientsOptions = void $ do
+    _clientsOptions = void $ do
       divClass "ui medium header" $ text "Clients"
       elClass "table" "ui celled striped compact table" $ do
         clients <- watchClientAddresses -- TODO
@@ -906,7 +904,7 @@ settingsTab = do
         addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
-    delegatesOptions = do
+    _delegatesOptions = do
       divClass "ui medium header" $ text "Delegates"
       elClass "table" "ui celled striped compact table" $ do
         delegates <- watchDelegatePublicKeyHashes
@@ -958,7 +956,7 @@ publicNodeOptions = do
     describePublicNode = \case
       PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
       PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
-      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro."
+      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro"
 
   pncDyn <- watchPublicNodeConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
@@ -1035,12 +1033,6 @@ mailServerForm frm0 = do
     defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
     labeled = el "label" . text
 
-
-data NodeTile
-  = NodeTile_PlainNode (Id Node) Node
-  | NodeTile_PublicNode PublicNodeHead
-  deriving (Eq, Ord, Show)
-
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -1051,9 +1043,7 @@ nodesTab = do
   nodesDyn <- watchNodes $ pure $ viewRangeAll ()
   nodeTilesWidget nodesDyn
   where
-    nodeTilesWidget
-      :: {- Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-      -> -} Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) Node) -> m ()
     nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -1171,7 +1161,6 @@ nodesTab = do
       | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
       , Just k <- [nodeIdForErrorLogView t]
       ]
-
 
 delegateTab
   :: forall r m t.
