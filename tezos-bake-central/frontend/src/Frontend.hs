@@ -545,7 +545,7 @@ appContentArea selectedTab = divClass "app-content" $
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> optionsTab
+    UITab_Options -> settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 
@@ -813,7 +813,7 @@ aliasedInputForm validator label info placeholder = divClass "ui form fields" $ 
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
-optionsTab
+settingsTab
   :: forall r t m.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadJSM (Performable m)
@@ -822,7 +822,7 @@ optionsTab
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
-optionsTab = do
+settingsTab = do
   divClass "version-section" $ do
     currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
     divClass "heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
@@ -830,21 +830,42 @@ optionsTab = do
     enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
     when enableUpgradeCheck upgradeOptions
 
-  traverse_ (divClass "ui basic segment") $
-    [ telegramOptions
-    ]
-    ++ [ delegatesOptions | False ]
-    ++ [ clientsOptions | False ]
+  divClass "notifications-section" $ do
+    SemUi.header
+      (def
+        & SemUi.headerConfig_size SemUi.|?~ SemUi.H3
+        )
+      $ text "Notifications"
 
-  divClass "ui basic segment" mailServerOptions
-  divClass "ui basic segment" notificationOptions
+    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection $
+      [ ("Email","letter",mailServerOptions)
+      , ("Telegram","telegram",telegramOptions)
+      ]
 
   where
+    notificationSection :: (Text,SemUi.Active t Text,m ()) -> m ()
+    notificationSection (name, iconName, content) =
+      divClass "notifications-subsection" $ do
+        toggle <- SemUi.header
+          (def
+            & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+            )
+          $ do 
+              flip SemUi.checkbox
+                (def
+                  & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
+                  & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
+                  )
+                $ do
+                    SemUi.icon ("icon-" <> iconName) def
+                    text name
+        dyn_ $ ffor (toggle ^. SemUi.checkbox_value) $ \case
+          False -> divClass "purpose" $ text $ name <> " notifications are turned off"
+          True -> content
+
     telegramOptions = do
-      openTelegramOptions <- uiButton "primary" "Configure Telegram"
-      tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
-        finish <- Telegram.settings
-        pure $ leftmost [finish, close]
+      divClass "purpose" $ text "Use a Telegram Bot to send alerts."
+      Telegram.inlineSettings
 
     notificationOptions = do
       divClass "ui medium header" $ text "Notification Recipients"
@@ -870,6 +891,7 @@ optionsTab = do
         let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
         updatedForm <- mailServerForm form0
         requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
+      notificationOptions
 
     clientsOptions = void $ do
       divClass "ui medium header" $ text "Clients"

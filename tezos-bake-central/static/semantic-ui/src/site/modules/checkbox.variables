@@ -14,7 +14,7 @@
 @toggleHandleOffset : (@toggleLaneHeight - @toggleHandleSize) / 2;
 @toggleOffOffset : @toggleHandleOffset;
 @toggleOnOffset: (@toggleLaneWidth - @toggleHandleSize - @toggleHandleOffset);
-@toggleLabelDistance: @toggleLaneWidth + 1rem;
+@toggleLabelDistance: @toggleLaneWidth;
 @toggleWidth: @toggleLaneWidth;
 @toggleHeight : @toggleLaneHeight;
 
@@ -27,7 +27,7 @@
 @toggleHandleOffsetBig : (@toggleLaneHeightBig - @toggleHandleSizeBig) / 2;
 @toggleOffOffsetBig : @toggleHandleOffsetBig;
 @toggleOnOffsetBig: (@toggleLaneWidthBig - @toggleHandleSizeBig - @toggleHandleOffsetBig);
-@toggleLabelDistanceBig: @toggleLaneWidthBig + 1rem;
+@toggleLabelDistanceBig: @toggleLaneWidthBig;
 @toggleWidthBig: @toggleLaneWidthBig;
 @toggleHeightBig : @toggleLaneHeightBig;
 
@@ -39,7 +39,7 @@
 @toggleHandleOffsetHuge : (@toggleLaneHeightHuge - @toggleHandleSizeHuge) / 2;
 @toggleOffOffsetHuge : @toggleHandleOffsetHuge;
 @toggleOnOffsetHuge: (@toggleLaneWidthHuge - @toggleHandleSizeHuge - @toggleHandleOffsetHuge);
-@toggleLabelDistanceHuge: @toggleLaneWidthHuge + 1rem;
+@toggleLabelDistanceHuge: @toggleLaneWidthHuge;
 @toggleWidthHuge: @toggleLaneWidthHuge;
 @toggleHeightHuge : @toggleLaneHeightHuge;
 
