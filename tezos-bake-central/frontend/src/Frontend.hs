@@ -751,7 +751,7 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             header "Multiple bakers for same delegate" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
-      [ (direction (_errorLog_started l, _errorLog_lastSeen l, elId), row)
+      [ (direction (_errorLog_started l, elId), row)
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
