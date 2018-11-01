@@ -635,7 +635,7 @@ summaryTab = divClass "ui grid" $ do
         for_ baked $ \b -> el "tr" $ do
           el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
           el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . blockHashLink $ _bakedEvent_hash $ _event_detail b
+          el "td" . blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
           el "td" . dyn . ffor dparameters $ \case
             Nothing -> text "N/A"
             Just protoInfo -> text . tez $ blockRewards b protoInfo
@@ -690,10 +690,10 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
           el "p" $ do
-            text "First seen: " *> localTimestamp (_errorLog_started log) *> text " | "
+            text "First seen: " *> localTimestamp (pure $ _errorLog_started log) *> text " | "
             case _errorLog_stopped log of
-              Nothing -> text "Last seen: " *> localTimestamp (_errorLog_lastSeen log)
-              Just stopped -> text "Stopped: " *> localTimestamp stopped
+              Nothing -> text "Last seen: " *> localTimestamp (pure $ _errorLog_lastSeen log)
+              Just stopped -> text "Stopped: " *> localTimestamp (pure stopped)
 
   where
     passesFilter filterSelection log =
@@ -739,11 +739,11 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
             header "Baker lagging behind" -- TODO Show client address
             el "p" $ do
               text "Last block level seen: "
-              blockHashLinkAs lastBlockHash (text $ tshow lastLevel)
+              blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
           ErrorLogView_BadNodeHead l ->
             for_ node' $ \node -> do
-            let (heading, message) = badNodeHeadMessage text blockHashLink l
+            let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
             header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address node) (_node_alias node)
             el "p" message
 
@@ -1263,7 +1263,7 @@ clientTab cid addr = do
           for_ baked $ \b -> el "tr" $ do
             el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
             el "td" $ text $ tshow $ blockLevel b
-            el "td" $ blockHashLink $ _bakedEvent_hash $ _event_detail b
+            el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
             el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
               text $ tez $ blockRewards b protoInfo
 
