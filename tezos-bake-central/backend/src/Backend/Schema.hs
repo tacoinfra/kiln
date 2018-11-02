@@ -519,6 +519,10 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
+        fields:
+          - name: _mailServerConfig_enabled
+            type: Bool
+            default: "True"
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode

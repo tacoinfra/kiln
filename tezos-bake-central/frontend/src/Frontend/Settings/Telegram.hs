@@ -23,16 +23,26 @@ import Safe (headMay)
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
-import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
+import Common.Vassal (getRangeView', viewRangeAll)
 import ExtraPrelude
 import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, icon, uiButton,
                         uiDynSubmit, updatedWithInit)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 
 
-inlineSettings :: forall m t. (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
-inlineSettings = do
-  cfg <- watchTelegramConfig
+-- We take a dynamic `Maybe TelegramConfig` parameter rather than watching to
+-- get `Maybe (Maybe TelegramConfig)`, so the caller can handle the
+-- uninitialized case.
+
+inlineSettings
+  :: forall m t
+  . ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m
+    )
+  => Dynamic t (Maybe TelegramConfig)
+  -> m ()
+inlineSettings cfg = do
   hasValidated <- holdUniqDyn $ preview (_Just . telegramConfig_validated . _Just) <$> cfg
   openTelegramOptions <- (switchHold never =<<) $ dyn $ ffor hasValidated $ \case
     Nothing -> uiButton "primary" "Connect Telegram"
@@ -52,15 +62,20 @@ inlineSettings = do
       return $ domEvent Click reopener
 
   tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
-    finish <- settings
+    finish <- settings cfg
     pure $ leftmost [finish, close]
 
-telegramRecipientFullName :: TelegramRecipient -> Text
+telegramRecipientFullName
+  :: TelegramRecipient
+  -> Text
 telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
-settings :: forall m t. MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
-settings = switchHold never <=< workflowView $ Workflow $ do
-  cfg <- watchTelegramConfig
+settings
+  :: forall m t
+  .  MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Maybe TelegramConfig)
+  -> m (Event t ())
+settings cfg = switchHold never <=< workflowView $ Workflow $ do
   recipients <- watchTelegramRecipients
   let
     validated = _Just . telegramConfig_validated . _Just
@@ -146,9 +161,3 @@ watchTelegramRecipients =
   (fmap . fmap) (getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_telegramRecipients) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
-
-watchTelegramConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TelegramConfig))
-watchTelegramConfig =
-  (fmap . fmap) (getMaybeView . _bakeView_telegramConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_telegramConfig = viewJust 1 }

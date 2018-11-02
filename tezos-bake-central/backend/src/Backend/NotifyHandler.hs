@@ -188,7 +188,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
     handleTelegramConfig cfg = whenM (viewSelects () telegramConfigVS) $ do
-      pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS $ Just cfg }
+      pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS $ Just $ Just cfg }
 
     telegramRecipientsVS = _bakeViewSelector_telegramRecipients aggVS
     handleTelegramRecipient rid recipient = whenM (viewSelects (Bounded rid) telegramRecipientsVS) $ do

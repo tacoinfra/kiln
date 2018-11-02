@@ -373,7 +373,7 @@ appContentArea
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => Dynamic t UITab -> m ()
-appContentArea selectedTab = 
+appContentArea selectedTab =
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
