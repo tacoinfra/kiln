@@ -11,11 +11,10 @@ module Frontend.Settings.Telegram where
 
 import Data.Function (on)
 import Data.Map (Map)
-import Data.Map.Monoidal (MonoidalMap, getMonoidalMap)
+import Data.Map.Monoidal (getMonoidalMap)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
-import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
@@ -48,7 +47,7 @@ inlineSettings = do
           elClass "th" "telegram-bot" $ text "Bot Name"
         void $ listWithKey recipients $ \_ recipient -> do
           el "tr" $ do
-            elClass "td" "telegram-recipient" $ dynText $ fmap _telegramRecipient_fullName recipient
+            elClass "td" "telegram-recipient" $ dynText $ fmap telegramRecipientFullName recipient
             elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
       return $ domEvent Click reopener
 
@@ -56,7 +55,8 @@ inlineSettings = do
     finish <- settings
     pure $ leftmost [finish, close]
 
-_telegramRecipient_fullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
+telegramRecipientFullName :: TelegramRecipient -> Text
+telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
 settings :: forall m t. MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 settings = switchHold never <=< workflowView $ Workflow $ do
@@ -111,7 +111,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
       heading $ text "Bot Connection Successful!"
       el "p" $ do
         text "We’ve sent a test message and will be sending notifications to "
-        el "strong" $ text $ _telegramRecipient_fullName recipient
+        el "strong" $ text $ telegramRecipientFullName recipient
         text " from your bot."
       done <- horizontallyCentered $ uiButton "primary" "Close"
       pure (done, never)
