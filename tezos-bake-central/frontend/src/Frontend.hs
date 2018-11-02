@@ -19,8 +19,6 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
-import Data.Fixed (Micro)
-import Data.Function (on)
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
@@ -29,12 +27,9 @@ import Data.Ord (Down (..), comparing)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (UTCTime)
 import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Version (showVersion)
 import Data.Word (Word64)
-import qualified Form.Checks as Check
 import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.Element (setInnerHTML)
 import qualified GHCJS.DOM.Location as Location
@@ -46,15 +41,10 @@ import Obelisk.Generated.Static (static)
 import Obelisk.Route (R)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
-import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
-import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget,
-                              watchViewSelector)
-import Rhyolite.Schema (Email, Json (..))
+import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
+import Rhyolite.Schema (Json (..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -68,8 +58,7 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_upgradeBranch)
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute)
@@ -79,7 +68,8 @@ import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
-import qualified Frontend.Settings.Telegram as Telegram
+import Frontend.Settings
+import Frontend.Watch
 
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
@@ -168,167 +158,8 @@ withFrontendContext f = do
       currentTime <- holdDyn t0 everySecondTick
       runReaderT f $ FrontendContext c tz currentTime
 
-validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
-validatingRange f v =
-  if null $ _rangeView_support v
-    then Nothing
-    else Just $ f v
-
-watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
-watchFrontendConfig =
-  (fmap . fmap) (getMaybeView . _bakeView_config) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_config = viewJust 1
-    }
-
-watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
-watchProtoInfo =
-  (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_parameters = viewJust 1
-    }
-
-watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))
-watchLatestHead =
-  (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_latestHead = viewJust 1
-    }
-
-watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
-watchNodes nidsDyn = do
-  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = 1 <$ nids
-    }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodes v)
-
-watchNodesValid :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (Maybe (MonoidalMap (Id Node) Node)))
-watchNodesValid nidsDyn = do
-  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = 1 <$ nids
-    }
-  return $ ffor theView $ \v -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodes v)
-
-watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
-watchNodeAddresses = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
-    }
-  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
-
-watchNodeAddressesValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) NodeSummary)))
-watchNodeAddressesValid = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
-    }
-  return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
-
-watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
-watchClient cidDyn = do
-  theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
-    { _bakeViewSelector_clients = viewRangeExactly cid 1
-    }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView (_bakeView_clients v)
-
-watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
-watchDelegatePublicKeyHashes = do
-  theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_delegates = viewRangeAll 1}
-  return $ ffor theView $ MMap.keysSet . getRangeView' . _bakeView_delegates
-
-watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
-watchDelegateStats delegates = do
-  let levels :: (RawLevel, RawLevel) = (0, 30)
-      --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
-  _theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
-    { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
-    }
-  holdDyn MMap.empty never
-  -- return $ ffor theView $ uncurry (mergeMMap
-  --     (\_ acc -> Just (mempty, acc))
-  --     (\_ _ -> Nothing)
-  --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
-  --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
-
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
-watchClientAddresses = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_clientAddresses = viewRangeAll 1
-    }
-  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
-
-watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
-watchNotificatees = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_notificatees = viewRangeAll 1
-    }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_notificatees v)
-
-watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
-watchSummary = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_summary = viewJust 1
-    }
-  improvingMaybe $ ffor theView $ \v -> getMaybeView $ _bakeView_summary v
-
-watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
-watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
--- watchSummaryGraph = do
---   theView <- watchViewSelector . pure $ mempty
---     { _bakeViewSelector_summary = Just 1
---     }
---   improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
-
-watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
-watchMailServer =
-  (fmap . fmap) (join . getMaybeView . _bakeView_mailServer) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_mailServer = viewJust 1 }
-
-watchErrors
-  :: MonadRhyoliteFrontendWidget Bake t m
-  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
-  -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
-watchErrors intervals =
-  -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  (fmap . fmap) (fmap (fst . getFirst) . _intervalView_elements . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
-    { _bakeViewSelector_errors = viewIntervalSet ivals 1
-    }
-
-watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
-watchPublicNodeConfig =
-  (fmap . fmap) (getRangeView . _bakeView_publicNodeConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
-
-watchPublicNodeConfigValid :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (MonoidalMap PublicNode PublicNodeConfig)))
-watchPublicNodeConfigValid =
-  (fmap . fmap) (validatingRange getRangeView . _bakeView_publicNodeConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
-
 isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
-
-watchPublicNodeHeads :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
-watchPublicNodeHeads =
-  (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
-
-watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
-watchTelegramRecipients =
-  (fmap . fmap) (fmap getFirst . getRangeView' . _bakeView_telegramRecipients) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
-
-watchUpstreamVersion :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe UpstreamVersion))
-watchUpstreamVersion = holdUniqDyn <=<
-  (fmap . fmap) (getMaybeView . _bakeView_upstreamVersion) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_upstreamVersion = viewJust 1 }
-
-watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
-watchAlertCount =
-  (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_alertCount = viewJust 1
-    }
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Nodes
@@ -795,155 +626,6 @@ nodesOptions = do
           nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
           pure $ leftmost [nodeAddedE, close]
 
-aliasedInputForm
-  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-aliasedInputForm validator label info placeholder = divClass "ui form fields" $ do
-  (namedAddress, submitEvt) <- formWithSubmit $ do
-    address <- formItem' "required"
-      $ validatedInput validator
-      $ def & Txt.setPlaceholder placeholder
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Address")
-    alias <- formItem
-      $ validatedInput (Validator.optional Validator.validateText)
-      $ def & Txt.setPlaceholder "alias"
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Alias")
-    _ <- submitButtonWithInfoCls "fluid primary" label info
-    let namedAddress = liftA2 (liftA2 (,)) address alias
-    return namedAddress
-  return $ filterRight $ tag (current namedAddress) submitEvt
-
-settingsTab
-  :: forall r t m.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadJSM (Performable m)
-    , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
-    )
-  => m ()
-settingsTab = do
-  divClass "version-section" $ do
-    currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
-    divClass "soft-heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
-
-    enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
-    when enableUpgradeCheck upgradeOptions
-
-  divClass "notifications-section" $ do
-    SemUi.header
-      (def
-        & SemUi.headerConfig_size SemUi.|?~ SemUi.H3
-        )
-      $ text "Notifications"
-
-    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection $
-      [ ("Email","letter",mailServerOptions)
-      , ("Telegram","telegram",telegramOptions)
-      ]
-
-  where
-    notificationSection :: (Text, Text, m ()) -> m ()
-    notificationSection (name, iconName, content) =
-      divClass "notifications-subsection" $ do
-        toggleSwitch <- SemUi.header
-          (def
-            & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
-            )
-          $ do
-              flip SemUi.checkbox
-                (def
-                  & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
-                  & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
-                  )
-                $ do
-                    icon ("icon-" <> iconName)
-                    text name
-        dyn_ $ ffor (toggleSwitch ^. SemUi.checkbox_value) $ \case
-          False -> divClass "purpose" $ text $ name <> " notifications are turned off"
-          True -> content
-
-    telegramOptions = do
-      divClass "purpose" $ text "Use a Telegram Bot to send alerts."
-      Telegram.inlineSettings
-
-    notificationOptions = do
-      divClass "ui medium header" $ text "Notification Recipients"
-      notificatees <- watchNotificatees
-
-      let
-        emailWidget email = do
-          dynText email
-          text " "
-          ev <- uiButton "mini compact orange" "Send test"
-          void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> tag (current email) ev
-
-      rec (addN, removeN) <- listInput "user@example.com" (isRight . Check.email) emailWidget notificatees (Right "" <$ addedN)
-          addedN <- requestingIdentity . ffor addN $ \email -> public (PublicRequest_AddNotificatee email)
-          _ <- requestingIdentity . ffor removeN $ \(_, email) -> public (PublicRequest_RemoveNotificatee email)
-
-      pure ()
-
-    mailServerOptions = do
-      divClass "ui medium header" $ text "SMTP Mail Server"
-      mailServer <- watchMailServer
-      dyn_ $ ffor mailServer $ \cfg -> do
-        let form0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
-        updatedForm <- mailServerForm form0
-        requestingIdentity $ public . uncurry PublicRequest_SetMailServerConfig <$> updatedForm
-      notificationOptions
-
-    _clientsOptions = void $ do
-      divClass "ui medium header" $ text "Clients"
-      elClass "table" "ui celled striped compact table" $ do
-        clients <- watchClientAddresses -- TODO
-        _ <- listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
-          el "td" $ dynText $ Uri.render <$> dName
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
-
-        addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
-
-    _delegatesOptions = do
-      divClass "ui medium header" $ text "Delegates"
-      elClass "table" "ui celled striped compact table" $ do
-        delegates <- watchDelegatePublicKeyHashes
-        _ <- listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
-          el "td" $ publicKeyHashLink pkh
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
-            requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
-
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
-
-    upgradeOptions = do
-      currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
-      upstreamVersion <- watchUpstreamVersion
-
-      elClass "p" "check-for-updates" $ do
-        (aEl, _) <- el' "a" $ text "Check for updates"
-        rec
-          let submit = gate (not <$> current isLoading) $ domEvent Click aEl
-          (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
-        _ <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ submit
-
-        dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
-          True -> divClass "ui tiny active inline loader" blank *> text " Checking for updates..."
-          False -> case v' of
-            Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
-            Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
-              if v > currentVersion
-              then changelogLink "" v $
-                text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
-              else
-                text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
-            _ -> blank
-
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
   let
@@ -977,65 +659,6 @@ publicNodeOptions = do
 
     let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
-
-mailServerForm
-  :: ( DomBuilder t m
-     , DomBuilderSpace m ~ GhcjsDomSpace
-     , MonadHold t m
-     , MonadFix m
-     , PostBuild t m
-     , MonadJSM m
-     , MonadJSM (Performable m)
-     , PerformEvent t m
-     , TriggerEvent t m
-     )
-  => MailServerView -> m (Event t (MailServerView, Text))
-mailServerForm frm0 = do
-  (form, save) <- formWithSubmit $ do
-    form <- fields
-    elDynAttr "button"
-      (ffor (isRight <$> form) $ \s -> "type"=:"submit"
-        <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
-      ) $ text "Save"
-    return form
-
-  pure $ filterRight $ tag (current form) save
-
-  where
-    fields = withFormFieldsErr (frm0, "") $ do
-      divClass "three fields" $ do
-        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required eight wide"
-          $ validatedInput Validator.validateText
-          $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName frm0)
-
-        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required four wide"
-          $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-          $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber frm0)
-
-        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required four wide"
-          $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
-          $ do
-            labeled "Protocol"
-            SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol"
-                                & SemUi.dropdownConfig_fluid SemUi.|~ True)
-              (Just $ _mailServerView_smtpProtocol frm0)
-              $ SemUi.TaggedStatic
-              $ SmtpProtocol_Plain=:text "Plain"
-              <> SmtpProtocol_Ssl=:text "SSL"
-              <> SmtpProtocol_Starttls=:text "STARTTLS"
-
-      divClass "two fields" $ do
-        tellFieldErr (_1 . mailServerView_userName) <=< formItem
-          $ validatedInput (Validator.optionalWith "" id Validator.validateText)
-          $ defTxt "User name" & Txt.setInitial (_mailServerView_userName frm0)
-
-        tellFieldErr _2 <=< formItem
-          $ validatedInput (Validator.optionalWith "" id validatePassword)
-          $ defTxt "Password"
-
-    validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
-    defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
-    labeled = el "label" . text
 
 nodesTab
   :: forall r m t.
@@ -1317,41 +940,3 @@ semuiTab label k currentTab enabled =
   fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
-
--- | Control that allows the user to build a list of items.
-listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m, Ord k)
-          => Text -- ^ Placeholder for input
-          -> (Text -> Bool) -- ^ Input validation
-          -> (Dynamic t Text -> m ()) -- ^ Widget builder for each item in the list
-          -> Dynamic t (MonoidalMap k Text) -- ^ Items in list
-          -> Event t (Either [Text] Text) -- ^ Event of error messages or successful submission
-          -> m (Event t Text, Event t (k, Text)) -- ^ Add item event, remove item event
-listInput ph validate itemWidget items rsp = divClass "list-input" $ do
-  rec (i, addClick) <- divClass "item-input" $ do
-        itemInput <- inputElement $ def
-          & initialAttributes .~ ("placeholder" =: ph)
-          & inputElementConfig_setValue .~ ("" <$ fmapMaybe (^? _Right) rsp)
-          & inputElementConfig_elementConfig . elementConfig_modifyAttributes .~ validationAttrs
-        addItemClick <- fmap (domEvent Click . fst) $ elClass' "span" "add-button" $ elClass "i" "fa fa-plus-circle fa-fw" blank
-        return (itemInput, addItemClick)
-      let v = value i
-          validationResults = leftmost
-            [ (\v' -> if T.null v' then Left () else Right (validate v')) <$> updated v
-            , Right . isJust . preview _Right <$> rsp
-            ]
-          validationAttrs = ffor validationResults $ \r -> mapKeysToAttributeName $ case r of
-            Left () -> "class" =: Nothing
-            Right True -> "class" =: Nothing
-            Right False -> "class" =: Just "invalid"
-          submit = tag (current v) $ leftmost
-            [ () <$ ffilter ((==Enter) . keyCodeLookup . fromIntegral) (domEvent Keypress i)
-            , addClick
-            ]
-      widgetHold_ blank $ ffor rsp $ \case
-        Left errs -> for_ errs $ elClass "div" "modal-content__text-input-error" . text
-        Right success -> elClass "div" "modal-content__text-input-success" $ text success
-      remove <- fmap (fmap (leftmost . Map.elems)) $ elClass "ul" "list-input-items" $
-        listWithKey (coerce <$> items) $ \k t -> el "li" $ do
-          el "span" $ itemWidget t
-          fmap ((,) k) . tag (current t) . domEvent Click . fst <$> el' "span" (elClass "i" "fa fa-fw fa-times-circle" blank)
-  return (ffilter validate submit, switch . current $ remove)

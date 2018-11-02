@@ -18,7 +18,9 @@ library
     Frontend.Common
     Frontend.Modal.Base
     Frontend.Modal.Class
+    Frontend.Settings
     Frontend.Settings.Telegram
+    Frontend.Watch
 
   build-depends:
       base
