@@ -266,6 +266,40 @@ body {
   padding-top: 0;
 }
 
+.ui.sidebar {
+  padding: @20px @30px;
+
+  .ui.segment.vertical.app-notifications-list {
+    overflow-y: auto;
+
+    .ui.message.app-notification {
+      display: flex;
+      flex-direction: column;
+
+      > * {
+        margin-top: @3px;
+        margin-bottom: @3px;
+      }
+
+      .positive, .success, .negative, .error {
+        &, & .header {
+          color: @black;
+        }
+      }
+
+      label {
+        font-weight: bold;
+        margin-right: 1em;
+      }
+
+      .node-secondary-label {
+        font-weight: normal;
+        font-style: italic;
+        color: @grey;
+      }
+    }
+  }
+}
 /* .ui.header > img sets a vertical-align */
 .ui.header > img.app-logo {
   height: 0.74em; // TODO: Don't use 'em'

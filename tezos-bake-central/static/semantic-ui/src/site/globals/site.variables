@@ -5,6 +5,7 @@
 @fontWeight: 500;
 @primaryColor:@blue;
 
+@black: #000000;
 @blue: #1269F3;
 @green: #19D201;
 @orange: #FF6705;
