@@ -71,11 +71,17 @@ localTimestamp t = do
   dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .
     Time.utcToZonedTime tz <$> t
 
-localHumanizedTimestamp :: (DomBuilder t m, PostBuild t m, MonadReader r m, HasTimeZone r, HasTimer t r) => Dynamic t Time.UTCTime -> m ()
+localHumanizedTimestamp
+  ::
+    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+    , MonadReader r m, HasTimeZone r, HasTimer t r
+    )
+  => Dynamic t Time.UTCTime
+  -> m ()
 localHumanizedTimestamp tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  dynText $ ffor2 currentTime tDyn $ \c t ->
+  dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
     T.pack $ HumanTime.humanReadableTimeI18N' HumanTime.defaultHumanTimeLocale { HumanTime.timeZone = tz } c t
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()

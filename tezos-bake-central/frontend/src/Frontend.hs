@@ -1077,8 +1077,13 @@ nodesTab =
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                 _ -> blank
 
+            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (_node_address <$> vDyn) (_node_alias <$> vDyn)
+            titleUniq <- holdUniqDyn title
+            subtitleUniq <- holdUniqDyn subtitle
+
             nodeTile
-              (\n -> first text $ nodeTitleSubtitle (_node_address n) (_node_alias n))
+              (dynText titleUniq)
+              subtitleUniq
               getNodeHeadBlock
               (Just errorMessages)
               (Just _node_peerCount)
@@ -1086,15 +1091,17 @@ nodesTab =
               vDyn
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
+            source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
+            chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
             let
-              title node = case _publicNodeHead_source node of
-                PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) chain $ text "tzscan"
+              title = dyn_ $ ffor2 source chain $ \s c -> case s of
+                PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) c $ text "tzscan"
                 PublicNode_Blockscale -> text "Foundation Nodes"
                 PublicNode_Obsidian -> text "Obsidian Systems"
-                where chain = getNamedChainOrChainId $ _publicNodeHead_chain node
 
             nodeTile
-              (\n -> (title n, Nothing))
+              title
+              (pure Nothing)
               (Just . mkVeryBlockLike)
               Nothing
               Nothing
@@ -1107,27 +1114,26 @@ nodesTab =
           --  void $ requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
 
     nodeTile
-      :: (a -> (m (), Maybe Text)) -- ^ Function to get title and subtitle of a node
+      :: m () -- ^ Title
+      -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile getTitleSubtitle getBlock errors' getPeerCount' getNetworkStats' node = do
+    nodeTile title subtitle getBlock errors' getPeerCount' getNetworkStats' node = do
       b <- maybeDyn $ getBlock <$> node
       divClass "ui card node-tile" $ divClass "content" $ do
-        divClass "menu-section" $
+        divClass "menu-section" $ do
           icon "icon-ellipsis"
 
         divClass "title" $ do
-          let (title, subtitle) = splitDynPure $ getTitleSubtitle <$> node
-
           for_ errors' $ \errors -> do
             errorsEmpty <- holdUniqDyn $ null <$> errors
             iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
-          dyn_ title
-          divClass "subtitle" $ dynText $ fromMaybe nbsp <$> subtitle
+          title
+          divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors ->
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
@@ -1154,15 +1160,15 @@ nodesTab =
           divClass "divider" blank
 
         for_ getPeerCount' $ \getPeerCount -> do
-          peerCount <- maybeDyn $ getPeerCount <$> node
+          peerCount <- maybeDyn <=< holdUniqDyn $ getPeerCount <$> node
           elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
           text " connected peers"
 
         for_ getNetworkStats' $ \getNetworKStats -> do
           let
             stat = getNetworKStats <$> node
-            showSpeed n = dynText $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
-            showTotal n = dynText $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
+            showSpeed n = dynText <=< holdUniqDyn $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
+            showTotal n = dynText <=< holdUniqDyn $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
 
           divClass "stats" $ do
             divClass "column heading" $ do
@@ -1184,8 +1190,8 @@ nodesTab =
           Nothing -> text placeholder
           Just f -> f
 
-        withMaybeDyn :: Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
-        withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget . fmap f) d
+        withMaybeDyn :: Eq b => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
+        withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
         nbsp = "\x00A0"
 
