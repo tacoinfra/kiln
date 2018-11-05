@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Frontend.Common where
@@ -26,11 +27,14 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
 import qualified Text.URI as Uri
+import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
+import Common.App (Bake)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
@@ -277,3 +281,23 @@ instance HasTimeZone (FrontendContext t) where
 
 instance HasTimer t (FrontendContext t) where
   timer = frontendContext_oneSecondTimer
+
+aliasedInputForm
+  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+aliasedInputForm validator label info placeholder = divClass "ui form fields" $ do
+  (namedAddress, submitEvt) <- formWithSubmit $ do
+    address <- formItem' "required"
+      $ validatedInput validator
+      $ def & Txt.setPlaceholder placeholder
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Address")
+    alias <- formItem
+      $ validatedInput (Validator.optional Validator.validateText)
+      $ def & Txt.setPlaceholder "alias"
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Alias")
+    _ <- submitButtonWithInfoCls "fluid primary" label info
+    let namedAddress = liftA2 (liftA2 (,)) address alias
+    return namedAddress
+  return $ filterRight $ tag (current namedAddress) submitEvt
