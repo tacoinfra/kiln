@@ -697,11 +697,10 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       dyn_ $ ffor vDyn $ \v@(log, _, _) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
-          row $ timestamped ("First seen", _errorLog_started log)
-          row $ timestamped $ maybe ("Last seen", _errorLog_lastSeen log) ("Stopped",) $ _errorLog_stopped log
+          timestamped ("First seen", _errorLog_started log)
+          timestamped $ maybe ("Last seen", _errorLog_lastSeen log) ("Stopped",) $ _errorLog_stopped log
   where
-    row = el "div"
-    timestamped (lbl,ts) = do
+    timestamped (lbl,ts) = el "div" $ do
       el "label" $ text lbl
       localTimestamp $ pure ts
 
@@ -735,9 +734,9 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
         Just node -> Just (log, logView, node)
 
     logEntry :: (ErrorLog, ErrorLogView, Maybe Node) -> m ()
-    logEntry (log, specificLog, node') =
+    logEntry (_, specificLog, node') =
       let header = divClass "header" . text
-          nodeLabel n = row $ do
+          nodeLabel n = el "div" $ do
             let (primary, secondary) = nodeIdentification n
             el "label" $ text primary
             for_ secondary $ elClass "label" "node-secondary-label" . text
