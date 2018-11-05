@@ -276,11 +276,20 @@ body {
   padding-top: 0;
 }
 
-.ui.sidebar {
+.ui.sidebar.vertical.menu {
   padding: @20px @30px;
+  display: flex;
+
+  .no-notifications {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: @grey;
+    font-size: @20px;
+  }
 
   .ui.segment.vertical.app-notifications-list {
-    overflow-y: auto;
 
     .ui.message.app-notification {
       display: flex;

@@ -497,7 +497,7 @@ liveErrorsWidget
   -> Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
 liveErrorsWidget errorsDyn nodesDyn = void $ do
-  filterDyn <- holdUniqDyn =<< radioLabels AlertsFilter_All
+  filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
     , (AlertsFilter_UnresolvedOnly, text "Unresolved")
     , (AlertsFilter_ResolvedOnly, text "Resolved")
@@ -518,12 +518,15 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       (fmap (\(a, b) -> (a, b, Nothing)) `fmap` otherErrors)
       (fmap (_3 %~ Just) `fmap` nodeErrorsWithNode)
 
-  SemUi.segment
+    showWhenErrors p attrs = elDynAttr "div" (ffor combinedErrors $ \ce -> attrs <> bool ("style" =: "display: none") Map.empty (p ce))
+
+  showWhenErrors null ("class" =: "no-notifications") $ text "No notifications"
+  showWhenErrors (not . null) Map.empty $ void $ SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-notifications-list"
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
-      ) $
+    ) $
     listWithKey (errorsByTime Down <$> combinedErrors) $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \v@(log, _, _) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
