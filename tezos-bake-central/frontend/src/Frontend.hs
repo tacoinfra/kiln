@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -189,7 +190,9 @@ appMain = do
         (def
           & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
           & SemUi.sidebarConfig_dimming .~ pure False
-          & SemUi.sidebarConfig_closeOnClick .~ pure False)
+          & SemUi.sidebarConfig_closeOnClick .~ pure False
+          & SemUi.sidebarConfig_width .~ pure SemUi.SidebarWidth_VeryWide
+        )
         -- Container for the content the sidebar accompanies. "app-right" must
         -- be this and not a child div for flexbox's sake.
         (\f -> SemUi.ui "div" $ f $ def
@@ -515,18 +518,29 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
       (fmap (\(a, b) -> (a, b, Nothing)) `fmap` otherErrors)
       (fmap (_3 %~ Just) `fmap` nodeErrorsWithNode)
 
-  elAttr "div" ("style"=:"padding-top:1em; overflow-y: auto;") $
+  SemUi.segment
+    (def
+      & SemUi.classes SemUi.|~ "app-notifications-list"
+      & SemUi.segmentConfig_vertical SemUi.|~ True
+      & SemUi.segmentConfig_basic SemUi.|~ True
+      ) $
     listWithKey (errorsByTime Down <$> combinedErrors) $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \v@(log, _, _) -> do
-        divClass ("ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
+        divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           logEntry v
-          el "p" $ do
-            text "First seen: " *> localTimestamp (pure $ _errorLog_started log) *> text " | "
-            case _errorLog_stopped log of
-              Nothing -> text "Last seen: " *> localTimestamp (pure $ _errorLog_lastSeen log)
-              Just stopped -> text "Stopped: " *> localTimestamp (pure stopped)
-
+          row $ timestamped ("First seen", _errorLog_started log)
+          row $ timestamped $ maybe ("Last seen", _errorLog_lastSeen log) ("Stopped",) $ _errorLog_stopped log
   where
+    row = el "div"
+    timestamped (lbl,ts) = do
+      el "label" $ text lbl
+      localTimestamp $ pure ts
+
+    nodeIdentification :: Node -> (Text, Maybe Text)
+    nodeIdentification ns =
+      let addr = Uri.render $ _node_address ns
+      in maybe (addr, Nothing) (, Just addr) $ _node_alias ns
+
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
         || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
@@ -553,30 +567,35 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
 
     logEntry :: (ErrorLog, ErrorLogView, Maybe Node) -> m ()
     logEntry (log, specificLog, node') =
-      let header txt = divClass "header" $ text $ case _errorLog_stopped log of
-            Just _ -> "Resolved: " <> txt
-            Nothing -> txt
+      let header = divClass "header" . text
+          nodeLabel n = row $ do
+            let (primary, secondary) = nodeIdentification n
+            el "label" $ text primary
+            for_ secondary $ elClass "label" "node-secondary-label" . text
       in case specificLog of
-          ErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ const $ do
+          ErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
             header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
+            nodeLabel n
 
           ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) ->
-            for_ node' $ const $ do
+            for_ node' $ \n -> do
               header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
-              el "p" $
+              nodeLabel n
+              el "div" $
                 text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
           ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
-            el "p" $ do
+            el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
           ErrorLogView_BadNodeHead l ->
-            for_ node' $ \node -> do
+            for_ node' $ \n -> do
             let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-            header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address node) (_node_alias node)
-            el "p" message
+            header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
+            nodeLabel n
+            el "div" message
 
           ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
             header "Multiple bakers for same delegate" -- TODO Fill this out

@@ -87,6 +87,7 @@ mailServerForm frm0 = do
             SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol"
                                 & SemUi.dropdownConfig_fluid SemUi.|~ True)
               (Just $ _mailServerView_smtpProtocol frm0)
+              never
               $ SemUi.TaggedStatic
               $ SmtpProtocol_Plain=:text "Plain"
               <> SmtpProtocol_Ssl=:text "SSL"
