@@ -373,11 +373,11 @@ appContentArea
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => Dynamic t UITab -> m ()
-appContentArea selectedTab = divClass "app-content" $
+appContentArea selectedTab = 
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> settingsTab
+    UITab_Options -> divClass "app-content" $ settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 
@@ -397,9 +397,9 @@ nodesTabOrWelcome = do
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
   dyn_ $ ffor haveNodesMaybe $ \case
-    Nothing -> waitingForResponse
-    Just False -> divClass "app-welcome" welcomeScreen
-    Just True -> nodesTab
+    Nothing -> divClass "app-content app-welcome" waitingForResponse
+    Just False -> divClass "app-content app-welcome" welcomeScreen
+    Just True -> divClass "app-content" nodesTab
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do

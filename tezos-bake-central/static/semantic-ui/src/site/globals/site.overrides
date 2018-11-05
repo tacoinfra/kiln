@@ -231,7 +231,8 @@ body {
 
 .pusher {
   display: flex;
-  flex-direction: column
+  flex-direction: column;
+  height: 100%;
 }
 
 .app-header {
@@ -239,9 +240,18 @@ body {
 
 .app-content {
   flex-grow: 1;
-  padding-left: @30px;
-  padding-top: @35px;
+  &:not(.app-welcome) {
+    padding-left: @30px;
+    padding-top: @35px;
+  }
   overflow: auto;
+
+  &.app-welcome {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+  }
 
   h4 {
       margin-bottom: @30px;
@@ -304,13 +314,6 @@ body {
 .ui.header > img.app-logo {
   height: 0.74em; // TODO: Don't use 'em'
   vertical-align: baseline;
-}
-
-.app-welcome {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
 }
 
 img.credits-obsidian {
