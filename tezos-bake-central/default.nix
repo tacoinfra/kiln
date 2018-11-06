@@ -36,7 +36,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       modern-uri = dontCheck super.modern-uri;
       semantic-reflex = dontHaddock (dontCheck (self.callCabal2nix "semantic-reflex" (semantic-reflex-src  + /semantic-reflex) {}));
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = dontHaddock (super.tezos-bake-monitor-lib);
-      tezos-noderpc = dontHaddock (super.tezos-noderpc);
+      tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
+      tezos-noderpc = dontHaddock super.tezos-noderpc;
     });
   })
