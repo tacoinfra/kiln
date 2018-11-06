@@ -514,11 +514,16 @@ img.credits-obsidian {
                     margin: 0;
                 }
 
-                .ui.popup .link.list .item {
-                    ._link-like();
-                    color: @blue;
-                    font-size: @14px;
-                    line-height: 2.86;
+                .ui.popup {
+                    top: @15px;
+                    right: -@32px;
+
+                    > .link.list .item {
+                        ._link-like();
+                        color: @blue;
+                        font-size: @14px;
+                        line-height: 2.86;
+                    }
                 }
             }
 

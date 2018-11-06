@@ -774,7 +774,6 @@ nodesTab =
           (iconEl, _) <- elClass' "i" "ui icon icon-ellipsis" blank
           (uiEl, _) <- SemUi.ui' "span" (def
             & SemUi.classes .~ "ui popup bottom center"
-            & SemUi.style .~ "top: 15px; right: -30px"
             & SemUi.action .~ Just def
               { SemUi._action_initialDirection = SemUi.Out
               , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
