@@ -18,6 +18,7 @@ import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
@@ -27,7 +28,7 @@ import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
-import Rhyolite.Schema (Id (..))
+import Rhyolite.Schema (Email, Id (..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -97,15 +98,6 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         for_ dids $ \did ->
           updateIdNotify did [Delegate_deletedField =. True]
 
-      PublicRequest_AddNotificatee email -> inDb $
-        insertNotify Notificatee { _notificatee_email = email }
-
-      PublicRequest_RemoveNotificatee email -> inDb $ do
-        nids :: [Id Notificatee] <- fmap toId <$> project AutoKeyField (Notificatee_emailField ==. email)
-        let inIds = In nids
-        _ <- [executeQ| DELETE FROM "Notificatee" n WHERE n.id IN ?inIds |]
-        for_ nids $ notify . mkDefaultNotify
-
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'
           (Address Nothing email)
@@ -115,7 +107,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         )
         Nothing
 
-      PublicRequest_SetMailServerConfig mailServerView password -> inDb $ do
+      PublicRequest_SetMailServerConfig mailServerView recipients password -> inDb $ do
         now <- getTime
         let updatedMailServer = MailServerConfig
               { _mailServerConfig_hostName = _mailServerView_hostName mailServerView
@@ -125,8 +117,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               , _mailServerConfig_password = password
               , _mailServerConfig_madeDefaultAt = now
               }
-        defaultMailServer <- getDefaultMailServer
-        case defaultMailServer of
+        getDefaultMailServer >>= \case
           Nothing -> insertNotify updatedMailServer
           Just (id_, _) -> updateIdNotify id_
             [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
@@ -136,6 +127,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
             , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
             ]
+        delete $ Notificatee_emailField `notIn_` recipients
+        keep :: [Email] <- project Notificatee_emailField (Notificatee_emailField `in_` recipients)
+        for_ ((Set.difference `on` Set.fromList) recipients keep) $ insertNotify . Notificatee
 
       PublicRequest_CheckForUpgrade ->
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $

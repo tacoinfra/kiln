@@ -41,13 +41,8 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake ()
     PublicRequest_SetMailServerConfig
       :: MailServerView
+      -> [Email]
       -> Text -- password
-      -> PublicRequest Bake ()
-    PublicRequest_AddNotificatee
-      :: Email
-      -> PublicRequest Bake ()
-    PublicRequest_RemoveNotificatee
-      :: Email
       -> PublicRequest Bake ()
     PublicRequest_SendTestEmail
       :: Email
