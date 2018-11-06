@@ -49,6 +49,7 @@ module ExtraPrelude
   , liftA2
   , liftA3
   , listToMaybe
+  , on
   , preview
   , runReaderT
   , second
@@ -91,6 +92,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Default (def)
 import Data.Either (isLeft, isRight)
 import Data.Foldable (fold, for_, toList, traverse_)
+import Data.Function (on)
 import Data.Functor (void, ($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
