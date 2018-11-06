@@ -106,11 +106,10 @@ withModals
 withModals backdropCfg open body = do
   b <- body
   document <- DOM.currentDocumentUnchecked
+  escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
+    key <- getKeyEvent
+    pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
   rec
-    escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
-      key <- getKeyEvent
-      pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
-
     isVisible <- holdDyn False $ leftmost [True <$ open, False <$ close]
     (backdropEl, _) <- elDynAttr' "div"
       (ffor isVisible $ \isVis ->

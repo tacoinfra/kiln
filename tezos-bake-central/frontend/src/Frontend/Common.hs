@@ -26,9 +26,9 @@ import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
-import qualified Text.URI as Uri
 import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)

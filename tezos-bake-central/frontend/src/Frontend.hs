@@ -373,7 +373,7 @@ appContentArea
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => Dynamic t UITab -> m ()
-appContentArea selectedTab = 
+appContentArea selectedTab =
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
@@ -621,7 +621,7 @@ nodesOptions = do
   divClass "ui header" $ text "Nodes"
   divClass "ui list" $ do
     nodes <- watchNodeAddresses
-    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item bullet-before" $ do
+    _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
