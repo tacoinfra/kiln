@@ -385,6 +385,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -685,6 +686,7 @@ nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 nodesTab =
@@ -728,6 +730,7 @@ nodesTab =
             nodeTile
               (dynText titleUniq)
               subtitleUniq
+              (\ev -> PublicRequest_RemoveNode . _node_address <$> current vDyn <@ ev)
               getNodeHeadBlock
               (Just errorMessages)
               (Just _node_peerCount)
@@ -746,31 +749,41 @@ nodesTab =
             nodeTile
               title
               (pure Nothing)
+              (\ev -> flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev)
               (Just . mkVeryBlockLike)
               Nothing
               Nothing
               Nothing
               vDyn
 
-
-          --el "div" $ do
-          --  eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-          --  void $ requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
-
     nodeTile
       :: m () -- ^ Title
       -> Dynamic t (Maybe Text) -- ^ Subtitle
+      -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this node.
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile title subtitle getBlock errors' getPeerCount' getNetworkStats' node = do
+    nodeTile title subtitle mkRemoveReq getBlock errors' getPeerCount' getNetworkStats' node = do
       b <- maybeDyn $ getBlock <$> node
       divClass "ui card node-tile" $ divClass "content" $ do
-        divClass "menu-section" $ do
-          icon "icon-ellipsis"
+        divClass "menu-section" $ divClass "span" $ mdo
+          menuTransition <- manageMenu (domEvent Click iconEl) uiEl
+          (iconEl, _) <- elClass' "i" "ui icon icon-ellipsis" blank
+          (uiEl, _) <- SemUi.ui' "span" (def
+            & SemUi.classes .~ "ui popup bottom center"
+            & SemUi.style .~ "top: 15px; right: -30px"
+            & SemUi.action .~ Just def
+              { SemUi._action_initialDirection = SemUi.Out
+              , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
+              , SemUi._action_transitionStateClasses = SemUi.forceVisible
+              }) $ do
+                SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ do
+                  remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Node"
+                  tellModal $ remove $> removeNodeModal mkRemoveReq
+          pure ()
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
@@ -838,6 +851,13 @@ nodesTab =
         withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
         nbsp = "\x00A0"
+
+    removeNodeModal mkRemoveReq = cancelableModal $ \close -> do
+      el "h3" $ text "Remove this node?"
+      el "p" $ text "You can always add this node again from the \"Add Node\" button."
+      sure <- divClass "buttons" $ uiButton "primary" "Remove Node"
+      response <- requestingIdentity $ public <$> mkRemoveReq sure
+      pure $ leftmost [response, close]
 
     errorsByNode
       :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
