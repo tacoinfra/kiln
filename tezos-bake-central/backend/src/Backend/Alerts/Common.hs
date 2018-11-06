@@ -4,10 +4,6 @@
 
 module Backend.Alerts.Common where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Reader (MonadReader)
-import Data.Foldable (for_)
-import Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
 import Database.Groundhog.Core (Cond (CondEmpty), select)
@@ -21,6 +17,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Schema ()
 import Common.Schema
+import ExtraPrelude
 
 data Alert = Alert
   { _alert_subject :: !Text
