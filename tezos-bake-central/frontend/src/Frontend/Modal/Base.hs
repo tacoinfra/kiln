@@ -40,11 +40,6 @@ instance (Reflex t, Monad m) => HasModal t (ModalT t m) where
   type ModalM (ModalT t m) = m
   tellModal = ModalT . tellEvent . fmap First
 
--- TODO: Remove this after upgrading reflex: https://github.com/reflex-frp/reflex/commit/4a32a8202e180f0919ec36e6770f6af5ce88818e
-instance PrimMonad m => PrimMonad (EventWriterT t w m) where
-  type PrimState (EventWriterT t w m) = PrimState m
-  primitive = lift . primitive
-
 newtype ModalT t m a
   = ModalT { unModalT :: EventWriterT t (First (Event t () -> m (Event t ()))) m a }
   deriving
