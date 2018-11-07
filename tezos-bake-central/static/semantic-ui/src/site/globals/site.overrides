@@ -361,6 +361,60 @@ img.credits-obsidian {
   }
   margin-top: @30px;
   margin-bottom: @30px;
+
+  .small.ui.header + .notification-settings-description {
+    margin-top: @10px;
+  }
+
+  .notification-settings-description {
+    font-size: @12px;
+    margin-top: @30px;
+    margin-bottom: @20px;
+  }
+
+  .ui.form .fields {
+    margin-left: 0;
+    margin-bottom: @10px;
+
+    .inline.field {
+      padding-left: 0;
+      padding-right: 0;
+      margin-right: @20px;
+    }
+
+    .field.wide {
+      padding-left: 0;
+      padding-right: 0;
+      margin-right: @30px;
+
+      input {
+        padding-left: @10px;
+        padding-right: @15px;
+      }
+
+      i.dropdown.icon {
+        color: @blue;
+        font-size: @20px;
+        padding: @7px;
+      }
+    }
+
+    .email-buttons {
+      > a.remove {
+        cursor: pointer;
+        font-weight: bold;
+
+        &:hover {
+        text-decoration: none;
+        }
+      }
+
+      > a.send-test {
+        cursor: pointer;
+        margin-left: @20px;
+      }
+    }
+  }
 }
 
 .telegram-recipients {

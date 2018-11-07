@@ -7,7 +7,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -27,7 +26,7 @@ import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import Reflex.Dom.Form.Widgets (formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
@@ -69,12 +68,12 @@ mailServerForm (srv0, emails0) = do
 
   where
     mailNotificationOptions = do
-      divClass "ui medium header" $ text "Notification Recipients"
+      divClass "notification-settings-description" $ text "Enter email address to receive email notifications below."
 
       let
-        emailWidget email = do
-          (remove, _) <- el' "a" $ icon "icon-x"
-          (send, _) <- el' "a" $ text "Send Test Email"
+        emailWidget email = elClass "span" "email-buttons" $ do
+          (remove, _) <- elClass' "a" "remove" $ icon "icon-x"
+          (send, _) <- elClass' "a" "send-test" $ text "Send Test Email"
           void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> (current email <@ domEvent Click send)
           pure $ domEvent Click remove
 
@@ -82,15 +81,19 @@ mailServerForm (srv0, emails0) = do
 
     serverFields = withFormFieldsErr (srv0, "") $ do
       divClass "three fields" $ do
-        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required eight wide"
+        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required four wide"
           $ validatedInput Validator.validateText
-          $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName srv0)
+          $ defTxt "Host"
+            & Txt.setInitial (_mailServerView_hostName srv0)
+            & Txt.setPlaceholder "eg 127.0.0.1"
 
-        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required four wide"
+        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required three wide"
           $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-          $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber srv0)
+          $ defTxt "Port"
+            & Txt.setInitial (tshow $ _mailServerView_portNumber srv0)
+            & Txt.setPlaceholder "eg 465"
 
-        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required four wide"
+        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required three wide"
           $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
           $ do
             labeled "Protocol"
@@ -104,11 +107,11 @@ mailServerForm (srv0, emails0) = do
               <> SmtpProtocol_Starttls=:text "STARTTLS"
 
       divClass "two fields" $ do
-        tellFieldErr (_1 . mailServerView_userName) <=< formItem
+        tellFieldErr (_1 . mailServerView_userName) <=< formItem' "four wide"
           $ validatedInput (Validator.optionalWith "" id Validator.validateText)
           $ defTxt "User name" & Txt.setInitial (_mailServerView_userName srv0)
 
-        tellFieldErr _2 <=< formItem
+        tellFieldErr _2 <=< formItem' "three wide"
           $ validatedInput (Validator.optionalWith "" id validatePassword)
           $ defTxt "Password"
 
@@ -172,7 +175,7 @@ settingsTab = do
 
     mailServerOptions :: m ()
     mailServerOptions = do
-      divClass "ui medium header" $ text "SMTP Mail Server"
+      divClass "notification-settings-description" $ text "Use your own email server to send alerts."
       mailServer <- watchMailServer
       notificatees <- watchNotificatees
 
