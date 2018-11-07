@@ -2,6 +2,16 @@
          Site Overrides
 *******************************/
 
+._link-like() {
+    cursor: pointer;
+    &:hover {
+        color: @hoverBlue;
+    }
+    &:active {
+        color: @activeBlue;
+    }
+}
+
 .fine-print() {
   line-height: @16px;
   font-size: @12px;
@@ -34,7 +44,7 @@ h6.ui.header {
     font-size: @relative13px;
 }
 
-._modal-base {
+._modal-base() {
     // This isn't necessary for our modals, but some common pesky plugins
     // put overlays on the screen with z-index and we want to beat them.
     // This is the smallest number that works for the following plugins:
@@ -43,7 +53,7 @@ h6.ui.header {
 }
 
 .modal-backdrop {
-    ._modal-base;
+    ._modal-base();
 
     position: fixed;
     top: 0;
@@ -57,7 +67,7 @@ h6.ui.header {
 }
 
 .modal-box {
-    ._modal-base;
+    ._modal-base();
 
     position: fixed;
     top: 50%;
@@ -70,24 +80,27 @@ h6.ui.header {
 
     > .content {
         padding: @50px;
-    }
-}
 
-.modal-box > .modal-close {
-    padding: @10px;
-    height: @30px;
-    width: @30px;
-    float: right;
-    cursor: pointer;
+        > p {
+            margin-top: @20px;
+        }
 
-    &:hover {
-        color: @hoverBlue;
+        .buttons {
+            text-align: center;
+            margin-top: @30px;
+        }
     }
-    &:active {
-        color: @activeBlue;
-    }
-    > i.fitted {
-        transform: translate(-@2px, -@2px);
+
+    > .modal-close {
+        ._link-like();
+        padding: @10px;
+        height: @30px;
+        width: @30px;
+        float: right;
+
+        > i.fitted {
+            transform: translate(-@2px, -@2px);
+        }
     }
 }
 
@@ -494,18 +507,22 @@ img.credits-obsidian {
             > .menu-section {
                 text-align: right;
 
-                > .icon {
+                .icon {
+                    ._link-like();
                     font-size: @20px;
                     color: @grey;
                     margin: 0;
+                }
 
-                    cursor: pointer;
+                .ui.popup {
+                    top: @15px;
+                    right: -@32px;
 
-                    &:hover {
-                        color: @hoverBlue;
-                    }
-                    &:active {
-                        color: @activeBlue;
+                    > .link.list .item {
+                        ._link-like();
+                        color: @blue;
+                        font-size: @14px;
+                        line-height: 2.86;
                     }
                 }
             }

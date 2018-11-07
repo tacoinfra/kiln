@@ -94,7 +94,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
             (\loading key -> if loading then Nothing else Just $ either (const Disabled) (const Enabled) key)
             isLoading botApiKey
 
-        horizontallyCentered $ do
+        divClass "buttons" $
           uiDynSubmit submitState $ text "Connect Telegram"
 
         pure (submit, submitResult)
@@ -105,7 +105,6 @@ settings = switchHold never <=< workflowView $ Workflow $ do
 
   where
     heading = el "h3"
-    horizontallyCentered = elAttr "div" ("style"=:"text-align:center")
 
     successPage recipient = do
       heading $ text "Bot Connection Successful!"
@@ -113,7 +112,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
         text "We’ve sent a test message and will be sending notifications to "
         el "strong" $ text $ telegramRecipientFullName recipient
         text " from your bot."
-      done <- horizontallyCentered $ uiButton "primary" "Close"
+      done <- divClass "buttons" $ uiButton "primary" "Close"
       pure (done, never)
 
 settingsForm
