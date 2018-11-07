@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
@@ -85,13 +86,13 @@ data Notify
   | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
-  | Notify_MailServerConfig !(Id MailServerConfig)
+  | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
   | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
-  | Notify_TelegramConfig !(Id TelegramConfig) TelegramConfig
+  | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
   deriving (Eq, Ord, Typeable, Generic, Show)
 instance ToJSON Notify
@@ -114,10 +115,16 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
-instance HasDefaultNotify (Id MailServerConfig) where
-  mkDefaultNotify = Notify_MailServerConfig
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
+
+class HasDefaultNotifyUnique f where
+  mkDefaultNotifyUnique :: Id f -> f -> Notify
+
+instance HasDefaultNotifyUnique MailServerConfig where
+  mkDefaultNotifyUnique = Notify_MailServerConfig
+instance HasDefaultNotifyUnique TelegramConfig where
+  mkDefaultNotifyUnique = Notify_TelegramConfig
 
 notify :: (PersistBackend m) => Notify -> m ()
 notify n = do
@@ -156,8 +163,29 @@ updateIdNotify tid dt = do
   updateId tid dt
   notify $ mkDefaultNotify tid
 
-insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m ()
-insertNotify a = notify . mkDefaultNotify =<< insert' a
+updateIdNotifyUnique
+  :: (HasDefaultNotifyUnique a, EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
+updateIdNotifyUnique tid dt = do
+  updateId tid dt
+  newRow <- getId tid >>= \case
+    Nothing -> fail "impossible got nothing back after insertion in DB transaction"
+    Just x -> pure x
+  notify $ mkDefaultNotifyUnique tid newRow
+
+insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotify a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotify primaryKey
+  pure primaryKey
+
+insertNotifyUnique :: (HasDefaultNotifyUnique a, EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotifyUnique a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotifyUnique primaryKey a
+  pure primaryKey
 
 selectIds
   :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.

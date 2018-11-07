@@ -68,7 +68,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
         case nonEmpty existingIds of
-          Nothing -> insertNotify Client
+          Nothing -> void $ insertNotify Client
             { _client_address = addr
             , _client_alias = alias
             , _client_updated = Nothing
@@ -86,7 +86,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_AddDelegate pkh alias -> inDb $ do
         existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
         case nonEmpty existingIds of
-          Nothing -> insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
+          Nothing -> void $ insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
           Just dids -> for_ dids $ \did ->
             updateIdNotify (did :: Id Delegate) [Delegate_deletedField =. False, Delegate_aliasField =. alias]
 
@@ -118,8 +118,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               , _mailServerConfig_madeDefaultAt = now
               }
         getDefaultMailServer >>= \case
-          Nothing -> insertNotify updatedMailServer
-          Just (id_, _) -> updateIdNotify id_
+          Nothing -> void $ insertNotifyUnique updatedMailServer
+          Just (id_, _) -> updateIdNotifyUnique id_
             [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
             , MailServerConfig_portNumberField =. _mailServerConfig_portNumber updatedMailServer
             , MailServerConfig_smtpProtocolField =. _mailServerConfig_smtpProtocol updatedMailServer
@@ -202,29 +202,23 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                 (TelegramConfig_enabledField ==. TelegramConfig_enabledField) -- Silliness to help types infer
             now <- getTime
             case cid' of
-              Nothing -> do
-                let
-                  new = TelegramConfig
-                    { _telegramConfig_botApiKey = botApiKey
-                    , _telegramConfig_botName = botName
-                    , _telegramConfig_created = now
-                    , _telegramConfig_updated = now
-                    , _telegramConfig_enabled = enabled
-                    , _telegramConfig_validated = validated
-                    }
-                cid <- insert' new
-                notify $ Notify_TelegramConfig cid new
-                pure cid
+              Nothing -> insertNotifyUnique $ TelegramConfig
+                { _telegramConfig_botApiKey = botApiKey
+                , _telegramConfig_botName = botName
+                , _telegramConfig_created = now
+                , _telegramConfig_updated = now
+                , _telegramConfig_enabled = enabled
+                , _telegramConfig_validated = validated
+                }
 
               Just cid -> do
-                updateId cid
+                updateIdNotifyUnique cid
                   [ TelegramConfig_botNameField =. botName
                   , TelegramConfig_botApiKeyField =. botApiKey
                   , TelegramConfig_updatedField =. now
                   , TelegramConfig_enabledField =. enabled
                   , TelegramConfig_validatedField =. validated
                   ]
-                getId cid >>= traverse_ (notify . Notify_TelegramConfig cid)
                 pure cid
 
           updateRecipient cid chat sender = inDb $ do
