@@ -393,7 +393,25 @@ img.credits-obsidian {
       }
 
       i.dropdown.icon {
-        color: @blue
+        color: @blue;
+        font-size: @20px;
+        padding: @7px;
+      }
+    }
+
+    .email-buttons {
+      > a.remove {
+        cursor: pointer;
+        font-weight: bold;
+
+        &:hover {
+        text-decoration: none;
+        }
+      }
+
+      > a.send-test {
+        cursor: pointer;
+        margin-left: @20px;
       }
     }
   }

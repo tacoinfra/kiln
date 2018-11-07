@@ -72,9 +72,9 @@ mailServerForm (srv0, emails0) = do
       divClass "notification-settings-description" $ text "Enter email address to receive email notifications below."
 
       let
-        emailWidget email = do
-          (remove, _) <- el' "a" $ icon "icon-x"
-          (send, _) <- el' "a" $ text "Send Test Email"
+        emailWidget email = elClass "span" "email-buttons" $ do
+          (remove, _) <- elClass' "a" "remove" $ icon "icon-x"
+          (send, _) <- elClass' "a" "send-test" $ text "Send Test Email"
           void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> (current email <@ domEvent Click send)
           pure $ domEvent Click remove
 
