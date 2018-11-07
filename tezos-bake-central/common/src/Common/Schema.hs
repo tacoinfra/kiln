@@ -449,6 +449,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeWrongChain
   , ''Event
+  , ''MailServerConfig
   , ''Node
   , ''Parameters
   , ''PublicNodeConfig
