@@ -228,9 +228,22 @@ body {
     background: @sidebarBackground;
   }
 
-  app-side-header {
+  .app-side-header {
     margin-bottom: 0;
     padding-bottom: 0;
+
+    > .ui.vertical.menu {
+      > .link.item:only-child {
+        background-color: @white;
+        border: solid @1px @grey;
+        border-radius: @3px;
+        box-shadow: 0 @2px @6px 0 rgba(0, 0, 0, 0.1);
+
+        &.active {
+            border-color: @blue;
+        }
+      }
+    }
   }
 }
 
