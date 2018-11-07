@@ -51,7 +51,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
       Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
-      Notify_MailServerConfig eid cfg -> handleMailServer eid cfg
+      Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
@@ -131,7 +131,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS
-    handleMailServer nid mailServer = whenM (viewSelects () mailServerVS) $ do
+    handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
       pure $ (mempty :: BakeView a)
         { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ mailServerConfigToView $ mailServer
         }
