@@ -262,7 +262,7 @@ appSideHeader =
       )
     $ do
         SemUi.header def $ do
-          elAttr "img" ("src" =: static @ "images/logo.svg" <> "class" =: "app-logo") $ return ()
+          elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") $ return ()
           text appName
         SemUi.menu
           (def
@@ -305,7 +305,7 @@ appSideFooter =
               SemUi.menuItem def $ do
                 icon "icon-question-mark"
                 text "Help"
-        elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
+        elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
 appHeader
   :: forall r m t.
