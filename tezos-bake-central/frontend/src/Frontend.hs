@@ -302,9 +302,6 @@ appSideFooter =
               routeSelector UITab_Options SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
-              SemUi.menuItem def $ do
-                icon "icon-question-mark"
-                text "Help"
         elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
 
 appHeader
