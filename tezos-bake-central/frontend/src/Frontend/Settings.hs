@@ -45,6 +45,7 @@ import Frontend.Watch
 
 data NotificationCfg m t = forall cfg. NotificationCfg
   { _notificationCfg_name :: Text
+  , _notificationCfg_description :: Text
   , _notificationCfg_iconName :: Text
   , _notificationCfg_content :: Dynamic t (Maybe cfg) -> m ()
   , _notificationCfg_method :: AlertNotificationMethod
@@ -80,6 +81,7 @@ settingsTab = do
     sequence_ $ intersperse (SemUi.divider def) $ map notificationSection $
       [ NotificationCfg
         { _notificationCfg_name = "Email"
+        , _notificationCfg_description = "Use your own email server to send alerts."
         , _notificationCfg_iconName = "letter"
         , _notificationCfg_content = mailServerOptions
         , _notificationCfg_method = AlertNotificationMethod_Email
@@ -88,8 +90,9 @@ settingsTab = do
         }
       , NotificationCfg
         { _notificationCfg_name = "Telegram"
+        , _notificationCfg_description = "Use a Telegram Bot to send alerts."
         , _notificationCfg_iconName = "telegram"
-        , _notificationCfg_content = telegramOptions
+        , _notificationCfg_content = Telegram.inlineSettings
         , _notificationCfg_method = AlertNotificationMethod_Telegram
         , _notificationCfg_watchCfg = watchTelegramConfig
         , _notificationCfg_getEnabled = _telegramConfig_enabled
@@ -97,7 +100,7 @@ settingsTab = do
       ]
   where
     notificationSection :: NotificationCfg m t -> m ()
-    notificationSection (NotificationCfg name iconName content method watchCfg getEnabled) =
+    notificationSection (NotificationCfg name descr iconName content method watchCfg getEnabled) =
       divClass "notifications-subsection" $ do
         dmdmCfg <- maybeDyn =<< watchCfg
         dyn_ $ ffor dmdmCfg $ \case
@@ -141,15 +144,12 @@ settingsTab = do
                 join <$> holdDyn (pure initialShowHeader) checkEvent
             dyn_ $ ffor showSettings $ \case
               False -> divClass "purpose" $ text $ name <> " notifications are turned off"
-              True -> content dmCfg
-
-    telegramOptions cfg = do
-      divClass "purpose" $ text "Use a Telegram Bot to send alerts."
-      Telegram.inlineSettings cfg
+              True -> do
+                divClass "notification-settings-description" $ text descr
+                content dmCfg
 
     mailServerOptions :: Dynamic t (Maybe MailServerView) -> m ()
     mailServerOptions mailServer = do
-      divClass "notification-settings-description" $ text "Use your own email server to send alerts."
       notificatees <- watchNotificatees
 
       dyn_ $ ffor2 mailServer notificatees $ \cfg ns0 -> do
