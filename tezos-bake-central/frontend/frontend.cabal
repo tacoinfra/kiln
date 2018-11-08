@@ -33,6 +33,7 @@ library
     , exceptions
     , file-embed
     , friendly-time
+    , functor-infix
     , ghcjs-dom
     , IntervalMap
     , jsaddle

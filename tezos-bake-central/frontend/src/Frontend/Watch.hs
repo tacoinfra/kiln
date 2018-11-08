@@ -111,9 +111,11 @@ watchClientAddresses = do
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
 
-watchMailServer :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe MailServerView))
+watchMailServer
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => m (Dynamic t (Maybe (Maybe MailServerView)))
 watchMailServer =
-  (fmap . fmap) (join . getMaybeView . _bakeView_mailServer) $
+  (fmap . fmap) (getMaybeView . _bakeView_mailServer) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = viewJust 1 }
 
@@ -166,6 +168,12 @@ watchPublicNodeHeads =
   (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
+
+watchTelegramConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Maybe TelegramConfig)))
+watchTelegramConfig =
+  (fmap . fmap) (getMaybeView . _bakeView_telegramConfig) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_telegramConfig = viewJust 1 }
 
 watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
 watchTelegramRecipients =

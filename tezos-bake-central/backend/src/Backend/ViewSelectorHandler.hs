@@ -153,7 +153,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       cfgs <- selectMap' TelegramConfigConstructor $ CondEmpty `limitTo` 1
 
       telegramConfig <- maybeViewHandler _bakeViewSelector_telegramConfig $
-        pure $ listToMaybe $ MMap.elems cfgs
+        pure $ Just $ listToMaybe $ MMap.elems cfgs
 
       telegramRecipients <- whenM (not $ null trVS) $ do
         recipients <- for (listToMaybe $ MMap.keys cfgs) $ \cid ->

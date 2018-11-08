@@ -304,6 +304,21 @@ data Notificatee = Notificatee
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 
+data AlertNotificationMethod
+  = AlertNotificationMethod_Email
+  | AlertNotificationMethod_Telegram
+  deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
+
+instance Aeson.ToJSONKey AlertNotificationMethod where
+  toJSONKey = Aeson.ToJSONKeyText (tshow) (AesonE.text . tshow)
+
+-- show match show!
+instance Aeson.FromJSONKey AlertNotificationMethod where
+  fromJSONKey = Aeson.FromJSONKeyTextParser $ \case
+    "AlertNotificationMethod_Email" -> pure AlertNotificationMethod_Email
+    "AlertNotificationMethod_Telegram" -> pure AlertNotificationMethod_Telegram
+    _ -> fail "unknown alert notification method"
+
 data SmtpProtocol
   = SmtpProtocol_Plain
   | SmtpProtocol_Ssl
@@ -317,6 +332,7 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
   , _mailServerConfig_madeDefaultAt :: UTCTime
+  , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
@@ -456,6 +472,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
+  , ''AlertNotificationMethod
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
