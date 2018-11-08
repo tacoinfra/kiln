@@ -7,7 +7,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Frontend.Settings.Mail where
+module Frontend.Settings.Mail
+  ( viewCfg
+  , editCfg
+  ) where
 
 import Control.Monad (guard)
 import Control.Monad.Fix (MonadFix)
@@ -35,18 +38,26 @@ import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
 
+viewCfg
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t MailServerView
+  -> m (Event t ())
+viewCfg _ = never <$ text "TODO Email View"
+
 editCfg
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadJSM m
      , MonadJSM (Performable m)
      )
-  => Dynamic t (Maybe MailServerView) -> m ()
+  => Dynamic t (Maybe MailServerView) -> m (Event t ())
 editCfg mailServer = do
   dyn_ $ ffor mailServer $ \cfg -> do
     let ns0 = foldMap _mailServerView_notificatees cfg
     let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True ns0) cfg
     updatedForm <- mailServerForm (srv0, ns0)
     requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
+  -- TODO
+  pure never
 
 
 abstractPassword :: Text

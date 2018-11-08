@@ -451,11 +451,6 @@ img.credits-obsidian {
     margin-top: @20px;
     margin-bottom: @20px;
   }
-  > .purpose {
-    .fine-print();
-    margin-top: @10px;
-    margin-bottom: @10px;
-  }
   > .edit-link {
     margin-top: @15px;
     margin-bottom: @15px;
@@ -472,6 +467,7 @@ img.credits-obsidian {
   }
 
   .notification-settings-description {
+    .fine-print();
     font-size: @12px;
     margin-top: @30px;
     margin-bottom: @20px;
