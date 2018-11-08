@@ -509,6 +509,8 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
     errorsDyn
     (passesFilter <$> filterDyn)
 
+  SemUi.divider def
+
   let
     (otherErrors, nodeErrors) = splitDynPure $ partitionErrors <$> filteredErrors
 
