@@ -309,8 +309,16 @@ body {
 }
 
 .ui.sidebar.vertical.menu {
-  padding: @20px @30px;
+  @sidebar-horizontal-padding: @30px;
+  padding: @20px @sidebar-horizontal-padding;
   display: flex;
+
+  .divider {
+    margin-top: @15px;
+    margin-bottom: @20px;
+    margin-left: -@sidebar-horizontal-padding;
+    margin-right: -@sidebar-horizontal-padding;
+  }
 
   .no-notifications {
     display: flex;
@@ -322,6 +330,7 @@ body {
   }
 
   .ui.segment.vertical.app-notifications-list {
+    padding-top: 0;
 
     .ui.message.app-notification {
       display: flex;
