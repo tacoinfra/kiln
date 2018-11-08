@@ -35,6 +35,7 @@ library
     , filepath
     , formatting
     , frontend
+    , functor-infix
     , generic-deriving
     , groundhog
     , groundhog-postgresql
