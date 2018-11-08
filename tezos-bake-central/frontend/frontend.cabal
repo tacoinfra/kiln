@@ -19,6 +19,7 @@ library
     Frontend.Modal.Base
     Frontend.Modal.Class
     Frontend.Settings
+    Frontend.Settings.Mail
     Frontend.Settings.Telegram
     Frontend.Watch
 
