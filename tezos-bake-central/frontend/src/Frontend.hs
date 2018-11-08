@@ -333,34 +333,28 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
           text $ tshow (unRawLevel $ b ^. level) <> " "
           localHumanizedTimestamp $ pure $ b ^. timestamp
 
-    divClass "ten wide column" $ do
+    divClass "ten wide column right aligned" $ do
       headerBell
 
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
-  SemUi.segment
+  alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
+  (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.segmentConfig_basic SemUi.|~ True
-      & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
+      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
       )
     $ do
-        alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
-        (e,_) <- SemUi.ui' "span"
+        dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+        text " "
+        SemUi.icon "icon-bell"
           (def
-            & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+            & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
+            & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
+            & SemUi.iconConfig_link SemUi.|~ True
+            & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
             )
-          $ do
-              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
-              text " "
-              SemUi.icon "icon-bell"
-                (def
-                  & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
-                  & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
-                  & SemUi.iconConfig_link SemUi.|~ True
-                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
-                  )
-        return $ domEvent Click e
+  return $ domEvent Click e
 
 
 appContentArea

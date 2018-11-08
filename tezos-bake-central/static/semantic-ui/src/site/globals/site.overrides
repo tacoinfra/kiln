@@ -264,6 +264,12 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+
+  .ui.segment.vertical.primary {
+    padding-top: @10px;
+    padding-bottom: @10px;
+    padding-right: @20px;
+  }
 }
 
 .app-header {
