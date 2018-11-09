@@ -119,6 +119,10 @@ h6.ui.header {
     border-radius: @borderRadius;
     cursor: pointer;
 
+    &:hover {
+      box-shadow: 0 @4px @12px 0 rgba(0,0,0,0.1);
+    }
+
     &@{moreMagic5} {
       margin-bottom: @15px !important;
     }
