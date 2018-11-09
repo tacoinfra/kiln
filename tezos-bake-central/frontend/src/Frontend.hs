@@ -613,7 +613,7 @@ nodesOptions ::
   )
   => m ()
 nodesOptions = do
-  divClass "ui header" $ text "Nodes"
+  divClass "ui sub header" $ text "Nodes"
   divClass "ui list" $ do
     nodes <- watchNodeAddresses
     _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
