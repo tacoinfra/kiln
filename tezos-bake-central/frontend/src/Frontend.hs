@@ -302,7 +302,8 @@ appSideFooter =
               routeSelector UITab_Options SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
-        elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
+        hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
+          elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
 appHeader
   :: forall r m t.
