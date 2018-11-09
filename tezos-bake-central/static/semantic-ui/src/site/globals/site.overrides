@@ -308,10 +308,22 @@ body {
   padding-top: 0;
 }
 
-.ui.sidebar.vertical.menu {
+.app-right .ui.sidebar.vertical.menu {
   @sidebar-horizontal-padding: @30px;
   padding: @20px @sidebar-horizontal-padding;
   display: flex;
+
+  .sidebar-title {
+    padding-bottom: @10px;
+    .header.floated {
+      font-size: @20px;
+      margin-right: 0;
+      > .icon {
+        font-size: @25px;
+        margin-right: 0;
+      }
+    }
+  }
 
   .divider {
     margin-top: @15px;

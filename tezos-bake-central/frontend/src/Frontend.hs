@@ -205,9 +205,9 @@ appMain = do
             nodesDyn <- watchNodes $ pure $ viewRangeAll ()
             alertsDyn <- watchErrors (pure $ Set.singleton alertWindow)
             -- TODO style icon better
-            e <- elClass "h3" "ui header" $ do
-              text "Notifications"
-              domEvent Click <$> SemUi.icon' "icon-arrow-right" def
+            e <- divClass "sidebar-title" $ do
+              divClass "ui left floated header" $ text "Notifications"
+              divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
             liveErrorsWidget alertsDyn nodesDyn
             pure e)
         -- Accompanying content
