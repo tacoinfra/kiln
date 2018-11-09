@@ -664,7 +664,7 @@ publicNodeOptions = do
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
