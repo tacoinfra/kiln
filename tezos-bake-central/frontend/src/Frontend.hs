@@ -204,7 +204,6 @@ appMain = do
             let alertWindow = ClosedInterval LowerInfinity UpperInfinity
             nodesDyn <- watchNodes $ pure $ viewRangeAll ()
             alertsDyn <- watchErrors (pure $ Set.singleton alertWindow)
-            -- TODO style icon better
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
