@@ -221,13 +221,6 @@ body {
   flex-wrap: nowrap;
 }
 
-.app-right {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-}
-
 .app-sidebar {
   width: unit(220 / @emSize, rem);
   height: 100%;
@@ -308,66 +301,74 @@ body {
   padding-top: 0;
 }
 
-.app-right .ui.sidebar.vertical.menu {
-  @sidebar-horizontal-padding: @30px;
-  padding: @20px @sidebar-horizontal-padding;
+
+.app-right {
+  height: 100%;
   display: flex;
+  flex-direction: column;
+  flex-grow: 1;
 
-  .sidebar-title {
-    padding-bottom: @10px;
-    .header.floated {
-      font-size: @20px;
-      margin-right: 0;
-      > .icon {
-        font-size: @25px;
-        margin-right: 0;
-      }
-    }
-  }
-
-  .divider {
-    margin-top: @15px;
-    margin-bottom: @20px;
-    margin-left: -@sidebar-horizontal-padding;
-    margin-right: -@sidebar-horizontal-padding;
-  }
-
-  .no-notifications {
+  .ui.sidebar.vertical.menu {
+    @sidebar-horizontal-padding: @30px;
+    padding: @20px @sidebar-horizontal-padding;
     display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-    color: @grey;
-    font-size: @20px;
-  }
 
-  .ui.segment.vertical.app-notifications-list {
-    padding-top: 0;
-
-    .ui.message.app-notification {
-      display: flex;
-      flex-direction: column;
-
-      > * {
-        margin-top: @3px;
-        margin-bottom: @3px;
-      }
-
-      .positive, .success, .negative, .error {
-        &, & .header {
-          color: @black;
+    .sidebar-title {
+      padding-bottom: @10px;
+      .header.floated {
+        font-size: @20px;
+        margin-right: 0;
+        > .icon {
+          font-size: @25px;
+          margin-right: 0;
         }
       }
+    }
 
-      label {
-        font-weight: bold;
-        margin-right: 1em;
-      }
+    .divider {
+      margin-top: @15px;
+      margin-bottom: @20px;
+      margin-left: -@sidebar-horizontal-padding;
+      margin-right: -@sidebar-horizontal-padding;
+    }
 
-      .node-secondary-label {
-        font-weight: normal;
-        font-style: italic;
-        color: @grey;
+    .no-notifications {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+      color: @grey;
+      font-size: @20px;
+    }
+
+    .ui.segment.vertical.app-notifications-list {
+      padding-top: 0;
+
+      .ui.message.app-notification {
+        display: flex;
+        flex-direction: column;
+
+        > * {
+          margin-top: @3px;
+          margin-bottom: @3px;
+        }
+
+        .positive, .success, .negative, .error {
+          &, & .header {
+            color: @black;
+          }
+        }
+
+        label {
+          font-weight: bold;
+          margin-right: 1em;
+        }
+
+        .node-secondary-label {
+          font-weight: normal;
+          font-style: italic;
+          color: @grey;
+        }
       }
     }
   }
