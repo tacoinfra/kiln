@@ -117,6 +117,7 @@ h6.ui.header {
     border: @1px solid #CED4DA;
     background: white;
     border-radius: @borderRadius;
+    cursor: pointer;
 
     &@{moreMagic5} {
       margin-bottom: @15px !important;
