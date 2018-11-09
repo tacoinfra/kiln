@@ -500,6 +500,7 @@ img.credits-obsidian {
 
 .nodes-dashboard > .ui.cards {
   margin-left: 0;
+  margin-right: 0;
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
