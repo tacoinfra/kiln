@@ -67,7 +67,10 @@ isEnabled Enabled = True
 isEnabled Disabled = False
 
 urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
-urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
+urlLink = hrefLink . Uri.render
+
+hrefLink :: DomBuilder t m => Text -> m a -> m a
+hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
