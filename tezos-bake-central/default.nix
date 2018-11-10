@@ -31,7 +31,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
           super.backend-db;
       base58-bytestring = dontCheck super.base58-bytestring;
       email-validate = dontCheck super.email-validate;
-      functor-infix = doJailbreak super.functor-infix;
+      functor-infix = self.callCabal2nix "functor-infix" (obelisk.reflex-platform.hackGet ./dep/functor-infix) {};
       lens-aeson = dontCheck super.lens-aeson;
       megaparsec = dontCheck super.megaparsec;
       modern-uri = dontCheck super.modern-uri;
