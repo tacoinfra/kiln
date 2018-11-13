@@ -234,11 +234,34 @@ body {
     background: @sidebarBackground;
   }
 
+  > .ui.basic.segment {
+    margin-left: 0;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-left: unit(30 / @emSize, rem);
+    padding-right: unit(30 / @emSize, rem);
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
   .app-side-header {
     margin-bottom: 0;
     padding-bottom: 0;
 
+    img.app-logo {
+      width: auto;
+      margin-right: 0.5em;
+      margin-top: 1em;
+    }
+ 
+    .ui.header {
+      font-size: unit(22 / @emSize, rem);
+    }
+
     > .ui.vertical.menu {
+      margin-top: unit(40 / @emSize, rem);
+      margin-bottom: unit(30 / @emSize, rem);
       > .link.item:only-child {
         background-color: @white;
         border: solid @1px @grey;
@@ -291,8 +314,16 @@ body {
 .ui.segment.app-gutter {
   padding-left: @30px;
   flex-grow: 1;
-  margin-top: 0;
-  margin-bottom: 0;
+  > .ui.sub.header , > .ui.list > .item {
+    margin-top: @12px;
+    margin-bottom: @12px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  > .ui.button {
+    margin-top: @14px;
+    margin-bottom: @14px;
+  }
   overflow: auto;
   .ui.sub.header {
     color: @grey;
@@ -301,8 +332,22 @@ body {
 }
 
 .ui.segment.app-side-footer {
-  margin-top: 0;
-  padding-top: 0;
+  > .ui.vertical.menu {
+    margin-left: -@10px;
+    margin-right: -@10px;
+    width: calc(100% ~"+" @20px);
+    > .link.item:only-child {
+      font-size: @13px;
+      line-height: @18px;
+      padding-left: @10px;
+      padding-right: @10px;
+      padding-top: @5px;
+      padding-bottom: @5px;
+      .icon {
+        margin-top: unit(2.5 / @emSize, rem);
+      }
+    }
+  }
 }
 
 
@@ -385,14 +430,14 @@ body {
 }
 
 img.credits-obsidian {
-  width: 60%;
+  width: 75%;
   background: white;
   border-color: white;
   border-radius: @2px;
   border-style: solid;
   border-width: @5px @10px;
-  margin-left: 20%;
-  margin-right: 20%;
+  margin-left: 12.5%;
+  margin-right: 12.5%;
 }
 
 .notifications-subsection {
@@ -433,6 +478,7 @@ img.credits-obsidian {
 
   .ui.form .fields {
     margin-left: 0;
+    margin-right: 0;
     margin-bottom: @10px;
 
     .inline.field {
