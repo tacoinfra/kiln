@@ -72,7 +72,7 @@ snapAncestors = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- maybe (throwError "missing param:level") return =<< (listToMaybe <=< Map.lookup "level") <$> Snap.liftSnap Snap.getQueryParams
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
 

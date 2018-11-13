@@ -88,7 +88,7 @@ frontendBody
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  let decodeViaJson = Aeson.eitherDecode . LBS.fromStrict . T.encodeUtf8 . T.strip
+  let decodeViaJson = Aeson.eitherDecodeStrict' . T.encodeUtf8 . T.strip
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
     Nothing ->

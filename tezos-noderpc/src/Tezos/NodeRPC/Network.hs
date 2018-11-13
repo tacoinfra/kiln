@@ -78,7 +78,7 @@ nodeRPCImpl :: forall m a s e.
   , MonadError e m , AsRpcError e
   )
   => Http.Method -> Text -> m a
-nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode
+nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode'
 
 nodeRPCImpl' :: forall m a s e.
   ( MonadIO m, MonadLogger m
@@ -122,7 +122,7 @@ nodeRPCChunkedImpl :: forall a r s e m.
   -> Http.Method
   -> Text
   -> m r
-nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode
+nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode'
 
 
 nodeRPCChunkedImpl' :: forall a r s e m.
