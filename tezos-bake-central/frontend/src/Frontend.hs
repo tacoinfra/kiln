@@ -636,11 +636,16 @@ nodesOptions = do
         divClass "ten wide column" $ divClass "blue shaded" $ do
           elClass "h5" "ui header" $ text "Connect to a Public Node"
           publicNodeOptions
-        divClass "six wide column" $ divClass "blue shaded" $ do
+        divClass "six wide column" $ divClass "blue shaded" $ mdo
+          let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+                icon "check blue"
+                text "Node added!"
           elClass "h5" "ui header" $ text "Connect via address"
-          addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-          nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
-          pure $ leftmost [nodeAddedE, close]
+          addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+          showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+          hideMsg <- delay 3 showMsg
+          showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+          pure close
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
