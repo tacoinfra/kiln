@@ -13,11 +13,10 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
-import Control.Monad.State (execStateT)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Map (Map)
@@ -35,7 +34,7 @@ import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History (CachedHistory (..), accumHistory)
+import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
@@ -72,16 +71,22 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let chainId = _nodeDataSource_chain nds
   let cacheVar = _nodeDataSource_history nds
   oldHead <- runReaderT dataSourceHead nds
-  newBlock <- liftIO $ modifyMVar cacheVar $ \cache -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  cache <- liftIO $ readMVar cacheVar
+  newBlock <- do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
-      flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
-        flip execStateT cache $ do
-          _ <- accumHistory nodeMonitorBranchProgess chainId (const ()) headBlockInfo
-          $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+    newStateRsp :: Either PublicNodeError () <- runExceptT $
+      flip runReaderT (AccumHistoryContext cacheVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+        accumHistory
+          (\branch current i n -> runLoggingEnv (_nodeDataSource_logger nds) $ nodeMonitorBranchProgess branch current i n)
+          chainId
+          (const ())
+          headBlockInfo
+
+        $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+
     case newStateRsp of
-      Left e -> $(logWarnSH) e $> (cache, Left e)
-      Right good -> return (good, Right newBlock)
+      Left e -> $(logWarnSH) e $> Left e
+      Right () -> pure $ Right newBlock
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
     updatedLevel <- liftIO $ atomically $ do
