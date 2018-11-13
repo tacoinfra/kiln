@@ -54,7 +54,7 @@ instance ToJSON (Base16ByteString BS.ByteString) where
 --     else case eitherBinary (show $ typeRep (Proxy :: Proxy a)) bytes of
 --       Left bad -> fail bad
 --       Right value -> return $ Base16ByteString value
--- 
+--
 -- instance TezosBinary a => ToJSON (Base16ByteString a) where
 --   toJSON (Base16ByteString x) = toJSON $ T.decodeUtf8 $ BS.encode $ encodeBinary x
 --   toEncoding (Base16ByteString x) = toEncoding $ T.decodeUtf8 $ BS.encode $ encodeBinary x

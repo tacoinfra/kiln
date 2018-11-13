@@ -40,14 +40,12 @@ showProgress blk (Progress x y) = T.unpack $ T.concat
   , toBase58Text blk
   ]
 
--- onRPCError :: (HasNodeRPC ctx, MonadReader ctx m, MonadIO m) => NodeRPCRequest a -> m a
 onRPCError :: PublicNodeError -> a
 onRPCError = \case
   PublicNodeError_FeatureNotSupported ->                           error "\nfeature not supported"
   PublicNodeError_RpcError (RpcError_HttpException bad) ->         error $ ("\n" <>) $ show bad
   PublicNodeError_RpcError (RpcError_UnexpectedStatus code bad) -> error $ ("\n" <>) (show code <> show bad)
   PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
---     Right ok -> ok
 
 accum :: ChainId -> Block -> StateT (CachedHistory Fitness) (ExceptT PublicNodeError (ReaderT PublicNodeContext (LoggingT IO))) ()
 accum chainId = void . accumHistory scanProgress chainId (^. fitness) -- getBalanceChanges
@@ -64,7 +62,7 @@ main = do
     b <- flip execStateT emptyCache $ scanBranch headBlk 50000 50001 $ \blk -> do
       accum chainId blk
       -- scanProgress headBlk blk
-    let (xHash, xPath):_ = Map.toList ( _cachedHistory_blocks b )
+    let (xHash, xPath):_ = Map.toList $ _cachedHistory_blocks b
     let xLevel :: Int = 2000 + fromIntegral (length xPath)
     xBlk <- nodeRPC $ rBlock chainId xHash
     liftIO $ print [toBase58Text xHash, T.pack $ show xLevel, T.pack $ show $ _blockHeader_level $ _block_header xBlk]

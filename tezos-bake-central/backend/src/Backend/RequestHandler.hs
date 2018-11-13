@@ -284,13 +284,13 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
       PublicRequest_SetAlertNotificationMethodEnabled method enabled -> inDb $ do
         let f :: (PersistBackend m', MonadLogger m', _)
-              => Text -> (Field cfg cstr Bool) -> (Maybe (Id cfg)) -> m' Bool
+              => Text -> Field cfg cstr Bool -> Maybe (Id cfg) -> m' Bool
             f name enabledField = \case
               Just cid -> do
                 updateIdNotifyUnique cid [enabledField =. enabled]
                 pure True
               Nothing -> do
-                $(logInfo) $ "Requested to " <> (bool "enable" "disable" enabled) <> " "
+                $(logInfo) $ "Requested to " <> bool "enable" "disable" enabled <> " "
                   <> name <> " notifications, but no configuration set, so doing nothing."
                 -- disabling the non existent config is trivially successful
                 pure $ not enabled

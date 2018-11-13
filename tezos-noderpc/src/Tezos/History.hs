@@ -30,8 +30,8 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Network
-import Tezos.Types
 import Tezos.NodeRPC.Sources
+import Tezos.Types
 
 data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
@@ -120,7 +120,7 @@ accumHistoryImpl
 accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistory_blocks c) of
   Just _ -> c -- why dont we replace acc?  It'd have to be updated in every path that contains it, O(n log h) work.  this way we're only O(log n)
   Nothing -> CachedHistory
-      { _cachedHistory_blocks = Map.insert blkHash newPath $ blocks
+      { _cachedHistory_blocks = Map.insert blkHash newPath blocks
       , _cachedHistory_branches = Map.delete predHash branches
       , _cachedHistory_minLevel = _cachedHistory_minLevel c
       }

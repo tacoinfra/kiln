@@ -56,17 +56,17 @@ instance ToJSON (FitnessF (Base16ByteString ShortByteString)) where
 --   parseBinary = (<?> "Fitness") $ do
 --     xs <- parserRecursiveLengthPrefixed parseLengthPrefixedByteString
 --     return $ FitnessF $ Seq.fromList $ fmap Base16ByteString xs
--- 
+--
 --   encodeBinary (FitnessF xs) = encodeLengthPrefixedByteString $ foldMap (encodeLengthPrefixedByteString . unbase16ByteString) xs
 
 type Fitness' a = FitnessF (Base16ByteString a)
 type Fitness = Fitness' ShortByteString
 
 toFitness :: Seq a -> Fitness' a
-toFitness xs = (FitnessF $ fmap Base16ByteString xs)
+toFitness xs = FitnessF $ fmap Base16ByteString xs
 
-unFitness :: (FitnessF (Base16ByteString a)) -> Seq a
-unFitness ((FitnessF xs)) = fmap unbase16ByteString xs
+unFitness :: FitnessF (Base16ByteString a) -> Seq a
+unFitness (FitnessF xs) = fmap unbase16ByteString xs
 
 instance Show Fitness where
   showsPrec _ = showListWith (showString . T.unpack . T.decodeUtf8 . BS16.encode . fromShort) . toList . unFitness

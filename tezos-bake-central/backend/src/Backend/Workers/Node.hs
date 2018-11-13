@@ -20,8 +20,8 @@ import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInf
 import Control.Monad.State (execStateT)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import qualified Data.Map as Map
 import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)

@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleContexts #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.LCA.Online.Monoidal
@@ -58,11 +60,11 @@ import Control.Applicative hiding (empty)
 import Data.Foldable hiding (toList)
 
 #if __GLASGOW_HASKELL__ < 710
-import Data.Monoid (Monoid(..))
+import Data.Monoid (Monoid (..))
 #endif
 
-import Data.Function(on)
-import Safe.Foldable(maximumByMay)
+import Data.Function (on)
+import Safe.Foldable (maximumByMay)
 
 import Prelude hiding
   ( drop
@@ -85,8 +87,8 @@ infixl 6 <>
 --
 -- NB: we could ensure the complete tree invariant
 data Tree k a
-  = Bin a  !k a (Tree k a) (Tree k a)
-  | Tip  !k a
+  = Bin a !k a (Tree k a) (Tree k a)
+  | Tip !k a
   deriving (Show, Read)
 
 instance Foldable (Tree k) where

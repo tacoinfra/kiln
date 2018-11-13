@@ -368,7 +368,7 @@ appContentArea selectedTab =
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> divClass "app-content" $ settingsTab
+    UITab_Options -> divClass "app-content" settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 

@@ -69,9 +69,9 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
+import Common (unixEpoch)
 import Common.Schema
 import Rhyolite.Backend.Logging
-import Common (unixEpoch)
 
 
 data NodeQuery a where

@@ -12,19 +12,19 @@
 module Tezos.Base58Check where
 
 import Control.Monad
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import Data.Aeson
 import Data.ByteString (ByteString)
-import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
--- import Data.Monoid
 import Data.String
 import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
+
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Semigroup
+#endif
+
 #if defined(ghcjs_HOST_OS)
 import qualified "hashing" Crypto.Hash as CryptoHash
 import qualified Data.ByteString.Base16 as BS16
@@ -33,6 +33,7 @@ import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
 import qualified Data.ByteArray as BA
 #endif
 
+import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- see ~/tezos/src/lib_crypto/base58.ml
 type BlockHash = HashedValue 'HashType_BlockHash
@@ -56,8 +57,6 @@ type ChainId = HashedValue 'HashType_ChainId
 type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash
 type P256PublicKey = HashedValue 'HashType_P256PublicKey
 type P256Signature = HashedValue 'HashType_P256Signature
-
-
 
 
 -- see ~/tezos/src/proto_alpha/lib_protocol/src/contract_hash.ml
