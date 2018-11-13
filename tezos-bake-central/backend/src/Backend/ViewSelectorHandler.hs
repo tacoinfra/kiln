@@ -15,7 +15,7 @@ import Data.Time (UTCTime)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
-import Rhyolite.Backend.DB (runDb, selectMap')
+import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
@@ -46,6 +46,11 @@ viewSelectorHandler
   -> QueryHandler (BakeViewSelector a) m
 viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
+    maybeViewHandler
+      :: Applicative m'
+      => (BakeViewSelector a -> MaybeSelector v a)
+      -> m' (Maybe v)
+      -> m' (View (MaybeSelector v) a)
     maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> query
 
@@ -63,7 +68,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   --         return (cid, First (ClientInfo cid <$> report <*> config))
   --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
   parameters <- maybeViewHandler _bakeViewSelector_parameters $
-    fmap _parameters_protoInfo . listToMaybe <$> select (CondEmpty `limitTo` 1)
+    fmap _parameters_protoInfo <$> selectSingle CondEmpty
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
@@ -131,15 +136,14 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     return $ tightenView $ toRangeView notificateesVS $ MMap.toList $ First . Just . _notificatee_email <$> MMap.mapKeys Bounded rs
 
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $
-    fmap (fmap (Just . mailServerConfigToView) . listToMaybe) $ select $ CondEmpty `limitTo` 1
+    fmap (Just . fmap mailServerConfigToView) $ selectSingle $ CondEmpty
 
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
   errors <- getErrorLogs $ unIntervalSelector errorsVS
 
-  upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $
-    fmap listToMaybe $ select $ CondEmpty `limitTo` 1
+  upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $ selectSingle CondEmpty
 
   let
     tcVS = _bakeViewSelector_telegramConfig vs
@@ -149,7 +153,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       cfgs <- selectMap' TelegramConfigConstructor $ CondEmpty `limitTo` 1
 
       telegramConfig <- maybeViewHandler _bakeViewSelector_telegramConfig $
-        pure $ listToMaybe $ MMap.elems cfgs
+        pure $ Just $ listToMaybe $ MMap.elems cfgs
 
       telegramRecipients <- whenM (not $ null trVS) $ do
         recipients <- for (listToMaybe $ MMap.keys cfgs) $ \cid ->

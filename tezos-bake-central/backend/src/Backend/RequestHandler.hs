@@ -7,6 +7,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -16,9 +17,11 @@ import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Functor.Infix
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Database.Groundhog.Core (Field)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
@@ -68,7 +71,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
         case nonEmpty existingIds of
-          Nothing -> insertNotify Client
+          Nothing -> void $ insertNotify Client
             { _client_address = addr
             , _client_alias = alias
             , _client_updated = Nothing
@@ -86,7 +89,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_AddDelegate pkh alias -> inDb $ do
         existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
         case nonEmpty existingIds of
-          Nothing -> insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
+          Nothing -> void $ insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
           Just dids -> for_ dids $ \did ->
             updateIdNotify (did :: Id Delegate) [Delegate_deletedField =. False, Delegate_aliasField =. alias]
 
@@ -116,16 +119,18 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               , _mailServerConfig_userName = _mailServerView_userName mailServerView
               , _mailServerConfig_password = password
               , _mailServerConfig_madeDefaultAt = now
+              , _mailServerConfig_enabled = _mailServerView_enabled mailServerView
               }
         getDefaultMailServer >>= \case
-          Nothing -> insertNotify updatedMailServer
-          Just (id_, _) -> updateIdNotify id_
+          Nothing -> void $ insertNotifyUnique updatedMailServer
+          Just (id_, _) -> updateIdNotifyUnique id_
             [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
             , MailServerConfig_portNumberField =. _mailServerConfig_portNumber updatedMailServer
             , MailServerConfig_smtpProtocolField =. _mailServerConfig_smtpProtocol updatedMailServer
             , MailServerConfig_userNameField =. _mailServerConfig_userName updatedMailServer
             , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
             , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
+            , MailServerConfig_enabledField =. _mailServerConfig_enabled updatedMailServer
             ]
         delete $ Notificatee_emailField `notIn_` recipients
         keep :: [Email] <- project Notificatee_emailField (Notificatee_emailField `in_` recipients)
@@ -197,34 +202,26 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                   }
 
           updateTelegramCfg botApiKey (botName :: Maybe Text) enabled validated = do
-            cid' :: Maybe (Id TelegramConfig) <-
-              fmap toId . listToMaybe <$> project AutoKeyField
-                (TelegramConfig_enabledField ==. TelegramConfig_enabledField) -- Silliness to help types infer
+            cid' :: Maybe (Id TelegramConfig) <- getTelegramCfgId
             now <- getTime
             case cid' of
-              Nothing -> do
-                let
-                  new = TelegramConfig
-                    { _telegramConfig_botApiKey = botApiKey
-                    , _telegramConfig_botName = botName
-                    , _telegramConfig_created = now
-                    , _telegramConfig_updated = now
-                    , _telegramConfig_enabled = enabled
-                    , _telegramConfig_validated = validated
-                    }
-                cid <- insert' new
-                notify $ Notify_TelegramConfig cid new
-                pure cid
+              Nothing -> insertNotifyUnique $ TelegramConfig
+                { _telegramConfig_botApiKey = botApiKey
+                , _telegramConfig_botName = botName
+                , _telegramConfig_created = now
+                , _telegramConfig_updated = now
+                , _telegramConfig_enabled = enabled
+                , _telegramConfig_validated = validated
+                }
 
               Just cid -> do
-                updateId cid
+                updateIdNotifyUnique cid
                   [ TelegramConfig_botNameField =. botName
                   , TelegramConfig_botApiKeyField =. botApiKey
                   , TelegramConfig_updatedField =. now
                   , TelegramConfig_enabledField =. enabled
                   , TelegramConfig_validatedField =. validated
                   ]
-                getId cid >>= traverse_ (notify . Notify_TelegramConfig cid)
                 pure cid
 
           updateRecipient cid chat sender = inDb $ do
@@ -263,6 +260,24 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                 notify . Notify_TelegramRecipient rid =<< getId rid
                 pure rid
 
+      PublicRequest_SetAlertNotificationMethodEnabled method enabled -> inDb $ do
+        let f :: (PersistBackend m', MonadLogger m', _)
+              => Text -> (Field cfg cstr Bool) -> (Maybe (Id cfg)) -> m' Bool
+            f name enabledField = \case
+              Just cid -> do
+                updateIdNotifyUnique cid [enabledField =. enabled]
+                pure True
+              Nothing -> do
+                $(logInfo) $ "Requested to " <> (bool "enable" "disable" enabled) <> " "
+                  <> name <> " notifications, but no configuration set, so doing nothing."
+                -- disabling the non existent config is trivially successful
+                pure $ not enabled
+        case method of
+          AlertNotificationMethod_Email ->
+            f "email" MailServerConfig_enabledField =<< (fst <$$> getDefaultMailServer)
+          AlertNotificationMethod_Telegram ->
+            f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
+
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
@@ -274,3 +289,8 @@ getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailS
 getDefaultMailServer =
   fmap (listToMaybe . Map.toList) $
     selectMap MailServerConfigConstructor $ CondEmpty `orderBy` [Desc MailServerConfig_madeDefaultAtField] `limitTo` 1
+
+getTelegramCfgId :: PersistBackend m => m (Maybe (Id TelegramConfig))
+getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
+  -- Silliness to help type inference:
+  (TelegramConfig_enabledField ==. TelegramConfig_enabledField)

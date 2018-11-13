@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -25,10 +27,11 @@ import qualified Data.Time.Format.Human as HumanTime
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
-import qualified Reflex.Dom.TextField as Txt
-import qualified Text.URI as Uri
 import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import qualified Reflex.Dom.SemanticUI as SemUi
+import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
@@ -64,7 +67,10 @@ isEnabled Enabled = True
 isEnabled Disabled = False
 
 urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
-urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
+urlLink = hrefLink . Uri.render
+
+hrefLink :: DomBuilder t m => Text -> m a -> m a
+hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
@@ -144,7 +150,7 @@ tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
 -- | Builds a form element and captures the submit event.
 formWithSubmit :: (DomBuilder t m, PostBuild t m) => m a -> m (a, Event t ())
 formWithSubmit f = do
-  (el_, r) <- elDynAttrWithPreventDefaultEvent' Submit "form" (pure $ "class"=:"ui form") f
+  (el_, r) <- elDynAttrWithModifyEvent' preventDefault Submit "form" (pure $ "class"=:"ui form") f
   pure (r, domEvent Submit el_)
 
 -- | Like 'elDynAttr'' but allows you to modify the element configuration.
@@ -162,17 +168,19 @@ elDynAttrWithModifyConfig' f elementTag attrs child = do
   notReadyUntil =<< getPostBuild
   pure result
 
--- | Like 'elDynAttr'' but configures "prevent default" on the given event.
-elDynAttrWithPreventDefaultEvent'
+
+-- | Like 'elDynWithModifyConfig'' but only configures the 'EventFlags'.
+elDynAttrWithModifyEvent'
   :: forall en t m a. (DomBuilder t m, PostBuild t m)
-  => EventName en              -- ^ Event on the element to configure with 'preventDefault'
+  => EventFlags
+  -> EventName en              -- ^ Event on the element to configure with 'preventDefault'
   -> Text                      -- ^ Element tag
   -> Dynamic t (Map Text Text) -- ^ Element attributes
   -> m a                       -- ^ Child of element
   -> m (Element EventResult (DomBuilderSpace m) t, a) -- An element and the result of the child
-elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
+elDynAttrWithModifyEvent' f ev = elDynAttrWithModifyConfig'
   (\elCfg -> elCfg & elementConfig_eventSpec %~
-    addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const preventDefault))
+    addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const f))
 
 validateUri :: Validator.Validator t m Uri.URI
 validateUri = Validator.Validator mkRootUri setUrlType
@@ -271,6 +279,73 @@ cancelableModal f close = elAttr "div" ("class"=:"modal-box") $ do
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
+data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
+  deriving (Eq, Show, Ord)
+
+manageMenu
+  :: forall menu m t.
+    ( PerformEvent t m, TriggerEvent t m, MonadHold t m, MonadFix m, MonadIO (Performable m)
+    , HasDomEvent t menu 'MouseleaveTag, HasDomEvent t menu 'MouseenterTag
+    )
+  => Event t ()
+  -> menu
+  -> m (Event t SemUi.Direction)
+manageMenu click menuEl = mdo
+  afterPendingClose <- delay 1 $ ffilter (== MenuState_PendingClose) $ updated menuState
+  menuState <- holdUniqDyn <=< foldDyn ($) MenuState_Closed $ leftmost
+    [ click $> \case
+        MenuState_Closed -> MenuState_PendingClose
+        MenuState_Opened -> MenuState_Closed
+        MenuState_PendingClose -> MenuState_Closed
+    , domEvent Mouseleave menuEl $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_PendingClose
+        MenuState_PendingClose -> MenuState_PendingClose
+    , domEvent Mouseenter menuEl $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_Opened
+        MenuState_PendingClose -> MenuState_Opened
+    , afterPendingClose $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_Opened
+        MenuState_PendingClose -> MenuState_Closed
+    ]
+  open <- transitionEvent
+    (\a b -> if a == MenuState_Closed && b /= MenuState_Closed then Just () else Nothing)
+    MenuState_Closed
+    (updated menuState)
+  close <- transitionEvent
+    (\a b -> if a /= MenuState_Closed && b == MenuState_Closed then Just () else Nothing)
+    MenuState_Closed
+    (updated menuState)
+
+  pure $ leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+
+
+aliasedInputForm
+  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a -> m () -> Event t () -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+aliasedInputForm validator feedback reset label info placeholder = divClass "ui form fields" $ do
+  (namedAddress, submitEvt) <- formWithSubmit $ do
+    address <- formItem' "required"
+      $ validatedInput validator
+      $ def & Txt.setPlaceholder placeholder
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Address")
+            & Txt.setChangeEvent ("" <$ reset)
+    alias <- formItem
+      $ validatedInput (Validator.optional Validator.validateText)
+      $ def & Txt.setPlaceholder "alias"
+            & Txt.setFluid
+            & Txt.addLabel (el "label" $ text "Alias")
+            & Txt.setChangeEvent ("" <$ reset)
+    feedback
+    _ <- submitButtonWithInfoCls "fluid primary" label info
+    let namedAddress = liftA2 (liftA2 (,)) address alias
+    return namedAddress
+  return $ filterRight $ tag (current namedAddress) submitEvt
+
+
 makeLenses ''FrontendContext
 
 instance HasFrontendConfig (FrontendContext t) where
@@ -281,23 +356,3 @@ instance HasTimeZone (FrontendContext t) where
 
 instance HasTimer t (FrontendContext t) where
   timer = frontendContext_oneSecondTimer
-
-aliasedInputForm
-  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-aliasedInputForm validator label info placeholder = divClass "ui form fields" $ do
-  (namedAddress, submitEvt) <- formWithSubmit $ do
-    address <- formItem' "required"
-      $ validatedInput validator
-      $ def & Txt.setPlaceholder placeholder
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Address")
-    alias <- formItem
-      $ validatedInput (Validator.optional Validator.validateText)
-      $ def & Txt.setPlaceholder "alias"
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Alias")
-    _ <- submitButtonWithInfoCls "fluid primary" label info
-    let namedAddress = liftA2 (liftA2 (,)) address alias
-    return namedAddress
-  return $ filterRight $ tag (current namedAddress) submitEvt

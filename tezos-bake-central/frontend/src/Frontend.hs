@@ -204,10 +204,9 @@ appMain = do
             let alertWindow = ClosedInterval LowerInfinity UpperInfinity
             nodesDyn <- watchNodes $ pure $ viewRangeAll ()
             alertsDyn <- watchErrors (pure $ Set.singleton alertWindow)
-            -- TODO style icon better
-            e <- elClass "h3" "ui header" $ do
-              text "Notifications"
-              domEvent Click <$> SemUi.icon' "icon-arrow-right" def
+            e <- divClass "sidebar-title" $ do
+              divClass "ui left floated header" $ text "Notifications"
+              divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
             liveErrorsWidget alertsDyn nodesDyn
             pure e)
         -- Accompanying content
@@ -262,7 +261,7 @@ appSideHeader =
       )
     $ do
         SemUi.header def $ do
-          elAttr "img" ("src" =: static @ "images/logo.svg" <> "class" =: "app-logo") $ return ()
+          elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") $ return ()
           text appName
         SemUi.menu
           (def
@@ -302,10 +301,8 @@ appSideFooter =
               routeSelector UITab_Options SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
-              SemUi.menuItem def $ do
-                icon "icon-question-mark"
-                text "Help"
-        elAttr "img" ("src" =: static @ "images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") $ return ()
+        hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
+          elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
 appHeader
   :: forall r m t.
@@ -333,34 +330,28 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
           text $ tshow (unRawLevel $ b ^. level) <> " "
           localHumanizedTimestamp $ pure $ b ^. timestamp
 
-    divClass "ten wide column" $ do
+    divClass "ten wide column right aligned" $ do
       headerBell
 
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
-  SemUi.segment
+  alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
+  (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.segmentConfig_basic SemUi.|~ True
-      & SemUi.segmentConfig_floated SemUi.|?~ SemUi.RightFloated
+      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
       )
     $ do
-        alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
-        (e,_) <- SemUi.ui' "span"
+        dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+        text " "
+        SemUi.icon "icon-bell"
           (def
-            & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+            & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
+            & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
+            & SemUi.iconConfig_link SemUi.|~ True
+            & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
             )
-          $ do
-              dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
-              text " "
-              SemUi.icon "icon-bell"
-                (def
-                  & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
-                  & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
-                  & SemUi.iconConfig_link SemUi.|~ True
-                  & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
-                  )
-        return $ domEvent Click e
+  return $ domEvent Click e
 
 
 appContentArea
@@ -373,7 +364,7 @@ appContentArea
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => Dynamic t UITab -> m ()
-appContentArea selectedTab = 
+appContentArea selectedTab =
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
@@ -385,6 +376,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -508,6 +500,8 @@ liveErrorsWidget errorsDyn nodesDyn = void $ do
     errorsDyn
     (passesFilter <$> filterDyn)
 
+  SemUi.divider def
+
   let
     (otherErrors, nodeErrors) = splitDynPure $ partitionErrors <$> filteredErrors
 
@@ -618,10 +612,10 @@ nodesOptions ::
   )
   => m ()
 nodesOptions = do
-  divClass "ui header" $ text "Nodes"
+  divClass "ui sub header" $ text "Nodes"
   divClass "ui list" $ do
     nodes <- watchNodeAddresses
-    _ <- listWithKey (coerce <$> nodes) $ \_ node -> divClass "item bullet-before" $ do
+    _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
       let dHealth = (> 0) . _nodeSummary_alertCount <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
@@ -641,11 +635,16 @@ nodesOptions = do
         divClass "ten wide column" $ divClass "blue shaded" $ do
           elClass "h5" "ui header" $ text "Connect to a Public Node"
           publicNodeOptions
-        divClass "six wide column" $ divClass "blue shaded" $ do
+        divClass "six wide column" $ divClass "blue shaded" $ mdo
+          let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+                icon "check blue"
+                text "Node added!"
           elClass "h5" "ui header" $ text "Connect via address"
-          addE <- aliasedInputForm validateUri "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-          nodeAddedE <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
-          pure $ leftmost [nodeAddedE, close]
+          addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
+          showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+          hideMsg <- delay 3 showMsg
+          showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+          pure close
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
@@ -669,7 +668,7 @@ publicNodeOptions = do
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
@@ -685,6 +684,7 @@ nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 nodesTab =
@@ -728,6 +728,7 @@ nodesTab =
             nodeTile
               (dynText titleUniq)
               subtitleUniq
+              (\ev -> PublicRequest_RemoveNode . _node_address <$> current vDyn <@ ev)
               getNodeHeadBlock
               (Just errorMessages)
               (Just _node_peerCount)
@@ -746,31 +747,40 @@ nodesTab =
             nodeTile
               title
               (pure Nothing)
+              (\ev -> flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev)
               (Just . mkVeryBlockLike)
               Nothing
               Nothing
               Nothing
               vDyn
 
-
-          --el "div" $ do
-          --  eRemove <- buttonWithInfo "Remove" "Stop monitoring this node. It will continue running."
-          --  void $ requestingIdentity $ public . PublicRequest_RemoveNode . _node_address <$> (node <$ eRemove)
-
     nodeTile
       :: m () -- ^ Title
       -> Dynamic t (Maybe Text) -- ^ Subtitle
+      -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this node.
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile title subtitle getBlock errors' getPeerCount' getNetworkStats' node = do
+    nodeTile title subtitle mkRemoveReq getBlock errors' getPeerCount' getNetworkStats' node = do
       b <- maybeDyn $ getBlock <$> node
       divClass "ui card node-tile" $ divClass "content" $ do
-        divClass "menu-section" $ do
-          icon "icon-ellipsis"
+        divClass "menu-section" $ divClass "span" $ mdo
+          menuTransition <- manageMenu (domEvent Click iconEl) uiEl
+          (iconEl, _) <- elClass' "i" "ui icon icon-ellipsis" blank
+          (uiEl, _) <- SemUi.ui' "span" (def
+            & SemUi.classes .~ "ui popup bottom center"
+            & SemUi.action .~ Just def
+              { SemUi._action_initialDirection = SemUi.Out
+              , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
+              , SemUi._action_transitionStateClasses = SemUi.forceVisible
+              }) $ do
+                SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ do
+                  remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Node"
+                  tellModal $ remove $> removeNodeModal mkRemoveReq
+          pure ()
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
@@ -838,6 +848,13 @@ nodesTab =
         withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
         nbsp = "\x00A0"
+
+    removeNodeModal mkRemoveReq = cancelableModal $ \close -> do
+      el "h3" $ text "Remove this node?"
+      el "p" $ text "You can always add this node again from the \"Add Node\" button."
+      sure <- divClass "buttons" $ uiButton "primary" "Remove Node"
+      response <- requestingIdentity $ public <$> mkRemoveReq sure
+      pure $ leftmost [response, close]
 
     errorsByNode
       :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)

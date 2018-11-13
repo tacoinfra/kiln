@@ -19,6 +19,7 @@ library
     Frontend.Modal.Base
     Frontend.Modal.Class
     Frontend.Settings
+    Frontend.Settings.Mail
     Frontend.Settings.Telegram
     Frontend.Watch
 
@@ -33,6 +34,7 @@ library
     , exceptions
     , file-embed
     , friendly-time
+    , functor-infix
     , ghcjs-dom
     , IntervalMap
     , jsaddle

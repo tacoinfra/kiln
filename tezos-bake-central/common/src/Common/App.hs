@@ -12,7 +12,12 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Common.App where
+module Common.App
+  ( module Common.App
+
+  -- Re-exports
+  , AlertNotificationMethod (..)
+  ) where
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
@@ -72,7 +77,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
-  , _bakeViewSelector_telegramConfig :: !(MaybeSelector TelegramConfig a)
+  , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
@@ -94,7 +99,7 @@ data BakeView a = BakeView
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
-  , _bakeView_telegramConfig :: !(MaybeView TelegramConfig a)
+  , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
   -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
@@ -107,6 +112,7 @@ data MailServerView = MailServerView
   , _mailServerView_portNumber :: Word16
   , _mailServerView_smtpProtocol :: SmtpProtocol
   , _mailServerView_userName :: Text
+  , _mailServerView_enabled :: Bool
   } deriving (Eq, Ord, Generic, Typeable, Read, Show)
 instance FromJSON MailServerView
 instance ToJSON MailServerView
@@ -135,6 +141,7 @@ mailServerConfigToView x = MailServerView
   , _mailServerView_portNumber = _mailServerConfig_portNumber x
   , _mailServerView_smtpProtocol = _mailServerConfig_smtpProtocol x
   , _mailServerView_userName = _mailServerConfig_userName x
+  , _mailServerView_enabled = _mailServerConfig_enabled x
   }
 
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView b -> BakeView a

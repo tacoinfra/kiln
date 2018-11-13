@@ -21,7 +21,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (Bake, MailServerView)
+import Common.App (AlertNotificationMethod, Bake, MailServerView)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -63,6 +63,10 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddTelegramConfig
       :: Text
       -> PublicRequest Bake ()
+    PublicRequest_SetAlertNotificationMethodEnabled
+      :: AlertNotificationMethod -- which one
+      -> Bool -- whether is enabled
+      -> PublicRequest Bake Bool -- True: success, False: no config to enable
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()

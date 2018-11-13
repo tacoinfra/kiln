@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -7,32 +8,25 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Frontend.Settings where
 
-import Control.Monad.Fix (MonadFix)
-import Control.Monad.Trans (lift)
 import Data.Function (on)
+import Data.Functor.Infix
 import Data.List (intersperse)
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
-import qualified Form.Checks as Check
 import GHCJS.DOM.Types (MonadJSM)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import Reflex.Dom.Form.FieldWriter (tellFieldErr, withFormFieldsErr)
 import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
-import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
-import Rhyolite.Schema (Email)
 import qualified Text.URI as Uri
 
 import Tezos.Types
@@ -46,75 +40,19 @@ import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Class (HasModal (ModalM))
 import qualified Frontend.Settings.Telegram as Telegram
+import qualified Frontend.Settings.Mail as Mail
 import Frontend.Watch
 
-mailServerForm
-  :: ( MonadRhyoliteFrontendWidget Bake t m
-     , MonadJSM m
-     , MonadJSM (Performable m)
-     )
-  => (MailServerView, [Email]) -> m (Event t ((MailServerView, Text), [Email]))
-mailServerForm (srv0, emails0) = do
-  (form, save) <- formWithSubmit $ do
-    srvform <- serverFields
-    mailform <- mailNotificationOptions
-    let form = (liftA2 . liftA2) (,) srvform mailform
-    elDynAttr "button"
-      (ffor (isRight <$> form) $ \s -> "type"=:"submit"
-        <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
-      ) $ text "Save Email Settings"
-    return form
-
-  pure $ filterRight $ tag (current form) save
-
-  where
-    mailNotificationOptions = do
-      divClass "ui medium header" $ text "Notification Recipients"
-
-      let
-        emailWidget email = do
-          (remove, _) <- el' "a" $ icon "icon-x"
-          (send, _) <- el' "a" $ text "Send Test Email"
-          void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> (current email <@ domEvent Click send)
-          pure $ domEvent Click remove
-
-      listInput "Add email address" (isRight . Check.email) emailWidget emails0
-
-    serverFields = withFormFieldsErr (srv0, "") $ do
-      divClass "three fields" $ do
-        tellFieldErr (_1 . mailServerView_hostName) <=< formItem' "required eight wide"
-          $ validatedInput Validator.validateText
-          $ defTxt "Host" & Txt.setInitial (_mailServerView_hostName srv0)
-
-        tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required four wide"
-          $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
-          $ defTxt "Port" & Txt.setInitial (tshow $ _mailServerView_portNumber srv0)
-
-        tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required four wide"
-          $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)
-          $ do
-            labeled "Protocol"
-            SemUi.dropdown (def & SemUi.dropdownConfig_placeholder .~ "Protocol"
-                                & SemUi.dropdownConfig_fluid SemUi.|~ True)
-              (Just $ _mailServerView_smtpProtocol srv0)
-              never
-              $ SemUi.TaggedStatic
-              $ SmtpProtocol_Plain=:text "Plain"
-              <> SmtpProtocol_Ssl=:text "SSL"
-              <> SmtpProtocol_Starttls=:text "STARTTLS"
-
-      divClass "two fields" $ do
-        tellFieldErr (_1 . mailServerView_userName) <=< formItem
-          $ validatedInput (Validator.optionalWith "" id Validator.validateText)
-          $ defTxt "User name" & Txt.setInitial (_mailServerView_userName srv0)
-
-        tellFieldErr _2 <=< formItem
-          $ validatedInput (Validator.optionalWith "" id validatePassword)
-          $ defTxt "Password"
-
-    validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType
-    defTxt txt = def & Txt.addLabel (labeled txt) & Txt.setPlaceholder txt
-    labeled = el "label" . text
+data NotificationCfg m t = forall cfg. NotificationCfg
+  { _notificationCfg_name :: Text
+  , _notificationCfg_description :: Text
+  , _notificationCfg_iconName :: Text
+  , _notificationCfg_content :: Dynamic t (Maybe cfg) -> m ()
+  , _notificationCfg_method :: AlertNotificationMethod
+  , -- Outer Maybe means not loaded
+    _notificationCfg_watchCfg :: m (Dynamic t (Maybe (Maybe cfg)))
+  , _notificationCfg_getEnabled :: cfg -> Bool
+  }
 
 settingsTab
   :: forall r t m.
@@ -141,45 +79,83 @@ settingsTab = do
       $ text "Notifications"
 
     sequence_ $ intersperse (SemUi.divider def) $ map notificationSection $
-      [ ("Email","letter",mailServerOptions)
-      , ("Telegram","telegram",telegramOptions)
+      [ NotificationCfg
+        { _notificationCfg_name = "Email"
+        , _notificationCfg_description = "Use your own email server to send alerts."
+        , _notificationCfg_iconName = "letter"
+        , _notificationCfg_content = mailServerOptions
+        , _notificationCfg_method = AlertNotificationMethod_Email
+        , _notificationCfg_watchCfg = watchMailServer
+        , _notificationCfg_getEnabled = _mailServerView_enabled
+        }
+      , NotificationCfg
+        { _notificationCfg_name = "Telegram"
+        , _notificationCfg_description = "Use a Telegram Bot to send alerts."
+        , _notificationCfg_iconName = "telegram"
+        , _notificationCfg_content = Telegram.inlineSettings
+        , _notificationCfg_method = AlertNotificationMethod_Telegram
+        , _notificationCfg_watchCfg = watchTelegramConfig
+        , _notificationCfg_getEnabled = _telegramConfig_enabled
+        }
       ]
-
   where
-    notificationSection :: (Text, Text, m ()) -> m ()
-    notificationSection (name, iconName, content) =
+    notificationSection :: NotificationCfg m t -> m ()
+    notificationSection (NotificationCfg name descr iconName content method watchCfg getEnabled) =
       divClass "notifications-subsection" $ do
-        toggleSwitch <- SemUi.header
-          (def
-            & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
-            )
-          $ do
-              flip SemUi.checkbox
-                (def
-                  & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
-                  & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
-                  )
-                $ do
-                    icon ("icon-" <> iconName)
-                    text name
-        dyn_ $ ffor (toggleSwitch ^. SemUi.checkbox_value) $ \case
-          False -> divClass "purpose" $ text $ name <> " notifications are turned off"
-          True -> content
+        dmdmCfg <- maybeDyn =<< watchCfg
+        dyn_ $ ffor dmdmCfg $ \case
+          Nothing -> divClass "ui active centered inline text loader"
+            $ text $ name <> " notification settings loading."
+          Just dmCfg -> do
+            (showSettings :: Dynamic t Bool) <- SemUi.header
+              (def
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                )
+              $ do
+                let headerIconText = do
+                      icon ("icon-" <> iconName)
+                      text name
+                    initialShowHeader = True
+                ddEnabled <- maybeDyn $ getEnabled <$$> dmCfg
+                checkEvent <- dyn $ ffor ddEnabled $ \case
+                  -- If nothing is set, the settings should always be available.
+                  Nothing -> pure initialShowHeader <$ headerIconText
+                  -- If something is set, the enable toggle should appear and the
+                  -- settings should only show up if toggle is enabled.
+                  Just (dEnabled :: Dynamic t Bool) -> do
+                    pb <- getPostBuild
+                    let setVal = leftmost [updated dEnabled, tag (current dEnabled) pb]
+                    toggleSwitch <- flip SemUi.checkbox
+                      (def
+                        & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
+                        & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
+                        & SemUi.checkboxConfig_setValue . SemUi.event .~ Just setVal
+                        )
+                      $ headerIconText
+                    -- Set enabled state based on toggle.
+                    statuses <- requestingIdentity $ fmap (public . PublicRequest_SetAlertNotificationMethodEnabled method) $
+                      updated $ toggleSwitch ^. SemUi.checkbox_value
+                    _ <- runWithReplace (pure ()) $ ffor statuses $ \case
+                      True -> pure ()
+                      False -> fail $ show $ "\
+\Can't enable unconfigured " <> iconName <> " notifications. \
+\It is a bug that the user even had a toggle to click in this case."
+                    pure $ toggleSwitch ^. SemUi.checkbox_value
+                join <$> holdDyn (pure initialShowHeader) checkEvent
+            dyn_ $ ffor showSettings $ \case
+              False -> divClass "purpose" $ text $ name <> " notifications are turned off"
+              True -> do
+                divClass "notification-settings-description" $ text descr
+                content dmCfg
 
-    telegramOptions = do
-      divClass "purpose" $ text "Use a Telegram Bot to send alerts."
-      Telegram.inlineSettings
-
-    mailServerOptions :: m ()
-    mailServerOptions = do
-      divClass "ui medium header" $ text "SMTP Mail Server"
-      mailServer <- watchMailServer
+    mailServerOptions :: Dynamic t (Maybe MailServerView) -> m ()
+    mailServerOptions mailServer = do
       notificatees <- watchNotificatees
 
       dyn_ $ ffor2 mailServer notificatees $ \cfg ns0 -> do
-        let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "") cfg
-        updatedForm <- mailServerForm (srv0, MMap.elems ns0)
-        requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass) <$> updatedForm
+        let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True) cfg
+        updatedForm <- Mail.mailServerForm (srv0, MMap.elems ns0)
+        requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
 
     _clientsOptions :: m ()
     _clientsOptions = void $ do
@@ -192,7 +168,7 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     _delegatesOptions = do
@@ -205,7 +181,7 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
             requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) "Add Delegate" "Begin monitoring wallet address entered." "tz..."
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Delegate" "Begin monitoring wallet address entered." "tz..."
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
 
     upgradeOptions = do
@@ -230,49 +206,3 @@ settingsTab = do
               else
                 text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
             _ -> blank
-
--- | Control that allows the user to build a list of items.
-listInput :: (DomBuilder t m, MonadHold t m, PostBuild t m, MonadFix m)
-          => Text -- ^ Placeholder for input
-          -> (Text -> Bool) -- ^ Input validation
-          -> (Dynamic t Text -> m (Event t ())) -- ^ Widget builder for each item in the list
-          -> [Text] -- ^ Initial items
-          -> m (Dynamic t (Either Text [Text])) -- ^ Items in list
-listInput ph validate itemWidget items0 = mdo
-  let insert is = if any T.null is
-                  then is
-                  else Map.insert (succ . maybe 0 fst $ Map.lookupMax is) "" is
-
-      validation t = if T.null t
-                     then Right t
-                     else submission t
-
-      submission = Check.satisfies validate "Invalid email address"
-
-  items' <- holdUniqDyn <=< holdDyn (Map.fromList $ zip [0::Int ..] items0) $ leftmost
-    [ insert <$> updated items
-    , attachWith (flip Map.delete) (current items) $ fmap getFirst delete
-    ]
-
-  (items, delete) <- runEventWriterT $ fmap joinDynThroughMap $ listWithKey items' $ \k v -> divClass "ui fields" $ do
-    divClass "ui inline field" $ mdo
-      postBuild <- getPostBuild
-      txt <- fmap value $ inputElement $ def
-        & initialAttributes .~ ("placeholder" =: ph)
-        & inputElementConfig_setValue .~ (current v <@ postBuild)
-        & inputElementConfig_elementConfig . elementConfig_modifyAttributes .~ updated validationAttrs
-
-      let
-        validationAttrs = ffor (validation <$> txt) $ mapKeysToAttributeName . ("class" =:) . \case
-          Left _ -> Just "invalid"
-          Right _ -> Nothing
-
-      dyn_ $ ffor (submission <$> txt) $ \case
-        Left _ -> blank
-        Right _ -> do
-          del <- lift $ itemWidget txt
-          tellEvent $ First k <$ del
-
-      pure txt
-
-  pure $ fmap sequence $ fmap submission . ffilter (not . T.null) . Map.elems <$> items
