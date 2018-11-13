@@ -534,18 +534,21 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
-    border-radius: @2px;
-    border: solid @1px #cacaca;
     box-shadow: none;
 
     margin-left: 0;
     margin-right: @30px;
 
     > .content {
+      flex-grow: 0;
+
       padding-left: @15px;
       padding-right: @15px;
       padding-top: @2px;
       padding-bottom: @17px;
+
+      border-radius: @2px !important;
+      border: solid @1px #cacaca !important;
 
       font-size: @12px;
       line-height: 1.5;
