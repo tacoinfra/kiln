@@ -112,43 +112,43 @@ h6.ui.header {
 .shaded.grey { background-color: @blue; }
 .shaded.blue { background-color: #f8f9fc; }
 
-.ui.publicnodes .ui.icon.header > i.icon {
-  font-size: @25px;
-}
+.ui.publicnodes {
+  > .public-node.grid {
+    border: @1px solid #CED4DA;
+    background: white;
+    border-radius: @borderRadius;
+    cursor: pointer;
 
-.ui.publicnodes > .grid > .row {
-  align-items: center;
-}
+    &:hover {
+      box-shadow: 0 @4px @12px 0 rgba(0,0,0,0.1);
+    }
 
-.ui.publicnodes > .grid {
-  border: @1px solid #CED4DA;
-  background: white;
-  border-radius: @borderRadius;
-}
-.ui.publicnodes > .grid@{moreMagic5} {
-  margin-bottom: @15px !important;
-}
-.ui.publicnodes > .active .ui.icon.header {
-  color: #a6a6a6;
-}
+    &@{moreMagic5} {
+      margin-bottom: @15px !important;
+    }
 
-.ui.publicnodes .ui.icon.header {
-  font-size: @14px;
-  font-weight: 500;
-  color: @primaryColor;
-}
+    > .row {
+      align-items: center;
+    }
+  }
 
-.ui.publicnodes .header {
-  font-weight: bold;
-}
+  > .active .ui.icon.header {
+    color: #a6a6a6;
+  }
 
-.ui.list.publicnodes > .item:not(.active) > .icon {
-  content:'Add Node';
-}
-.ui.list.publicnodes > .item.active > .icon {
-  content:'Added';
-}
-.ui.list.publicnodes > .item.active > .content {
+  .ui.icon.header {
+    font-size: @14px;
+    font-weight: 500;
+    color: @primaryColor;
+
+    > i.icon {
+      font-size: @25px;
+    }
+  }
+
+  .header {
+    font-weight: bold;
+  }
 }
 
 .topbar {
