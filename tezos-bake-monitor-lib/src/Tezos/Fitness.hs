@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Tezos.Fitness where
 
@@ -18,12 +20,14 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable
 import Text.Show (showListWith, showString)
+import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 import Tezos.Base16ByteString
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
-  deriving (Eq, Typeable, Functor, Foldable, Traversable)
+  deriving (Eq, Typeable, Functor, Foldable, Traversable, Generic, NFData)
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
 -- almost certainly the *wrong* one for this particular FromJSON, which needs

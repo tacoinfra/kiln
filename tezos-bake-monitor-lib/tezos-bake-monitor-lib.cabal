@@ -55,6 +55,7 @@ library
     , containers
     , cryptohash
     , cryptonite
+    , deepseq
     , groups
     , hashing
     , http-types

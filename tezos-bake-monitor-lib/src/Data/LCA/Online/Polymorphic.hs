@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 -----------------------------------------------------------------------------
@@ -57,7 +58,9 @@ module Data.LCA.Online.Polymorphic
   ) where
 
 import Control.Applicative hiding (empty)
+import Control.DeepSeq (NFData)
 import Data.Foldable hiding (toList)
+import GHC.Generics (Generic)
 
 #if __GLASGOW_HASKELL__ < 710
 import Data.Monoid (Monoid (..))
@@ -89,7 +92,8 @@ infixl 6 <>
 data Tree k a
   = Bin a !k a (Tree k a) (Tree k a)
   | Tip !k a
-  deriving (Show, Read)
+  deriving (Show, Read, Generic)
+instance (NFData k, NFData a) => NFData (Tree k a)
 
 instance Foldable (Tree k) where
   foldMap f (Tip _ a) = f a
@@ -115,7 +119,8 @@ data Path k a
          {-# UNPACK #-} !Int -- the number of elements @w@ in this binary tree node
          (Tree k a)          -- a complete binary tree @t@ of with @w@ elements
          (Path k a)          -- @n - w@ elements in a linked list @ts@, of complete trees in ascending order by size
-  deriving (Show, Read)
+  deriving (Show, Read, Generic)
+instance (NFData k, NFData a) => NFData (Path k a)
 
 instance Foldable (Path k) where
   foldMap _ Nil = mempty

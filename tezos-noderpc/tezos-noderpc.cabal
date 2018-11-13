@@ -21,6 +21,7 @@ library
     , aeson
     , bytestring
     , containers
+    , deepseq
     , http-client
     , http-types
     , lens

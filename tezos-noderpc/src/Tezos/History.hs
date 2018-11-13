@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -10,6 +11,7 @@
 
 module Tezos.History where
 
+import Control.DeepSeq (NFData)
 import Control.Lens (Lens, ifor_, view, (%=), (^.))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except
@@ -25,6 +27,7 @@ import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable
+import GHC.Generics (Generic)
 
 import qualified Data.LCA.Online.Polymorphic as LCA
 
@@ -40,7 +43,8 @@ data CachedHistory a = CachedHistory
   { _cachedHistory_branches :: !(Map BlockHash VeryBlockLike)
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
-  } deriving (Show, Typeable)
+  } deriving (Show, Typeable, Generic)
+instance NFData a => NFData (CachedHistory a)
 
 makeLenses 'CachedHistory
 

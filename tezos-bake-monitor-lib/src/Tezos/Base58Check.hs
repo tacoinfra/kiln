@@ -1,7 +1,9 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports #-}
@@ -11,6 +13,7 @@
 
 module Tezos.Base58Check where
 
+import Control.DeepSeq (NFData)
 import Control.Monad
 import Data.Aeson
 import Data.ByteString (ByteString)
@@ -20,6 +23,7 @@ import Data.String
 import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
+import GHC.Generics (Generic)
 
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -98,7 +102,7 @@ data HashType
   deriving (Eq, Ord, Show, Typeable, Enum)
 
 newtype HashedValue (tag :: HashType) = HashedValue { unHashedValue :: ShortByteString }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Generic, Typeable, NFData)
 
 instance IsBase58Hash tag => ToJSON (HashedValue tag) where
   toJSON = toJSON . T.decodeUtf8 . toBase58
