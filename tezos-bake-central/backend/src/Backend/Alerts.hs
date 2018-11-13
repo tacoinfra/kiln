@@ -82,7 +82,7 @@ clearNoBakerHeartbeatError cid = do
   client :: Maybe Client <- get $ fromId cid
   queueAlert $
     Alert "Resolved: Baker has now seen a block" $
-    text $ "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again."
+    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again."
 
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
@@ -117,8 +117,8 @@ clearInaccessibleNodeError nodeId = do
   for_ lids $ notify . mkDefaultNotify
   node' <- get (fromId nodeId)
   for_ node' $ \node -> do
-    queueAlert $ Alert "Resolved: Now able to connect to node"
-      $ text $ "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+    queueAlert $ Alert "Resolved: Now able to connect to node" $
+        "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
 reportNodeWrongChainError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
@@ -159,7 +159,7 @@ clearNodeWrongChainError nodeId = do
   node' <- get $ fromId nodeId
   for_ node' $ \node -> do
     queueAlert $ Alert "Resolved: Node on right network" $
-      text $ "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
+       "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
 
 
@@ -209,8 +209,8 @@ clearBadNodeHeadError nodeId = do
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
   for_ node $ \n -> do
-    queueAlert $ Alert "Resolved: Node Issue"
-      $ text $ "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n)
+    queueAlert $ Alert "Resolved: Node Issue" $
+        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n)
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do
