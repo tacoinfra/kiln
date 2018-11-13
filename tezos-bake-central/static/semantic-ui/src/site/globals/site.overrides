@@ -294,6 +294,10 @@ body {
   margin-top: 0;
   margin-bottom: 0;
   overflow: auto;
+  .ui.sub.header {
+    color: @grey;
+    font-weight: normal;
+  }
 }
 
 .ui.segment.app-side-footer {
