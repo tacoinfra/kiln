@@ -70,7 +70,9 @@ reportNoBakerHeartbeatError cid eventDetail = do
         ]
 
 
-clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Client -> m ()
+clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m, MonadIO m,
+                               PostgresLargeObject m, MonadIO m, MonadReader a m,
+                               HasAppConfig a) => Id Client -> m ()
 clearNoBakerHeartbeatError cid = do
   lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -78,6 +80,10 @@ clearNoBakerHeartbeatError cid = do
     WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
+  client :: Maybe Client <- get $ fromId cid
+  queueAlert $
+    Alert "Resolved: Baker has now seen a block" $
+    text $ "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again."
 
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
@@ -101,7 +107,8 @@ reportInaccessibleNodeError nodeId = do
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
+      MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearInaccessibleNodeError nodeId = do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -109,6 +116,10 @@ clearInaccessibleNodeError nodeId = do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
+  node' <- get (fromId nodeId)
+  for_ node' $ \node -> do
+    queueAlert $ Alert "Resolved: Now able to connect to node"
+      $ text $ "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
 reportNodeWrongChainError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
@@ -135,7 +146,8 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = do
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
-  :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
+      MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -145,6 +157,12 @@ clearNodeWrongChainError nodeId = do
       AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
+  node' <- get $ fromId nodeId
+  for_ node' $ \node -> do
+    queueAlert $ Alert "Resolved: Node on right network" $
+      text $ "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
+
+
 
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
@@ -181,7 +199,8 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
 
-clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
+clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m,
+                          MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearBadNodeHeadError nodeId = do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -189,6 +208,10 @@ clearBadNodeHeadError nodeId = do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
+  node <- get $ fromId nodeId
+  for_ node $ \n -> do
+    queueAlert $ Alert "Resolved: Node Issue"
+      $ text $ "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n)
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do
