@@ -66,6 +66,45 @@ Now open a browser and navigate to `http://localhost:8000` to start configuring 
 
 Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.2 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
+## Updating an older Docker container
+
+Updating to a newer pre-built Docker image is simple because all your data is stored separately in the PostgreSQL database.
+
+### Making a backup of your data
+
+Ideally you should make a backup of your database before upgrading, just in case something goes wrong.
+
+If you started your PostgreSQL database in Docker (as described above) you can use `docker commit` to save a copy of you current database before the upgrade:
+
+```shell
+docker commit tezos-monitor-postgres tezos-monitor-postgres:backup1
+```
+
+Use `docker image ls` to see your backup image listed. `docker image rm tezos-monitor-postgres:backup1` will delete it.
+
+Alternatively, if you have a compatible version of `pg_dump` installed, you can make a more lightweight backup by connecting to your database:
+
+```shell
+pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > tezos-monitor-postgres-backup1.sql
+```
+
+### Running the Newer Version
+
+Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
+
+```shell
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 ...
+```
+
+you can replace `0.1` with another available version.
+
+You can remove the old image and container safely. They do not store any data.
+
+
+# Known Issues
+
+  * If the frontend page loses connection to the server it will stop showing live data. This might happen if, for example, your computer goes to sleep with the page open. For now, you need to manually refresh the page to reconnect. This will be fixed in a future release.
+
 # Building the Monitor from Source
 
 ## Prerequisites
