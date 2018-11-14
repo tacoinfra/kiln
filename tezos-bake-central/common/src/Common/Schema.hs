@@ -331,6 +331,7 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_smtpProtocol :: SmtpProtocol
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
+  -- TODO this `madeDefaultAt` seems to be for old design
   , _mailServerConfig_madeDefaultAt :: UTCTime
   , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)

@@ -17,6 +17,7 @@ import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Foldable (toList)
 import Data.Functor.Infix
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
@@ -110,27 +111,31 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         )
         Nothing
 
-      PublicRequest_SetMailServerConfig mailServerView recipients password -> inDb $ do
+      -- TODO think harder about update versus initial set
+      PublicRequest_SetMailServerConfig mailServerView recipients mPassword -> inDb $ do
         now <- getTime
-        let updatedMailServer = MailServerConfig
-              { _mailServerConfig_hostName = _mailServerView_hostName mailServerView
-              , _mailServerConfig_portNumber = _mailServerView_portNumber mailServerView
-              , _mailServerConfig_smtpProtocol = _mailServerView_smtpProtocol mailServerView
-              , _mailServerConfig_userName = _mailServerView_userName mailServerView
-              , _mailServerConfig_password = password
-              , _mailServerConfig_madeDefaultAt = now
-              , _mailServerConfig_enabled = _mailServerView_enabled mailServerView
-              }
         getDefaultMailServer >>= \case
-          Nothing -> void $ insertNotifyUnique updatedMailServer
-          Just (id_, _) -> updateIdNotifyUnique id_
-            [ MailServerConfig_hostNameField =. _mailServerConfig_hostName updatedMailServer
-            , MailServerConfig_portNumberField =. _mailServerConfig_portNumber updatedMailServer
-            , MailServerConfig_smtpProtocolField =. _mailServerConfig_smtpProtocol updatedMailServer
-            , MailServerConfig_userNameField =. _mailServerConfig_userName updatedMailServer
-            , MailServerConfig_passwordField =. _mailServerConfig_password updatedMailServer
-            , MailServerConfig_madeDefaultAtField =. _mailServerConfig_madeDefaultAt updatedMailServer
-            , MailServerConfig_enabledField =. _mailServerConfig_enabled updatedMailServer
+          Nothing -> do
+            let updatedMailServer = MailServerConfig
+                  { _mailServerConfig_hostName = _mailServerView_hostName mailServerView
+                  , _mailServerConfig_portNumber = _mailServerView_portNumber mailServerView
+                  , _mailServerConfig_smtpProtocol = _mailServerView_smtpProtocol mailServerView
+                  , _mailServerConfig_userName = _mailServerView_userName mailServerView
+                  , _mailServerConfig_password = maybe "" id mPassword
+                  , _mailServerConfig_madeDefaultAt = now
+                  , _mailServerConfig_enabled = _mailServerView_enabled mailServerView
+                  }
+            void $ insertNotifyUnique updatedMailServer
+          Just (id_, _) -> updateIdNotifyUnique id_ $
+            [ MailServerConfig_hostNameField =. _mailServerView_hostName mailServerView
+            , MailServerConfig_portNumberField =. _mailServerView_portNumber mailServerView
+            , MailServerConfig_smtpProtocolField =. _mailServerView_smtpProtocol mailServerView
+            , MailServerConfig_userNameField =. _mailServerView_userName mailServerView
+            , MailServerConfig_madeDefaultAtField =. now
+            , MailServerConfig_enabledField =. _mailServerView_enabled mailServerView
+            ] ++
+            [ MailServerConfig_passwordField =. password
+            | password <- toList mPassword
             ]
         delete $ Notificatee_emailField `notIn_` recipients
         keep :: [Email] <- project Notificatee_emailField (Notificatee_emailField `in_` recipients)
