@@ -104,7 +104,7 @@ You can remove the old image and container safely. They do not store any data.
 
 **Disk:** The monitor uses PostgreSQL for *all* storage. The entire database typically uses about 1-2GB.
 
-**Memory:** Idle memory usage is typically under 1GB. When initializing history (usually right after start-up) memory can spike to about 3GB for a short time.
+**Memory:** Idle memory usage is typically under 1GB. When initializing history (usually right after start-up or adding your first node) memory can spike to about 3GB for a short time.
 
 **CPU:** Running with at least 2 cores is recommended.
 
