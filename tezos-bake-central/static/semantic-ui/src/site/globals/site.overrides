@@ -451,11 +451,6 @@ img.credits-obsidian {
     margin-top: @20px;
     margin-bottom: @20px;
   }
-  > .purpose {
-    .fine-print();
-    margin-top: @10px;
-    margin-bottom: @10px;
-  }
   > .edit-link {
     margin-top: @15px;
     margin-bottom: @15px;
@@ -472,6 +467,7 @@ img.credits-obsidian {
   }
 
   .notification-settings-description {
+    .fine-print();
     font-size: @12px;
     margin-top: @30px;
     margin-bottom: @20px;
@@ -523,12 +519,22 @@ img.credits-obsidian {
   }
 }
 
-.telegram-recipients {
+.settings-table {
+  margin-top: @15px;
+  margin-bottom: @15px;
+
   td, th {
     text-align: left;
+    vertical-align: top;
+    // No way to do interior-only border-spacing, so instead use this on
+    // successive children. Use padding because no margin on table cells.
+    padding-left: @40px;
   }
-  .telegram-recipient {
-    padding-right: @40px;
+  // `rowspan` means `:first-child` doesn't indicate visually first cell of row.
+  // Use `.visually-second` on such second column first children as a
+  // workaround.
+  td:first-child:not(.visually-second), th:first-child:not(.visually-second) {
+    padding-left: 0px;
   }
 }
 
