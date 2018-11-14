@@ -59,6 +59,7 @@ library
     , tezos-bake-monitor-lib
     , these
     , time
+    , universe
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 

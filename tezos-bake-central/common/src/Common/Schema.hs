@@ -35,6 +35,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.Typeable (Typeable)
+import Data.Universe
+import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
@@ -325,12 +327,16 @@ data SmtpProtocol
   | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
 
+instance Universe SmtpProtocol where universe = universeDef
+instance Finite SmtpProtocol
+
 data MailServerConfig = MailServerConfig
   { _mailServerConfig_hostName :: Text
   , _mailServerConfig_portNumber :: Word16
   , _mailServerConfig_smtpProtocol :: SmtpProtocol
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
+  -- TODO this `madeDefaultAt` seems to be for old design
   , _mailServerConfig_madeDefaultAt :: UTCTime
   , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)

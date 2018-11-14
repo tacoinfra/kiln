@@ -13,8 +13,8 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.))
-import Rhyolite.Backend.DB (runDb)
+import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.), Cond(..))
+import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -123,17 +123,18 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         { _bakeView_delegates = foldMap (\d -> toRangeView1 delegateVS (Bounded $ _delegate_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _delegate_deleted d)) delegate
         }
 
-    notificateesVS = _bakeViewSelector_notificatees aggVS
-    handleNotificatee nid = whenM (viewSelects (Bounded nid) notificateesVS) $ do
-      notificatee :: Maybe Notificatee <- get $ fromId nid
-      pure $ (mempty :: BakeView a)
-        { _bakeView_notificatees = toRangeView1 notificateesVS (Bounded nid) $ Just $ First $ _notificatee_email <$> notificatee
-        }
-
     mailServerVS = _bakeViewSelector_mailServer aggVS
-    handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
+    handleNotificatee _nid = whenM (viewSelects () mailServerVS) $ do
+      notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
+      -- TODO: do something a little more reasonable that 'listToMaybe'  what happens if there *are* more than one serverConfig?
+      mailServer :: Maybe MailServerConfig <- listToMaybe . toList <$> selectMap' MailServerConfigConstructor CondEmpty
       pure $ (mempty :: BakeView a)
-        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ mailServerConfigToView $ mailServer
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ flip mailServerConfigToView notificatees <$> mailServer
+        }
+    handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
+      notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
+      pure $ (mempty :: BakeView a)
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
         }
 
     errorsVS = _bakeViewSelector_errors aggVS

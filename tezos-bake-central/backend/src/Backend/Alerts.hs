@@ -37,7 +37,7 @@ reportNoBakerHeartbeatError
      , MonadReader a m, HasAppConfig a
      )
   => Id Client -> SeenEvent -> m ()
-reportNoBakerHeartbeatError cid eventDetail = do
+reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted bakers
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
     FROM "ErrorLog" el
@@ -72,11 +72,15 @@ reportNoBakerHeartbeatError cid eventDetail = do
 clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m, MonadIO m,
                                PostgresLargeObject m, MonadIO m, MonadReader a m,
                                HasAppConfig a) => Id Client -> m ()
-clearNoBakerHeartbeatError cid = do
+clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerNoHeartbeat" t
-    WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
+      JOIN "Client" c ON t.client = c.id
+    WHERE t.log = el.id
+      AND t.client = ?cid
+      AND NOT c.deleted
+      AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
@@ -87,12 +91,15 @@ clearNoBakerHeartbeatError cid = do
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> m ()
-reportInaccessibleNodeError nodeId = do
+reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
-     WHERE t.node = ?nodeId AND el.stopped IS NULL
+      JOIN "Node" n ON n.id = t.node
+     WHERE t.node = ?nodeId
+       AND NOT n.deleted
+       AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -108,7 +115,7 @@ reportInaccessibleNodeError nodeId = do
 clearInaccessibleNodeError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
-clearInaccessibleNodeError nodeId = do
+clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInaccessibleNode" t
@@ -123,14 +130,16 @@ clearInaccessibleNodeError nodeId = do
 reportNodeWrongChainError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> ChainId -> ChainId -> m ()
-reportNodeWrongChainError nodeId expectedChainId actualChainId = do
+reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+      JOIN "Node" n ON n.id = t.node
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
+       AND NOT n.deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -147,7 +156,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = do
 clearNodeWrongChainError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
-clearNodeWrongChainError nodeId = do
+clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeWrongChain" t
@@ -156,23 +165,25 @@ clearNodeWrongChainError nodeId = do
       AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
+  for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
   for_ node' $ \node -> do
     queueAlert $ Alert "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
-
-
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
-reportBadNodeHeadError nodeId latestHead nodeHead lca = do
+reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-     WHERE t.node = ?nodeId AND el.stopped IS NULL
+      JOIN "Node" n ON n.id = t.node
+     WHERE t.node = ?nodeId
+       AND NOT n.deleted
+       AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -200,7 +211,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
 
 clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m,
                           MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
-clearBadNodeHeadError nodeId = do
+clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBadNodeHead" t
@@ -211,6 +222,9 @@ clearBadNodeHeadError nodeId = do
   for_ node $ \n -> do
     queueAlert $ Alert "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
+
+nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
+nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do
