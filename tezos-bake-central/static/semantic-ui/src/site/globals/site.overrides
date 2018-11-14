@@ -547,6 +547,12 @@ img.credits-obsidian {
   }
 }
 
+.notifications-section {
+  > .ui.header:first-child {
+    margin-top: @64px;
+  }
+}
+
 .ui.list > .item.bullet-before {
   position: relative;
 
