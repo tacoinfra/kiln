@@ -7,7 +7,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Frontend.Settings.Telegram where
+module Frontend.Settings.Telegram
+  ( viewCfg
+  , editCfg
+  ) where
 
 import Data.Function (on)
 import Data.Map (Map)
@@ -25,57 +28,39 @@ import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
 import Common.Vassal (getRangeView', viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), cancelableModal, formIsLoading, formWithSubmit, icon, uiButton,
+import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, icon, uiButton,
                         uiDynSubmit, updatedWithInit)
-import Frontend.Modal.Class (HasModal (ModalM, tellModal))
-
 
 -- We take a dynamic `Maybe TelegramConfig` parameter rather than watching to
 -- get `Maybe (Maybe TelegramConfig)`, so the caller can handle the
 -- uninitialized case.
 
-inlineSettings
-  :: forall m t
-  . ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
-    , HasModal t m
-    )
-  => Dynamic t (Maybe TelegramConfig)
-  -> m ()
-inlineSettings cfg = do
-  hasValidated <- holdUniqDyn $ preview (_Just . telegramConfig_validated . _Just) <$> cfg
-  openTelegramOptions <- (switchHold never =<<) $ dyn $ ffor hasValidated $ \case
-    Nothing -> uiButton "primary" "Connect Telegram"
-    Just False -> uiButton "primary" "Connect Telegram"
-    Just True -> do
-      recipients <- watchTelegramRecipients
-      (reopener, _) <- elClass "p" "edit-link" $ do
-        el' "a" $ text "Reconfigure Telegram"
-      elClass "table" "telegram-recipients" $ do
-        el "tr" $ do
-          elClass "th" "telegram-recipient" $ text "Recipient"
-          elClass "th" "telegram-bot" $ text "Bot Name"
-        void $ listWithKey recipients $ \_ recipient -> do
-          el "tr" $ do
-            elClass "td" "telegram-recipient" $ dynText $ fmap telegramRecipientFullName recipient
-            elClass "td" "telegram-bot" $ dynText $ fmap (view $ _Just . telegramConfig_botName . _Just) cfg
-      return $ domEvent Click reopener
+viewCfg
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t TelegramConfig
+  -> m (Event t ())
+viewCfg cfg = do
+  (reopener, _) <- elClass "p" "edit-link" $ do
+    el' "a" $ text "Reconfigure Telegram"
 
-  tellModal $ (openTelegramOptions $>) $ cancelableModal $ \close -> do
-    finish <- settings cfg
-    pure $ leftmost [finish, close]
+  recipients <- watchTelegramRecipients
+  elClass "table" "settings-table" $ do
+    el "tr" $ do
+      el "th" $ text "Recipient"
+      el "th" $ text "Bot Name"
+    void $ listWithKey recipients $ \_ recipient -> do
+      el "tr" $ do
+        el "td" $ dynText $ fmap telegramRecipientFullName recipient
+        el "td" $ dynText $ fmap (view $ telegramConfig_botName . _Just) cfg
 
-telegramRecipientFullName
-  :: TelegramRecipient
-  -> Text
-telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
+  return $ domEvent Click reopener
 
-settings
+editCfg
   :: forall m t
   .  MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Maybe TelegramConfig)
   -> m (Event t ())
-settings cfg = switchHold never <=< workflowView $ Workflow $ do
+editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
   recipients <- watchTelegramRecipients
   let
     validated = _Just . telegramConfig_validated . _Just
@@ -129,6 +114,11 @@ settings cfg = switchHold never <=< workflowView $ Workflow $ do
         text " from your bot."
       done <- divClass "buttons" $ uiButton "primary" "Close"
       pure (done, never)
+
+telegramRecipientFullName
+  :: TelegramRecipient
+  -> Text
+telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
 settingsForm
   :: MonadRhyoliteFrontendWidget Bake t m

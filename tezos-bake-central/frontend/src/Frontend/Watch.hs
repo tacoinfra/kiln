@@ -126,12 +126,12 @@ watchSummary = do
     }
   improvingMaybe $ ffor theView $ \v -> getMaybeView $ _bakeView_summary v
 
-watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Notificatee) Email))
+watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Maybe [Email])))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_notificatees = viewRangeAll 1
+    { _bakeViewSelector_mailServer = viewJust 1
     }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_notificatees v)
+  return $ fmap ((fmap . fmap) _mailServerView_notificatees . getMaybeView . _bakeView_mailServer) theView
 
 watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
 watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
