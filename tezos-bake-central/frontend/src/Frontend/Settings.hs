@@ -150,11 +150,10 @@ settingsTab = do
 
     mailServerOptions :: Dynamic t (Maybe MailServerView) -> m ()
     mailServerOptions mailServer = do
-      notificatees <- watchNotificatees
-
-      dyn_ $ ffor2 mailServer notificatees $ \cfg ns0 -> do
-        let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True) cfg
-        updatedForm <- Mail.mailServerForm (srv0, MMap.elems ns0)
+      dyn_ $ ffor mailServer $ \cfg -> do
+        let ns0 = foldMap _mailServerView_notificatees cfg
+        let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True ns0) cfg
+        updatedForm <- Mail.mailServerForm (srv0, ns0)
         requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
 
     _clientsOptions :: m ()
