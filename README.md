@@ -100,6 +100,13 @@ you can replace `0.2` with another available version.
 
 You can remove the old image and container safely. They do not store any data.
 
+# System Requirements
+
+**Disk:** The monitor uses PostgreSQL for *all* storage. The entire database typically uses about 1-2GB.
+
+**Memory:** Idle memory usage is typically under 1GB. When initializing history (usually right after start-up) memory can spike to about 3GB for a short time.
+
+**CPU:** Running with at least 2 cores is recommended.
 
 # Building the Monitor from Source
 
