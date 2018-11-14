@@ -148,26 +148,26 @@ settingsTab = do
                 & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
-                  -- If nothing is set, return nothing
-                  Nothing -> headerIconText
-                  -- If something is set, the enable toggle should appear and
-                  -- return the value of that config.
-                  Just (dEnabled :: Dynamic t Bool) -> do
-                    pb <- getPostBuild
-                    let setVal = leftmost [updated dEnabled, tag (current dEnabled) pb]
-                    toggleSwitch <- flip SemUi.checkbox
-                      (def
-                        & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
-                        & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
-                        & SemUi.checkboxConfig_setValue . SemUi.event .~ Just setVal
-                        )
-                      $ headerIconText
-                    -- Set enabled state based on toggle.
-                    statuses <- requestingIdentity $ fmap (public . PublicRequest_SetAlertNotificationMethodEnabled method) $
-                      updated $ toggleSwitch ^. SemUi.checkbox_value
-                    void $ runWithReplace (pure ()) $ ffor statuses $ \case
-                      True -> pure ()
-                      False -> fail $ show $ "\
+                -- If nothing is set, return nothing
+                Nothing -> headerIconText
+                -- If something is set, the enable toggle should appear and
+                -- return the value of that config.
+                Just (dEnabled :: Dynamic t Bool) -> do
+                  pb <- getPostBuild
+                  let setVal = leftmost [updated dEnabled, tag (current dEnabled) pb]
+                  toggleSwitch <- flip SemUi.checkbox
+                    (def
+                      & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
+                      & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
+                      & SemUi.checkboxConfig_setValue . SemUi.event .~ Just setVal
+                      )
+                    $ headerIconText
+                  -- Set enabled state based on toggle.
+                  statuses <- requestingIdentity $ fmap (public . PublicRequest_SetAlertNotificationMethodEnabled method) $
+                    updated $ toggleSwitch ^. SemUi.checkbox_value
+                  void $ runWithReplace (pure ()) $ ffor statuses $ \case
+                    True -> pure ()
+                    False -> fail $ show $ "\
 \Can't enable unconfigured " <> iconName <> " notifications. \
 \It is a bug that the user even had a toggle to click in this case."
             rec
