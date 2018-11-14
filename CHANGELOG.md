@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.1
+## 0.2 (November 14, 2018)
+
+  * Telegram support for notifications
+  * Completely revamped UI
+  * Configurable logging (to journald, to files, to stdout/stderr, configurable filtering, levels, etc.)
+  * The frontend now reports when it is not actively connected to the backend (fixed known issue from version 0.1)
+  * Minor bug fixes
+
+## 0.1 (October 9, 2018)
 
   * Initial release.
 
