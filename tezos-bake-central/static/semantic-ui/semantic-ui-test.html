@@ -1,0 +1,265 @@
+<link rel="stylesheet" type="text/css" href="../css/font-awesome.min.css">
+<link rel="stylesheet" type="text/css" href="dist/semantic.css">
+<link rel="stylesheet" type="text/css" href="../css/main.css">
+<link rel="stylesheet" type="text/css" href="../icons/style.css">
+
+<!-- NOTE: the real app does not use jquery or the semantic-ui js libraries.
+    just because an interaction works on this page doesn't mean that it works
+    in semantic-reflex.  always check! -->
+<script
+  src="https://code.jquery.com/jquery-3.1.1.min.js"
+  integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8="
+  crossorigin="anonymous"></script>
+<script src="dist/semantic.min.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function(event) {
+        $('.ui.checkbox')
+          .checkbox()
+        ;
+    });
+</script>
+<body>
+<div class="app-frame">
+<div class="app-right">
+<div class="app-content">
+<div class="ui one column grid">
+<div class="column">
+<div class="ui basic segment">
+    <h3 class="ui header">Typography</h3>
+    <h1 class="ui header">Header 1.</h1>
+    <h2 class="ui header">Header 2.</h2>
+    <h3 class="ui header">Header 3.</h3>
+    <h4 class="ui header">Header 4.</h4>
+    <h5 class="ui header">Header 5.</h5>
+    <!-- <h6 class="ui header">Header 6.</h6> -->
+    <p class="ui vertical segment basic">Body copy. Lorem Ipsum is simply dummy text of the printing and typesetting industry. Dolor sit amet!
+    <h6 class="ui header">Small Header for Small Stuff</h6>
+    <div class="ui vertical segment basic small">
+        <p >Small copy. Small copy will be generally used for notes, tooltips and things that aren't as important. Line Height is smaller than the standard 1.5x.
+        <p class="aside">Aside Copy. For small notes, tips, etc. Same as Small Copy except for color.
+    </div>
+</div>
+<div class="ui basic segment">
+
+    <h3>Links</h3>
+    <a href="example.com">Unvisited Link</a>
+    <a href="example.com">Hover Link</a>
+    <a href="example.com">Active Link</a>
+    <a href="example.com">Visited Link</a>
+</div>
+<div class="ui basic segment">
+    <h3>Colors</h3>
+    <p>
+    <button class="ui button blue">blue</button>
+    <button class="ui button green">green</button>
+    <button class="ui button orange">orange</button>
+    <button class="ui button red">red</button>
+    <button class="ui button black">black</button>
+    <button class="ui button grey">grey</button>
+</div>
+<div class="ui basic segment">
+    <h3>Forms</h3>
+    <div class="ui form">
+        <div class="ui labeled input"><input placeholder="placeholder"></input></div>
+        <div class="ui labeled input"><input value="not placeholder"></input></div>
+        <br>
+        <div class="field">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+        <div class="field required">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+        <div class="required field">
+            <label>Label
+            <input value="not placeholder"></input>
+            </label>
+        </div>
+    </div>
+
+    <div class="ui segment basic">
+        <button class="ui primary button">Primary Button</button>
+        <button class="ui primary disabled button">Disabled</button>
+        <button class="ui button">Secondary Button</button>
+        <button class="ui disabled button">Disabled</button>
+    </div>
+    <div class="ui segment basic">
+        <div class="ui buttons">
+          <button class="ui button">Default</button>
+          <button class="ui button primary">Selected</button>
+          <button class="ui button disabled">Disabled</button>
+        </div>
+    </div>
+    <div class="ui segment basic">
+      <div class="active ui button modalopener">
+        <i class="icon-plus icon"></i>
+        Default
+      </div>
+      <div class="ui button modalopener">
+        <i class="icon-plus icon"></i>
+        Default
+      </div>
+    </div>
+    <div class="ui segment basic">
+        <div class="inline field">
+          <div class="ui toggle checkbox huge">
+            <input type="checkbox" tabindex="0" class="hidden">
+            <label>Toggle</label>
+          </div>
+        </div>
+        <div class="inline field">
+          <div class="ui toggle checkbox big">
+            <input type="checkbox" tabindex="0" class="hidden">
+            <label>Toggle</label>
+          </div>
+        </div>
+        <div class="inline field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" tabindex="0" class="hidden">
+            <label>Toggle</label>
+          </div>
+        </div>
+    </div>
+</div>
+<div class="ui basic segment">
+    <h3>Left Nav Extra Buttons</h3>
+    <div class="ui segment basic" style="background-color:#f5f5f5">
+        <div class="ui secondary vertical menu">
+          <div class="active item">
+            <i class="icon-gear icon"></i>
+            Settings
+          </div>
+          <div class="item">
+            <i class="icon-question-mark icon"></i>
+            Help
+          </div>
+        </div>
+    </div>
+</div>
+<div class="ui basic segment">
+    <h3>Modal</h3>
+    <div class="ui segment basic">
+        <div class="modal-box" style="position:relative;transform:none;width:400px;height:300px">
+            <div class="modal-close">
+                <i class="icon-x fitted icon"></i>
+            </div>
+            <div class="content">
+                Some content
+                Some more content
+                Lorem Ipsum
+                <br/>
+                Dolor
+            </div>
+        </div>
+    </div>
+</div>
+<div class="ui basic segment" style="max-width:700px">
+    <div class="ui grid">
+        <div class="ui nine wide column"><div class="blue shaded">
+                <div class="ui header">Add a public Node</div>
+                <div class="ui publicnodes">
+
+                    <div class="ui padded divided grid active">
+                        <div class="row">
+                            <div class="four wide column label">
+                                <div class="ui center aligned icon header">
+                                    <i class="icon-check icon"></i>Added
+                                </div>
+                            </div>
+                            <div class="twelve wide column">
+                                <div class="header">Obsidian Systems</div>
+                                <div class="description">Public Node Caching Service provided by Obsidian Systems</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ui padded divided grid">
+                        <div class="row">
+                            <div class="four wide column label">
+                                <div class="ui center aligned icon header">
+                                    <i class=""></i>Add Node
+                                </div>
+                            </div>
+                            <div class="twelve wide column">
+                                <a class="header">Foundation</a>
+                                <div class="description">Load-balanced collection of nodes provided by the Tezos Foundation</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ui padded divided grid active">
+                        <div class="row">
+                            <div class="four wide column label">
+                                <div class="ui center aligned icon header">
+                                    <i class="icon-check icon"></i>Added
+                                </div>
+                            </div>
+                            <div class="twelve wide column">
+                                <a class="header">tzscan.io</a>
+                                <div class="description">API provided by tzscan.io, the block explorer by OCamlPro.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            <div class="ui seven wide column">
+                asdf
+            </div>
+        </div>
+    </div>
+</div>
+<div class="ui basic segment" style="max-width:700px">
+    <div class="ui header">Node Tile</div>
+    <div class="nodes-dashboard">
+        <h4>Nodes</h4>
+        <div class="ui cards">
+            <div class="ui card node-tile">
+                <div class="content">
+                    <div class="menu-section">
+                        <i class="icon-ellipsis icon"></i>
+                    </div>
+                    <div class="title">
+                        <i class="tiny green circle icon"></i>Obsidian Systems
+                        <div class="subtitle">test</div>
+                    </div>
+                    <div class="ui error message">
+                        Something is wrong.
+                    </div>
+                    <div class="divider"></div>
+                    <div class="soft-heading">113608</div>
+                    #<a href="https://tzscan.io/BKiqquMez5NhgN9ZtpT7Cmh8Y5BbrowZavJCC3MFJ5JRwSShpBy" target="_blank">BKiqquMez5NhgN</a>
+
+                    <dl>
+                        <dt>Fitness</dt><dd>00:00000000004bf912</dd>
+                        <dt>Baked</dt><dd>15 seconds ago</dd>
+                    </dl>
+
+                    <div class="divider"></div>
+
+                    <span class="peer-count">15</span> connected-peers
+
+                    <div class="stats">
+                        <div class="column heading">
+                            <div class="cell">Speed</div>
+                            <div class="cell">Total</div>
+                        </div>
+                        <div class="column">
+                            <div class="cell"><i class="icon-arrow-up icon"></i>149KB/s</div>
+                            <div class="cell"><i class="icon-arrow-up icon"></i>23MB</div>
+                        </div>
+                        <div class="column">
+                            <div class="cell"><i class="icon-arrow-down icon"></i>12KB/s</div>
+                            <div class="cell"><i class="icon-arrow-down icon"></i>54MB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

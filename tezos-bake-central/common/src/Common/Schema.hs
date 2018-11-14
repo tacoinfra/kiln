@@ -17,11 +17,14 @@
 
 {-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
 
-module Common.Schema where
+module Common.Schema
+  ( module Common.Schema
 
-import qualified Cases
-import Control.Lens (views)
-import Control.Lens.TH (makeLenses)
+  -- Re-exports
+  , Id
+  ) where
+
+import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -40,9 +43,12 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Json
-import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.NodeRPC.Types (NetworkStat (..))
 import Tezos.Types
+
+import Common (defaultTezosCompatJsonOptions)
+import ExtraPrelude
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -64,8 +70,11 @@ data Error = Error
   , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
--- type ClientAddress = URI
-
+mkErr :: Event ErrorEvent -> Error
+mkErr err = Error
+  { _error_time = _event_time err
+  , _error_text = _errorEvent_message $ _event_detail err
+  }
 
 -- TODO: move to ~-lib
 knownProtocols :: [ProtocolHash]
@@ -104,6 +113,7 @@ data Node = Node
   , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
   , _node_headLevel :: !(Maybe RawLevel)
   , _node_headBlockHash :: !(Maybe BlockHash)
+  , _node_headBlockPred :: !(Maybe BlockHash)
   , _node_headBlockBakedAt :: !(Maybe UTCTime)
   , _node_peerCount :: !(Maybe Word64)
   , _node_networkStat :: !NetworkStat
@@ -113,6 +123,29 @@ data Node = Node
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+mkNode :: URI -> Maybe Text -> Node
+mkNode addr alias = Node
+  { _node_address = addr
+  , _node_alias = alias
+  , _node_identity = Nothing -- TODO
+  , _node_headLevel = Nothing
+  , _node_headBlockHash = Nothing
+  , _node_headBlockPred = Nothing
+  , _node_headBlockBakedAt = Nothing
+  , _node_peerCount = Nothing
+  , _node_networkStat = NetworkStat 0 0 0 0
+  , _node_fitness = Nothing
+  , _node_deleted = False
+  , _node_updated = Nothing
+  }
+
+getNodeHeadBlock :: Node -> Maybe VeryBlockLike
+getNodeHeadBlock n = VeryBlockLike
+  <$> _node_headBlockHash n
+  <*> _node_headBlockPred n
+  <*> _node_fitness n
+  <*> _node_headLevel n
+  <*> _node_headBlockBakedAt n
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -139,33 +172,14 @@ instance HasId PublicNodeConfig
 data PublicNodeHead = PublicNodeHead
   { _publicNodeHead_source :: !PublicNode
   , _publicNodeHead_chain :: !NamedChainOrChainId
-  , _publicNodeHead_headLevel :: !RawLevel
-  , _publicNodeHead_headBlockHash :: !BlockHash
-  , _publicNodeHead_headBlockFitness :: !Fitness
-  , _publicNodeHead_headBlockBakedAt :: !UTCTime
+  , _publicNodeHead_headBlock :: !VeryBlockLike
   , _publicNodeHead_updated :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
-  }
-
 data Parameters = Parameters
   { _parameters_chain :: !ChainId
   , _parameters_protoInfo :: !ProtoInfo
-  , _parameters_headTimestamp :: !UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Parameters
 
@@ -214,13 +228,6 @@ data EndorseEvent = EndorseEvent
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
   } deriving (Show, Eq, Typeable, Generic)
-
-
-mkErr :: Event ErrorEvent -> Error
-mkErr err = Error
-  { _error_time = _event_time err
-  , _error_text = _errorEvent_message $ _event_detail err
-  }
 
 data Report = Report
   { _report_baked :: [Event BakedEvent]
@@ -297,6 +304,21 @@ data Notificatee = Notificatee
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 
+data AlertNotificationMethod
+  = AlertNotificationMethod_Email
+  | AlertNotificationMethod_Telegram
+  deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
+
+instance Aeson.ToJSONKey AlertNotificationMethod where
+  toJSONKey = Aeson.ToJSONKeyText (tshow) (AesonE.text . tshow)
+
+-- show match show!
+instance Aeson.FromJSONKey AlertNotificationMethod where
+  fromJSONKey = Aeson.FromJSONKeyTextParser $ \case
+    "AlertNotificationMethod_Email" -> pure AlertNotificationMethod_Email
+    "AlertNotificationMethod_Telegram" -> pure AlertNotificationMethod_Telegram
+    _ -> fail "unknown alert notification method"
+
 data SmtpProtocol
   = SmtpProtocol_Plain
   | SmtpProtocol_Ssl
@@ -309,7 +331,9 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_smtpProtocol :: SmtpProtocol
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
+  -- TODO this `madeDefaultAt` seems to be for old design
   , _mailServerConfig_madeDefaultAt :: UTCTime
+  , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
@@ -359,19 +383,6 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead
 
-data UpgradeCheckError
-  = UpgradeCheckError_UpstreamUnreachable
-  | UpgradeCheckError_UpstreamMissing
-  | UpgradeCheckError_UpstreamUnparseable
-  deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
-
-data ErrorLogUpgradeNotice = ErrorLogUpgradeNotice
-  { _errorLogUpgradeNotice_log :: !(Id ErrorLog)
-  , _errorLogUpgradeNotice_error :: !(Maybe UpgradeCheckError)
-  , _errorLogUpgradeNotice_newVersion :: !(Maybe Version)
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogUpgradeNotice
-
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -395,12 +406,49 @@ data GenericCacheEntry = GenericCacheEntry
   } deriving (Eq, Generic, Show, Typeable)
 instance HasId GenericCacheEntry
 
+data UpgradeCheckError
+  = UpgradeCheckError_UpstreamUnreachable
+  | UpgradeCheckError_UpstreamMissing
+  | UpgradeCheckError_UpstreamUnparseable
+  deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
 
--- We build instances carefully so that they agree exactly with the JSON produced by the tezos ocaml apps
-concat <$> traverse (deriveJSON Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
-      , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
-      })
+data UpstreamVersion = UpstreamVersion
+  { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
+  , _upstreamVersion_version :: !(Maybe Version)
+  , _upstreamVersion_updated :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId UpstreamVersion
+
+data TelegramConfig = TelegramConfig
+  { _telegramConfig_botName :: !(Maybe Text)
+  , _telegramConfig_botApiKey :: !Text
+  , _telegramConfig_created :: !UTCTime
+  , _telegramConfig_updated :: !UTCTime
+  , _telegramConfig_enabled :: !Bool
+  , _telegramConfig_validated :: !(Maybe Bool)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramConfig
+
+data TelegramRecipient = TelegramRecipient
+  { _telegramRecipient_config :: !(Id TelegramConfig)
+  , _telegramRecipient_userId :: !Word64
+  , _telegramRecipient_chatId :: !Word64
+  , _telegramRecipient_firstName :: !Text
+  , _telegramRecipient_lastName :: !(Maybe Text)
+  , _telegramRecipient_username :: !(Maybe Text)
+  , _telegramRecipient_created :: !UTCTime
+  , _telegramRecipient_deleted :: !Bool
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramRecipient
+
+data TelegramMessageQueue = TelegramMessageQueue
+  { _telegramMessageQueue_recipient :: !(Id TelegramRecipient)
+  , _telegramMessageQueue_message :: !Text
+  , _telegramMessageQueue_created :: !UTCTime
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TelegramMessageQueue
+
+fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
@@ -417,19 +465,22 @@ concat <$> traverse (deriveJSON Aeson.defaultOptions
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameDelegate
   , ''ErrorLogNodeWrongChain
-  , ''ErrorLogUpgradeNotice
   , ''Event
+  , ''MailServerConfig
   , ''Node
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
+  , ''AlertNotificationMethod
   , ''SmtpProtocol
+  , ''TelegramConfig
+  , ''TelegramMessageQueue
+  , ''TelegramRecipient
   , ''UpgradeCheckError
-  ]
-
-concat <$> traverse makeLenses
+  , ''UpstreamVersion
+  ] ++ map makeLenses
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BakeEfficiency
@@ -451,7 +502,14 @@ concat <$> traverse makeLenses
   , 'PublicNodeHead
   , 'Report
   , 'SeenEvent
-  ]
+  , 'TelegramConfig
+  , 'TelegramMessageQueue
+  , 'TelegramRecipient
+  , 'UpstreamVersion
+  ] ++ map makePrisms
+  [ ''UpgradeCheckError
+  ])
+
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash
@@ -466,3 +524,10 @@ instance BlockLike (Event SeenEvent) where
   fitness = event_detail . seenEvent_fitness
   level = event_detail . seenEvent_level
   timestamp = event_time
+
+instance BlockLike PublicNodeHead where
+  hash = publicNodeHead_headBlock . hash
+  predecessor = publicNodeHead_headBlock . predecessor
+  fitness = publicNodeHead_headBlock . fitness
+  level = publicNodeHead_headBlock . level
+  timestamp = publicNodeHead_headBlock . timestamp

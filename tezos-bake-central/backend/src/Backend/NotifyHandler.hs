@@ -2,39 +2,35 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Backend.NotifyHandler where
 
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Control.Arrow ((&&&))
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
-import qualified Data.AppendMap as Map
-import Data.Bool (bool)
-import Data.Functor.Identity (Identity (..))
-import Data.Maybe (listToMaybe)
-import Data.Semigroup (First (..), (<>))
-import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.))
-import Rhyolite.Backend.DB (runDb)
+import qualified Data.Map.Monoidal as MMap
+import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.), Cond(..))
+import Rhyolite.Backend.DB (runDb, selectMap')
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id)
-import Say (sayErr)
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getUpgradeNotice)
-import Common (tshow, whenJust, whenM)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
+import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
+                   nodeIdForErrorLogView)
 import Common.Schema
-
 import Common.Vassal
+import ExtraPrelude
 
 notifyHandler
   :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
@@ -42,10 +38,10 @@ notifyHandler
   -> NotifyMessage
   -> BakeViewSelector a
   -> m (BakeView a)
-notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeDataSource_pool nds) $
+notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
   case fromJSON (_notifyMessage_value notifyMessage) of
     Aeson.Error e -> do
-      sayErr $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
+      $(logWarn) $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
@@ -55,16 +51,19 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
       Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
-      Notify_ErrorLogUpgradeNotice eid -> handleUpgradeNotice eid
-      Notify_MailServerConfig eid -> handleMailServer eid
+      Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
-      Notify_PublicNodeConfig eid ent -> handlePublicNodeConfig eid ent
-      Notify_PublicNodeHead eid -> handlePublicNodeHead eid
+      Notify_PublicNodeConfig _eid ent -> handlePublicNodeConfig ent
+      Notify_PublicNodeHead eid ent -> handlePublicNodeHead eid ent
+      Notify_TelegramConfig _eid ent -> handleTelegramConfig ent
+      Notify_TelegramRecipient eid ent -> handleTelegramRecipient eid ent
+      Notify_UpstreamVersion _eid ent -> handleUpstreamVersion ent
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
+    latestHeadVS = _bakeViewSelector_latestHead aggVS
 
     summaryVS = _bakeViewSelector_summary aggVS
     handleClient cid = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
@@ -99,12 +98,20 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
 
     nodesVS = _bakeViewSelector_nodes aggVS
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
-    handleNode nid node' = whenM (viewSelects (Bounded nid) nodesVS || viewSelects (Bounded nid) nodeAddressesVS) $
-      let node = if _node_deleted node' then Nothing else Just node' in
-      pure mempty
-        { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node))
-        , _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ Just $ First $ (_node_address &&& _node_alias) <$> node
-        }
+    handleNode nid node' = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) nodesVS) $ do
+          let node = if _node_deleted node' then Nothing else Just node'
+          pure mempty
+            { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node)) }
+      , whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+          alerts <- case _node_deleted node' of
+            False -> getNodeAddresses $ Just nid
+            True -> pure [(Bounded nid, First Nothing)]
+          pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
+      , whenM (viewSelects () latestHeadVS) $ do
+          latestHead <- runReaderT dataSourceHead nds
+          pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
+      ]
 
     delegateVS = _bakeViewSelector_delegates aggVS
     handleDelegate dId = do
@@ -116,30 +123,42 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
         { _bakeView_delegates = foldMap (\d -> toRangeView1 delegateVS (Bounded $ _delegate_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _delegate_deleted d)) delegate
         }
 
-    notificateesVS = _bakeViewSelector_notificatees aggVS
-    handleNotificatee nid = whenM (viewSelects (Bounded nid) notificateesVS) $ do
-      notificatee :: Maybe Notificatee <- get $ fromId nid
-      pure $ (mempty :: BakeView a)
-        { _bakeView_notificatees = toRangeView1 notificateesVS (Bounded nid) $ Just $ First $ _notificatee_email <$> notificatee
-        }
-
     mailServerVS = _bakeViewSelector_mailServer aggVS
-    handleMailServer nid = whenM (viewSelects () mailServerVS) $ do
-      mailServer :: Maybe MailServerConfig <- get $ fromId nid
+    handleNotificatee _nid = whenM (viewSelects () mailServerVS) $ do
+      notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
+      -- TODO: do something a little more reasonable that 'listToMaybe'  what happens if there *are* more than one serverConfig?
+      mailServer :: Maybe MailServerConfig <- listToMaybe . toList <$> selectMap' MailServerConfigConstructor CondEmpty
       pure $ (mempty :: BakeView a)
-        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ mailServerConfigToView <$> mailServer
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ flip mailServerConfigToView notificatees <$> mailServer
+        }
+    handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
+      notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
+      pure $ (mempty :: BakeView a)
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
         }
 
     errorsVS = _bakeViewSelector_errors aggVS
+    alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog
-      :: forall e m2. (EntityWithId e, PersistBackend m2)
+      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      whenJust specificLog' $ \specificLog -> do
+      logNodeSummary <- for (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
+        whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
+          newNodeCounts <- getNodeAddresses $ Just logNodeId
+          pure mempty
+            { _bakeView_nodeAddresses = toRangeView nodeAddressesVS newNodeCounts
+            }
+      newCount <- whenM (viewSelects () alertCountVS) $ do
+        alertCount <- getAlertCount
+        pure mempty
+          { _bakeView_alertCount = toMaybeView alertCountVS alertCount
+          }
+      newErrors <- whenJust specificLog' $ \specificLog -> do
         let logId = getLogId specificLog
         errorLog' :: Maybe ErrorLog <- get $ fromId logId
         whenJust errorLog' $ \errorLog -> do
@@ -149,21 +168,34 @@ notifyHandler nds notifyMessage aggVS = runNoLoggingT $ runDb (Identity $ _nodeD
                   (Bounded $ _errorLog_started errorLog)
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
           whenM (viewSelects errorInterval errorsVS) $ pure mempty
-              { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                  Map.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
-              }
+            { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
+            }
+      return $ newCount <> newErrors <> fold logNodeSummary
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
-    handlePublicNodeConfig _cid pnc =
+    handlePublicNodeConfig pnc =
       whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $
         pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
 
     publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
-    handlePublicNodeHead nid = whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
-      node <- get $ fromId nid
-      pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) node }
+    handlePublicNodeHead nid pnh = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
+          pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
+      , whenM (viewSelects () latestHeadVS) $ do
+          latestHead <- runReaderT dataSourceHead nds
+          pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
+      ]
 
-    upgradeVS = _bakeViewSelector_upgrade aggVS
-    handleUpgradeNotice _specificLogId = whenM (viewSelects () upgradeVS) $ do
-      n <- getUpgradeNotice
-      pure $ mempty { _bakeView_upgrade = toMaybeView upgradeVS n }
+    telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
+    handleTelegramConfig cfg = whenM (viewSelects () telegramConfigVS) $ do
+      pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS $ Just $ Just cfg }
+
+    telegramRecipientsVS = _bakeViewSelector_telegramRecipients aggVS
+    handleTelegramRecipient rid recipient = whenM (viewSelects (Bounded rid) telegramRecipientsVS) $ do
+      pure $ mempty
+        { _bakeView_telegramRecipients = toRangeView1 telegramRecipientsVS (Bounded rid) (Just $ First recipient) }
+
+    upgradeVS = _bakeViewSelector_upstreamVersion aggVS
+    handleUpstreamVersion ent = whenM (viewSelects () upgradeVS) $ do
+      pure $ mempty { _bakeView_upstreamVersion = toMaybeView upgradeVS (Just ent) }

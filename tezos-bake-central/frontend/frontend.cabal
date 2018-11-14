@@ -16,6 +16,12 @@ library
 
   other-modules:
     Frontend.Common
+    Frontend.Modal.Base
+    Frontend.Modal.Class
+    Frontend.Settings
+    Frontend.Settings.Mail
+    Frontend.Settings.Telegram
+    Frontend.Watch
 
   build-depends:
       base
@@ -25,18 +31,23 @@ library
     , common
     , containers
     , data-default
-    , either
+    , exceptions
     , file-embed
+    , friendly-time
+    , functor-infix
     , ghcjs-dom
     , IntervalMap
+    , jsaddle
     , lens
     , modern-uri
     , monoidal-containers
     , mtl
     , obelisk-executable-config
     , obelisk-frontend
+    , obelisk-generated-static
     , obelisk-route
     , primitive
+    , ref-tf
     , reflex
     , reflex-dom-core
     , reflex-dom-forms

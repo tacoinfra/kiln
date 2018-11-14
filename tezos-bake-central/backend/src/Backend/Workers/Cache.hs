@@ -2,11 +2,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Backend.Workers.Cache where
 
 import Control.Concurrent.MVar (modifyMVar, tryReadMVar)
 import Control.Lens ((<&>))
-import Control.Monad.Logger (runNoLoggingT)
+import Control.Monad.Logger (logDebugSH)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DSum (..))
@@ -19,13 +20,13 @@ import Data.Maybe (catMaybes, listToMaybe)
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
-import Say (sayShow)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 
 import Tezos.Types (ChainId)
 
 import Backend.CachedNodeRPC (CacheLine (..), CachedResult (..), NodeDataSource (..), NodeQuery (..))
 import Backend.Common (workerWithDelay)
-import Backend.Schema (Field (..), stripOnly)
+import Backend.Schema
 import Common.Schema (GenericCacheEntry (..))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.Schema (fromId)
@@ -69,8 +70,8 @@ cacheWorker delay dsrc = workerWithDelay (pure delay) $ \_ -> do
   modifyMVar (_nodeDataSource_cache dsrc) $ \cache -> do
     now <- addUTCTime maxTTL <$> getCurrentTime
     (writeBackThese, retainThese) <- fmap (partitionEithers . catMaybes) $ traverse (classifyCacheEntry chainId now) $ DMap.toAscList cache
-    sayShow ("flushing cache:" :: Text, length writeBackThese, length retainThese)
-    runNoLoggingT $ runDb (Identity db) $ for_ writeBackThese $ \cacheEntry -> do
+    runLoggingEnv (_nodeDataSource_logger dsrc) $ $(logDebugSH) ("flushing cache:" :: Text, length writeBackThese, length retainThese)
+    runLoggingEnv (_nodeDataSource_logger dsrc) $ runDb (Identity db) $ for_ writeBackThese $ \cacheEntry -> do
       let kJson = _genericCacheEntry_key cacheEntry
       have :: Maybe (Id GenericCacheEntry) <- listToMaybe . stripOnly <$> [queryQ|
         SELECT c."id"

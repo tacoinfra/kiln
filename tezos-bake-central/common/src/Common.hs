@@ -1,30 +1,37 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Common where
 
-import Data.Foldable (toList)
-import Data.Map.Monoidal (MonoidalMap)
+import qualified Cases
+import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
-import Data.Semigroup ((<>))
-import Data.Text (Text)
+import Data.Ratio (denominator, numerator)
 import qualified Data.Text as T
+import qualified Data.Time as Time
+import Data.Time.Clock (NominalDiffTime)
 import qualified Text.URI as Uri
+import ExtraPrelude
 
-tshow :: Show a => a -> Text
-tshow = T.pack . show
+nominalDiffTimeToSeconds :: NominalDiffTime -> Integer
+nominalDiffTimeToSeconds n = numerator ratio * denominator ratio
+  where
+    ratio = toRational n
 
-whenJust :: (Applicative m, Monoid a) => Maybe t -> (t -> m a) -> m a
-whenJust Nothing _ = pure mempty
-whenJust (Just x) f = f x
-
-whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
-whenM x true = if x then true else pure mempty
+nominalDiffTimeToMicroseconds :: NominalDiffTime -> Integer
+nominalDiffTimeToMicroseconds n = numerator ratio * (microsecondsInSecond `div` denominator ratio)
+  where
+    microsecondsInSecond = 10^(6 :: Integer)
+    ratio = toRational n
 
 curryMap :: (Eq a) => MonoidalMap (a, b) c -> MonoidalMap a (MonoidalMap b c)
 curryMap = MMap.fromAscList . fmap (\((a, b), c) -> (a, MMap.singleton b c)) . MMap.toAscList
 
 maybeSomething :: Foldable f => f a -> Maybe (f a)
 maybeSomething as = if null as then Nothing else Just as
+
+unixEpoch :: Time.UTCTime
+unixEpoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
 
 uriHostPortPath :: Uri.URI -> Text
 uriHostPortPath uri = auth <> path
@@ -35,3 +42,19 @@ uriHostPortPath uri = auth <> path
     path = case Uri.uriPath uri of
       Nothing -> ""
       Just (_, pieces) -> T.intercalate "/" $ toList $ Uri.unRText <$> pieces
+
+defaultTezosCompatJsonOptions :: Aeson.Options
+defaultTezosCompatJsonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=) . tail
+  , Aeson.constructorTagModifier = T.unpack . Cases.snakify . T.pack . dropWhile ('_' /=)
+  }
+
+humanBytes :: Double -> Text
+humanBytes n = tshow (round n' :: Int) <> u
+  where
+    (n' :: Double, u :: Text)
+      | n >= 2^(40 :: Int) = (n / 2**40, "TB")
+      | n >= 2^(30 :: Int) = (n / 2**30, "GB")
+      | n >= 2^(20 :: Int) = (n / 2**20, "MB")
+      | n >= 2^(10 :: Int) = (n / 2**10, "KB")
+      | otherwise = (n, "B")

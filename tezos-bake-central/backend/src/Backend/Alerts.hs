@@ -2,69 +2,42 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
 module Backend.Alerts where
 
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Reader (MonadReader)
-import Data.Either.Combinators (leftToMaybe, rightToMaybe)
-import Data.Foldable (for_)
-import Data.Functor.Const (Const (..))
-import Data.Maybe (listToMaybe)
-import Data.Semigroup ((<>))
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
-import Data.Version (Version)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
-import Network.Mail.Mime (Address (..), Mail, simpleMail')
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
-import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
 
 import Tezos.Types
 
-import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
+import Backend.Alerts.Common (Alert (..), queueAlert)
+import Backend.Config (HasAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
 import Common.Schema
-
-mailFor :: Address -> Text -> [Error] -> Mail
-mailFor fromAddr toAddr errs =
-  let
-    toA = Address Nothing toAddr
-    body = TL.fromStrict . T.unlines $ [T.pack (show t) <> ": " <> e | Error t e <- errs]
-  in simpleMail' toA fromAddr "Error from Tezos bake monitor" body
-
-queueAllEmails ::
-  ( PersistBackend m, PostgresLargeObject m, MonadIO m
-  , MonadReader a m, HasAppConfig a) => [Error] -> m ()
-queueAllEmails message = do
-  ns <- select CondEmpty
-  fromAddr <- _appConfig_emailFromAddress <$> askAppConfig
-  for_ ns $ \n ->
-    queueEmail (mailFor fromAddr (_notificatee_email n) message) Nothing
-
+import ExtraPrelude
 
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a
      )
   => Id Client -> SeenEvent -> m ()
-reportNoBakerHeartbeatError cid eventDetail = do
+reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted bakers
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
     FROM "ErrorLog" el
@@ -86,11 +59,9 @@ reportNoBakerHeartbeatError cid eventDetail = do
         }
 
       client :: Maybe Client <- get $ fromId cid
-      now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
-        }]
+      queueAlert $
+        Alert "Baker has not seen block for a while" $
+        "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
         [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
@@ -99,23 +70,30 @@ reportNoBakerHeartbeatError cid eventDetail = do
 
 
 clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Client -> m ()
-clearNoBakerHeartbeatError cid = do
+clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerNoHeartbeat" t
-    WHERE t.log = el.id AND t.client = ?cid AND el.stopped IS NULL
+      JOIN "Client" c ON t.client = c.id
+    WHERE t.log = el.id
+      AND t.client = ?cid
+      AND NOT c.deleted
+      AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
 
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> m ()
-reportInaccessibleNodeError nodeId = do
+reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
-     WHERE t.node = ?nodeId AND el.stopped IS NULL
+      JOIN "Node" n ON n.id = t.node
+     WHERE t.node = ?nodeId
+       AND NOT n.deleted
+       AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -124,16 +102,13 @@ reportInaccessibleNodeError nodeId = do
       node' <- get (fromId nodeId)
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
-        now <- getTime
-        queueAllEmails [Error
-          { _error_time = now
-          , _error_text = "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
-          }]
+        queueAlert $ Alert "Unable to connect to node" $
+          "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
   :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
-clearInaccessibleNodeError nodeId = do
+clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInaccessibleNode" t
@@ -144,14 +119,16 @@ clearInaccessibleNodeError nodeId = do
 reportNodeWrongChainError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
   => Id Node -> ChainId -> ChainId -> m ()
-reportNodeWrongChainError nodeId expectedChainId actualChainId = do
+reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
+      JOIN "Node" n ON n.id = t.node
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
+       AND NOT n.deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -161,16 +138,13 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = do
       node' <- get $ fromId nodeId
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
-        now <- getTime
-        queueAllEmails [Error
-          { _error_time = now
-          , _error_text = "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
-          }]
+        queueAlert $ Alert "Node on wrong network" $
+          "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
   :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
-clearNodeWrongChainError nodeId = do
+clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeWrongChain" t
@@ -178,18 +152,21 @@ clearNodeWrongChainError nodeId = do
       AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notify . Notify_ErrorLogNodeWrongChain
+  for_ lids $ notify . mkDefaultNotify
 
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
-reportBadNodeHeadError nodeId latestHead nodeHead lca = do
+reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-     WHERE t.node = ?nodeId AND el.stopped IS NULL
+      JOIN "Node" n ON n.id = t.node
+     WHERE t.node = ?nodeId
+       AND NOT n.deleted
+       AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -205,9 +182,8 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
       node <- get $ fromId nodeId
       for_ node $ \n -> do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        now <- getTime
-        queueAllEmails [Error now $
-          heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message]
+        queueAlert $ Alert heading $
+          heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -217,7 +193,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = do
         ]
 
 clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m) => Id Node -> m ()
-clearBadNodeHeadError nodeId = do
+clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBadNodeHead" t
@@ -225,43 +201,8 @@ clearBadNodeHeadError nodeId = do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
 
-reportUpgradeNotice
-  :: (PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig r, MonadReader r m)
-  => Either UpgradeCheckError Version -> m ()
-reportUpgradeNotice errorOrNewVersion = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogUpgradeNotice) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
-      FROM "ErrorLog" el
-      JOIN "ErrorLogUpgradeNotice" t ON t.log = el.id
-     WHERE el.stopped IS NULL
-     ORDER BY el."lastSeen" DESC, el.started DESC
-     LIMIT 1
-    |]
-  case existingLog of
-    Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogUpgradeNotice logId (leftToMaybe errorOrNewVersion) (rightToMaybe errorOrNewVersion)
-      now <- getTime
-      queueAllEmails [Error
-        { _error_time = now
-        , _error_text = case errorOrNewVersion of
-            Left _ -> "We were not able to contact the upgrade check endpoint. If this issue persists please check for an upgrade manually."
-            Right _ -> "We found a newer version of the monitor. Please consider upgrading."
-        }]
-
-    Just (logId, specificLogId) -> do
-      updateErrorLogBy logId specificLogId
-        [ ErrorLogUpgradeNotice_errorField =. leftToMaybe errorOrNewVersion
-        , ErrorLogUpgradeNotice_newVersionField =. rightToMaybe errorOrNewVersion
-        ]
-
-clearUpgradeNotice :: (Monad m, PostgresRaw m, PersistBackend m) => m ()
-clearUpgradeNotice = do
-  lids :: [Id ErrorLogUpgradeNotice] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = NOW()
-      FROM "ErrorLogUpgradeNotice" t
-    WHERE t.log = el.id AND el.stopped IS NULL
-    RETURNING t.id |]
-  for_ lids $ notify . mkDefaultNotify
+nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
+nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do

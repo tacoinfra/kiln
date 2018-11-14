@@ -1,5 +1,5 @@
 name: backend
-version: 0.1
+version: 0.2
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -31,10 +31,11 @@ library
     -- , diagrams-core
     -- , diagrams-lib
     -- , diagrams-svg
-    , either
+    , exceptions
     , filepath
     , formatting
     , frontend
+    , functor-infix
     , generic-deriving
     , groundhog
     , groundhog-postgresql
@@ -71,7 +72,6 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
-    , say
     , snap-core
     , snap-loader-static
     , snap-server
@@ -79,8 +79,10 @@ library
     , svg-builder
     , text
     , tezos-bake-monitor-lib
+    , tezos-noderpc
     , time
     , unix
+    , uri-encode
 
   exposed-modules:
     Backend
@@ -88,16 +90,20 @@ library
   other-modules:
     Paths_backend
     Backend.Alerts
+    Backend.Alerts.Common
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
     Backend.Config
-    -- Backend.Graphs
+    --Backend.Graphs
+    Backend.Http
+    Backend.Migrations
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
     Backend.Supervisor
+    Backend.Telegram
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler

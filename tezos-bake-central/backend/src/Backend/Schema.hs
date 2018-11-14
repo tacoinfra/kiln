@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
@@ -19,28 +20,25 @@
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
-module Backend.Schema where
+module Backend.Schema
+  ( module Backend.Schema
+
+  -- Re-exports
+  , toId
+  ) where
 
 import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
-import Data.Coerce (Coercible, coerce)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
-import Data.Foldable (toList)
-import Data.Functor (void)
 import Data.Int (Int64)
-import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (fromJust, fromMaybe)
-import Data.Semigroup ((<>))
+import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
-import Data.Typeable (Typeable)
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
@@ -50,13 +48,12 @@ import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
-import Database.Groundhog.TH
+import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
-import GHC.Generics (Generic)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
@@ -74,6 +71,7 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.Schema
+import ExtraPrelude
 
 
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
@@ -87,13 +85,15 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
-  | Notify_ErrorLogUpgradeNotice !(Id ErrorLogUpgradeNotice)
-  | Notify_MailServerConfig !(Id MailServerConfig)
+  | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
+  | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
-  | Notify_PublicNodeHead !(Id PublicNodeHead)
+  | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
+  | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
+  | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
   deriving (Eq, Ord, Typeable, Generic, Show)
 instance ToJSON Notify
 instance FromJSON Notify
@@ -115,14 +115,16 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
-instance HasDefaultNotify (Id ErrorLogUpgradeNotice) where
-  mkDefaultNotify = Notify_ErrorLogUpgradeNotice
-instance HasDefaultNotify (Id MailServerConfig) where
-  mkDefaultNotify = Notify_MailServerConfig
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
-instance HasDefaultNotify (Id PublicNodeHead) where
-  mkDefaultNotify = Notify_PublicNodeHead
+
+class HasDefaultNotifyUnique f where
+  mkDefaultNotifyUnique :: Id f -> f -> Notify
+
+instance HasDefaultNotifyUnique MailServerConfig where
+  mkDefaultNotifyUnique = Notify_MailServerConfig
+instance HasDefaultNotifyUnique TelegramConfig where
+  mkDefaultNotifyUnique = Notify_TelegramConfig
 
 notify :: (PersistBackend m) => Notify -> m ()
 notify n = do
@@ -161,8 +163,41 @@ updateIdNotify tid dt = do
   updateId tid dt
   notify $ mkDefaultNotify tid
 
-insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m ()
-insertNotify a = notify . mkDefaultNotify =<< insert' a
+updateIdNotifyUnique
+  :: (HasDefaultNotifyUnique a, EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
+updateIdNotifyUnique tid dt = do
+  updateId tid dt
+  newRow <- getId tid >>= \case
+    Nothing -> fail "impossible got nothing back after insertion in DB transaction"
+    Just x -> pure x
+  notify $ mkDefaultNotifyUnique tid newRow
+
+insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotify a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotify primaryKey
+  pure primaryKey
+
+insertNotifyUnique :: (HasDefaultNotifyUnique a, EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotifyUnique a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotifyUnique primaryKey a
+  pure primaryKey
+
+selectIds
+  :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.
+     ( ProjectionDb t (PhantomDb m)
+     , ProjectionRestriction t (RestrictionHolder v c), DefaultKeyId v
+     , Projection t v, EntityConstr v c
+     , HasSelectOptions a (PhantomDb m) (RestrictionHolder v c)
+     , PersistBackend m, AutoKey v ~ DefaultKey v)
+  => t -- ^ Constructor
+  -> a -- ^ Select options
+  -> m [(Id v, v)]
+selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -484,6 +519,10 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
+        fields:
+          - name: _mailServerConfig_enabled
+            type: Bool
+            default: "True"
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
@@ -493,7 +532,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameDelegate
   - entity: ErrorLogNodeWrongChain
-  - entity: ErrorLogUpgradeNotice
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -511,6 +549,16 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields:
            - _genericCacheEntry_chainId
            - _genericCacheEntry_key
+  - entity: TelegramConfig
+    constructors:
+    - name: TelegramConfig
+      uniques:
+      - name: _telegramConfig_uniqueness
+        type: constraint
+        fields: [_telegramConfig_botApiKey]
+  - entity: TelegramMessageQueue
+  - entity: TelegramRecipient
+  - entity: UpstreamVersion
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -524,7 +572,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
-  , (''ErrorLogUpgradeNotice, 'ErrorLogUpgradeNoticeKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
@@ -533,4 +580,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''PendingReward, 'PendingRewardKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
+  , (''TelegramConfig, 'TelegramConfigKey)
+  , (''TelegramRecipient, 'TelegramRecipientKey)
+  , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
+  , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
