@@ -9,8 +9,10 @@
 
 module Frontend.Settings.Mail where
 
+import Control.Monad (guard)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Trans (lift)
+import Data.Bifunctor (first, second)
 import Data.Functor.Infix
 import qualified Data.Map as Map
 import qualified Data.Text as T
@@ -33,12 +35,15 @@ import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
 
+abstractPassword :: Text
+abstractPassword = "••••••••••••"
+
 mailServerForm
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadJSM m
      , MonadJSM (Performable m)
      )
-  => (MailServerView, [Email]) -> m (Event t ((MailServerView, Text), [Email]))
+  => (MailServerView, [Email]) -> m (Event t ((MailServerView, Maybe Text), [Email]))
 mailServerForm (srv0, emails0) = do
   (form, save) <- formWithSubmit $ do
     srvform <- serverFields
@@ -50,7 +55,12 @@ mailServerForm (srv0, emails0) = do
       ) $ text "Save Email Settings"
     return form
 
-  pure $ filterRight $ tag (current form) save
+  -- TODO think about passwords forms and optional fields
+  let form' = (fmap . first . second)
+        (\t -> guard (t /= abstractPassword) *> Just t)
+        (filterRight $ tag (current form) save)
+
+  pure form'
 
   where
     mailNotificationOptions = do
@@ -99,6 +109,7 @@ mailServerForm (srv0, emails0) = do
 
         tellFieldErr _2 <=< formItem' "three wide"
           $ validatedInput (Validator.optionalWith "" id validatePassword)
+          $ Txt.setInitial abstractPassword
           $ defTxt "Password"
 
     validatePassword = Validator.Validator (\x -> if T.null x then Left "Please enter a password" else Right x) Txt.setPasswordType

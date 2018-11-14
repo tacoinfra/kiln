@@ -130,13 +130,10 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   --     flip itraverse (_bakeViewSelector_delegateStats vs) $ \(i, j) -> _
   --     -- calculateDelegateStats (_bakeViewSelector_delegateStats vs)
 
-  let notificateesVS = _bakeViewSelector_notificatees vs
-  notificatees <- whenM (not $ null notificateesVS) $ do
-    rs <- selectMap' NotificateeConstructor CondEmpty
-    return $ tightenView $ toRangeView notificateesVS $ MMap.toList $ First . Just . _notificatee_email <$> MMap.mapKeys Bounded rs
 
-  mailServer <- maybeViewHandler _bakeViewSelector_mailServer $
-    fmap (Just . fmap mailServerConfigToView) $ selectSingle $ CondEmpty
+  mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
+    rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
+    fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle $ CondEmpty
 
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
@@ -176,7 +173,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_delegateStats = delegateStats
-    , _bakeView_notificatees = notificatees
     , _bakeView_mailServer = mailServer
     -- , _bakeView_summaryGraph = summaryGraph
     , _bakeView_summary = summaryView

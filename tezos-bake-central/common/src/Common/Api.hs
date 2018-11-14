@@ -39,10 +39,11 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveClient
       :: URI -- address of client to unsubscribe from
       -> PublicRequest Bake ()
+    -- TODO think harder about update versus initial set
     PublicRequest_SetMailServerConfig
       :: MailServerView
       -> [Email]
-      -> Text -- password
+      -> Maybe Text -- password
       -> PublicRequest Bake ()
     PublicRequest_SendTestEmail
       :: Email
