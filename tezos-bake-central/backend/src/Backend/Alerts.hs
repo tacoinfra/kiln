@@ -209,8 +209,8 @@ clearBadNodeHeadError nodeId = do
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
   for_ node $ \n -> do
-    queueAlert $ Alert "Resolved: Node Issue" $
-        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n)
+    queueAlert $ Alert "Resolved: Node is in sync" $
+        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
 insertErrorLog mkErrorLog = do
