@@ -74,6 +74,7 @@ module ExtraPrelude
   , ($>)
 
   , tshow
+  , when'
   , whenJust
   , whenM
   ) where
@@ -117,3 +118,6 @@ whenJust (Just x) f = f x
 
 whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
 whenM x true = if x then true else pure mempty
+
+when' :: (Monad m, Monoid b) => m Bool -> m b -> m b
+when' x true = x >>= \v -> if v then true else pure mempty

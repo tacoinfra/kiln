@@ -254,7 +254,7 @@ body {
       margin-right: 0.5em;
       margin-top: 1em;
     }
- 
+
     .ui.header {
       font-size: unit(22 / @emSize, rem);
     }
@@ -368,6 +368,7 @@ body {
         font-size: @20px;
         margin-right: 0;
         > .icon {
+          ._link-like();
           font-size: @25px;
           margin-right: 0;
         }
@@ -543,6 +544,12 @@ img.credits-obsidian {
       cursor: pointer;
       padding-right: @27px;
     }
+  }
+}
+
+.notifications-section {
+  > .ui.header:first-child {
+    margin-top: @64px;
   }
 }
 
