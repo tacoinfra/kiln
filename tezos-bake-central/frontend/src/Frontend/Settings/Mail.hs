@@ -35,6 +35,20 @@ import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
 
+editCfg
+  :: ( MonadRhyoliteFrontendWidget Bake t m
+     , MonadJSM m
+     , MonadJSM (Performable m)
+     )
+  => Dynamic t (Maybe MailServerView) -> m ()
+editCfg mailServer = do
+  dyn_ $ ffor mailServer $ \cfg -> do
+    let ns0 = foldMap _mailServerView_notificatees cfg
+    let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True ns0) cfg
+    updatedForm <- mailServerForm (srv0, ns0)
+    requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
+
+
 abstractPassword :: Text
 abstractPassword = "••••••••••••"
 

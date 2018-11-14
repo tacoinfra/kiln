@@ -83,7 +83,7 @@ settingsTab = do
         { _notificationCfg_name = "Email"
         , _notificationCfg_description = "Use your own email server to send alerts."
         , _notificationCfg_iconName = "letter"
-        , _notificationCfg_content = mailServerOptions
+        , _notificationCfg_content = Mail.editCfg
         , _notificationCfg_method = AlertNotificationMethod_Email
         , _notificationCfg_watchCfg = watchMailServer
         , _notificationCfg_getEnabled = _mailServerView_enabled
@@ -147,14 +147,6 @@ settingsTab = do
               True -> do
                 divClass "notification-settings-description" $ text descr
                 content dmCfg
-
-    mailServerOptions :: Dynamic t (Maybe MailServerView) -> m ()
-    mailServerOptions mailServer = do
-      dyn_ $ ffor mailServer $ \cfg -> do
-        let ns0 = foldMap _mailServerView_notificatees cfg
-        let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True ns0) cfg
-        updatedForm <- Mail.mailServerForm (srv0, ns0)
-        requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
 
     _clientsOptions :: m ()
     _clientsOptions = void $ do
