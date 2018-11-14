@@ -88,22 +88,18 @@ Alternatively, if you have a compatible version of `pg_dump` installed, you can 
 pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > tezos-monitor-postgres-backup1.sql
 ```
 
-### Running the Newer Version
+### Running the newer version
 
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 ...
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2 ...
 ```
 
-you can replace `0.1` with another available version.
+you can replace `0.2` with another available version.
 
 You can remove the old image and container safely. They do not store any data.
 
-
-# Known Issues
-
-  * If the frontend page loses connection to the server it will stop showing live data. This might happen if, for example, your computer goes to sleep with the page open. For now, you need to manually refresh the page to reconnect. This will be fixed in a future release.
 
 # Building the Monitor from Source
 
