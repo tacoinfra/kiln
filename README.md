@@ -98,7 +98,7 @@ DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake
 
 you can replace `0.2` with another available version.
 
-You can remove the old image and container safely. They do not store any data.
+You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
 
 # System Requirements
 
