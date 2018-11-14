@@ -17,6 +17,7 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (first, second)
 import Data.Functor.Infix
+import Data.Universe (universeF)
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Form.Checks as Check
@@ -38,11 +39,43 @@ import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
 
+renderProto :: SmtpProtocol -> Text
+renderProto = \case
+  SmtpProtocol_Plain -> "Plain"
+  SmtpProtocol_Ssl -> "SSL"
+  SmtpProtocol_Starttls -> "STARTTLS"
+
 viewCfg
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t MailServerView
   -> m (Event t ())
-viewCfg _ = never <$ text "TODO Email View"
+viewCfg dMsv = do --never <$ text "TODO Email View"
+  (reopener, _) <- elClass "p" "edit-link" $ do
+    el' "a" $ text "Edit Settings"
+
+  elClass "table" "settings-table" $ do
+    el "tr" $ do
+      el "th" $ text "Email Server"
+      el "th" $ text "Username"
+      el "th" $ text "Password"
+    el "tr" $ do
+      el "td" $ dynText $ ffor dMsv $ \msv ->
+        _mailServerView_hostName msv
+        <> ":"
+        <> T.pack (show $ _mailServerView_portNumber msv)
+        <> " "
+        <> renderProto (_mailServerView_smtpProtocol msv)
+      el "td" $ dynText $ _mailServerView_userName <$> dMsv
+      el "td" $ text $ "••••••••••••"
+
+  elClass "table" "settings-table" $ do
+    el "tr" $ do
+      elAttr "th" ("rowspan" =: "0") $ text "Recipients"
+    dyn_ $ ffor (_mailServerView_notificatees <$> dMsv) $ mapM_ $ \notificatee ->
+      el "tr" $ do
+        elClass "td" "visually-second" $ text notificatee
+
+  return $ domEvent Click reopener
 
 editCfg
   :: ( MonadRhyoliteFrontendWidget Bake t m
@@ -51,13 +84,13 @@ editCfg
      )
   => Dynamic t (Maybe MailServerView) -> m (Event t ())
 editCfg mailServer = do
-  dyn_ $ ffor mailServer $ \cfg -> do
+  eeClose <- dyn $ ffor mailServer $ \cfg -> do
     let ns0 = foldMap _mailServerView_notificatees cfg
     let srv0 = fromMaybe (MailServerView "" 587 SmtpProtocol_Ssl "" True ns0) cfg
-    updatedForm <- mailServerForm (srv0, ns0)
-    requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
-  -- TODO
-  pure never
+    (updatedForm, cancelled) <- mailServerForm (srv0, ns0)
+    saved <- requestingIdentity $ public . (\((srv, pass), ns) -> PublicRequest_SetMailServerConfig srv ns pass ) <$> updatedForm
+    pure $ leftmost [saved, cancelled]
+  switchHold never eeClose
 
 
 abstractPassword :: Text
@@ -68,9 +101,9 @@ mailServerForm
      , MonadJSM m
      , MonadJSM (Performable m)
      )
-  => (MailServerView, [Email]) -> m (Event t ((MailServerView, Maybe Text), [Email]))
+  => (MailServerView, [Email]) -> m (Event t ((MailServerView, Maybe Text), [Email]), Event t ())
 mailServerForm (srv0, emails0) = do
-  (form, save) <- formWithSubmit $ do
+  ((form, cancel), save) <- formWithSubmit $ do
     srvform <- serverFields
     mailform <- mailNotificationOptions
     let form = (liftA2 . liftA2) (,) srvform mailform
@@ -78,14 +111,15 @@ mailServerForm (srv0, emails0) = do
       (ffor (isRight <$> form) $ \s -> "type"=:"submit"
         <> "class"=:("ui tiny primary submit button" <> if s then "" else " disabled")
       ) $ text "Save Email Settings"
-    return form
+    cancel <- uiButton "tiny" "Cancel"
+    return (form, cancel)
 
   -- TODO think about passwords forms and optional fields
   let form' = (fmap . first . second)
         (\t -> guard (t /= abstractPassword) *> Just t)
         (filterRight $ tag (current form) save)
 
-  pure form'
+  pure (form', cancel)
 
   where
     mailNotificationOptions = do
@@ -123,9 +157,9 @@ mailServerForm (srv0, emails0) = do
               (Just $ _mailServerView_smtpProtocol srv0)
               never
               $ SemUi.TaggedStatic
-              $ SmtpProtocol_Plain=:text "Plain"
-              <> SmtpProtocol_Ssl=:text "SSL"
-              <> SmtpProtocol_Starttls=:text "STARTTLS"
+              $ fold
+              $ ffor universeF $ \p ->
+                p =: text (renderProto p)
 
       divClass "two fields" $ do
         tellFieldErr (_1 . mailServerView_userName) <=< formItem' "four wide"

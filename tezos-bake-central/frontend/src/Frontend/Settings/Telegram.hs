@@ -40,17 +40,19 @@ viewCfg
   => Dynamic t TelegramConfig
   -> m (Event t ())
 viewCfg cfg = do
-  recipients <- watchTelegramRecipients
   (reopener, _) <- elClass "p" "edit-link" $ do
     el' "a" $ text "Reconfigure Telegram"
-  elClass "table" "telegram-recipients" $ do
+
+  recipients <- watchTelegramRecipients
+  elClass "table" "settings-table" $ do
     el "tr" $ do
-      elClass "th" "telegram-recipient" $ text "Recipient"
-      elClass "th" "telegram-bot" $ text "Bot Name"
+      el "th" $ text "Recipient"
+      el "th" $ text "Bot Name"
     void $ listWithKey recipients $ \_ recipient -> do
       el "tr" $ do
-        elClass "td" "telegram-recipient" $ dynText $ fmap telegramRecipientFullName recipient
-        elClass "td" "telegram-bot" $ dynText $ fmap (view $ telegramConfig_botName . _Just) cfg
+        el "td" $ dynText $ fmap telegramRecipientFullName recipient
+        el "td" $ dynText $ fmap (view $ telegramConfig_botName . _Just) cfg
+
   return $ domEvent Click reopener
 
 editCfg
