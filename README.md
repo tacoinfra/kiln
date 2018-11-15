@@ -180,18 +180,20 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 ### Adding Monitored Nodes
 
-When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
+Click *Add Node* from the left panel and enter the address of the node you would like to monitor under *Connect via address*. Then click *Add Node*. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC address. If you do not know the RPC address of the node or if the node wasn't started with `--rpc-addr`, the monitor will not be able to retrieve information from the node.
 
-\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
+\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal` instead of `localhost`, e.g. `http://host.docker.internal:8732`. `localhost` will also not work on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
-Once you’ve added at least one Monitored or Public Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
+Once you’ve added at least one node or Public Node, the Dashboard will show you statistics.
 
 ### Adding Public Nodes
 
-On the Options Tab, you’ll see a section called ‘Public Nodes’, which lists a button for each Public Node you’re able to observe. By default, none of these are selected. To observe them, toggle on the button for that node. It should then appear on the Node Tab.
+Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Email Configuration
+### Email Notifications
 
-Within the Options Tab of the Monitor you can configure your own SMTP email server to send alerts if a node is on the wrong chain or network, more than five blocks behind, or has gone offline. To link your email server to the Monitor, enter the location information (host, port, and protocol), as well as the authentication information (username and password). When you have finished filling in the fields, hit ‘Save’ and move on to ‘Notification Recipients’. Add the email addresses of whomever you would like to receive the email alerts.
+Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
 
-Once you’ve added a notification recipient, an orange ‘Send Test’ button will appear next to their email address. Pressing that button will send a test email to that address, confirming that the SMTP server has been configured correctly.
+### Telegram Notifications
+
+Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.
