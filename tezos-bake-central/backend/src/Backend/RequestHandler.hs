@@ -186,7 +186,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
         -- When turning something "on" immediately update the data source.
         when enabled $
-          for_ (filter (\(pn, _, _) -> pn == publicNode) publicNodeSources) $
+          void $ liftIO $ async $ for_ (filter (\(pn, _, _) -> pn == publicNode) publicNodeSources) $
             updateDataSource nds
 
       PublicRequest_AddTelegramConfig apiKey -> do
