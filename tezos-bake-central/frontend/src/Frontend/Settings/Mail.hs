@@ -66,7 +66,7 @@ viewCfg dMsv = do --never <$ text "TODO Email View"
         <> " "
         <> renderProto (_mailServerView_smtpProtocol msv)
       el "td" $ dynText $ _mailServerView_userName <$> dMsv
-      el "td" $ text $ "••••••••••••"
+      el "td" $ text abstractPassword
 
   elClass "table" "settings-table" $ do
     el "tr" $ do
