@@ -18,7 +18,7 @@ This version (v0.2) is a very early version of our Monitoring Software. Near-ter
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
-#### Running a Node
+#### Running a node
 
 This Monitor assumes that you are running at least one Tezos node. Options for running a node include:
 
@@ -162,7 +162,7 @@ The result of this command will be the path to a Docker image. You can load it w
 
 # Initial Setup
 
-### Adding Monitored Nodes
+### Adding monitored nodes
 
 Click *Add Node* from the left panel and enter the address of the node you would like to monitor under *Connect via address*. Then click *Add Node*. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC address. If you do not know the RPC address of the node or if the node wasn't started with `--rpc-addr`, the monitor will not be able to retrieve information from the node.
 
@@ -170,14 +170,14 @@ Click *Add Node* from the left panel and enter the address of the node you would
 
 Once you’ve added at least one node or Public Node, the Dashboard will show you statistics.
 
-### Adding Public Nodes
+### Adding public nodes
 
 Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Email Notifications
+### Configuring email notifications
 
 Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
 
-### Telegram Notifications
+### Configuring Telegram notifications
 
 Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.
