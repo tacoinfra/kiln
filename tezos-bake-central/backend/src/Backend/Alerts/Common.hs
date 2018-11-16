@@ -1,8 +1,10 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 module Backend.Alerts.Common where
 
+import Control.Monad.Logger (MonadLogger, logInfoS, logErrorS)
 import qualified Data.Text.Lazy as TL
 import Database.Groundhog.Core (Cond (CondEmpty), select)
 import Database.Groundhog.Postgresql (PersistBackend)
@@ -17,18 +19,21 @@ import Common.Schema
 import ExtraPrelude
 
 data Alert = Alert
-  { _alert_subject :: !Text
+  { _is_recovery :: !Bool
+  , _alert_subject :: !Text
   , _alert_content :: !Text
   }
 
 queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a
+     , MonadReader a m, HasAppConfig a, MonadLogger m
      )
   => Alert -> m ()
 queueAlert alert = do
   queueEmailAlert alert
   queueTelegramAlert alert
+  let logger = if _is_recovery alert then $(logInfoS) else $(logErrorS)
+  logger "Kiln" (_alert_subject alert <> ": " <> _alert_content alert)
 
 queueTelegramAlert
   :: (PersistBackend m, PostgresRaw m)
