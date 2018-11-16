@@ -24,6 +24,9 @@ data Alert = Alert
   , _alert_content :: !Text
   }
 
+recoveryAlert = Alert True
+newAlert = Alert False
+
 queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a, MonadLogger m
