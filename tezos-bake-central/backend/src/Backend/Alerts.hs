@@ -9,7 +9,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
+{-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
 
 module Backend.Alerts where
 
@@ -20,7 +20,7 @@ import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
@@ -71,7 +71,7 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
         ]
 
 
-clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m,
+clearNoBakerHeartbeatError :: (Monad m, PersistBackend m,
                                PostgresLargeObject m, MonadIO m, MonadReader a m, MonadLogger m,
                                HasAppConfig a) => Id Client -> m ()
 clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
@@ -116,7 +116,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
@@ -126,7 +126,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node' <- get (fromId nodeId)
-  $(logDebugSH) ("LIDs we've supposedly blanked out", lids)
+  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
@@ -159,7 +159,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
@@ -214,7 +214,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
 
-clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
+clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
                           MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
