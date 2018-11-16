@@ -6,12 +6,14 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
 module Backend.Alerts where
 
+import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
@@ -22,6 +24,7 @@ import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
+import qualified Data.Text as T
 
 import Tezos.Types
 
@@ -84,9 +87,9 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
-  queueAlert $
+  when (not $ null lids) $ queueAlert $
     Alert "Resolved: Baker has now seen a block" $
-    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again."
+    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
 
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
@@ -109,12 +112,12 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
         queueAlert $ Alert "Unable to connect to node" $
-          "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+          "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
   :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
-      MonadReader a m, HasAppConfig a) => Id Node -> m ()
+      MonadReader a m, HasAppConfig a, MonadLogger m) => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -123,7 +126,8 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node' <- get (fromId nodeId)
-  for_ node' $ \node -> do
+  $(logDebugSH) ("LIDs we've supposedly blanked out", lids)
+  when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert $ Alert "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
@@ -167,7 +171,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
-  for_ node' $ \node -> do
+  when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert $ Alert "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
@@ -219,7 +223,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
-  for_ node $ \n -> do
+  when (not $ null lids) $ for_ node $ \n -> do
     queueAlert $ Alert "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
