@@ -121,8 +121,8 @@ If you have not done so already, we recommend you add our Nix caches to your Nix
 ### Cloning the repository
 
 ```shell
-$ git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
-$ cd tezos-bake-monitor/
+git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
+cd tezos-bake-monitor/
 ```
 
 By default you will be on the `develop` branch which is the latest unstable version. For a stable version, checkout `master` or one of the specific version tags.
@@ -130,13 +130,13 @@ By default you will be on the `develop` branch which is the latest unstable vers
 ## Running the build
 
 ```shell
-$ mkdir app
+mkdir app
 ```
 
 Then run this command to link the build’s path to the app directory.
 
 ```shell
-$ ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
 ```
 
 ### Starting the monitor
@@ -144,8 +144,8 @@ $ ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
 To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `alphanet`, `mainnet`, or with a specific chain ID.
 
 ```shell
-$ cd app
-$ ./backend --network <network>
+cd app
+./backend --network <network>
 ```
 
 If you completed these steps correctly, your Monitor should now be running at http://127.0.0.1:8000.
@@ -155,14 +155,14 @@ If you completed these steps correctly, your Monitor should now be running at ht
 To update your source build, simply checkout the newer version.
 
 ```shell
-$ git fetch
-$ git checkout master
+git fetch
+git checkout master
 ```
 
 Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `ln` command.
 
 ```shell
-$ ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
 ```
 
 ## Building the Docker image
