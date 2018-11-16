@@ -83,10 +83,12 @@ let
     , user ? monitorName
     , rpcPort
     , monitorPort
+    , appConfig
+    , version
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = obApp.linuxExe;
+          exe = obApp.linuxExeConfigurable appConfig version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -262,7 +264,7 @@ let
 
 in obApp // {
   inherit dockerExe dockerImage;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, ... }:
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
@@ -276,7 +278,11 @@ in obApp // {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
           (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig))
+          (mkMonitorModule (args // nodeConfig // {
+              appConfig = config;
+              version = version;
+            })
+          )
           syslog-ngModule
           usersModule
         ];
