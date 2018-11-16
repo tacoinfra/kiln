@@ -18,14 +18,13 @@ import Backend.Schema ()
 import Common.Schema
 import ExtraPrelude
 
+data AlertType = Unresolved | Resolved
+
 data Alert = Alert
-  { _is_recovery :: !Bool
+  { _alert_type :: !AlertType
   , _alert_subject :: !Text
   , _alert_content :: !Text
   }
-
-recoveryAlert = Alert True
-newAlert = Alert False
 
 queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
@@ -35,7 +34,10 @@ queueAlert
 queueAlert alert = do
   queueEmailAlert alert
   queueTelegramAlert alert
-  let logger = if _is_recovery alert then $(logInfoS) else $(logErrorS)
+  let
+    logger = case _alert_type alert of
+      Resolved -> $(logInfoS)
+      Unresolved -> $(logErrorS)
   logger "Kiln" (_alert_subject alert <> ": " <> _alert_content alert)
 
 queueTelegramAlert

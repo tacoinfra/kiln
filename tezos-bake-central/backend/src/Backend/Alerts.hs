@@ -27,7 +27,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Types
 
-import Backend.Alerts.Common (Alert (..), queueAlert, recoveryAlert, newAlert)
+import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
@@ -62,7 +62,7 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
 
       client :: Maybe Client <- get $ fromId cid
       queueAlert $
-        newAlert "Baker has not seen block for a while" $
+        Alert Unresolved "Baker has not seen block for a while" $
         "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -87,7 +87,7 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
   when (not $ null lids) $ queueAlert $
-    recoveryAlert "Resolved: Baker has now seen a block" $
+    Alert Resolved "Resolved: Baker has now seen a block" $
     "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
 
 reportInaccessibleNodeError
@@ -111,7 +111,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
       node' <- get (fromId nodeId)
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
-        queueAlert $ newAlert "Unable to connect to node" $
+        queueAlert $ Alert Unresolved "Unable to connect to node" $
           "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -128,7 +128,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   node' <- get (fromId nodeId)
   $(logDebugSH) ("LIDs we've supposedly blanked out", lids)
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert $ recoveryAlert "Resolved: Now able to connect to node" $
+    queueAlert $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
 reportNodeWrongChainError
@@ -154,7 +154,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
       node' <- get $ fromId nodeId
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
-        queueAlert $ newAlert "Node on wrong network" $
+        queueAlert $ Alert Unresolved "Node on wrong network" $
           "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -173,7 +173,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert $ recoveryAlert "Resolved: Node on right network" $
+    queueAlert $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
 reportBadNodeHeadError
@@ -204,7 +204,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
       node <- get $ fromId nodeId
       for_ node $ \n -> do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        queueAlert $ newAlert heading $
+        queueAlert $ Alert Unresolved heading $
           heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
     Just (logId, specificLogId) -> do
@@ -225,7 +225,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
   when (not $ null lids) $ for_ node $ \n -> do
-    queueAlert $ recoveryAlert "Resolved: Node is in sync" $
+    queueAlert $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
