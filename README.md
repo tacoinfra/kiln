@@ -18,7 +18,7 @@ This version (v0.2) is a very early version of our Monitoring Software. Near-ter
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
-#### Running a Node
+#### Running a node
 
 This Monitor assumes that you are running at least one Tezos node. Options for running a node include:
 
@@ -108,77 +108,76 @@ You can remove old images and containers for the monitor safely. All your data i
 
 **CPU:** Running with at least 2 cores is recommended.
 
-# Building the Monitor from Source
+# Building from Source
 
 ## Prerequisites
 
-These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently.
+These builds have only been tested on Linux.
 
-##### Gitlab SSH Keys
+### Configuring the Nix cache (Recommended)
 
-This project is hosted on Gitlab. If you have not already, you should make an account and [set up SSH keys with Gitlab](https://docs.gitlab.com/ee/gitlab-basics/create-your-ssh-keys.html).
+If you have not done so already, we recommend you add our Nix caches to your Nix configuration to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md).
 
-##### Setting up Nix Caching (Recommended)
-
-If you have not already, we recommend you setup Nix caching to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md).
-
-##### Cloning the Repo
-
-Clone the Tezos Bake Monitor repo and checkout the develop branch.
+### Cloning the repository
 
 ```shell
-$ git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
-$ cd tezos-bake-monitor/
-$ git checkout develop
+git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
+cd tezos-bake-monitor/
 ```
 
-The monitoring software uses Git submodules, which allow a Git repository to be kept as a subdirectory of another Git repository. Sync and update Tezos Bake Monitor’s submodules.
+By default you will be on the `develop` branch which is the latest unstable version. For a stable version, checkout `master` or one of the specific version tags.
+
+## Running the build
 
 ```shell
-$ git submodule sync
-$ git submodule update --recursive --init
-```
-
-## Running the Build
-
-Enter the Tezos Bake Central subdirectory:
-
-```shell
-$ cd tezos-bake-central/
-```
-
-Build the Monitor by running the following command. This also returns a path which you will link to in a couple steps.
-
-```shell
-$ nix-build -A exe --out-link result
-```
-
-Once complete, still within tezos-bake-monitor/tezos-bake-central, create a directory called ‘app’
-
-```shell
-$ mkdir app
+mkdir app
 ```
 
 Then run this command to link the build’s path to the app directory.
 
 ```shell
-$ ln -s $(nix-build -A exe --no-out-link)/* app/
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
 ```
 
-### Starting the Monitor
+### Starting the monitor
 
-To run the Monitor, enter the app directory and initiate the backend. Replace <network> with your desired Tezos network, i.e. zeronet, alphanet, mainnet.
+To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `alphanet`, `mainnet`, or with a specific chain ID.
 
 ```shell
-$ cd app
-$ ./backend --network <network>
+cd app
+./backend --network <network>
 ```
 
-If you completed these steps correctly, your Monitor should now be running at http://127.0.01:8000.
+If you completed these steps correctly, your Monitor should now be running at http://127.0.0.1:8000.
+
+### Updating from an older source build
+
+To update your source build, simply checkout the newer version.
+
+```shell
+git fetch
+git checkout master
+```
+
+Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `ln` command.
+
+```shell
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
+```
+
+## Building the Docker image
+
+To build the Docker image you must be running on Linux or have at least one Linux remote builder configured.
+
+```shell
+nix-build -A dockerImage --no-out-link
+```
+
+The result of this command will be the path to a Docker image. You can load it with `docker load -i <path>`.
 
 # Initial Setup
 
-### Adding Monitored Nodes
+### Adding monitored nodes
 
 Click *Add Node* from the left panel and enter the address of the node you would like to monitor under *Connect via address*. Then click *Add Node*. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC address. If you do not know the RPC address of the node or if the node wasn't started with `--rpc-addr`, the monitor will not be able to retrieve information from the node.
 
@@ -186,14 +185,14 @@ Click *Add Node* from the left panel and enter the address of the node you would
 
 Once you’ve added at least one node or Public Node, the Dashboard will show you statistics.
 
-### Adding Public Nodes
+### Adding public nodes
 
 Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Email Notifications
+### Configuring email notifications
 
 Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
 
-### Telegram Notifications
+### Configuring Telegram notifications
 
 Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.
