@@ -10,7 +10,7 @@
 module Tezos.Operation where
 
 import Control.Lens(Traversal')
-import Control.Lens.TH (makeLenses)
+import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Applicative ((<|>))
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
@@ -418,10 +418,13 @@ instance (ToJSON a, Typeable a) => ToJSON (ManagerOperationMetadata a) where
 instance (FromJSON a, Typeable a) => FromJSON (ManagerOperationMetadata a) where
   parseJSON = $(Aeson.mkParseJSON tezosJsonOptions ''ManagerOperationMetadata)
 
-concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions) 
+concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions)
   [ ''OperationContentsOrigination
   , ''OperationResultOrigination
   , ''OperationResultTransaction
+  ]
+concat <$> traverse makePrisms
+  [ ''OperationContents
   ]
 concat <$> traverse makeLenses
  [ 'Operation
