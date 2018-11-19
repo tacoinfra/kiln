@@ -133,7 +133,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
-    fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle $ CondEmpty
+    fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
 
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 

@@ -63,7 +63,7 @@ data RpcQuery a = RpcQuery
   } deriving Functor
 
 plainNodeRequest :: FromJSON a => Http.Method -> Text -> RpcQuery a
-plainNodeRequest = RpcQuery Aeson.eitherDecode
+plainNodeRequest = RpcQuery Aeson.eitherDecode'
 
 newtype PlainNode a = PlainNode (RpcQuery a)
 newtype PlainNodeStream a = PlainNodeStream (RpcQuery a)

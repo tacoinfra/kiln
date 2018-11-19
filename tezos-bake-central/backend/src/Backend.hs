@@ -138,17 +138,17 @@ backendImpl cfg serve = do
 
   !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.tzscanApiUri
     , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
   !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_obsidianApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.obsidianApiUri
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
@@ -392,7 +392,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
+        (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.route)
 
       let
         staticHead :: DomBuilder t m => m ()

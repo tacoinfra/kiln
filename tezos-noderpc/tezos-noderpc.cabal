@@ -18,18 +18,19 @@ library
   -- other-extensions:
   build-depends:
       base >=4.11 && <5
-    , modern-uri
-    , tezos-bake-monitor-lib
-    , containers
-    , safe-exceptions
-    , lens
-    , mtl
-    , monad-logger
-    , text
-    , http-client
-    , http-types
     , aeson
     , bytestring
+    , containers
+    , deepseq
+    , http-client
+    , http-types
+    , lens
+    , modern-uri
+    , monad-logger
+    , mtl
+    , safe-exceptions
+    , text
+    , tezos-bake-monitor-lib
   hs-source-dirs:      src
   default-language:    Haskell2010
 

@@ -1,8 +1,9 @@
 { system ? builtins.currentSystem
 , supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
+, profiling ? false
 }:
 let
-  obelisk = import .obelisk/impl { inherit system; };
+  obelisk = import .obelisk/impl { inherit system profiling; };
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let

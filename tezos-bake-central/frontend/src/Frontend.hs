@@ -88,7 +88,7 @@ frontendBody
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  let decodeViaJson = Aeson.eitherDecode . LBS.fromStrict . T.encodeUtf8 . T.strip
+  let decodeViaJson = Aeson.eitherDecodeStrict' . T.encodeUtf8 . T.strip
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
     Nothing ->
@@ -368,7 +368,7 @@ appContentArea selectedTab =
   dyn_ $ ffor selectedTab $ \case
     -- UITab_Summary -> summaryTab
     UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> divClass "app-content" $ settingsTab
+    UITab_Options -> divClass "app-content" settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
     -- UITab_Delegate pkh -> delegateTab pkh
 

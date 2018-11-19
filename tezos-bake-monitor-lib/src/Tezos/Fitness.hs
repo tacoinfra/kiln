@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Tezos.Fitness where
 
@@ -18,12 +20,14 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable
 import Text.Show (showListWith, showString)
+import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 import Tezos.Base16ByteString
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
-  deriving (Eq, Typeable, Functor, Foldable, Traversable)
+  deriving (Eq, Typeable, Functor, Foldable, Traversable, Generic, NFData)
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
 -- almost certainly the *wrong* one for this particular FromJSON, which needs
@@ -56,17 +60,17 @@ instance ToJSON (FitnessF (Base16ByteString ShortByteString)) where
 --   parseBinary = (<?> "Fitness") $ do
 --     xs <- parserRecursiveLengthPrefixed parseLengthPrefixedByteString
 --     return $ FitnessF $ Seq.fromList $ fmap Base16ByteString xs
--- 
+--
 --   encodeBinary (FitnessF xs) = encodeLengthPrefixedByteString $ foldMap (encodeLengthPrefixedByteString . unbase16ByteString) xs
 
 type Fitness' a = FitnessF (Base16ByteString a)
 type Fitness = Fitness' ShortByteString
 
 toFitness :: Seq a -> Fitness' a
-toFitness xs = (FitnessF $ fmap Base16ByteString xs)
+toFitness xs = FitnessF $ fmap Base16ByteString xs
 
-unFitness :: (FitnessF (Base16ByteString a)) -> Seq a
-unFitness ((FitnessF xs)) = fmap unbase16ByteString xs
+unFitness :: FitnessF (Base16ByteString a) -> Seq a
+unFitness (FitnessF xs) = fmap unbase16ByteString xs
 
 instance Show Fitness where
   showsPrec _ = showListWith (showString . T.unpack . T.decodeUtf8 . BS16.encode . fromShort) . toList . unFitness
