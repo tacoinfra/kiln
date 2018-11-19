@@ -5,13 +5,7 @@
 let
   obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
 
-  tezos-bake-platform = import (pkgs.fetchgit {
-    url = "git@gitlab.com:obsidian.systems/tezos-baking-platform.git";
-    rev = "4466de9e9fd5999881648782802638b30e568708";
-    sha256 = "0gf1z5nii27csgkrjh1icddzpippp8zlljl87dwikaljz2yrzy6w";
-    fetchSubmodules = false;
-  }) {};
-
+  tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
 
   nodeConfigOptions = {
