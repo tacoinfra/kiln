@@ -18,8 +18,6 @@ import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as LBS
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
@@ -27,7 +25,6 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down (..), comparing)
 import qualified Data.Set as Set
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word64)
@@ -88,9 +85,8 @@ frontendBody
   => m ()
 frontendBody = void $ do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  let decodeViaJson = Aeson.eitherDecodeStrict' . T.encodeUtf8 . T.strip
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ either (error . ("Unable to parse injected route: " <>) . show) id (decodeViaJson r)
+    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
     Nothing ->
       Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
 
