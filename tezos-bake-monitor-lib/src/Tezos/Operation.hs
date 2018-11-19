@@ -418,41 +418,43 @@ instance (ToJSON a, Typeable a) => ToJSON (ManagerOperationMetadata a) where
 instance (FromJSON a, Typeable a) => FromJSON (ManagerOperationMetadata a) where
   parseJSON = $(Aeson.mkParseJSON tezosJsonOptions ''ManagerOperationMetadata)
 
-concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions)
-  [ ''OperationContentsOrigination
-  , ''OperationResultOrigination
-  , ''OperationResultTransaction
+fmap concat $ sequence
+  [ concat <$> traverse (Aeson.deriveToJSON tezosJsonOptions)
+    [ ''OperationContentsOrigination
+    , ''OperationResultOrigination
+    , ''OperationResultTransaction
+    ]
+  , concat <$> traverse makePrisms
+    [ ''OperationContents
+    ]
+  , concat <$> traverse makeLenses
+    [ 'Operation
+    , 'ActivateMetadata
+    , 'DoubleBakingEvidenceMetadata
+    , 'DoubleEndorsementEvidenceMetadata
+    , 'EndorsementMetadata
+    , 'InlinedEndorsement
+    , 'InlinedEndorsementContents
+    , 'ManagerOperationMetadata
+    , 'OperationContentsActivateAccount
+    , 'OperationContentsBallot
+    , 'OperationContentsDelegation
+    , 'OperationContentsDoubleBakingEvidence
+    , 'OperationContentsDoubleEndorsementEvidence
+    , 'OperationContentsEndorsement
+    , 'OperationContentsOrigination
+    , 'OperationContentsProposals
+    , 'OperationContentsReveal
+    , 'OperationContentsSeedNonceRevelation
+    , 'OperationContentsTransaction
+    , 'OperationResult
+    , 'OperationResultDelegation
+    , 'OperationResultOrigination
+    , 'OperationResultReveal
+    , 'OperationResultTransaction
+    , 'SeedNonceRevelationMetadata
+    ]
   ]
-concat <$> traverse makePrisms
-  [ ''OperationContents
-  ]
-concat <$> traverse makeLenses
- [ 'Operation
- , 'ActivateMetadata
- , 'DoubleBakingEvidenceMetadata
- , 'DoubleEndorsementEvidenceMetadata
- , 'EndorsementMetadata
- , 'InlinedEndorsement
- , 'InlinedEndorsementContents
- , 'ManagerOperationMetadata
- , 'OperationContentsActivateAccount
- , 'OperationContentsBallot
- , 'OperationContentsDelegation
- , 'OperationContentsDoubleBakingEvidence
- , 'OperationContentsDoubleEndorsementEvidence
- , 'OperationContentsEndorsement
- , 'OperationContentsOrigination
- , 'OperationContentsProposals
- , 'OperationContentsReveal
- , 'OperationContentsSeedNonceRevelation
- , 'OperationContentsTransaction
- , 'OperationResult
- , 'OperationResultDelegation
- , 'OperationResultOrigination
- , 'OperationResultReveal
- , 'OperationResultTransaction
- , 'SeedNonceRevelationMetadata
- ]
 
 instance HasBalanceUpdates Operation where
   -- balanceUpdates :: Traversal' Operation BalanceUpdate
@@ -479,3 +481,5 @@ instance HasBalanceUpdates Operation where
       mgOpFees :: forall a. Traversal' (ManagerOperationMetadata a) BalanceUpdate
       mgOpFees = managerOperationMetadata_balanceUpdates . traverse
 -- src/proto_002_PsYLVpVv/lib_protocol/src/helpers_services.ml:358:             (dft "proof_of_work_nonce"
+
+

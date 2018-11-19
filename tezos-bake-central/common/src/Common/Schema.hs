@@ -26,7 +26,6 @@ module Common.Schema
   ) where
 
 import Control.Lens
---import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -95,7 +94,7 @@ data BlockBaker = BlockBaker
   { _baker_publicKeyHash :: !PublicKeyHash
   , _baker_priority :: !Priority
   , _baker_endorsements :: !(Map PublicKeyHash (Seq Word8))
-  }
+  } deriving (Eq, Ord, Show, Typeable, Generic)
 
 getBakerFromBlock :: Block -> BlockBaker
 getBakerFromBlock block = BlockBaker

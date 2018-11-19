@@ -393,6 +393,7 @@ nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q 
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract chainId branch contractId
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
+  -- TODO: This can be handled by recursively calling NodeQuery_Block and extracting the relevant data.  that'd save us some round-trips.
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ nodeRPC' $ rBlock chainId branch
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
