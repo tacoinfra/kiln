@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 (November 19, 2018)
+
+  * Logging for Alerts to console, file or systemd journal
+  * Minor bug fixes
+
 ## 0.2 (November 14, 2018)
 
   * Telegram support for notifications
