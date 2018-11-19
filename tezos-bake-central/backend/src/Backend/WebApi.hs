@@ -109,7 +109,7 @@ snapBakingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   levelBS <- requiredParam "level"
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
 
-  asTextExcept @ RpcError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
+  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
 
 snapEndorsingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq EndorsingRights))
 snapEndorsingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
@@ -119,4 +119,4 @@ snapEndorsingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   levelBS <- requiredParam "level"
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
 
-  asTextExcept @ RpcError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
+  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
