@@ -5,6 +5,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
+-- TODO do everywhere
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.WebApi where
 
 import Control.Monad ((<=<))
@@ -23,7 +26,6 @@ import qualified Data.Text.Encoding as T
 import Data.Sequence (Seq())
 import qualified Snap.Core as Snap
 
-import Backend.CachedNodeRPC
 import qualified Control.Concurrent.MVar as MVar
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -33,6 +35,9 @@ import Tezos.Block (VeryBlockLike (..))
 import Tezos.Base58Check (fromBase58, toBase58)
 import Tezos.Types
 import Tezos.NodeRPC.Types
+
+import Backend.CachedNodeRPC
+import Common.Schema (BlockBaker)
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapHead = maybe (Left "cache not ready") pure <$> dataSourceHead
@@ -47,6 +52,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/block",     writeJSON $ const snapBlock )
   , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
   , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
+  , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
   ]
   where
     chain = _nodeDataSource_chain dataSrc
@@ -56,7 +62,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
     writeJSON x = do
       liftIO (MVar.tryReadMVar (_nodeDataSource_parameters dataSrc)) >>= \case
         Nothing -> Snap.modifyResponse (Snap.setResponseCode 503) *> Snap.writeLBS "Cache Not Ready"
-        Just params -> either sulk (Snap.writeLBS . Aeson.encode) =<< runReaderT (x params) dataSrc
+        Just ps -> either sulk (Snap.writeLBS . Aeson.encode) =<< runReaderT (x ps) dataSrc
 
     sulk :: Text -> m ()
     sulk msg = Snap.modifyResponse (Snap.setResponseCode 400) *> Snap.writeLBS (LBS.fromStrict $ T.encodeUtf8 msg)
@@ -107,7 +113,7 @@ snapBakingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- requiredParam "level"
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
 
@@ -117,6 +123,16 @@ snapEndorsingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- requiredParam "level"
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
+
+snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
+snapBlockBaker = withCache (Left "nocache") $ \_proto -> runExceptT $ do
+  branchBS <- requiredParam "branch"
+  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
+
+  levelBS <- requiredParam "level"
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
+
+  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel

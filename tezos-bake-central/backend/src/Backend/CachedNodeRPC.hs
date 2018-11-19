@@ -82,7 +82,7 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
-  NodeQuery_Baker           :: BlockHash -> RawLevel -> NodeQuery BlockBaker
+  NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
 deriving instance Show (NodeQuery a)
 
 
@@ -313,7 +313,7 @@ getKey params hist = \case
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
-  NodeQuery_Baker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_Baker ctx' lvl)) <$> levelAncestor hist lvl ctx
+  NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
 
 nodeQueryDataSource ::
   ( MonadIO m
@@ -393,7 +393,7 @@ nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q 
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract chainId branch contractId
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
-  NodeQuery_Baker branch _lvl -> fmap getBakerFromBlock $ nodeRPC' $ rBlock chainId branch
+  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ nodeRPC' $ rBlock chainId branch
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx

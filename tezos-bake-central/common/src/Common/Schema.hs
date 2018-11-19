@@ -16,7 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- TODO do everywhere
-{-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
+{-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
 
 module Common.Schema
   ( module Common.Schema
