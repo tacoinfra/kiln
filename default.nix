@@ -6,9 +6,9 @@ let
   obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
 
   tezos-bake-platform = import (pkgs.fetchgit {
-    url = "https://gitlab.com/obsidian.systems/tezos-baking-platform.git";
-    rev = "d9fce6eaa1401c981e5fc524a260892a21ed3335";
-    sha256 = "0svndkkibkygnzvjvybbxgiyw15kaiq4l9f5m4m1680fmrqwjdxi";
+    url = "git@gitlab.com:obsidian.systems/tezos-baking-platform.git";
+    rev = "4466de9e9fd5999881648782802638b30e568708";
+    sha256 = "0gf1z5nii27csgkrjh1icddzpippp8zlljl87dwikaljz2yrzy6w";
     fetchSubmodules = false;
   }) {};
 
