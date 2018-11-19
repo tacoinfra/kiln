@@ -392,7 +392,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.route)
+        (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.route)
 
       let
         staticHead :: DomBuilder t m => m ()
