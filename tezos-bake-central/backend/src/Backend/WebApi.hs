@@ -45,8 +45,8 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/lca",       writeJSON $ const snapBranchPoint )
   , ( chainTXT <> "/ancestors", writeJSON $ const snapAncestors )
   , ( chainTXT <> "/block",     writeJSON $ const snapBlock )
-  , ( chainTXT <> "/bakingrights",    writeJSON $ const snapBakingRights )
-  , ( chainTXT <> "/endorsingrights", writeJSON $ const snapEndorsingRights )
+  , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
+  , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
   ]
   where
     chain = _nodeDataSource_chain dataSrc
