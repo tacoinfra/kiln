@@ -15,7 +15,8 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
+-- TODO do everywhere
+{-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
 
 module Common.Schema
   ( module Common.Schema
@@ -24,13 +25,16 @@ module Common.Schema
   , Id
   ) where
 
-import Control.Lens.TH (makeLenses, makePrisms)
+import Control.Lens
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Function (on)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
@@ -38,7 +42,7 @@ import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
-import Data.Word (Word16, Word64)
+import Data.Word
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 import Text.URI (URI)
@@ -47,6 +51,7 @@ import qualified Text.URI as Uri
 import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.NodeRPC.Types (NetworkStat (..))
+import Tezos.Operation
 import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
@@ -84,6 +89,31 @@ knownProtocols =
   [ "PrihK96nBAFSxVL1GLJTVhu9YnzkMFiBeuJRPA8NwuZVZCE1L6i" -- GENESIS
   , "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -- MAINNET
   ]
+
+data BlockBaker = BlockBaker
+  { _baker_publicKeyHash :: !PublicKeyHash
+  , _baker_priority :: !Priority
+  , _baker_endorsements :: !(Map PublicKeyHash (Seq Word8))
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
+getBakerFromBlock :: Block -> BlockBaker
+getBakerFromBlock block = BlockBaker
+  { _baker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
+  , _baker_priority = block ^. block_header . blockHeader_priority
+  , _baker_endorsements = block ^. block_operations
+    . traverse
+    . traverse
+    . operation_contents
+    . traverse
+    . _OperationContents_Endorsement
+    . operationContentsEndorsement_metadata
+    . to f
+  }
+  where
+    f :: EndorsementMetadata -> Map PublicKeyHash (Seq Word8)
+    f em = Map.singleton
+      (_endorsementMetadata_delegate em)
+      (_endorsementMetadata_slots em)
 
 data Client = Client
   { _client_address :: !URI
@@ -457,6 +487,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
+  , ''BlockBaker
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
@@ -489,6 +520,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BakeEfficiency
+  , 'BlockBaker
   , 'CachedProtocolConstants
   , 'Delegate
   , 'EndorseEvent
