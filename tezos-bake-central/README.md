@@ -36,3 +36,13 @@ If you run the application behind a reverse-proxy, you should tell it what it's 
 ## Hacking
 
 Install [Obelisk](https://github.com/obsidiansystems/obelisk) then `ob run`.
+
+
+### Building with profiling
+
+```
+nix-shell -A shells.ghc --arg profiling true
+cd backend
+cabal new-configure --enable-profiling --enable-library-profiling
+cabal new-build
+```

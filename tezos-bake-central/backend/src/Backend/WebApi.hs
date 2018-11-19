@@ -90,7 +90,7 @@ snapAncestors = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- requiredParam "level"
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
 
@@ -107,7 +107,7 @@ snapBakingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- requiredParam "level"
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
 
   asTextExcept @ RpcError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
 
@@ -117,6 +117,6 @@ snapEndorsingRights = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
 
   levelBS <- requiredParam "level"
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecode $ LBS.fromStrict levelBS
+  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' $ LBS.fromStrict levelBS
 
   asTextExcept @ RpcError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel

@@ -24,6 +24,7 @@ import Data.Time
 import Data.Typeable (Typeable)
 import Data.Word
 import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 import qualified Data.Sequence as Seq
 
 import Tezos.BalanceUpdate
@@ -150,7 +151,8 @@ data VeryBlockLike = VeryBlockLike
   , _veryBlockLike_fitness :: !Fitness
   , _veryBlockLike_level :: !RawLevel
   , _veryBlockLike_timestamp :: !UTCTime
-  } deriving (Eq, Ord, Show, Typeable)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance NFData VeryBlockLike
 
 
 concat <$> traverse deriveTezosJson

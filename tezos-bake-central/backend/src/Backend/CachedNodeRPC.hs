@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -50,6 +51,7 @@ import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
+import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Request.Class
@@ -69,9 +71,9 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
+import Common (unixEpoch)
 import Common.Schema
 import Rhyolite.Backend.Logging
-import Common (unixEpoch)
 
 
 data NodeQuery a where
@@ -143,7 +145,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_pool :: !(Pool Postgresql)
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
-  }
+  } deriving (Typeable, Generic)
 
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
 blankNodeDataSource db chain protoInfo' mgr logger = do

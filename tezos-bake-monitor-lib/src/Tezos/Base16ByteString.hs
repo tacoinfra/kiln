@@ -2,6 +2,8 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Tezos.Base16ByteString where
 
@@ -15,10 +17,12 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
 import Data.Typeable
+import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 
 newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }
-  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable, Generic, NFData)
 
 instance FromJSON (Base16ByteString ShortByteString) where
   parseJSON x = fmap toShort <$> parseJSON x
@@ -54,7 +58,7 @@ instance ToJSON (Base16ByteString BS.ByteString) where
 --     else case eitherBinary (show $ typeRep (Proxy :: Proxy a)) bytes of
 --       Left bad -> fail bad
 --       Right value -> return $ Base16ByteString value
--- 
+--
 -- instance TezosBinary a => ToJSON (Base16ByteString a) where
 --   toJSON (Base16ByteString x) = toJSON $ T.decodeUtf8 $ BS.encode $ encodeBinary x
 --   toEncoding (Base16ByteString x) = toEncoding $ T.decodeUtf8 $ BS.encode $ encodeBinary x

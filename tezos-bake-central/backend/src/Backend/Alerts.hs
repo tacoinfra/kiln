@@ -6,26 +6,28 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
+{-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
 
 module Backend.Alerts where
 
+import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
 
 import Tezos.Types
 
-import Backend.Alerts.Common (Alert (..), queueAlert)
+import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
 import Common.Alerts (badNodeHeadMessage)
@@ -34,7 +36,7 @@ import ExtraPrelude
 
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a
+     , MonadReader a m, HasAppConfig a, MonadLogger m
      )
   => Id Client -> SeenEvent -> m ()
 reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted bakers
@@ -60,7 +62,7 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
 
       client :: Maybe Client <- get $ fromId cid
       queueAlert $
-        Alert "Baker has not seen block for a while" $
+        Alert Unresolved "Baker has not seen block for a while" $
         "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
     Just (logId, specificLogId) -> do
       updateErrorLogBy logId specificLogId
@@ -69,8 +71,8 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
         ]
 
 
-clearNoBakerHeartbeatError :: (Monad m, PostgresRaw m, PersistBackend m, MonadIO m,
-                               PostgresLargeObject m, MonadIO m, MonadReader a m,
+clearNoBakerHeartbeatError :: (Monad m, PersistBackend m,
+                               PostgresLargeObject m, MonadIO m, MonadReader a m, MonadLogger m,
                                HasAppConfig a) => Id Client -> m ()
 clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
@@ -84,12 +86,13 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
-  queueAlert $
-    Alert "Resolved: Baker has now seen a block" $
-    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again."
+  when (not $ null lids) $ queueAlert $
+    Alert Resolved "Resolved: Baker has now seen a block" $
+    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
 
 reportInaccessibleNodeError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadLogger m)
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
@@ -108,12 +111,12 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
       node' <- get (fromId nodeId)
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
-        queueAlert $ Alert "Unable to connect to node" $
-          "Unable to connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+        queueAlert $ Alert Unresolved "Unable to connect to node" $
+          "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
@@ -123,12 +126,14 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node' <- get (fromId nodeId)
-  for_ node' $ \node -> do
-    queueAlert $ Alert "Resolved: Now able to connect to node" $
+  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  when (not $ null lids) $ for_ node' $ \node -> do
+    queueAlert $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
 reportNodeWrongChainError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m)
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadLogger m)
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
@@ -149,12 +154,12 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
       node' <- get $ fromId nodeId
       for_ node' $ \node -> do
         _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
-        queueAlert $ Alert "Node on wrong network" $
+        queueAlert $ Alert Unresolved "Node on wrong network" $
           "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
-  :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m, MonadIO m,
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
@@ -167,13 +172,13 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
-  for_ node' $ \node -> do
-    queueAlert $ Alert "Resolved: Node on right network" $
+  when (not $ null lids) $ for_ node' $ \node -> do
+    queueAlert $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
-     , BlockLike latestHead, BlockLike nodeHead, BlockLike lca)
+     , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
@@ -199,7 +204,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
       node <- get $ fromId nodeId
       for_ node $ \n -> do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        queueAlert $ Alert heading $
+        queueAlert $ Alert Unresolved heading $
           heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
     Just (logId, specificLogId) -> do
@@ -209,7 +214,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
 
-clearBadNodeHeadError :: (Monad m, PostgresRaw m, PersistBackend m, PostgresLargeObject m,
+clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
                           MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
@@ -219,8 +224,8 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
-  for_ node $ \n -> do
-    queueAlert $ Alert "Resolved: Node is in sync" $
+  when (not $ null lids) $ for_ node $ \n -> do
+    queueAlert $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool

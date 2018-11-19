@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Backend.Common where
 
 import Control.Concurrent (threadDelay)
