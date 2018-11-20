@@ -25,7 +25,7 @@ let
     };
     mainnet = {
       network = "mainnet";
-      p2pPort = 9732;
+      p2pPort = 9733;
       rpcPort = 8732;
       tzKit = tezos.betanet.kit;
       monitorPort = 8000;
