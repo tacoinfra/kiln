@@ -18,6 +18,10 @@ Start the Kiln `backend` with `--serve-node-cache=yes` or create a file in `conf
 
 All endpoints return JSON.
 
+All endpoints require that Kiln is successfully connected to at least one node other than tzscan. Otherwise the result will be HTTP 400 error.
+
+Most endpoints require that Kiln is successfully connected to at least one non-public node. Otherwise the result will be HTTP 400 error.
+
 ### Chain ID
 
 Retrieve the *chain ID* of the chain/network being monitored/cached. This will never be a name like `mainnet` or `alphanet`.
@@ -111,7 +115,7 @@ Retrieve block data for the most recent common ancestor of two blocks. This can 
 
 ### Range of ancestors
 
-Get a list of ordered block hashes from a starting block and some number of levels backward.
+Retrieve a list of ordered block hashes from a starting block and some number of levels backward.
 
   * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
   * Replace `BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv` with some block hash.
@@ -132,4 +136,243 @@ Get a list of ordered block hashes from a starting block and some number of leve
   "BKzTJnFdgd7imZJ72nGpPh665Fn6tvATcmdKbnrqqiw6g2Vk4BN",
   "BLVMAztP4cxsjqHZUYghuuDKgMxD8PJK1sRfoRyLF86jiKD7AAg"
 ]
+```
+
+### Baking rights
+
+Retrieve the all baking rights at a specific level as seen by a given branch.
+
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
+  * Replace `151128` with a level that is at or before the block hash used as the branch.
+
+> `GET /api/v1/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+
+```json
+[
+  {
+    "level": 151128,
+    "delegate": "tz1iDu3tHhf7H4jyXk6rGV4FNUsMqQmRkwLp",
+    "priority": 0,
+    "estimated_time": "2018-10-18T07:37:25Z"
+  },
+  {
+    "level": 151128,
+    "delegate": "tz1S1Aew75hMrPUymqenKfHo8FspppXKpW7h",
+    "priority": 1,
+    "estimated_time": "2018-10-18T07:38:40Z"
+  },
+  {
+    "level": 151128,
+    "delegate": "tz1Sx1yc4cvLkcsUXD8ramcbVvj8g36y1Ms5",
+    "priority": 2,
+    "estimated_time": "2018-10-18T07:39:55Z"
+  },
+  {
+    "level": 151128,
+    "delegate": "tz1Lhf4J9Qxoe3DZ2nfe8FGDnvVj7oKjnMY6",
+    "priority": 3,
+    "estimated_time": "2018-10-18T07:41:10Z"
+  }
+]
+```
+
+### Endorsing rights
+
+Retrieve the all endorsing rights at a specific level as seen by a given branch.
+
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
+  * Replace `151128` with a level that is at or before the block hash used as the branch.
+
+> `GET /api/v1/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+
+```json
+[
+  {
+    "level": 151128,
+    "delegate": "tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5",
+    "slots": [
+      18,
+      16,
+      9,
+      4
+    ],
+    "estimated_time": "2018-10-18T07:36:25Z"
+  },
+  {
+    "level": 151128,
+    "delegate": "tz3bTdwZinP8U1JmSweNzVKhmwafqWmFWRfk",
+    "slots": [
+      25
+    ],
+    "estimated_time": "2018-10-18T07:36:25Z"
+  },
+  {
+    "level": 151128,
+    "delegate": "tz3WMqdzXqRWXwyvj5Hp2H7QEepaUuS7vd9K",
+    "slots": [
+      30,
+      0
+    ],
+    "estimated_time": "2018-10-18T07:36:25Z"
+  }
+]
+```
+
+
+### Baker and endorsers for a block
+
+Retrieve the the baker and endorsers for a block at a given level as seen by a given branch.
+
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
+  * Replace `151128` with a level that is at or before the block hash used as the branch.
+
+> `GET /api/v1/NetXdQprcVkpaWU/block-baker?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+
+```json
+{
+  "public_key_hash": "tz1iDu3tHhf7H4jyXk6rGV4FNUsMqQmRkwLp",
+  "priority": 0,
+  "endorsements": [
+    [
+      "tz1KksC8RvjUWAbXYJuNrUbontHGor26Cztk",
+      [
+        4
+      ]
+    ],
+    [
+      "tz1LH4L6XYT2JNPhvWYC4Zq3XEiGgEwzNRvo",
+      [
+        1
+      ]
+    ],
+    [
+      "tz1Lhf4J9Qxoe3DZ2nfe8FGDnvVj7oKjnMY6",
+      [
+        0
+      ]
+    ],
+    [
+      "tz1NpWrAyDL9k2Lmnyxcgr9xuJakbBxdq7FB",
+      [
+        31,
+        3
+      ]
+    ],
+    [
+      "tz1TNWtofRofCU11YwCNwTMWNFBodYi6eNqU",
+      [
+        29,
+        9,
+        6
+      ]
+    ],
+    [
+      "tz1TRqbYbUf2GyrjErf3hBzgBJPzW8y36qEs",
+      [
+        21
+      ]
+    ],
+    [
+      "tz1VQnqCCqX4K5sP3FNkVSNKTdCAMJDd3E1n",
+      [
+        17
+      ]
+    ],
+    [
+      "tz1WCd2jm4uSt4vntk4vSuUWoZQGhLcDuR9q",
+      [
+        15
+      ]
+    ],
+    [
+      "tz1Yju7jmmsaUiG9qQLoYv35v5pHgnWoLWbt",
+      [
+        24,
+        20
+      ]
+    ],
+    [
+      "tz1ZccvXdgxwN5jxHDW3WfmwcSHj5QD1tMgq",
+      [
+        27,
+        22
+      ]
+    ],
+    [
+      "tz1aviwxpVSjzBnepQMdMjEGksxgkKMKUZS6",
+      [
+        16
+      ]
+    ],
+    [
+      "tz1bHzftcTKZMTZgLLtnrXydCm6UEqf4ivca",
+      [
+        10
+      ]
+    ],
+    [
+      "tz1bnaLWidmdDR4R1Fz6NwJ1oeBPyuTnkSEH",
+      [
+        25
+      ]
+    ],
+    [
+      "tz1dZQdp66wDHyPQR1fSMygv5N9vY9MMcMoR",
+      [
+        11
+      ]
+    ],
+    [
+      "tz1hx8hMmmeyDBi6WJgpKwK4n5S2qAEpavx2",
+      [
+        5
+      ]
+    ],
+    [
+      "tz1iZEKy4LaAjnTmn2RuGDf2iqdAQKnRi8kY",
+      [
+        23
+      ]
+    ],
+    [
+      "tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8",
+      [
+        19,
+        18
+      ]
+    ],
+    [
+      "tz3RDC3Jdn4j15J7bBHZd29EUee9gVB1CxD9",
+      [
+        30,
+        26,
+        14,
+        13,
+        8
+      ]
+    ],
+    [
+      "tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r",
+      [
+        28
+      ]
+    ],
+    [
+      "tz3VEZ4k6a4Wx42iyev6i2aVAptTRLEAivNN",
+      [
+        12,
+        7
+      ]
+    ],
+    [
+      "tz3WMqdzXqRWXwyvj5Hp2H7QEepaUuS7vd9K",
+      [
+        2
+      ]
+    ]
+  ]
+}
 ```
