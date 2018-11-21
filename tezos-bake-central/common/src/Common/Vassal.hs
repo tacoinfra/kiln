@@ -56,6 +56,11 @@ import Reflex.FunctorMaybe
 
 import Common.WrappedShow1
 
+-- horray, orphans!
+deriving instance Ord k => Align (MonoidalMap k)
+deriving instance FunctorMaybe Option
+
+
 -- we have the general problem of needing to send "incremental" updates to a
 -- (view of) a shared data set.  The general idea is to have an initial query
 -- that captures the desired view in roughly the right format for that data
@@ -96,9 +101,6 @@ chop f vs = iMapMaybe $ \i b -> maybe Nothing (flip f b) $ lookup i vs
 
 cropView :: (Semigroup a, ViewSelector t) => t a -> View t b -> View t a
 cropView vs = iMapMaybe $ \i _ -> lookup i vs
-
--- horray, orphans!
-deriving instance FunctorMaybe Option
 
 class ( TraversableWithIndex (ViewIndex f) (View f)
       , FunctorMaybe (View f)
@@ -575,9 +577,6 @@ instance (ToJSON k, Ord k, ToJSON v, ToJSONKey k) => ToJSON1 (View (RangeSelecto
 instance (Ord k, Semigroup a, ToJSON k, ToJSON a, ToJSON v, ToJSONKey k) => ToJSON (View (RangeSelector k v) a) where
   toEncoding = $(mkToEncoding defaultOptions 'RangeView)
   toJSON = $(mkToJSON defaultOptions 'RangeView)
-
-deriving instance (Ord k, FromJSONKey k) => FromJSON1 (MonoidalMap k)
-deriving instance ToJSONKey k => ToJSON1 (MonoidalMap k)
 
 instance (FromJSON (View v a), FromJSON a, FromJSON1 (View w), ViewSelector v, ViewSelector w, Ord (ViewIndex v), FromJSONKey (ViewIndex v)) => FromJSON (View (Compose v w) a) where
   parseJSON = $(mkParseJSON defaultOptions 'ComposeView)
