@@ -1,6 +1,7 @@
 # Changelog
 
-## 0.2.2 (November 21, 2018)
+## 0.2.2
+*November 21, 2018*
 
 **NOTICE: An important update to Tezos is coming on Monday, November 26. We strongly recommend you join the Baker Slack channel for updates surrounding this breaking change. Please email <tezos@obsidian.systems> to join.**
 
@@ -9,7 +10,8 @@
   * Logging for alerts to console, file, or systemd journal. Alerts are logged under the "Kiln" category.
   * Minor bug fixes
 
-## 0.2 (November 14, 2018)
+## 0.2
+*November 14, 2018*
 
   * Telegram support for notifications
   * Completely revamped UI
@@ -17,7 +19,8 @@
   * The frontend now reports when it is not actively connected to the backend (fixed known issue from version 0.1)
   * Minor bug fixes
 
-## 0.1 (October 9, 2018)
+## 0.1
+*October 9, 2018*
 
   * Initial release.
 
