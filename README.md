@@ -152,11 +152,11 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 ### Updating from an older source build
 
-To update your source build, simply checkout the newer version.
+To update your source build, simply checkout the newer version and `git pull`. For example:
 
 ```shell
-git fetch
 git checkout master
+git pull
 ```
 
 Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `ln` command.
