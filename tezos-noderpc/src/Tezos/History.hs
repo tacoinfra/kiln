@@ -153,7 +153,7 @@ accumHistory progress chainId f blk = do
       -- minLevel
       let !levels = view level blk - minLevel
       let !branches = _cachedHistory_branches history
-      !descendents <- getHistoryIncremental (_cachedHistory_blocks history) 10000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
+      !descendents <- getHistoryIncremental (_cachedHistory_blocks history) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
 
       -- make sure we have a root node
       let !rootHash = Seq.index (blkHash <| descendents) (length descendents) -- gets 1 from [blkHash,4,3,2,1]
