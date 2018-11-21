@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -24,15 +23,15 @@ import Control.Monad.State.Strict
 import Data.Foldable
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
-import Data.Sequence ((<|))
 import qualified Data.Sequence as Seq
-import Data.Sequence (Seq())
+import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Time as Time
 import Data.Tuple (swap)
-import Data.Typeable
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
 import qualified Data.LCA.Online.Polymorphic as LCA
@@ -51,7 +50,6 @@ data CachedHistory a = CachedHistory
   , _cachedHistory_minLevel :: !RawLevel
   } deriving (Show, Typeable, Generic)
 instance NFData a => NFData (CachedHistory a)
-
 makeLenses 'CachedHistory
 
 emptyCache :: CachedHistory a
@@ -104,11 +102,11 @@ getHistoryIncremental history maxBatch chainId blk numLevels branches
             stepBlock = VeryBlockLike
               { _veryBlockLike_hash = lastButOneHash
               , _veryBlockLike_predecessor = lastHash
-              , _veryBlockLike_level = (blk ^. level) - (RawLevel prefixLen) + 1
+              , _veryBlockLike_level = blk ^. level - RawLevel prefixLen + 1
               , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
               , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
               }
-            remainingLevels = numLevels - (RawLevel prefixLen) + 1
+            remainingLevels = numLevels - RawLevel prefixLen + 1
           preflight <- nodeRPC $ rBlock chainId lastButOneHash
           -- if (stepBlock ^. level /= preflight ^.level) || (stepBlock ^. predecessor /= preflight ^. predecessor)
           --   then  do
@@ -196,7 +194,7 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
     where
       blocks = _cachedHistory_blocks c
       branches = _cachedHistory_branches c
-      newPath = LCA.cons blkHash acc $ maybe LCA.empty id $ Map.lookup predHash blocks
+      newPath = LCA.cons blkHash acc $ fromMaybe LCA.empty $ Map.lookup predHash blocks
 
 accumBalance :: MonadState Balances m => Block -> m ()
 accumBalance = modify . (<>) . getBalanceChanges
