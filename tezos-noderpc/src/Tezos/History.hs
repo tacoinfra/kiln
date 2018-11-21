@@ -23,13 +23,15 @@ import Control.Monad.State.Strict
 import Data.Foldable
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
-import Data.Sequence ((<|))
 import qualified Data.Sequence as Seq
+import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Time as Time
 import Data.Tuple (swap)
-import Data.Typeable
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
 import qualified Data.LCA.Online.Polymorphic as LCA
@@ -48,7 +50,6 @@ data CachedHistory a = CachedHistory
   , _cachedHistory_minLevel :: !RawLevel
   } deriving (Show, Typeable, Generic)
 instance NFData a => NFData (CachedHistory a)
-
 makeLenses 'CachedHistory
 
 emptyCache :: CachedHistory a
@@ -76,6 +77,45 @@ instance HasPublicNodeContext (AccumHistoryContext a) where
   publicNodeContext = accumHistoryContext_publicNodeContext
 instance HasNodeRPC (AccumHistoryContext a) where
   nodeRPCContext = accumHistoryContext_publicNodeContext . nodeRPCContext
+
+getHistoryIncremental :: forall blk e r m a.
+  ( MonadIO m, MonadLogger m
+  , MonadError e m , AsPublicNodeError e
+  , MonadReader r m, HasPublicNodeContext r
+  , BlockLike blk
+  )
+  => Map BlockHash a -> RawLevel -> ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
+getHistoryIncremental history maxBatch chainId blk numLevels branches
+  | numLevels <= maxBatch = getHistory chainId blk numLevels branches
+  | otherwise = do
+      prefix <- getHistory chainId blk maxBatch mempty
+      let
+        prefixLen = length prefix -- (blk) .. [1,2,3,4] not including blk
+        lastHash = Seq.index prefix (prefixLen - 1) -- 4
+      -- TODO: turn some of these comments into logging messages.
+      -- liftIO $ print ("getHistory", prefixLen, blk ^. level, (blk ^. level) - numLevels)
+      if Map.member lastHash history
+        then return prefix
+        else do
+          let
+            lastButOneHash = Seq.index prefix (prefixLen - 2) -- 3
+            stepBlock = VeryBlockLike
+              { _veryBlockLike_hash = lastButOneHash
+              , _veryBlockLike_predecessor = lastHash
+              , _veryBlockLike_level = blk ^. level - RawLevel prefixLen + 1
+              , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
+              , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
+              }
+            remainingLevels = numLevels - RawLevel prefixLen + 1
+          preflight <- nodeRPC $ rBlock chainId lastButOneHash
+          -- if (stepBlock ^. level /= preflight ^.level) || (stepBlock ^. predecessor /= preflight ^. predecessor)
+          --   then  do
+          --     liftIO $ print ("stepBlock", stepBlock)
+          --     liftIO $ print ("checkBlock", mkVeryBlockLike preflight)
+          --     error "bad"
+          --   else return ()
+          remaining <- getHistoryIncremental history maxBatch chainId stepBlock remainingLevels mempty
+          return (prefix <> Seq.drop 1 remaining)
 
 -- add a block to cached history.  If there are multipe blocks between the
 -- added block and the deepest allowed root, the summary for those blocks will
@@ -113,7 +153,7 @@ accumHistory progress chainId f blk = do
       -- minLevel
       let !levels = view level blk - minLevel
       let !branches = _cachedHistory_branches history
-      !descendents <- getHistory chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
+      !descendents <- getHistoryIncremental (_cachedHistory_blocks history) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
 
       -- make sure we have a root node
       let !rootHash = Seq.index (blkHash <| descendents) (length descendents) -- gets 1 from [blkHash,4,3,2,1]
@@ -154,7 +194,7 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
     where
       blocks = _cachedHistory_blocks c
       branches = _cachedHistory_branches c
-      newPath = LCA.cons blkHash acc $ maybe LCA.empty id $ Map.lookup predHash blocks
+      newPath = LCA.cons blkHash acc $ fromMaybe LCA.empty $ Map.lookup predHash blocks
 
 accumBalance :: MonadState Balances m => Block -> m ()
 accumBalance = modify . (<>) . getBalanceChanges
