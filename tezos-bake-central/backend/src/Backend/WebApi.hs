@@ -10,6 +10,7 @@
 
 module Backend.WebApi where
 
+import Control.Lens
 import Control.Monad ((<=<))
 import Control.Monad.Except (ExceptT(), runExceptT, throwError, MonadError)
 import Control.Monad.IO.Class
@@ -53,6 +54,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
   , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
   , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
+  , ( chainTXT <> "/delegate-info", writeJSON $ const snapDelegateInfo )
   ]
   where
     chain = _nodeDataSource_chain dataSrc
@@ -136,3 +138,15 @@ snapBlockBaker = withCache (Left "nocache") $ \_proto -> runExceptT $ do
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel
+
+snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text CacheDelegateInfo)
+snapDelegateInfo = withCache (Left "nocache") $ \_proto -> runExceptT $ do
+  branchBS <- requiredParam "branch"
+  delegateBS <- requiredParam "delegate"
+
+  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
+  delegate <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash delegateBS
+
+  blockLevel <- maybe (throwError "block unknown") (return . view level) =<< lookupBlock branch
+
+  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate

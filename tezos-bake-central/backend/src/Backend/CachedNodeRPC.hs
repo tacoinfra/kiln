@@ -65,6 +65,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History
+import Tezos.Json (deriveTezosJson)
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
@@ -83,6 +84,8 @@ data NodeQuery a where
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
+  NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+
 deriving instance Show (NodeQuery a)
 
 
@@ -96,6 +99,31 @@ data CacheLine a = CacheLine
   , _cacheLine_used :: !UTCTime
   }
 newtype CachedResult a = CachedResult { unCacheResult :: MVar (Either RpcError (CacheLine a)) }
+
+-- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
+-- we'd probably want to cache it seperately  (it changes way slower anyhow)
+data CacheDelegateInfo = CacheDelegateInfo
+  { _cacheDelegateInfo_balance :: !Tez
+  , _cacheDelegateInfo_frozenBalance :: !Tez
+  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
+  , _cacheDelegateInfo_stakingBalance :: !Tez
+  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
+  , _cacheDelegateInfo_delegatedBalance :: !Tez
+  , _cacheDelegateInfo_deactivated :: !Bool
+  , _cacheDelegateInfo_gracePeriod :: !Cycle
+  }
+
+toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
+toCacheDelegateInfo di = CacheDelegateInfo
+  { _cacheDelegateInfo_balance = _delegateInfo_balance di
+  , _cacheDelegateInfo_frozenBalance = _delegateInfo_frozenBalance di
+  , _cacheDelegateInfo_frozenBalanceByCycle = _delegateInfo_frozenBalanceByCycle di
+  , _cacheDelegateInfo_stakingBalance = _delegateInfo_stakingBalance di
+  -- , _cacheDelegateInfo_delegatedContracts = _delegateInfo_delegatedContracts di
+  , _cacheDelegateInfo_delegatedBalance = _delegateInfo_delegatedBalance di
+  , _cacheDelegateInfo_deactivated = _delegateInfo_deactivated di
+  , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
+  }
 
 unpackCacheResult
   :: forall m e a . ( MonadIO m , MonadError e m, AsRpcError e)
@@ -314,6 +342,7 @@ getKey params hist = \case
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
+  NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
 
 nodeQueryDataSource ::
   ( MonadIO m
@@ -394,6 +423,7 @@ nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q 
     nodeRPC' $ rContract chainId branch contractId
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
@@ -502,3 +532,7 @@ deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
 makeRequestForData ''NodeQuery
 makeLenses 'NodeDataSource
+
+concat <$> traverse deriveTezosJson
+  [ ''CacheDelegateInfo
+  ]
