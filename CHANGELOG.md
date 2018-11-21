@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.2.1 (November 19, 2018)
+## 0.2.1 (November 21, 2018)
 
-  * Logging for Alerts to console, file or systemd journal
+  * **Major bug fix:** Older versions of Kiln excercise a Tezos node bug that was fixed in https://gitlab.com/tezos/tezos/merge_requests/705. If your node does not include this patch Kiln will fail to sync with your node. Some public nodes may still exhibit this bug at the time of release.
+  * Logging for alerts to console, file, or systemd journal. Alerts are logged under the "Kiln" category.
   * Minor bug fixes
 
 ## 0.2 (November 14, 2018)
