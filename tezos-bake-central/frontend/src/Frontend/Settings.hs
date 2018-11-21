@@ -8,7 +8,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -61,7 +60,6 @@ data NotificationCfg m t = forall cfg. NotificationCfg
   , -- Outer Maybe means not loaded
     _notificationCfg_watchCfg :: m (Dynamic t (Maybe (Maybe cfg)))
   , _notificationCfg_getEnabled :: cfg -> Bool
-  , _notificationCfg_isValid :: cfg -> Bool
   }
 
 -- | If editing is instead a modal 'SettingsRoute_Edit' is not used.
@@ -99,7 +97,7 @@ settingsTab = do
         )
       $ text "Notifications"
 
-    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection $
+    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection
       [ NotificationCfg
         { _notificationCfg_name = "Email"
         , _notificationCfg_description = "Use your own email server to send alerts."
@@ -109,7 +107,7 @@ settingsTab = do
         , _notificationCfg_method = AlertNotificationMethod_Email
         , _notificationCfg_watchCfg = watchMailServer
         , _notificationCfg_getEnabled = _mailServerView_enabled
-        , _notificationCfg_isValid = \_ -> True
+
         }
       , NotificationCfg
         { _notificationCfg_name = "Telegram"
@@ -120,28 +118,24 @@ settingsTab = do
         , _notificationCfg_method = AlertNotificationMethod_Telegram
         , _notificationCfg_watchCfg = watchTelegramConfig
         , _notificationCfg_getEnabled = _telegramConfig_enabled
-        , _notificationCfg_isValid = (maybe False id) . _telegramConfig_validated
         }
       ]
   where
     notificationSection :: NotificationCfg m t -> m ()
-    notificationSection (NotificationCfg name descr iconName viewCfg editCfg method watchCfg (getEnabled :: cfg -> Bool) isValid) =
+    notificationSection (NotificationCfg name descr iconName viewCfg editCfg method watchCfg (getEnabled :: cfg -> Bool)) =
       divClass "notifications-subsection" $ do
         dmdmCfg <- maybeDyn =<< watchCfg
         dyn_ $ ffor dmdmCfg $ \case
           Nothing -> divClass "ui active centered inline text loader"
             $ text $ name <> " notification settings loading."
-          Just dmCfg -> do
+          Just dmCfg' -> do
             -- If the settings are invalid, we turn the `Just cfg` to
             -- nothing. This conflates invalid saved data with no saved
             -- data.
-            let (dmCfg' :: Dynamic t (Maybe cfg)) = ffor dmCfg $ \mcfg -> do
-                  cfg <- mcfg
-                  guard $ isValid cfg
-                  pure cfg
-                headerIconText = do
-                  icon ("icon-" <> iconName)
-                  text name
+            let
+              headerIconText = do
+                icon ("icon-" <> iconName)
+                text name
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
@@ -155,26 +149,26 @@ settingsTab = do
                 Just (dEnabled :: Dynamic t Bool) -> do
                   pb <- getPostBuild
                   let setVal = leftmost [updated dEnabled, tag (current dEnabled) pb]
-                  toggleSwitch <- flip SemUi.checkbox
+                  toggleSwitch <- SemUi.checkbox
+                    headerIconText
                     (def
                       & SemUi.checkboxConfig_type SemUi.|?~ SemUi.Toggle
                       & SemUi.checkboxConfig_setValue . SemUi.initial .~ True
                       & SemUi.checkboxConfig_setValue . SemUi.event .~ Just setVal
                       )
-                    $ headerIconText
                   -- Set enabled state based on toggle.
                   statuses <- requestingIdentity $ fmap (public . PublicRequest_SetAlertNotificationMethodEnabled method) $
                     updated $ toggleSwitch ^. SemUi.checkbox_value
                   void $ runWithReplace (pure ()) $ ffor statuses $ \case
                     True -> pure ()
                     False -> fail $ show $ "\
-\Can't enable unconfigured " <> iconName <> " notifications. \
-\It is a bug that the user even had a toggle to click in this case."
+                      \Can't enable unconfigured " <> iconName <> " notifications. \
+                      \It is a bug that the user even had a toggle to click in this case."
             rec
               let fromEnabled :: Dynamic t (SettingsRoute t cfg) = dmdCfg >>= \case
                     Nothing -> pure SettingsRoute_Button
                     Just dCfg -> ffor (getEnabled <$> dCfg) $ \case
-                      True -> SettingsRoute_View $ dCfg
+                      True -> SettingsRoute_View dCfg
                       False -> SettingsRoute_Disabled
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
