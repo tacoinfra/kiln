@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 (November 21, 2018)
+## 0.2.2 (November 21, 2018)
 
 **NOTICE: An important update to Tezos is coming on Monday, November 26. We strongly recommend you join the Baker Slack channel for updates surrounding this breaking change. Please email <tezos@obsidian.systems> to join.**
 

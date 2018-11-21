@@ -11,7 +11,7 @@ The Software alerts users within the GUI if a Monitored Node:
 
 In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choice.
 
-This version (v0.2.1) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
+This version (v0.2.2) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
 * Improving the UI and user-flow
 * Expanding to monitoring bakers
 * Introducing new alert pathways
@@ -51,20 +51,20 @@ Now you can download and run the monitor like this:
 On Linux:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.2 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.2.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.2.2 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.2.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.2.2 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
 ## Updating an older Docker container
 
@@ -93,10 +93,10 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.1 ...
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.2 ...
 ```
 
-you can replace `0.2.1` with another available version.
+you can replace `0.2.2` with another available version.
 
 You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
 
