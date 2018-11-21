@@ -385,7 +385,7 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either RpcError b))
   -> NodeQuery a
   -> IO (Either RpcError a)
-nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q of
+nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -393,11 +393,12 @@ nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q 
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract chainId branch contractId
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
-  -- TODO: This can be handled by recursively calling NodeQuery_Block and extracting the relevant data.  that'd save us some round-trips.
-  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ nodeRPC' $ rBlock chainId branch
+  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
+    self :: forall b. NodeQuery b -> ExceptT RpcError IO b
+    self = ExceptT . self'
 
 
 withCache ::
