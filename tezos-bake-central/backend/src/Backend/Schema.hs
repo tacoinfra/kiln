@@ -21,8 +21,6 @@
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
 
-{- # OPTIONS_GHC -ddump-splices #-}
-
 module Backend.Schema
   ( module Backend.Schema
 

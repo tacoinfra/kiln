@@ -1,9 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wall -Werror -Wno-type-defaults #-}
@@ -267,13 +267,11 @@ getErrorLogsImpl intervalMap = do
                         <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
           <> " WHERE "
           <> bool "" "   NOT n.deleted" (isJust related)
-      exact <- build <$> query (
+      build <$> query (
         qBase <>
           " AND  ((el.started >= ?) AND (el.started <= ?)) \
           \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
         (lowWithInf, highWithInf)
-
-      return exact
 
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
