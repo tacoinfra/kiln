@@ -9,6 +9,7 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -19,11 +20,11 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Map (Map)
+import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (TimeZone, UTCTime)
+import Data.Time (TimeZone, UTCTime, diffUTCTime)
 import qualified Data.Time as Time
-import qualified Data.Time.Format.Human as HumanTime
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -41,6 +42,7 @@ import Common.App (Bake)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
+import Common (humanizeDiffTime)
 import ExtraPrelude
 
 data FrontendContext t = FrontendContext
@@ -86,13 +88,20 @@ localHumanizedTimestamp
     ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
     , MonadReader r m, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t Time.UTCTime
+  => Dynamic t (Maybe Text)
+  -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestamp tDyn = do
+localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
-    T.pack $ HumanTime.humanReadableTimeI18N' HumanTime.defaultHumanTimeLocale { HumanTime.timeZone = tz } c t
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .  Time.utcToZonedTime tz <$> tDyn
+
+  elDynAttr "span" (fold
+    [ Map.fromList . fmap ("data-title",) . toList <$> titleDyn -- TODO: title doesn't work!
+    , Map.singleton "data-tooltip" <$> ltDyn
+    , pure $ Map.fromList [("data-position", "bottom center")]
+    ]) $ dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
+      humanizeDiffTime (diffUTCTime c t)
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case

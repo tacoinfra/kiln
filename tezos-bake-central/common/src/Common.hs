@@ -11,15 +11,35 @@ import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time.Clock (NominalDiffTime)
 import qualified Text.URI as Uri
+import Data.Maybe (mapMaybe)
 import ExtraPrelude
 
 nominalDiffTimeToSeconds :: NominalDiffTime -> Integer
-nominalDiffTimeToSeconds n = numerator ratio * denominator ratio
+nominalDiffTimeToSeconds n = numerator ratio `div` denominator ratio
   where
     ratio = toRational n
 
+humanizeDiffTime :: Time.NominalDiffTime -> Text
+humanizeDiffTime t = T.unwords elems <> agoFromNow
+  where
+    hms :: [Integer] -> Integer -> [Integer]
+    hms (x:xs) n = (n `mod` x):hms xs (n `div` x)
+    hms [] n = [n]
+
+    totalseconds = nominalDiffTimeToSeconds t
+    agoFromNow = bool " ago" " from now" $ totalseconds < 0
+    elems = mapMaybe showElem
+      $ take 2
+      $ dropWhile ((== 0) . fst)
+      $ reverse
+      $ zip (hms [60,60,24] totalseconds) "smhd"
+
+    showElem (n, u)
+      | n == 0 = Nothing
+      | otherwise = Just $ T.pack (show n) <> T.singleton u
+
 nominalDiffTimeToMicroseconds :: NominalDiffTime -> Integer
-nominalDiffTimeToMicroseconds n = numerator ratio * (microsecondsInSecond `div` denominator ratio)
+nominalDiffTimeToMicroseconds n = (numerator ratio * microsecondsInSecond) `div` denominator ratio
   where
     microsecondsInSecond = 10^(6 :: Integer)
     ratio = toRational n

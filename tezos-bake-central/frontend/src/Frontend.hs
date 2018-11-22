@@ -324,7 +324,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
 
         whenJustDyn latestHead $ \b -> info "Block" $ do
           text $ tshow (unRawLevel $ b ^. level) <> " "
-          localHumanizedTimestamp $ pure $ b ^. timestamp
+          localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
     divClass "ten wide column right aligned" $ do
       headerBell
@@ -819,7 +819,7 @@ nodesTab =
 
           el "dt" (text "Baked")
           el "dd" $ do
-            withPlaceholder $ withMaybeDyn b localHumanizedTimestamp (view timestamp)
+            withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
         when (isJust getPeerCount' || isJust getNetworkStats') $
           divClass "divider" blank
