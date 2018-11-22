@@ -60,7 +60,6 @@ library
     , hashing
     , http-types
     , lens
-    , lens-aeson
     , memory
     , modern-uri
     , mtl
