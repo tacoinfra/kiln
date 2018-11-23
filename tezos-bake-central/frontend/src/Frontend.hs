@@ -160,7 +160,7 @@ isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) 
 
 -- NB: The order of these constructors determines the order of the tabs in the UI.
 data UITab = UITab_Nodes
-           -- | UITab_Delegate PublicKeyHash
+           -- | UITab_Baker PublicKeyHash
            -- | UITab_Client (Id Client) URI
            | UITab_Options
   deriving (Eq, Ord, Show)
@@ -365,7 +365,7 @@ appContentArea selectedTab =
     UITab_Nodes -> nodesTabOrWelcome
     UITab_Options -> divClass "app-content" settingsTab
     -- UITab_Client cid addr -> clientTab cid addr
-    -- UITab_Delegate pkh -> delegateTab pkh
+    -- UITab_Baker pkh -> bakerTab pkh
 
 nodesTabOrWelcome
   :: forall r m t.
@@ -376,7 +376,7 @@ nodesTabOrWelcome
   => m ()
 nodesTabOrWelcome = do
   _clientAddresses <- watchClientAddresses
-  _delegates <- watchDelegatePublicKeyHashes
+  _bakers <- watchBakerPublicKeyHashes
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
@@ -586,8 +586,8 @@ liveErrorsWidget nodesDyn = void $ do
             nodeLabel n
             el "div" message
 
-          ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate{} -> do
-            header "Multiple bakers for same delegate" -- TODO Fill this out
+          ErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
+            header "Multiple bakers for same baker" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
       [ (direction (_errorLog_started l, elId), row)
@@ -682,7 +682,7 @@ thirtySixHoursToInfinity
 thirtySixHoursToInfinity = do
   let thirtySixHoursAgo = (-1.5) * Time.nominalDay
   let oneHour = 60 * 60
-  let quantize = flip Time.addUTCTime unixEpoch . (* oneHour) . fromIntegral . floor . (/ oneHour) . flip Time.diffUTCTime unixEpoch
+  let quantize = flip Time.addUTCTime unixEpoch . (* oneHour) . fromIntegral @Integer . floor . (/ oneHour) . flip Time.diffUTCTime unixEpoch
   time <- holdUniqDyn =<< fmap quantize <$> asks (view timer)
 
   return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
@@ -873,19 +873,19 @@ nodesTab =
       , Just k <- [nodeIdForErrorLogView t]
       ]
 
-delegateTab
+bakerTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r
     )
   => PublicKeyHash
   -> m ()
-delegateTab pkh = do
-  delegates <- watchDelegateStats $ pure $ Set.singleton pkh
+bakerTab pkh = do
+  bakers <- watchBakerStats $ pure $ Set.singleton pkh
   dparameters <- watchProtoInfo
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisDelegate <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> delegates
-  dyn_ $ ffor thisDelegate $ \case
+  thisBaker <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> bakers
+  dyn_ $ ffor thisBaker $ \case
     Nothing -> waitingForResponse
     Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
       divClass "eight wide column" $ do
@@ -942,9 +942,9 @@ clientTab cid addr = do
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ text $ Uri.render addr
-        _ <- divClass "delegates" $ do
+        _ <- divClass "bakers" $ do
           text "ID: "
-          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_delegates $ unJson $ _clientInfo_config clientInfo)
+          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _clientInfo_config clientInfo)
 
         elClass "p" "counts" $ do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $

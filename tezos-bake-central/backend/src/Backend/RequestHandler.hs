@@ -104,20 +104,20 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
         for_ cids $ notify . mkDefaultNotify
 
-      PublicRequest_AddDelegate pkh alias -> inDb $ do
-        existingIds :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
+      PublicRequest_AddBaker pkh alias -> inDb $ do
+        existingIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
         case nonEmpty existingIds of
-          Nothing -> void $ insertNotify Delegate { _delegate_publicKeyHash = pkh, _delegate_alias = alias, _delegate_deleted = False }
-          Just dids -> for_ dids $ \did ->
-            updateIdNotify (did :: Id Delegate) [Delegate_deletedField =. False, Delegate_aliasField =. alias]
+          Nothing -> void $ insertNotify Baker { _baker_publicKeyHash = pkh, _baker_alias = alias, _baker_deleted = False }
+          Just bIds -> for_ bIds $ \bId ->
+            updateIdNotify (bId :: Id Baker) [Baker_deletedField =. False, Baker_aliasField =. alias]
 
-      PublicRequest_RemoveDelegate pkh -> inDb $ do
-        dids :: [Id Delegate] <- fmap toId <$> project AutoKeyField (Delegate_publicKeyHashField ==. pkh)
-        let inIds = In dids
-        _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.delegate IN ?inIds |]
-        _ <- [executeQ| DELETE FROM "DelegateStats" ds WHERE ds.delegate IN ?inIds |]
-        for_ dids $ \did ->
-          updateIdNotify did [Delegate_deletedField =. True]
+      PublicRequest_RemoveBaker pkh -> inDb $ do
+        bIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        let inIds = In bIds
+        _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
+        _ <- [executeQ| DELETE FROM "BakerStats" ds WHERE ds.baker IN ?inIds |]
+        for_ bIds $ \bId ->
+          updateIdNotify bId [Baker_deletedField =. True]
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'

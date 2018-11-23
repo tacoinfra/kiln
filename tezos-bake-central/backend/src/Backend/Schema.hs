@@ -84,11 +84,11 @@ stripOnly = coerce
 
 data Notify
   = Notify_Client !(Id Client)
-  | Notify_Delegate !(Id Delegate) --TODO: Use PublicKeyHash instead
+  | Notify_Baker !(Id Baker) --TODO: Use PublicKeyHash instead
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
-  | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
+  | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
@@ -108,16 +108,16 @@ class HasDefaultNotify f where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
-instance HasDefaultNotify (Id Delegate) where
-  mkDefaultNotify = Notify_Delegate
+instance HasDefaultNotify (Id Baker) where
+  mkDefaultNotify = Notify_Baker
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
   mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
   mkDefaultNotify = Notify_ErrorLogInaccessibleNode
-instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
-  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
+instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
+  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
 instance HasDefaultNotify (Id Notificatee) where
@@ -508,14 +508,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _pendingReward_uniqueness
             type: constraint
-            fields: [_pendingReward_delegate, _pendingReward_hash]
-  - entity: Delegate
+            fields: [_pendingReward_baker, _pendingReward_hash]
+  - entity: Baker
     constructors:
-      - name: Delegate
+      - name: Baker
         uniques:
-          - name: _delegate_uniqueness
+          - name: _baker_uniqueness
             type: constraint
-            fields: [_delegate_publicKeyHash]
+            fields: [_baker_publicKeyHash]
   - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
@@ -548,7 +548,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
-  - entity: ErrorLogMultipleBakersForSameDelegate
+  - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
   - entity: CachedProtocolConstants
     constructors:
@@ -583,12 +583,12 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
-  , (''Delegate, 'DelegateKey)
+  , (''Baker, 'BakerKey)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
-  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
+  , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)

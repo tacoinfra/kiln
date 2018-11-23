@@ -64,10 +64,10 @@ instance Aeson.FromJSON Uri.URI where
   parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
 sumFees :: PublicKeyHash -> Operation -> Tez
-sumFees delegate = getSum . views balanceUpdates getFee
+sumFees baker = getSum . views balanceUpdates getFee
   where
     getFee :: BalanceUpdate -> Sum Tez
-    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == delegate = Sum (_freezerUpdate_change x)
+    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
     getFee _ = Sum 0
 
 type Baked = Event BakedEvent
@@ -91,16 +91,16 @@ knownProtocols =
   ]
 
 data BlockBaker = BlockBaker
-  { _baker_publicKeyHash :: !PublicKeyHash
-  , _baker_priority :: !Priority
-  , _baker_endorsements :: !(Map PublicKeyHash (Seq Word8))
+  { _blockBaker_publicKeyHash :: !PublicKeyHash
+  , _blockBaker_priority :: !Priority
+  , _blockBaker_endorsements :: !(Map PublicKeyHash (Seq Word8))
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 getBakerFromBlock :: Block -> BlockBaker
 getBakerFromBlock block = BlockBaker
-  { _baker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
-  , _baker_priority = block ^. block_header . blockHeader_priority
-  , _baker_endorsements = block ^. block_operations
+  { _blockBaker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
+  , _blockBaker_priority = block ^. block_header . blockHeader_priority
+  , _blockBaker_endorsements = block ^. block_operations
     . traverse
     . traverse
     . operation_contents
@@ -124,7 +124,7 @@ data Client = Client
 instance HasId Client
 
 data PendingReward = PendingReward
-  { _pendingReward_delegate :: !(Id Delegate)
+  { _pendingReward_baker :: !(Id Baker)
   , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
   , _pendingReward_level :: !TezosWord64
   , _pendingReward_amount :: !Tez
@@ -224,7 +224,7 @@ data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   , _bakedEvent_operations :: [[BakedEventOperation]]
   , _bakedEvent_signedHeader :: BlockHeader
-  , _bakedEvent_delegate :: !PublicKeyHash
+  , _bakedEvent_baker :: !PublicKeyHash
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SeenEvent = SeenEvent
@@ -256,7 +256,7 @@ data EndorseEvent = EndorseEvent
   { _endorseEvent_hash :: BlockHash
   , _endorseEvent_level :: Int
   , _endorseEvent_slot :: Int -- todo, pluralize
-  , _endorseEvent_delegate :: PublicKeyHash
+  , _endorseEvent_baker :: PublicKeyHash
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
   } deriving (Show, Eq, Typeable, Generic)
@@ -277,8 +277,8 @@ blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
   where
     blockHeader = _bakedEvent_signedHeader $ _event_detail b
     nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
-    delegate = _bakedEvent_delegate $ _event_detail b
-    fees = getSum $ (foldMap.foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
+    baker = _bakedEvent_baker $ _event_detail b
+    fees = getSum $ (foldMap.foldMap) (Sum . sumFees baker . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tez
 endorsementReward b p = Tez $ getTez (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
@@ -300,17 +300,17 @@ data ClientDaemonWorker
 
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
-  , _clientConfig_delegates :: [PublicKeyHash] -- Ident
+  , _clientConfig_bakers :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
-data Delegate = Delegate
-  { _delegate_publicKeyHash :: !PublicKeyHash
-  , _delegate_alias :: !(Maybe Text)
-  , _delegate_deleted :: !Bool
+data Baker = Baker
+  { _baker_publicKeyHash :: !PublicKeyHash
+  , _baker_alias :: !(Maybe Text)
+  , _baker_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Delegate
+instance HasId Baker
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
@@ -401,13 +401,13 @@ instance HasId ErrorLogBakerNoHeartbeat
 data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 
-data ErrorLogMultipleBakersForSameDelegate = ErrorLogMultipleBakersForSameDelegate
-  { _errorLogMultipleBakersForSameDelegate_log :: !(Id ErrorLog)
-  , _errorLogMultipleBakersForSameDelegate_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameDelegate_client :: !(Id Client)
-  , _errorLogMultipleBakersForSameDelegate_worker :: !ClientWorker
+data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
+  { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
+  , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
+  , _errorLogMultipleBakersForSameBaker_client :: !(Id Client)
+  , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogMultipleBakersForSameDelegate
+instance HasId ErrorLogMultipleBakersForSameBaker
 
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
@@ -492,14 +492,14 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
-  , ''Delegate
+  , ''Baker
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
-  , ''ErrorLogMultipleBakersForSameDelegate
+  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
   , ''Event
   , ''MailServerConfig
@@ -522,7 +522,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakeEfficiency
   , 'BlockBaker
   , 'CachedProtocolConstants
-  , 'Delegate
+  , 'Baker
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
@@ -530,7 +530,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBadNodeHead
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
-  , 'ErrorLogMultipleBakersForSameDelegate
+  , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig

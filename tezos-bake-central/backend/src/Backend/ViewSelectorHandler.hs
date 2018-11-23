@@ -123,20 +123,20 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           , _node_updated = updated
           })
 
-  let delegatesVS = _bakeViewSelector_delegates vs
-  delegates :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null delegatesVS) $ do
-    xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
-    return $ toRangeView delegatesVS $ (, First $ Just ()) . Bounded <$> xs
+  let bakersVS = _bakeViewSelector_bakers vs
+  bakers :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null bakersVS) $ do
+    xs <- project Baker_publicKeyHashField (Baker_deletedField ==. False)
+    return $ toRangeView bakersVS $ (, First $ Just ()) . Bounded <$> xs
 
   -- maybeCurrentHead <- runReaderT dataSourceHead nds
 
-  -- delegateStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
-  let delegateStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
+  -- bakerStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
+  let bakerStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
        = mempty
   --   <- whenJust maybeCurrentHead $ \currentHead -> do
   --   forRWT nds $ withCache mempty $ \_protoInfo -> do
-  --     flip itraverse (_bakeViewSelector_delegateStats vs) $ \(i, j) -> _
-  --     -- calculateDelegateStats (_bakeViewSelector_delegateStats vs)
+  --     flip itraverse (_bakeViewSelector_bakerStats vs) $ \(i, j) -> _
+  --     -- calculateBakerStats (_bakeViewSelector_bakerStats vs)
 
 
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
@@ -180,13 +180,13 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
-    , _bakeView_delegateStats = delegateStats
+    , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
     -- , _bakeView_summaryGraph = summaryGraph
     , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
-    , _bakeView_delegates = delegates
-    , _bakeView_errors =  errors
+    , _bakeView_bakers = bakers
+    , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
@@ -220,7 +220,7 @@ getErrorLogsImpl flt intervalMap = do
 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
   where
-    queryNodeAlert, queryDelegateAlert, queryClientDaemonAlert
+    queryNodeAlert, queryBakerAlert, queryClientDaemonAlert
       :: Pg.FromRow row
       => Pg.Query
       -> [Pg.Query]
@@ -231,8 +231,8 @@ getErrorLogsImpl flt intervalMap = do
       queryAlert sqlTable sqlFields (Just ("Node", "id", "node"))
     queryClientDaemonAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
-    queryDelegateAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Delegate", "publicKeyHash", "publicKeyHash"))
+    queryBakerAlert sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
 
     queryAlert
       :: (Monad f, PostgresRaw f, Pg.FromRow row)
@@ -305,9 +305,9 @@ getErrorLogsImpl flt intervalMap = do
                     , _errorLogBadNodeHead_nodeHead =tNodeHead
                     , _errorLogBadNodeHead_latestHead = tLatestHead
                     }) window
-        , queryDelegateAlert "ErrorLogMultipleBakersForSameDelegate" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_MultipleBakersForSameDelegate $
-                  ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker)
+        , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
+          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_MultipleBakersForSameBaker $
+                  ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
         ]
 

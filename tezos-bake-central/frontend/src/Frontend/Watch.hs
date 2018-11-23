@@ -86,24 +86,24 @@ watchClient cidDyn = do
     }
   return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView (_bakeView_clients v)
 
-watchDelegatePublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
-watchDelegatePublicKeyHashes = do
-  theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_delegates = viewRangeAll 1}
-  return $ ffor theView $ MMap.keysSet . getRangeView' . _bakeView_delegates
+watchBakerPublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
+watchBakerPublicKeyHashes = do
+  theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_bakers = viewRangeAll 1}
+  return $ ffor theView $ MMap.keysSet . getRangeView' . _bakeView_bakers
 
-watchDelegateStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
-watchDelegateStats delegates = do
+watchBakerStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
+watchBakerStats bakers = do
   let levels :: (RawLevel, RawLevel) = (0, 30)
       --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
-  _theView <- watchViewSelector $ ffor delegates $ \ds -> mempty
-    { _bakeViewSelector_delegateStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
+  _theView <- watchViewSelector $ ffor bakers $ \ds -> mempty
+    { _bakeViewSelector_bakerStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
     }
   holdDyn MMap.empty never
   -- return $ ffor theView $ uncurry (mergeMMap
   --     (\_ acc -> Just (mempty, acc))
   --     (\_ _ -> Nothing)
   --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
-  --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_delegateStats
+  --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_bakerStats
 
 watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
 watchClientAddresses = do
@@ -149,11 +149,11 @@ watchErrors
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrors alerts intervals = do
-  view <- watchViewSelector $ ffor2 alerts intervals $ \alert ivals -> mempty
+  v <- watchViewSelector $ ffor2 alerts intervals $ \alert ivals -> mempty
     { _bakeViewSelector_errors = MMap.singleton alert $ viewIntervalSet ivals 1
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> view)
+  return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> v)
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =

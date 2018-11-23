@@ -47,11 +47,11 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
-      Notify_Delegate eid -> handleDelegate eid
+      Notify_Baker eid -> handleBaker eid
       Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log ErrorLogView_BadNodeHead eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
-      Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
+      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log ErrorLogView_MultipleBakersForSameBaker eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_Node eid ent -> handleNode eid ent
@@ -90,12 +90,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     paramsVS = _bakeViewSelector_parameters aggVS
     handleParameters _eid params =
-      -- delegateStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
-      --   calculateDelegateStats (_bakeViewSelector_delegateStats aggVS)
+      -- bakerStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
+      --   calculateBakerStats (_bakeViewSelector_bakerStats aggVS)
       whenM (viewSelects () paramsVS) $
         pure $ mempty
           { _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
-          -- , _bakeView_delegateStats = delegateStatsView
+          -- , _bakeView_bakerStats = bakerStatsView
           }
 
     nodesVS = _bakeViewSelector_nodes aggVS
@@ -115,14 +115,14 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
-    delegateVS = _bakeViewSelector_delegates aggVS
-    handleDelegate dId = do
+    bakerVS = _bakeViewSelector_bakers aggVS
+    handleBaker bId = do
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
-      delegate :: Maybe Delegate <- get $ fromId dId
+      baker :: Maybe Baker <- get $ fromId bId
       pure $ mempty
-        { _bakeView_delegates = foldMap (\d -> toRangeView1 delegateVS (Bounded $ _delegate_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _delegate_deleted d)) delegate
+        { _bakeView_bakers = foldMap (\d -> toRangeView1 bakerVS (Bounded $ _baker_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _baker_deleted d)) baker
         }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS

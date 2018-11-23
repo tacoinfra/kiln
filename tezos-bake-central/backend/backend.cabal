@@ -111,7 +111,7 @@ library
     Backend.Workers
     Backend.Workers.Cache
     Backend.Workers.Client
-    Backend.Workers.Delegate
+    Backend.Workers.Baker
     Backend.Workers.Node
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

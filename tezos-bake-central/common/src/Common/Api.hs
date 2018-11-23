@@ -48,11 +48,11 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
-    PublicRequest_AddDelegate
+    PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text
       -> PublicRequest Bake ()
-    PublicRequest_RemoveDelegate
+    PublicRequest_RemoveBaker
       :: PublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
