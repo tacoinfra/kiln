@@ -28,8 +28,15 @@ humanizeDiffTime t = T.unwords elems <> agoFromNow
 
     totalseconds = nominalDiffTimeToSeconds t
     agoFromNow = bool " ago" " from now" $ totalseconds < 0
+
+    -- keep 2 elements if the first is a 1, otherwise take 1 element
+    take2 (xy@(x, _y):xys)
+      | x >= 2 = [xy]
+      | otherwise = xy:take 1 xys
+    take2 xys = take 2 $ xys
+
     elems = mapMaybe showElem
-      $ take 2
+      $ take2
       $ dropWhile ((== 0) . fst)
       $ reverse
       $ zip (hms [60,60,24] totalseconds) "smhd"
