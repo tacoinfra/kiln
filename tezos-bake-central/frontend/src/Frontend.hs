@@ -376,7 +376,7 @@ nodesTabOrWelcome
   => m ()
 nodesTabOrWelcome = do
   _clientAddresses <- watchClientAddresses
-  _bakers <- watchBakerPublicKeyHashes
+  _bakers <- watchBakerAddresses
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe

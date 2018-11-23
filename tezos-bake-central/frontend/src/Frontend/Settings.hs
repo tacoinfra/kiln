@@ -17,7 +17,6 @@ import Control.Monad (guard)
 import Data.Function (on)
 import Data.Functor.Infix
 import Data.List (intersperse)
-import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
@@ -219,11 +218,12 @@ settingsTab = do
         addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
+    _bakersOptions :: m ()
     _bakersOptions = do
       divClass "ui medium header" $ text "Bakers"
       elClass "table" "ui celled striped compact table" $ do
-        bakers <- watchBakerPublicKeyHashes
-        _ <- listWithKey (Map.fromSet (const ()) <$> bakers) $ \pkh _ -> el "tr" $ do
+        bakers <- watchBakerAddresses
+        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh _ -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
