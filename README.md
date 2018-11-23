@@ -5,7 +5,7 @@
 The Software alerts users within the GUI if a Monitored Node:
 
 * Is on the wrong network
-* Is on the wrong branch
+* Is not on the fittest branch
 * Falls behind the current head block level
 * Cannot be reached by the Monitoring Software (e.g. is offline)
 
