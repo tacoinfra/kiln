@@ -19,44 +19,34 @@
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
-import Prelude hiding (length)
-
-import Control.Applicative
+import Control.Applicative (ZipList (..))
 import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar
+import Control.Concurrent.MVar (MVar, isEmptyMVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar,
+                                readMVar, tryPutMVar, tryReadMVar)
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, readTVarIO, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
+import Control.Lens (TraversableWithIndex, re)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except
-import Control.Monad.Logger (LoggingT (..), logDebugSH, logInfo, logWarnSH)
-import Control.Monad.Reader
+import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
+import Control.Monad.Logger (LoggingT (..), logDebugSH, logErrorSH, logInfo, logWarnSH)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Foldable (fold, length, toList)
-import Data.Function (on)
-import Data.Functor.Identity (Identity (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
-import Data.Traversable (for)
-import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
-import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Request.Class
+import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
 import Safe (headMay)
@@ -75,7 +65,7 @@ import Backend.Common (timeout')
 import Backend.Schema
 import Common (unixEpoch)
 import Common.Schema
-import Rhyolite.Backend.Logging
+import ExtraPrelude
 
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
