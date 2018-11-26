@@ -51,7 +51,7 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (humanBytes, uriHostPortPath)
+import Common (humanBytes, uriHostPortPath, unixEpoch)
 import Common.Alerts (badNodeHeadMessage)
 import Common.Api
 import Common.App
@@ -182,6 +182,7 @@ appMain = do
 
     rec
       let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
+      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
       (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
         (def
           & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
@@ -197,9 +198,8 @@ appMain = do
         (\f -> SemUi.menu
           (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
           $ do
-            let alertWindow = ClosedInterval LowerInfinity UpperInfinity
             nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-            alertsDyn <- watchErrors (pure $ Set.singleton alertWindow)
+            alertsDyn <- watchErrors alertWindow
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
@@ -676,6 +676,20 @@ publicNodeOptions = do
     let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
+thirtySixHoursToInfinity
+  ::
+  ( MonadReader r m, HasTimer t r
+  , MonadRhyoliteFrontendWidget Bake t m
+  )
+  => m (Dynamic t (ClosedInterval (WithInfinity Time.UTCTime)))
+thirtySixHoursToInfinity = do
+  let thirtySixHoursAgo = (-1.5) * Time.nominalDay
+  let oneHour = 60 * 60
+  let quantize = flip Time.addUTCTime unixEpoch . (* oneHour) . fromIntegral . floor . (/ oneHour) . flip Time.diffUTCTime unixEpoch
+  time <- holdUniqDyn =<< fmap quantize <$> asks (view timer)
+
+  return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
+
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -699,12 +713,13 @@ nodesTab =
           ) publicNodeConfigDyn rawPublicNodesDyn
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
+      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
-          let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          alerts <- watchErrors (pure $ Set.singleton alertWindow)
+          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+          alerts <- watchErrors alertWindow
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             unresolvedAlertsForThisNode <- holdUniqDyn $
               foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
