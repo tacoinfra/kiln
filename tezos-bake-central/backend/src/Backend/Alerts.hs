@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
@@ -14,6 +15,7 @@
 module Backend.Alerts where
 
 import Control.Monad.Logger (MonadLogger, logDebugSH)
+import Data.Time (NominalDiffTime, addUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
@@ -176,6 +178,9 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
+badNodeHeadErrorDelaySeconds :: NominalDiffTime
+badNodeHeadErrorDelaySeconds = 180
+
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
@@ -194,25 +199,26 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
     |]
   case existingLog of
     Nothing -> do
-      l <- insertErrorLog $ \logId -> ErrorLogBadNodeHead
+      void $ insertErrorLog $ \logId -> ErrorLogBadNodeHead
         { _errorLogBadNodeHead_log = logId
         , _errorLogBadNodeHead_node = nodeId
         , _errorLogBadNodeHead_lca = Json . mkVeryBlockLike <$> lca
         , _errorLogBadNodeHead_nodeHead = Json $ mkVeryBlockLike nodeHead
         , _errorLogBadNodeHead_latestHead = Json $ mkVeryBlockLike latestHead
         }
-      node <- get $ fromId nodeId
-      for_ node $ \n -> do
-        let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        queueAlert $ Alert Unresolved heading $
-          heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
     Just (logId, specificLogId) -> do
-      updateErrorLogBy logId specificLogId
+      (g,l) <- returnUpdateErrorLogBy logId specificLogId
         [ ErrorLogBadNodeHead_lcaField =. (Json . mkVeryBlockLike <$> lca)
         , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
+      when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g)) $ do
+        node <- getId nodeId
+        for_ node $ \n -> do
+          let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+          queueAlert $ Alert Unresolved heading $
+            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
 clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
                           MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
@@ -224,7 +230,9 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node <- get $ fromId nodeId
-  when (not $ null lids) $ for_ node $ \n -> do
+  specErrs <- catMaybes <$> for lids getId
+  errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
+  when (any (\e -> _errorLog_lastSeen e >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started e)) errs) $ for_ node $ \n -> do
     queueAlert $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
@@ -260,7 +268,28 @@ updateErrorLogBy logId specificLogId updates = do
   updateId specificLogId updates
   notify $ mkDefaultNotify specificLogId
 
+returnUpdateErrorLogBy
+  :: (EntityWithId a, HasDefaultNotify (Id a), GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id ErrorLog
+  -> Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m (ErrorLog, a)
+returnUpdateErrorLogBy logId specificLogId updates = do
+  g <- returnUpdateErrorLogLastSeen logId
+  updateId specificLogId updates
+  notify $ mkDefaultNotify specificLogId
+  getId specificLogId >>= \case
+    Nothing -> fail $ "returnUpdateErrorLogBy called on nonexistent specific record " <> show specificLogId
+    Just l -> return (g,l)
+
 updateErrorLogLastSeen :: PersistBackend m => Id ErrorLog -> m ()
 updateErrorLogLastSeen logId = do
   now <- getTime
   updateId logId [ErrorLog_lastSeenField =. now]
+
+returnUpdateErrorLogLastSeen :: PersistBackend m => Id ErrorLog -> m ErrorLog
+returnUpdateErrorLogLastSeen logId = do
+  updateErrorLogLastSeen logId
+  getId logId >>= \case
+    Nothing -> fail $ "returnUpdateErrorLogLastSeen called on nonexistent record " <> show logId
+    Just l -> return l
