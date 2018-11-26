@@ -23,7 +23,7 @@ import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
 
-migrateKiln :: (Show (TableAnalysis m), Migrate m) => m ()
+migrateKiln :: (Migrate m) => m ()
 migrateKiln = (getTableAnalysis >>= preMigrate >>= autoMigrate) *> extraIndexes
 
 autoMigrate :: (Migrate m) => TableAnalysis m -> m ()
@@ -41,11 +41,15 @@ preMigrate =
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
   let table = (Nothing, "Parameters")
-  hasHeadTimestamp <- fmap (any ((== "headTimestamp") . colName) . tableColumns) <$> analyzeTable ta table
-  case hasHeadTimestamp of
+  analyzedTable' <- analyzeTable ta table
+  let
+    hasHeadTimestamp = any ((== "headTimestamp") . colName) . tableColumns
+    hasOriginationSize = any ((== "protoInfo#originationSize") . colName) . tableColumns
+  case analyzedTable' of
     Nothing -> pure ta
-    Just False -> pure ta
-    Just True -> dropTable table *> getTableAnalysis
+    Just analyzedTable -> if hasHeadTimestamp analyzedTable || not (hasOriginationSize analyzedTable)
+      then dropTable table *> getTableAnalysis
+      else pure ta
 
 migratePublicNodeHead :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migratePublicNodeHead ta = do
@@ -70,11 +74,11 @@ extraIndexes = do
 
 
 createIndex :: (Migrate m) => QualifiedName -> [String] -> String -> m ()
-createIndex table@(tableSchema, tableName) columns indexName = do
+createIndex table@(tableSchema, _tableName) columns indexName = do
   -- TODO: this only verifies that the index exists, not that it uses the right columns in the right order.
   -- JOIN pg_catalog.pg_attribute a  ON a.attrelid = t.oid
   --   where a.attnum = ANY(ix.indkey)
-  (Only needIndex):_ <- [queryQ|
+  Only needIndex:_ <- [queryQ|
     SELECT count(ix.indexrelid) = 0
     FROM pg_catalog.pg_class t
     JOIN pg_catalog.pg_index ix     ON t.oid = ix.indrelid

@@ -227,9 +227,9 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
     step l (pn, someNode) = l >>= \case
       Nothing -> do
         let ctx = PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)) pn
-        runExceptT (runReaderT (getProtoConstants chainId) ctx) <&> \case
-          Left (_ :: PublicNodeError) -> Nothing
-          Right params -> Just params
+        runExceptT (runReaderT (getProtoConstants chainId) ctx) >>= \case
+          Left (e :: PublicNodeError) -> $(logErrorSH) e $> Nothing
+          Right params -> $(logDebugSH) params $> Just params
       l' -> return l'
     onChainNodes = foldl step (return Nothing) theseNodes
 
