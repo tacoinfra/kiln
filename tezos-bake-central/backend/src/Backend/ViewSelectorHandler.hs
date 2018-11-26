@@ -269,7 +269,7 @@ getErrorLogsImpl intervalMap = do
           <> bool "" "   NOT n.deleted" (isJust related)
       build <$> query (
         qBase <>
-          " AND  ((el.started >= ?) AND (el.started <= ?)) \
+          " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \
           \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
         (lowWithInf, highWithInf)
 
