@@ -15,6 +15,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
@@ -27,6 +28,8 @@ module Backend.Schema
   , toId
   ) where
 
+import Control.Lens (Field1, Field2)
+import Data.Time (UTCTime)
 import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -46,12 +49,13 @@ import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
+import Database.Groundhog.TH.Settings (PersistDefinitions(..), PSEntityDef(..))
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
-import Database.PostgreSQL.Simple.ToField (ToField (toField))
+import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
@@ -70,6 +74,7 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Backend.Version (parseVersion)
+import Common.AppendIntervalMap (WithInfinity(..))
 import Common.Schema
 import ExtraPrelude
 
@@ -432,6 +437,19 @@ instance ToField URI where
   toField = toField . Uri.render
 instance FromField URI where
   fromField f b = fromMaybe (error "Invalid URI") . Uri.mkURI <$> fromField f b
+
+
+instance ToField (WithInfinity UTCTime) where
+  toField = \case
+    UpperInfinity -> Plain "'infinity'::timestamp"
+    Bounded x -> toField x
+    LowerInfinity -> Plain "'-infinity'::timestamp"
+
+instance Field1 (a :. b) (a' :. b) a a' where
+  _1 a2fb (a :. b) = (:. b) <$> a2fb a
+
+instance Field2 (a :. b) (a :. b') b b' where
+  _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client

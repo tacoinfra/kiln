@@ -1,25 +1,32 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-{-# OPTIONS_GHC -Wno-unused-matches #-}
+{-# OPTIONS_GHC -Wall -Werror -Wno-type-defaults #-}
 
 module Backend.ViewSelectorHandler where
 
+import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Bifunctor (first)
+import Data.Functor.Identity (Identity (..))
+import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
 import Data.Time (UTCTime)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
+import Text.URI (URI)
+
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ, query)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
-import Text.URI (URI)
 
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
@@ -27,14 +34,14 @@ import Tezos.Types
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
--- import Backend.Graphs
 import Backend.Schema
 import Common.App
-import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..), getBounded)
 import qualified Common.AppendIntervalMap as AppendIMap
+import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
+
 import ExtraPrelude
 
 viewSelectorHandler
@@ -51,8 +58,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       => (BakeViewSelector a -> MaybeSelector v a)
       -> m' (Maybe v)
       -> m' (View (MaybeSelector v) a)
-    maybeViewHandler getVS query = whenM (not $ null $ getVS vs) $
-      toMaybeView (getVS vs) <$> query
+    maybeViewHandler getVS xs = whenM (not $ null $ getVS vs) $
+      toMaybeView (getVS vs) <$> xs
 
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
@@ -120,7 +127,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
     return $ toRangeView delegatesVS $ (, First $ Just ()) . Bounded <$> xs
 
-  maybeCurrentHead <- runReaderT dataSourceHead nds
+  -- maybeCurrentHead <- runReaderT dataSourceHead nds
 
   -- delegateStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
   let delegateStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
@@ -138,7 +145,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
-  errors <- getErrorLogs $ unIntervalSelector errorsVS
+  errors <- getErrorLogs errorsVS
 
   upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $ selectSingle CondEmpty
 
@@ -178,7 +185,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
     , _bakeView_delegates = delegates
-    , _bakeView_errors = IntervalView (unIntervalSelector errorsVS) errors
+    , _bakeView_errors =  errors
     , _bakeView_latestHead = latestHead
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
@@ -186,178 +193,114 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_alertCount = alertCount
     }
 
-
 getErrorLogs
-  :: (Monad m, PostgresRaw m, Semigroup a)
+  :: forall m a.
+  ( MonadLogger m
+  , PostgresRaw m
+  , Semigroup a
+  )
+  =>          IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a
+  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo) a)
+getErrorLogs (IntervalSelector vs0) = fmap (IntervalView vs0) $ getErrorLogsImpl vs0
+
+getErrorLogsImpl
+  :: forall m a.
+  ( MonadLogger m
+  , PostgresRaw m
+  , Semigroup a
+  )
   => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
   -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
-getErrorLogs intervalMap = do
+getErrorLogsImpl intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
+  $(logDebugSH) ("getErrorLogs", void flattenedIntervalMap)
+
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
   where
-    runQueries (ClosedInterval lowWithInf highWithInf) = do
-      let (low, high) = (getBounded lowWithInf, getBounded highWithInf)
+    queryNodeAlert, queryDelegateAlert, queryClientDaemonAlert
+      :: Pg.FromRow row
+      => Pg.Query
+      -> [Pg.Query]
+      -> (Id ErrorLog -> row -> b)
+      -> ClosedInterval (WithInfinity UTCTime)
+      -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
+    queryNodeAlert sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Node", "id", "node"))
+    queryClientDaemonAlert sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
+    queryDelegateAlert sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Delegate", "publicKeyHash", "publicKeyHash"))
+
+    queryAlert
+      :: (Monad f, PostgresRaw f, Pg.FromRow row)
+      => Pg.Query
+      -> [Pg.Query]
+      -> Maybe (Pg.Query, Pg.Query, Pg.Query)
+      -> (Id ErrorLog -> row -> b)
+      -> ClosedInterval (WithInfinity UTCTime)
+      -> f (MonoidalMap (Id ErrorLog) (ErrorLog, b))
+    queryAlert sqlTable sqlFields related ctor (ClosedInterval lowWithInf highWithInf) = do
+      let
+        build = \rows -> MMap.fromAscList $ flip map rows $ \((elId, elStarted, elStopped, elLastSeen, elNoticeSentAt) Pg.:. t) ->
+          ( elId :: Id ErrorLog
+          , ( ErrorLog
+                { _errorLog_started = elStarted
+                , _errorLog_stopped = elStopped
+                , _errorLog_lastSeen = elLastSeen
+                , _errorLog_noticeSentAt = elNoticeSentAt
+                }
+            , ctor elId t
+            )
+          )
+        qBase =
+          "SELECT \
+          \    el.id \
+          \   , el.started AT TIME ZONE 'UTC' \
+          \   , el.stopped AT TIME ZONE 'UTC' \
+          \   , el.\"lastSeen\" AT TIME ZONE 'UTC' \
+          \   , el.\"noticeSentAt\" AT TIME ZONE 'UTC' \
+          \   " <> foldMap (\fld -> ", t.\"" <> fld <> "\"") sqlFields <> " \
+          \ FROM \"ErrorLog\" el \
+          \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id "
+          <> maybe "" (\(relatedTbl, relatedColumn, tColumn) ->
+                        " JOIN \"" <> relatedTbl
+                        <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
+          <> " WHERE "
+          <> bool "" "   NOT n.deleted" (isJust related)
+      build <$> query (
+        qBase <>
+          " AND  ((el.started >= ?) AND (el.started <= ?)) \
+          \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
+        (lowWithInf, highWithInf)
+
+    runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries window = do
       leftBiasedUnions <$> sequenceA
-        [ [queryQ|
-          SELECT
-              el.id
-            , el.started AT TIME ZONE 'UTC'
-            , el.stopped AT TIME ZONE 'UTC'
-            , el."lastSeen" AT TIME ZONE 'UTC'
-            , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t.node, t.address, t.alias
-          FROM "ErrorLog" el
-          JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
-          JOIN "Node" n ON n.id = t.node
-          WHERE
-            NOT n.deleted AND
-            (((?low IS NULL OR el.started >= ?low) AND
-             (?high IS NULL OR el.started <= ?high)) OR
-             ((?low IS NULL OR el.stopped >= ?low) AND
-             (?high IS NULL OR el.stopped <= ?high)))
-          ORDER BY el.id ASC
-          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tAddress, tAlias) ->
-            ( elId :: Id ErrorLog
-            , ( ErrorLog
-                  { _errorLog_started = elStarted
-                  , _errorLog_stopped = elStopped
-                  , _errorLog_lastSeen = elLastSeen
-                  , _errorLog_noticeSentAt = elNoticeSentAt
-                  }
-              , ErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias
-              )
-            )
+        [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
+            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
+            window
 
-        , [queryQ|
-            SELECT
-                el.id
-              , el.started AT TIME ZONE 'UTC'
-              , el.stopped AT TIME ZONE 'UTC'
-              , el."lastSeen" AT TIME ZONE 'UTC'
-              , el."noticeSentAt" AT TIME ZONE 'UTC'
-              , t.node, t.address, t.alias, t."expectedChainId", t."actualChainId"
-            FROM "ErrorLog" el
-            JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
-            JOIN "Node" n ON n.id = t.node
-            WHERE
-              NOT n.deleted AND
-              (((?low IS NULL OR el.started >= ?low) AND
-               (?high IS NULL OR el.started <= ?high)) OR
-               ((?low IS NULL OR el.stopped >= ?low) AND
-               (?high IS NULL OR el.stopped <= ?high)))
-            ORDER BY el.id ASC
-            |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-              ( elId :: Id ErrorLog
-              , ( ErrorLog
-                    { _errorLog_started = elStarted
-                    , _errorLog_stopped = elStopped
-                    , _errorLog_lastSeen = elLastSeen
-                    , _errorLog_noticeSentAt = elNoticeSentAt
-                    }
-                , ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId
-                )
-              )
+        , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
+            (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
+                ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
+            window
+        , queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
+          (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+            window
 
-        , [queryQ|
-          SELECT
-              el.id
-            , el.started AT TIME ZONE 'UTC'
-            , el.stopped AT TIME ZONE 'UTC'
-            , el."lastSeen" AT TIME ZONE 'UTC'
-            , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t."lastLevel", t."lastBlockHash", t.client
-          FROM "ErrorLog" el
-          JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
-          JOIN "Client" c ON c.id = t.client
-          WHERE
-            NOT c.deleted AND
-            (((?low IS NULL OR el.started >= ?low) AND
-             (?high IS NULL OR el.started <= ?high)) OR
-             ((?low IS NULL OR el.stopped >= ?low) AND
-             (?high IS NULL OR el.stopped <= ?high)))
-          ORDER BY el.id ASC
-          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tLastLevel, tLastBlockHash, tClient) ->
-            ( elId :: Id ErrorLog
-            , ( ErrorLog
-                  { _errorLog_started = elStarted
-                  , _errorLog_stopped = elStopped
-                  , _errorLog_lastSeen = elLastSeen
-                  , _errorLog_noticeSentAt = elNoticeSentAt
-                  }
-              , ErrorLogView_BakerNoHeartbeat $
-                  ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient
-              )
-            )
-
-        , [queryQ|
-          SELECT
-              el.id
-            , el.started AT TIME ZONE 'UTC'
-            , el.stopped AT TIME ZONE 'UTC'
-            , el."lastSeen" AT TIME ZONE 'UTC'
-            , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t.node, t.lca, t."nodeHead", t."latestHead"
-          FROM "ErrorLog" el
-          JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-          JOIN "Node" n ON n.id = t.node
-          WHERE
-            NOT n.deleted AND
-            (((?low IS NULL OR el.started >= ?low) AND
-             (?high IS NULL OR el.started <= ?high)) OR
-             ((?low IS NULL OR el.stopped >= ?low) AND
-             (?high IS NULL OR el.stopped <= ?high)))
-          ORDER BY el.id ASC
-          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \
-              (elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tNode, tLca, tNodeHead, tLatestHead) ->
-            ( elId :: Id ErrorLog
-            , ( ErrorLog
-                  { _errorLog_started = elStarted
-                  , _errorLog_stopped = elStopped
-                  , _errorLog_lastSeen = elLastSeen
-                  , _errorLog_noticeSentAt = elNoticeSentAt
-                  }
-              , ErrorLogView_BadNodeHead
+        , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
+          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_BadNodeHead
                   ErrorLogBadNodeHead
                     { _errorLogBadNodeHead_log = elId
                     , _errorLogBadNodeHead_node = tNode
                     , _errorLogBadNodeHead_lca = tLca
                     , _errorLogBadNodeHead_nodeHead =tNodeHead
                     , _errorLogBadNodeHead_latestHead = tLatestHead
-                    }
-
-              )
-            )
-
-        , [queryQ|
-          SELECT
-              el.id
-            , el.started AT TIME ZONE 'UTC'
-            , el.stopped AT TIME ZONE 'UTC'
-            , el."lastSeen" AT TIME ZONE 'UTC'
-            , el."noticeSentAt" AT TIME ZONE 'UTC'
-            , t."publicKeyHash", t.client, t.worker
-          FROM "ErrorLog" el
-          JOIN "ErrorLogMultipleBakersForSameDelegate" t ON t.log = el.id
-          JOIN "Delegate" d ON d."publicKeyHash" = t."publicKeyHash"
-          WHERE
-            NOT d.deleted AND
-            (((?low IS NULL OR el.started >= ?low) AND
-             (?high IS NULL OR el.started <= ?high)) OR
-             ((?low IS NULL OR el.stopped >= ?low) AND
-             (?high IS NULL OR el.stopped <= ?high)))
-          ORDER BY el.id ASC
-          |] <&> \rows -> MMap.fromAscList $ flip map rows $ \(elId, elStarted, elStopped, elLastSeen, elNoticeSentAt, tPublicKeyHash, tClient, tWorker) ->
-            ( elId :: Id ErrorLog
-            , ( ErrorLog
-                  { _errorLog_started = elStarted
-                  , _errorLog_stopped = elStopped
-                  , _errorLog_lastSeen = elLastSeen
-                  , _errorLog_noticeSentAt = elNoticeSentAt
-                  }
-              , ErrorLogView_MultipleBakersForSameDelegate $
-                  ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker
-              )
-            )
+                    }) window
+        , queryDelegateAlert "ErrorLogMultipleBakersForSameDelegate" ["publicKeyHash", "client", "worker"]
+          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_MultipleBakersForSameDelegate $
+                  ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker)
+          window
         ]
 
     leftBiasedUnions = MMap.unionsWith const
