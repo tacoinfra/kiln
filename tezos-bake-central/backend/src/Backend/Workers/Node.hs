@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -19,6 +20,7 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -286,6 +288,11 @@ updateDataSource nds (pn, chain, uri) = do
                 ]
               notify . Notify_PublicNodeHead eid =<< getId eid
 
+{- Send a 'bad branch' alert if either:
+ - 1) last common ancestor is at least 3 levels old (on either branch)
+ - 2) last common ancestor is 2 levels old (on the best branch) and the node is still on it
+ - 3) last common ancestor is 2 levels old (on the best branch) and the best branch's parent was better than what the other branch had on the same level
+ -}
 nodeAlertWorker
   :: NodeDataSource
   -> AppConfig
@@ -296,25 +303,31 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
     selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
-    nodeHeadAndLca :: Either RpcError (Block, Maybe VeryBlockLike)
-      <- flip runReaderT nds $ runExceptT $ do
-        nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
-        bp <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
-        pure (nodeHead, bp)
-
-    for_ nodeHeadAndLca $ \(nodeHead, lcaBlock') -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $
+    action' <- flip runReaderT nds $ runExceptT @RpcError $ do
+      nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
+      lcaBlock' <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+      let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
+          good = clearBadNodeHeadError nodeId
       case lcaBlock' of
-        Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
+        Nothing -> return bad
         Just lcaBlock -> do
           let
             -- Two cases to consider:
             --   * Node is behind, so the LCA block and node block will be the same
             --   * Node is branched, so the LCA block will be behind both the node *and* the latest
             levelsBehindHead = latestHead ^. level - lcaBlock ^. level
-
-          if levelsBehindHead > 1
-            then reportBadNodeHeadError nodeId latestHead nodeHead (Just lcaBlock)
-            else clearBadNodeHeadError nodeId
+            levelsBehindNode = nodeHead ^. level - lcaBlock ^. level
+          if | max levelsBehindHead levelsBehindNode > 2 -> return bad
+             | levelsBehindHead < 2 -> return good
+             | levelsBehindNode == 0 -> return bad
+             | otherwise -> do
+                 history <- liftIO $ readMVar $ _nodeDataSource_history nds
+                 let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
+                     uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
+                 latestParent <- nodeQueryDataSource (NodeQuery_Block parentHash)
+                 latestUncle <- nodeQueryDataSource (NodeQuery_Block uncleHash)
+                 if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
+    for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
 updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
 updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
