@@ -1,9 +1,15 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.ProtocolConstants where
 
+import Data.Aeson
+import qualified Data.Aeson.TH as Aeson
+import qualified Data.HashMap.Strict as HashMap
 import Data.Typeable
+import Data.Text (Text)
 import Data.Word
 
 import Tezos.Tez
@@ -31,6 +37,7 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_michelsonMaximumTypeSize :: !Word16 -- "michelson_maximum_type_size": { "type": "integer", "minimum": 0, "maximum": 65535 },
   , _protoInfo_seedNonceRevelationTip :: !Tez -- "seed_nonce_revelation_tip": { "$ref": "#/definitions/mutez" },
   , _protoInfo_originationBurn :: !Tez -- "origination_burn": { "$ref": "#/definitions/mutez" },
+  , _protoInfo_originationSize :: !Int -- Bytes (since protocol version 003)
   , _protoInfo_blockSecurityDeposit :: !Tez -- "block_security_deposit": { "$ref": "#/definitions/mutez" },
   , _protoInfo_endorsementSecurityDeposit :: !Tez -- "endorsement_security_deposit": { "$ref": "#/definitions/mutez" },
   , _protoInfo_blockReward :: !Tez -- "block_reward": { "$ref": "#/definitions/mutez" },
@@ -38,7 +45,29 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_costPerByte :: !Tez -- "cost_per_byte": { "$ref": "#/definitions/mutez" },
   , _protoInfo_hardStorageLimitPerOperation :: !TezosWord64 -- "hard_storage_limit_per_operation": { "$ref": "#/definitions/bignum" }
   } deriving (Eq, Ord, Show, Typeable)
-deriveTezosJson ''ProtoInfo
+
+-- O_o yes you need this HERE...because reasons.
+return [] -- Allow ProtoInfo to be reified below.
+
+-- Custom instance to support both protocol 002 and 003. We convert between the two.
+instance FromJSON ProtoInfo where
+  parseJSON = withObject "ProtoInfo" $ \o -> do
+    costPerByte :: Tez <- o .: "cost_per_byte"
+    origBurn :: Maybe Tez <- o .:? "origination_burn"
+    origSize :: Maybe Int <- o .:? "origination_size"
+    let
+      addBurn :: HashMap.HashMap Text Tez
+        = foldMap (HashMap.singleton "origination_burn" . (* costPerByte) . fromIntegral) origSize
+      addSize :: HashMap.HashMap Text Int
+        = foldMap (HashMap.singleton "origination_size" . floor . (/ costPerByte)) origBurn
+    parseProtoInfo $ Object $ o <> fmap toJSON addBurn <> fmap toJSON addSize
+
+    where
+      parseProtoInfo = $(Aeson.mkParseJSON tezosJsonOptions ''ProtoInfo)
+
+instance ToJSON ProtoInfo where
+  toJSON = $(Aeson.mkToJSON tezosJsonOptions ''ProtoInfo)
+  toEncoding = $(Aeson.mkToEncoding tezosJsonOptions ''ProtoInfo)
 
 levelToCycle :: ProtoInfo -> RawLevel -> Cycle
 levelToCycle info (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (_protoInfo_blocksPerCycle info)
