@@ -308,7 +308,7 @@ appHeader
   => m (Event t ())
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
   divClass "ui stackable grid" $ do
-    divClass "six wide column topbar" $ do
+    divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
         latestHead <- watchLatestHead
         let info title body = divClass "item" $ divClass "content" $ do
@@ -322,11 +322,12 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
         whenJustDyn cyc $ \c -> info "Cycle" $
           text $ tshow $ unCycle c
 
-        whenJustDyn latestHead $ \b -> info "Block" $ do
-          text $ tshow (unRawLevel $ b ^. level) <> " "
+        whenJustDyn latestHead $ \b -> info "Block" $ el "span" $ do
+          text $ tshow (unRawLevel $ b ^. level)
+          elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
-    divClass "ten wide column right aligned" $ do
+    divClass "four wide column right aligned" $ do
       headerBell
 
 

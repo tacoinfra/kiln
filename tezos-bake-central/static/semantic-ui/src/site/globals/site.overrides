@@ -158,6 +158,9 @@ h6.ui.header {
     font-weight: bold;
     padding-left: @30px;
 
+    .metadescription {
+      font-weight: normal;
+    }
     > .header {
       font-weight: normal;
       color: rgba(0, 0, 0, .6);
