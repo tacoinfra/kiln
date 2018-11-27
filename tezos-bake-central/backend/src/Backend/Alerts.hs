@@ -179,7 +179,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
-badNodeHeadErrorDelaySeconds = 180
+badNodeHeadErrorDelaySeconds = 125
 
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
