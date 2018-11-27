@@ -7,14 +7,15 @@ module Backend.Alerts.Common where
 import Control.Monad.Logger (MonadLogger, logInfoS, logErrorS)
 import qualified Data.Text.Lazy as TL
 import Database.Groundhog.Core (Cond (CondEmpty), select)
-import Database.Groundhog.Postgresql (PersistBackend)
+import Database.Groundhog.Postgresql (PersistBackend, (=.))
 import Network.Mail.Mime (Address (..), simpleMail')
+import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
-import Backend.Schema ()
+import Backend.Schema
 import Common.Schema
 import ExtraPrelude
 
@@ -30,8 +31,8 @@ queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a, MonadLogger m
      )
-  => Alert -> m ()
-queueAlert alert = do
+  => Maybe (Id ErrorLog) -> Alert -> m ()
+queueAlert maybeLogId alert = do
   queueEmailAlert alert
   queueTelegramAlert alert
   let
@@ -39,6 +40,9 @@ queueAlert alert = do
       Resolved -> $(logInfoS)
       Unresolved -> $(logErrorS)
   logger "Kiln" (_alert_subject alert <> ": " <> _alert_content alert)
+  for_ maybeLogId $ \logId -> do
+    now <- getTime
+    updateId logId [ErrorLog_noticeSentAtField =. Just now]
 
 queueTelegramAlert
   :: (PersistBackend m, PostgresRaw m)
