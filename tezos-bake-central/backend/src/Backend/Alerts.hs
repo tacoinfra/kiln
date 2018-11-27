@@ -55,7 +55,7 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
     seenHash = _seenEvent_hash eventDetail
   case existingLog of
     Nothing -> do
-      _ <- insertErrorLog $ \logId -> ErrorLogBakerNoHeartbeat
+      (logId, _) <- insertErrorLog $ \logId -> ErrorLogBakerNoHeartbeat
         { _errorLogBakerNoHeartbeat_log = logId
         , _errorLogBakerNoHeartbeat_lastLevel = seenLevel
         , _errorLogBakerNoHeartbeat_lastBlockHash = seenHash
@@ -63,7 +63,7 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
         }
 
       client :: Maybe Client <- get $ fromId cid
-      queueAlert $
+      queueAlert (Just logId) $
         Alert Unresolved "Baker has not seen block for a while" $
         "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
     Just (logId, specificLogId) -> do
@@ -88,7 +88,7 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
-  when (not $ null lids) $ queueAlert $
+  when (not $ null lids) $ queueAlert Nothing $
     Alert Resolved "Resolved: Baker has now seen a block" $
     "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
 
@@ -112,8 +112,8 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     Nothing -> do
       node' <- get (fromId nodeId)
       for_ node' $ \node -> do
-        _ <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
-        queueAlert $ Alert Unresolved "Unable to connect to node" $
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
+        queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
           "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -130,7 +130,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   node' <- get (fromId nodeId)
   $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert $ Alert Resolved "Resolved: Now able to connect to node" $
+    queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
 
 reportNodeWrongChainError
@@ -155,8 +155,8 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
     Nothing -> do
       node' <- get $ fromId nodeId
       for_ node' $ \node -> do
-        _ <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
-        queueAlert $ Alert Unresolved "Node on wrong network" $
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
+        queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
           "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
@@ -175,7 +175,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert $ Alert Resolved "Resolved: Node on right network" $
+    queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
@@ -213,11 +213,11 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
-      when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g)) $ do
+      when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
         node <- getId nodeId
         for_ node $ \n -> do
           let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-          queueAlert $ Alert Unresolved heading $
+          queueAlert (Just logId) $ Alert Unresolved heading $
             heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
 
 clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
@@ -232,25 +232,25 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   node <- get $ fromId nodeId
   specErrs <- catMaybes <$> for lids getId
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
-  when (any (\e -> _errorLog_lastSeen e >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started e)) errs) $ for_ node $ \n -> do
-    queueAlert $ Alert Resolved "Resolved: Node is in sync" $
+  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
+    queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
 nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)
 
-insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m a
+insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
 insertErrorLog mkErrorLog = do
   now <- getTime
   logId <- insert' ErrorLog
     { _errorLog_started = now
     , _errorLog_stopped = Nothing
     , _errorLog_lastSeen = now
-    , _errorLog_noticeSentAt = Just now
+    , _errorLog_noticeSentAt = Nothing
     }
   let errLog = mkErrorLog logId
   notify . mkDefaultNotify =<< insert' errLog
-  pure errLog
+  pure (logId, errLog)
 
 updateErrorLog :: (HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
 updateErrorLog logId specificLogId = do
