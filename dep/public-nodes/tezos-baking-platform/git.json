@@ -1,7 +1,7 @@
 {
   "url": "ssh://git@gitlab.com/obsidian.systems/tezos-baking-platform.git",
-  "rev": "162681a85813eedf747a48966216b1a2eb10bcb1",
-  "sha256": "0cj87xzvdxsbii4zqr3vcsbphk376k876rr7m5jjhknm299w7l94",
+  "rev": "7c6b7d90636db7e8566cf7bb9196befd99438f00",
+  "sha256": "1qcpkbz5w79113b3avynljqa1npk66hiyhk99lh0k25fwqyndg7k",
   "fetchSubmodules": false,
   "branch": "develop"
 }
