@@ -94,7 +94,7 @@ localHumanizedTimestamp
 localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .  Time.utcToZonedTime tz <$> tDyn
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" .  Time.utcToZonedTime tz <$> tDyn
 
   elDynAttr "span" (fold
     [ Map.fromList . fmap ("data-title",) . toList <$> titleDyn -- TODO: title doesn't work!
