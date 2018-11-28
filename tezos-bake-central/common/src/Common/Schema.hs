@@ -312,6 +312,13 @@ data Baker = Baker
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Baker
 
+data BakerDetails = BakerDetails
+  { _bakerDetails_publicKeyHash :: !PublicKeyHash
+  , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
+  , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDetails
+
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
   , _bakeEfficiency_bakingRights :: !Word64
@@ -493,6 +500,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ClientInfo
   , ''ClientWorker
   , ''Baker
+  , ''BakerDetails
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
@@ -523,6 +531,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BlockBaker
   , 'CachedProtocolConstants
   , 'Baker
+  , 'BakerDetails
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent

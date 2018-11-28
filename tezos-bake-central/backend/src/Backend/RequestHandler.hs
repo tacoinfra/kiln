@@ -106,18 +106,29 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
       PublicRequest_AddBaker pkh alias -> inDb $ do
         existingIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        let newVal = Baker
+              { _baker_publicKeyHash = pkh
+              , _baker_alias = alias
+              , _baker_deleted = False
+              }
         case nonEmpty existingIds of
-          Nothing -> void $ insertNotify Baker { _baker_publicKeyHash = pkh, _baker_alias = alias, _baker_deleted = False }
+          Nothing -> void $ insert newVal
           Just bIds -> for_ bIds $ \bId ->
-            updateIdNotify (bId :: Id Baker) [Baker_deletedField =. False, Baker_aliasField =. alias]
+            updateId (bId :: Id Baker) [Baker_deletedField =. False, Baker_aliasField =. alias]
+        notify $ mkDefaultNotify newVal
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
         bIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
         let inIds = In bIds
         _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
         _ <- [executeQ| DELETE FROM "BakerStats" ds WHERE ds.baker IN ?inIds |]
-        for_ bIds $ \bId ->
-          updateIdNotify bId [Baker_deletedField =. True]
+        for_ bIds $ \bId -> do
+          updateId bId [Baker_deletedField =. True]
+          notify $ mkDefaultNotify $ Baker
+            { _baker_publicKeyHash = pkh
+            , _baker_alias = Nothing
+            , _baker_deleted = True
+            }
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'

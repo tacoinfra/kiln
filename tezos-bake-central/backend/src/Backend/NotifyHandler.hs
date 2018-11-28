@@ -47,7 +47,8 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
-      Notify_Baker eid -> handleBaker eid
+      Notify_Baker baker -> handleBaker baker
+      Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log ErrorLogView_BadNodeHead eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
@@ -115,14 +116,24 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
-    bakerVS = _bakeViewSelector_bakers aggVS
-    handleBaker bId = do
+    bakersVS = _bakeViewSelector_bakers aggVS
+    bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
-      baker :: Maybe Baker <- get $ fromId bId
+    handleBaker baker = whenM (viewSelects (Bounded $ _baker_publicKeyHash baker) bakersVS) $
       pure $ mempty
-        { _bakeView_bakers = foldMap (\d -> toRangeView1 bakerVS (Bounded $ _baker_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _baker_deleted d)) baker
+        { _bakeView_bakers = toRangeView1
+            bakersVS
+            (Bounded $ _baker_publicKeyHash baker)
+            (Just $ First $ bool Nothing (Just ()) $ _baker_deleted baker)
+        }
+    handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
+      pure $ mempty
+        { _bakeView_bakerDetails = toRangeView1
+            bakerDetailsVS
+            (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
+            (Just $ First $ Just bakerDetails)
         }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS

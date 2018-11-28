@@ -108,7 +108,6 @@ library
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.WebApi
-    Backend.Workers
     Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Baker

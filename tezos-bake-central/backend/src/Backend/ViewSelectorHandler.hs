@@ -128,6 +128,10 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     xs <- project Baker_publicKeyHashField (Baker_deletedField ==. False)
     return $ toRangeView bakersVS $ (, First $ Just ()) . Bounded <$> xs
 
+  let bakerDetailsVS = _bakeViewSelector_bakerDetails vs
+  bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a <- whenM (not $ null bakerDetailsVS) $
+    toRangeView bakerDetailsVS . fmap (\x -> (Bounded $ _bakerDetails_publicKeyHash x, First $ Just x)) <$> select CondEmpty
+
   -- maybeCurrentHead <- runReaderT dataSourceHead nds
 
   -- bakerStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
@@ -186,6 +190,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
     , _bakeView_bakers = bakers
+    , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
     , _bakeView_upstreamVersion = upgrade
