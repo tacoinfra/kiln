@@ -5,6 +5,9 @@
 
 module Tezos.ProtocolConstants where
 
+import Prelude hiding (cycle)
+
+import Control.Lens
 import Data.Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
@@ -46,8 +49,7 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_hardStorageLimitPerOperation :: !TezosWord64 -- "hard_storage_limit_per_operation": { "$ref": "#/definitions/bignum" }
   } deriving (Eq, Ord, Show, Typeable)
 
--- O_o yes you need this HERE...because reasons.
-return [] -- Allow ProtoInfo to be reified below.
+makeLenses ''ProtoInfo
 
 -- Custom instance to support both protocol 002 and 003. We convert between the two.
 instance FromJSON ProtoInfo where
@@ -69,5 +71,33 @@ instance ToJSON ProtoInfo where
   toJSON = $(Aeson.mkToJSON tezosJsonOptions ''ProtoInfo)
   toEncoding = $(Aeson.mkToEncoding tezosJsonOptions ''ProtoInfo)
 
+-- | Convert a level to the cycle that contains it.
+--
+-- We subtract 1 because the first cycle begins after the genesis block. Yet
+-- while that block is not part of the cycle, it is still given a level, level
+-- 0.
 levelToCycle :: ProtoInfo -> RawLevel -> Cycle
-levelToCycle info (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (_protoInfo_blocksPerCycle info)
+levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (params ^. protoInfo_blocksPerCycle)
+
+-- | Convert a cycle to the level of the first block in that cycle.
+--
+-- We add 1 because we do not consider the genesis block as part of the first
+-- cycle, as that would make the first cycle alone 1 block larger than all the
+-- others.
+firstLevelInCycle :: ProtoInfo -> Cycle -> RawLevel
+firstLevelInCycle params cycle = 1 + fromIntegral cycle * params ^. protoInfo_blocksPerCycle
+
+-- | We don't want the first block of the next cycle behind the fog of
+-- blockchain, but rather the last block we can see (which is the previous
+-- cycle). Hence, the '- 1'.
+maxRightsLevel :: ProtoInfo -> RawLevel -> RawLevel
+maxRightsLevel params lvl = firstLevelInCycle params nextCycle - 1
+  where
+    nextCycle = levelToCycle params lvl + params ^. protoInfo_preservedCycles
+
+-- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
+-- requested level, that is on the correct branch.
+rightsContextLevel :: ProtoInfo -> RawLevel -> RawLevel
+rightsContextLevel params lvl = firstLevelInCycle params ctxCycle
+  where
+    ctxCycle = max 0 (levelToCycle params lvl - params ^. protoInfo_preservedCycles)
