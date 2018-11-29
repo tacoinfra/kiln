@@ -1,6 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module Common.Alerts where
 
@@ -17,16 +17,16 @@ import ExtraPrelude
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
   deriving (Eq, Ord, Show, Enum, Bounded, Typeable, Generic)
 
+instance FromJSON AlertsFilter
+instance FromJSONKey AlertsFilter
+instance ToJSON AlertsFilter
+instance ToJSONKey AlertsFilter
+
 alertsFilter :: FunctorMaybe f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
 alertsFilter f = \case
   AlertsFilter_All -> id
   AlertsFilter_UnresolvedOnly -> ffilter (isNothing . _errorLog_stopped . f)
   AlertsFilter_ResolvedOnly -> ffilter (isJust . _errorLog_stopped . f)
-
-instance FromJSON AlertsFilter
-instance FromJSONKey AlertsFilter
-instance ToJSON AlertsFilter
-instance ToJSONKey AlertsFilter
 
 badNodeHeadMessage
   :: Applicative f
