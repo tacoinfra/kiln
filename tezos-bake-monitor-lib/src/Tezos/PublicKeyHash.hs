@@ -1,9 +1,11 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Tezos.PublicKeyHash where
 
+import Control.DeepSeq (NFData)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -11,19 +13,24 @@ import Data.Semigroup
 import qualified Data.ByteString as BS
 import Tezos.ShortByteString (fromShort)
 import qualified Data.ByteString.Base16 as BS16
+import Data.Hashable (Hashable)
 import Data.String
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import GHC.Generics (Generic)
 
 import Tezos.Base58Check
 
 
 data PublicKeyHash
-  = PublicKeyHash_Ed25519 Ed25519PublicKeyHash
-  | PublicKeyHash_Secp256k1 Secp256k1PublicKeyHash
-  | PublicKeyHash_P256 P256PublicKeyHash
-  deriving (Eq, Ord)
+  = PublicKeyHash_Ed25519 !Ed25519PublicKeyHash
+  | PublicKeyHash_Secp256k1 !Secp256k1PublicKeyHash
+  | PublicKeyHash_P256 !P256PublicKeyHash
+  deriving (Eq, Ord, Generic, Typeable)
+instance NFData PublicKeyHash
+instance Hashable PublicKeyHash
 
 -- TODO: This could be done for any such sum of hashes with TH?
 publicKeyHashConstructorDecoders :: [TryDecodeBase58 PublicKeyHash]

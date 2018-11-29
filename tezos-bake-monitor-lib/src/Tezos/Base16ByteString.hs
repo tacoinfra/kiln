@@ -15,6 +15,7 @@ import Data.Semigroup
 import Data.Aeson.Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
+import Data.Hashable (Hashable)
 import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -23,7 +24,7 @@ import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
 
 newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }
-  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable, Generic, NFData)
+  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable, Generic, NFData, Hashable)
 
 instance FromJSON (Base16ByteString ShortByteString) where
   parseJSON x = fmap toShort <$> parseJSON x

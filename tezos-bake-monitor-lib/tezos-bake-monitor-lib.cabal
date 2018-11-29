@@ -57,6 +57,7 @@ library
     , cryptonite
     , deepseq
     , groups
+    , hashable
     , hashing
     , http-types
     , lens

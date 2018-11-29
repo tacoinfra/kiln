@@ -10,9 +10,10 @@ module Tezos.ShortByteString (ShortByteString, toShort, fromShort) where
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
+import Data.Hashable (Hashable)
 
 newtype ShortByteString = ShortByteString { fromShort :: ByteString }
-  deriving (Eq, Ord, NFData)
+  deriving (Eq, Ord, NFData, Hashable)
 
 toShort :: ByteString -> ShortByteString
 toShort = ShortByteString

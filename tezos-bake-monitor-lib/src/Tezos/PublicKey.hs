@@ -1,26 +1,33 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Tezos.PublicKey where
 
+import Control.DeepSeq (NFData)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
+import Data.Hashable (Hashable)
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 
 import Tezos.Base58Check
 
 -- TODO: it'd be nice to unify all this into a tagged scheme.
 
 data PublicKey
-  = PublicKey_Ed25519 Ed25519PublicKey
-  | PublicKey_Secp256k1 Secp256k1PublicKey
-  | PublicKey_P256 P256PublicKey
-  deriving (Eq, Ord)
+  = PublicKey_Ed25519 !Ed25519PublicKey
+  | PublicKey_Secp256k1 !Secp256k1PublicKey
+  | PublicKey_P256 !P256PublicKey
+  deriving (Eq, Ord, Generic, Typeable)
+instance Hashable PublicKey
+instance NFData PublicKey
 
 -- TODO: This could be done for any such sum of hashes with TH?
 publicKeyConstructorDecoders :: [TryDecodeBase58 PublicKey]

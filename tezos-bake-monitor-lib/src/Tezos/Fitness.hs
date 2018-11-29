@@ -15,6 +15,7 @@ import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Function (on)
 import Data.Foldable (toList)
+import Data.Hashable (Hashable (hashWithSalt))
 import Data.Sequence (Seq)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -28,6 +29,8 @@ import Tezos.Base16ByteString
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
   deriving (Eq, Typeable, Functor, Foldable, Traversable, Generic, NFData)
+instance Hashable a => Hashable (FitnessF a) where
+  hashWithSalt s = hashWithSalt s . toList . unFitnessF
 
 -- | for these to be useful, you'd need `TezosBinary ByteString`, but that's
 -- almost certainly the *wrong* one for this particular FromJSON, which needs

@@ -4,9 +4,11 @@
 
 module Tezos.Json where
 
+import Control.DeepSeq (NFData)
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON, Value, camelTo2, encode, parseJSON, toEncoding, toJSON)
 import Data.Bits (Bits)
+import Data.Hashable (Hashable)
 import Data.List (uncons)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
@@ -94,7 +96,7 @@ instance FromJSON JsonValue where
 
 -- | Tezos RPC JSON encodes 64-bit numbers as strings.
 newtype TezosWord64 = TezosWord64 { unTezosWord64 :: Word64 }
-  deriving (Eq, Ord, Show, Bounded, Enum, Typeable, Num, Integral, Bits, Real)
+  deriving (Eq, Ord, Show, Bounded, Enum, Typeable, Num, Integral, Bits, Real, NFData, Hashable)
 
 instance FromJSON TezosWord64 where
   parseJSON x = TezosWord64 <$> parseIntegralAsString x

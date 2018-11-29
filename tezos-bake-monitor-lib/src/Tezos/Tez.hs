@@ -4,8 +4,10 @@
 
 module Tezos.Tez where
 
+import Control.DeepSeq (NFData)
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON)
 import Data.Fixed (E6, Fixed, Micro, resolution)
+import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
@@ -14,7 +16,7 @@ import GHC.Word (Word64)
 import Tezos.Json (parseIntegralAsString)
 
 newtype Tez = Tez { getTez :: Micro }
-  deriving (Eq, Ord, Show, Typeable, Enum, Fractional, Num, Real, RealFrac)
+  deriving (Eq, Ord, Show, Typeable, Enum, Fractional, Num, Real, RealFrac, NFData, Hashable)
 
 getMicroTez :: Tez -> Int64
 getMicroTez
