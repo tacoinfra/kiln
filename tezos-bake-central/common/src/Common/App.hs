@@ -21,6 +21,7 @@ module Common.App
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Map.Monoidal as MMap
 import Data.Align (Align (alignWith, nil))
 import Data.Functor.Compose (Compose (..))
 import Data.These (These (..), these)
@@ -35,6 +36,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common.Alerts (AlertsFilter(..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
 import Common.Schema
@@ -66,7 +68,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
   , _bakeViewSelector_delegateStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
-  , _bakeViewSelector_errors :: !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
+  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
   , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
@@ -87,7 +89,13 @@ data BakeView a = BakeView
   , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
   , _bakeView_delegateStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
-  , _bakeView_errors :: !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
+  -- TODO: I'm more than a little concerned about this approach for dealing
+  -- with deletes in IntervalView.  I think in this particular case, we can get
+  -- away with it; since we never go from Resolved to Unresolved, so the
+  -- relevant selection window should *eventually* roll off for the resolved
+  -- things and be dropped anyway.  In other cases, this approach is likely to
+  -- leak memory in Reflex (deletes never really get to go away)
+  , _bakeView_errors :: !(MonoidalMap AlertsFilter (IntervalView' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
@@ -158,7 +166,7 @@ cropBakeView vs v = BakeView
   , _bakeView_delegateStats = cropView (_bakeViewSelector_delegateStats vs) (_bakeView_delegateStats v)
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
-  , _bakeView_errors = cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
+  , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
   , _bakeView_upstreamVersion = cropView (_bakeViewSelector_upstreamVersion vs) (_bakeView_upstreamVersion v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
@@ -180,7 +188,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
-    , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
+    , _bakeViewSelector_errors = (fmap.fmapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_upstreamVersion = fmapMaybe f $ _bakeViewSelector_upstreamVersion a
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
@@ -224,7 +232,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_mailServer = f' _bakeViewSelector_mailServer
     , _bakeViewSelector_summary = f' _bakeViewSelector_summary
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
-    , _bakeViewSelector_errors = f' _bakeViewSelector_errors
+    , _bakeViewSelector_errors = alignWith (these (fmap $ f . This) (fmap $ f . That) (alignWith f)) (_bakeViewSelector_errors xs) (_bakeViewSelector_errors ys)
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
     , _bakeViewSelector_upstreamVersion = f' _bakeViewSelector_upstreamVersion
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
@@ -249,7 +257,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
-    , _bakeView_errors = fmapMaybe f $ _bakeView_errors a
+    , _bakeView_errors = (fmap.fmapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
     , _bakeView_upstreamVersion = fmapMaybe f $ _bakeView_upstreamVersion a
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
