@@ -52,7 +52,7 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (humanBytes, uriHostPortPath, unixEpoch)
-import Common.Alerts (badNodeHeadMessage)
+import Common.Alerts (AlertsFilter(..), badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -182,7 +182,6 @@ appMain = do
 
     rec
       let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
-      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
       (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
         (def
           & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
@@ -199,11 +198,10 @@ appMain = do
           (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
           $ do
             nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-            alertsDyn <- watchErrors alertWindow
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-            liveErrorsWidget alertsDyn nodesDyn
+            liveErrorsWidget nodesDyn
             pure e)
         -- Accompanying content
         $ do
@@ -472,25 +470,23 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
-  deriving (Eq, Ord, Show, Enum, Bounded)
-
 
 liveErrorsWidget
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-  -> Dynamic t (MonoidalMap (Id Node) Node)
+  => Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
-liveErrorsWidget errorsDyn nodesDyn = void $ do
+liveErrorsWidget nodesDyn = void $ do
+  alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
     , (AlertsFilter_UnresolvedOnly, text "Unresolved")
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
 
+  errorsDyn <- watchErrors filterDyn alertWindow
   filteredErrors <- holdUniqDyn $ liftA2
     (\errors filterFn -> MMap.filter (filterFn . fst) errors)
     errorsDyn
@@ -719,7 +715,7 @@ nodesTab =
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          alerts <- watchErrors alertWindow
+          alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             unresolvedAlertsForThisNode <- holdUniqDyn $
               foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts

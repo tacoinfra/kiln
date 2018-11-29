@@ -1,14 +1,32 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Common.Alerts where
 
+import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
+import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (ErrorLogBadNodeHead (..))
+import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..))
 import ExtraPrelude
+
+data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
+  deriving (Eq, Ord, Show, Enum, Bounded, Typeable, Generic)
+
+alertsFilter :: FunctorMaybe f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
+alertsFilter f = \case
+  AlertsFilter_All -> id
+  AlertsFilter_UnresolvedOnly -> ffilter (isNothing . _errorLog_stopped . f)
+  AlertsFilter_ResolvedOnly -> ffilter (isJust . _errorLog_stopped . f)
+
+instance FromJSON AlertsFilter
+instance FromJSONKey AlertsFilter
+instance ToJSON AlertsFilter
+instance ToJSONKey AlertsFilter
 
 badNodeHeadMessage
   :: Applicative f

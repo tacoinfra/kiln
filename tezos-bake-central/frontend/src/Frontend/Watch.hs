@@ -30,6 +30,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
 import Common.Schema hiding (Event)
 import Common.Vassal
+import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
 
 watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
@@ -141,15 +142,18 @@ watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
 --     }
 --   improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
 
+-- TODO: filter by alert type (that is, ErrorLogView constructor, or logical groups of such)
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
-  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  => Dynamic t AlertsFilter
+  -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
-watchErrors intervals =
-  -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  (fmap . fmap) (fmap (fst . getFirst) . _intervalView_elements . _bakeView_errors) $ watchViewSelector $ ffor intervals $ \ivals -> mempty
-    { _bakeViewSelector_errors = viewIntervalSet ivals 1
+watchErrors alerts intervals = do
+  view <- watchViewSelector $ ffor2 alerts intervals $ \alert ivals -> mempty
+    { _bakeViewSelector_errors = MMap.singleton alert $ viewIntervalSet ivals 1
     }
+  -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
+  return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> view)
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =

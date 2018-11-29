@@ -35,6 +35,7 @@ import Tezos.Types
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
+import Common.Alerts(AlertsFilter(..))
 import Common.App
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -145,7 +146,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
-  errors <- getErrorLogs errorsVS
+  errors <- itraverse getErrorLogs errorsVS
 
   upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $ selectSingle CondEmpty
 
@@ -194,14 +195,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     }
 
 getErrorLogs
-  :: forall m a.
+  :: forall m a e.
   ( MonadLogger m
   , PostgresRaw m
   , Semigroup a
   )
-  =>          IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a
-  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo) a)
-getErrorLogs (IntervalSelector vs0) = fmap (IntervalView vs0) $ getErrorLogsImpl vs0
+  => AlertsFilter
+  ->          IntervalSelector' UTCTime (Id ErrorLog) e a
+  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+getErrorLogs flt (IntervalSelector vs0) = fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ getErrorLogsImpl flt vs0
 
 getErrorLogsImpl
   :: forall m a.
@@ -209,9 +211,10 @@ getErrorLogsImpl
   , PostgresRaw m
   , Semigroup a
   )
-  => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
+  => AlertsFilter
+  -> AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
   -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
-getErrorLogsImpl intervalMap = do
+getErrorLogsImpl flt intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   $(logDebugSH) ("getErrorLogs", void flattenedIntervalMap)
 
@@ -267,6 +270,11 @@ getErrorLogsImpl intervalMap = do
                         <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
           <> " WHERE "
           <> bool "" "   NOT n.deleted" (isJust related)
+          <> qFlt
+        qFlt = case flt of
+          AlertsFilter_All -> ""
+          AlertsFilter_ResolvedOnly -> " AND el.stopped IS NOT NULL"
+          AlertsFilter_UnresolvedOnly -> " AND el.stopped IS NULL"
       build <$> query (
         qBase <>
           " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \

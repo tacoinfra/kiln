@@ -7,6 +7,7 @@
 
 module Backend.NotifyHandler where
 
+import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -28,6 +29,7 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
                    nodeIdForErrorLogView)
+import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
@@ -137,7 +139,6 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
         }
 
-    errorsVS = _bakeViewSelector_errors aggVS
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog
       :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
@@ -167,10 +168,15 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
             errorInterval = ClosedInterval
                   (Bounded $ _errorLog_started errorLog)
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
-          whenM (viewSelects errorInterval errorsVS) $ pure mempty
-            { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
-            }
+
+          pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt errorsVS ->
+            if viewSelects errorInterval errorsVS
+            then mempty
+              { _bakeView_errors = MMap.singleton flt $ IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                  MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
+              }
+            else mempty
+            -- whenM (viewSelects errorInterval errorsVS) $ pure 
       return $ newCount <> newErrors <> fold logNodeSummary
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
