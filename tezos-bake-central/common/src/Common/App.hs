@@ -144,6 +144,22 @@ nodeIdForErrorLogView = \case
   ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
   ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
 
+errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
+errorLogIdForErrorLogView = \case
+  ErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
+  ErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
+  ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
+  ErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
+  ErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
+
+manuallyResolvable :: ErrorLogView -> Bool
+manuallyResolvable = \case
+  ErrorLogView_InaccessibleNode _ -> False
+  ErrorLogView_NodeWrongChain _ -> False
+  ErrorLogView_BakerNoHeartbeat _ -> False
+  ErrorLogView_BadNodeHead _ -> False
+  ErrorLogView_MultipleBakersForSameBaker _ -> False
+
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView
   { _mailServerView_hostName = _mailServerConfig_hostName x

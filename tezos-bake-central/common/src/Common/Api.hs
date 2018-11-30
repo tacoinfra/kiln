@@ -21,7 +21,8 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, Bake, MailServerView)
+import Common.App (AlertNotificationMethod, Bake, ErrorLogView, MailServerView)
+import Common.Schema (ErrorLog, Id)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -68,6 +69,9 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: AlertNotificationMethod -- which one
       -> Bool -- whether is enabled
       -> PublicRequest Bake Bool -- True: success, False: no config to enable
+    PublicRequest_ResolveAlert
+      :: Id ErrorLog
+      -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
