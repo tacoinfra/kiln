@@ -49,6 +49,8 @@ class QueryHistory repr where -- blockscale
   rBakingRights :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> repr (Seq BakingRights)
   rEndorsingRights :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> repr (Seq EndorsingRights)
 
+  rDelegateInfo :: ChainId -> BlockHash -> PublicKeyHash -> repr DelegateInfo
+
 class QueryNode repr where -- my node
   rConnections :: repr Word64 -- just a count for now, but there's more data there we may someday be interested in
   rNetworkStat :: repr NetworkStat
@@ -92,6 +94,7 @@ instance QueryHistory RpcQuery where
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rEndorsingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
+  rDelegateInfo chainId blockHash publicKeyHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/delegates/" <> toPublicKeyHashText publicKeyHash
 
 instance QueryNode RpcQuery where
   rConnections = decoder <$> plainNodeRequest Http.methodGet "/network/connections"
