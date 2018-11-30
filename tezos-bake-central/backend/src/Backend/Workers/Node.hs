@@ -15,7 +15,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -69,11 +69,11 @@ nodeMonitorBranchProgess branch current i n = when (i `mod` 1000 == 0) $ $(logIn
 
 haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  let httpMgr = _nodeDataSource_httpMgr nds
-  let chainId = _nodeDataSource_chain nds
-  let historyVar = _nodeDataSource_history nds
-  oldHead <- liftIO $ atomically $ dataSourceHead nds
-  history <- liftIO $ readTVarIO historyVar
+  let
+    httpMgr = _nodeDataSource_httpMgr nds
+    chainId = _nodeDataSource_chain nds
+    historyVar = _nodeDataSource_history nds
+  (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
   newBlock <- do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either PublicNodeError () <- runExceptT $
@@ -103,8 +103,9 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
-  atomically $ updateNodeDataSource nds nodeAddr headBlockInfo
-  haveNewHead nds Nothing nodeAddr headBlockInfo
+  atomically $ do
+    updateNodeDataSource nds nodeAddr headBlockInfo
+    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
 
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
@@ -158,7 +159,6 @@ nodeWorker
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  -- IO
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
 
