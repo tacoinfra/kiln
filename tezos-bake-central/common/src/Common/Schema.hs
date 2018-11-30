@@ -316,6 +316,7 @@ data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
   , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
   , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
+  , _bakerDetails_branch :: !BlockHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails
 
