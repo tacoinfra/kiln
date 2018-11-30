@@ -16,7 +16,6 @@ module Backend.Workers.Client where
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Common.Schema
 import Common.Verification (validateForkyBlocks)
-import Control.Concurrent.STM (atomically, readTVar, retry)
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
@@ -65,7 +64,7 @@ clientWorker
   -> IO (IO ())
 clientWorker appCfg nds =
   worker' $ (*> waitForNewHeadWithTimeout nds) $
-    atomically (maybe retry pure =<< readTVar (_nodeDataSource_parameters nds)) >>= \protoInfo ->
+    withParams nds $ \protoInfo ->
       runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
         runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 

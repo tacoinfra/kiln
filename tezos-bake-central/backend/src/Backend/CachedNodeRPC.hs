@@ -140,6 +140,12 @@ class HasNodeDataSource a where
 instance HasNodeDataSource NodeDataSource where
   nodeDataSource = id
 
+waitForParams :: (HasNodeDataSource r, MonadSTM m) => r -> m ProtoInfo
+waitForParams r = maybe retry' pure =<< readTVar' (r ^. nodeDataSource . nodeDataSource_parameters)
+
+withParams :: (HasNodeDataSource r, MonadIO m) => r -> (ProtoInfo -> m a) -> m a
+withParams r act = liftIO (atomically (waitForParams r)) >>= act
+
 unpackCacheResult
   :: forall a r m. (MonadSTM m, MonadReader r m, HasTimestamp r)
   => Compose TVar CacheLine a -> m a

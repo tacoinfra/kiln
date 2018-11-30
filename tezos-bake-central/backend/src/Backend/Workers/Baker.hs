@@ -4,7 +4,7 @@
 
 module Backend.Workers.Baker where
 
-import Control.Concurrent.STM (atomically, readTVar, retry)
+import Control.Concurrent.STM (atomically)
 import Control.Monad (mzero)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (logDebug, logErrorSH)
@@ -35,9 +35,7 @@ bakerWorker
   -> m (IO ())
 bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   (protoInfo, headM) <- liftIO $ atomically $
-    liftA2 (,)
-      (maybe retry pure =<< readTVar (_nodeDataSource_parameters nds))
-      (dataSourceHead nds)
+    liftA2 (,) (waitForParams nds) (dataSourceHead nds)
 
   let db = _nodeDataSource_pool nds
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
