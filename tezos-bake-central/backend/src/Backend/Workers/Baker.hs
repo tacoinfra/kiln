@@ -52,7 +52,10 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
     -- get the exist configured bakers from the DB, and any info about them we've retrieved previously
     bakers :: Map (Id Baker) (Baker, Maybe BakerDetails) <- runDb (Identity db) $ do
       bakers :: Map (Id Baker) Baker <- selectMap BakerConstructor (Baker_deletedField ==. False)
-      bakerDetails0 :: Map (Id BakerDetails) BakerDetails <- selectMap BakerDetailsConstructor CondEmpty
+      bakerDetails0 :: Map (Id BakerDetails) BakerDetails <- selectMap BakerDetailsConstructor
+        (BakerDetails_publicKeyHashField
+        `in_` toList (fmap _baker_publicKeyHash bakers))
+
       let bakerDetails = Map.fromList $ fmap (\x -> (_bakerDetails_publicKeyHash x, x)) $ toList bakerDetails0
       return $ flip fmap bakers $ \b -> (b, Map.lookup (_baker_publicKeyHash b) bakerDetails)
 
@@ -61,13 +64,16 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
       newBHs <- runMaybeT $ do
         bakerDetails <- MaybeT $ pure maybeBakerDetails
         (_invalidatedBlockHashes, blockHashes) <- MaybeT $ atomicallyWith $
-          newBlockHashes (_bakerDetails_branch bakerDetails) headHash
+          enumerateBranches (_bakerDetails_branch bakerDetails) headHash
         pure blockHashes
       pure (baker, maybeBakerDetails, maybe [headHash] id newBHs)
 
     let
       bakersSet = Set.fromList $ _baker_publicKeyHash . fst <$> Map.elems bakers
 
+      mkFillMap
+        :: forall m' s e a. (MonadIO m', MonadReader s m', HasNodeDataSource s, MonadError e m', AsRpcError e)
+        => (BlockHash -> RawLevel -> NodeQuery (Seq a)) -> (a -> PublicKeyHash) -> m' (Map PublicKeyHash a)
       mkFillMap cacheQ getter = flip execStateT Map.empty $ runMaybeT $ do
         let queries = flip fmap [headLevel..maxLevel] $ \lvl ->
               nodeQueryDataSource $ cacheQ headHash lvl
@@ -77,9 +83,11 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
           stuff <- query
           for_ stuff $ \thing -> do
             modify $ Map.insertWith (\_new old -> old) (getter thing) thing
+      {-# INLINE mkFillMap #-}
 
-    bakingRights <- mkFillMap NodeQuery_BakingRights _bakingRights_delegate
-    endorsingRights <- mkFillMap NodeQuery_EndorsingRights _endorsingRights_delegate
+    bakingRights :: Map PublicKeyHash BakingRights <- mkFillMap NodeQuery_BakingRights _bakingRights_delegate
+    endorsingRights :: Map PublicKeyHash EndorsingRights <- mkFillMap NodeQuery_EndorsingRights _endorsingRights_delegate
+
     runDb (Identity (_nodeDataSource_pool nds)) $ for_ bakers $ \(baker, _bakerDetails) -> do
       let pkh = _baker_publicKeyHash baker
       $(logDebug) $ "Updating rights data baker " <> toPublicKeyHashText pkh
