@@ -15,6 +15,5 @@ concat <$> traverse makeLenses
  , 'ContractUpdate
  , 'FreezerUpdate
  , 'Level
- , 'ProtoInfo
  ]
 

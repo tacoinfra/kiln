@@ -49,7 +49,6 @@ import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
 import Backend.Schema
-import Backend.Workers
 
 data ClientWorkerContext = ClientWorkerContext
   { _clientWorkerContext_appConfig :: !AppConfig
@@ -170,4 +169,11 @@ clientWorker appCfg nds =
         --  Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
         pure []
 
-      insertClientBakers (Set.fromList $ concat clientBakers)
+      --insertClientBakers (Set.fromList $ concat clientBakers)
+      pure ()
+
+--insertClientBakers :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
+--insertClientBakers pkhs = do
+--  existingPkhs :: [PublicKeyHash] <- project Baker_publicKeyHashField CondEmpty
+--  let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
+--  for_ newPkhs $ \pkh -> insertNotify $ Baker pkh Nothing False

@@ -312,17 +312,10 @@ levelAncestor hist lvl ctx = ctxBlockHash
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
     ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
 
-
+-- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
+-- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
-rightsContext params hist ctx lvl = ctxBlockHash
-    -- for this case, we want the first block in the cycle that sits
-    -- PRESERVED_CYCLES before the requested level, that is on the correct
-    -- branch.
-    where
-      reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params
-      ctxCycle = max 0 (reqCycle - _protoInfo_preservedCycles params)
-      ctxLvl :: RawLevel = 1 + fromIntegral ctxCycle * _protoInfo_blocksPerCycle params
-      ctxBlockHash = levelAncestor hist ctxLvl ctx
+rightsContext params hist ctx lvl = levelAncestor hist (rightsContextLevel params lvl) ctx
 
 -- Recontextualize a query for maximum cache friendliness, and also return the least block
 getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)

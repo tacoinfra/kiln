@@ -84,7 +84,8 @@ stripOnly = coerce
 
 data Notify
   = Notify_Client !(Id Client)
-  | Notify_Baker !(Id Baker) --TODO: Use PublicKeyHash instead
+  | Notify_Baker !Baker
+  | Notify_BakerDetails !BakerDetails
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
@@ -108,8 +109,10 @@ class HasDefaultNotify f where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
-instance HasDefaultNotify (Id Baker) where
+instance HasDefaultNotify Baker where
   mkDefaultNotify = Notify_Baker
+instance HasDefaultNotify BakerDetails where
+  mkDefaultNotify = Notify_BakerDetails
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -516,6 +519,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _baker_uniqueness
             type: constraint
             fields: [_baker_publicKeyHash]
+  - entity: BakerDetails
+    constructors:
+      - name: BakerDetails
+        uniques:
+          - name: _bakerDetails_uniqueness
+            type: constraint
+            fields: [_bakerDetails_publicKeyHash]
   - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
@@ -584,6 +594,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Baker, 'BakerKey)
+  , (''BakerDetails, 'BakerDetailsKey)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
