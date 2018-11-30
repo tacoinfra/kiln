@@ -25,12 +25,12 @@ getAllRewards :: (PostgresRaw m, PersistBackend m) => a -> m (MonoidalMap Public
 getAllRewards a = do
   rewards <- [queryQ|
     SELECT d."publicKeyHash", COALESCE(pr.level, 0), COALESCE(pr.amount, 0)
-    FROM "Delegate" d
+    FROM "Baker" d
     LEFT OUTER JOIN "PendingReward" pr
-      ON d.id = pr.delegate
+      ON d.id = pr.baker
     |] -- selectAll -- PendingReward
   let rewardMap' = MMap.fromListWith (MMap.unionWith (+))
-        [(delegate, MMap.singleton (unTezosWord64 level) amount) | (delegate, level, amount) <- rewards]
+        [(baker, MMap.singleton (unTezosWord64 level) amount) | (baker, level, amount) <- rewards]
       rewardMap = fmap (\x -> (First x, a)) rewardMap'
   return rewardMap
 

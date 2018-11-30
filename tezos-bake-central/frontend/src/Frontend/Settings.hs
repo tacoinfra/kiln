@@ -219,18 +219,18 @@ settingsTab = do
         addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
-    _delegatesOptions = do
-      divClass "ui medium header" $ text "Delegates"
+    _bakersOptions = do
+      divClass "ui medium header" $ text "Bakers"
       elClass "table" "ui celled striped compact table" $ do
-        delegates <- watchDelegatePublicKeyHashes
-        _ <- listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+        bakers <- watchBakerPublicKeyHashes
+        _ <- listWithKey (Map.fromSet (const ()) <$> bakers) $ \pkh _ -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
           el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
-            requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
+            eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
+            requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "tz..."
+        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)

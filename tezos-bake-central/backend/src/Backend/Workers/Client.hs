@@ -87,7 +87,7 @@ clientWorker appCfg nds =
         ORDER BY updated NULLS FIRST
       |]
 
-      clientDelegates <- for toUpdate $ \(cid, address, _alias) -> do
+      clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
               , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
@@ -114,21 +114,21 @@ clientWorker appCfg nds =
           -- know if the baker itself is active.  The reqards should be computed
           -- based on nodes reporting new blocks.  Even if we baked, if that was
           -- a different branch, there's no reward.
-          let bakingReward delegate blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+          let bakingReward baker blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees baker . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["text", "varchar", "int8", "int8"]
-                [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward delegatePkh b)
+                [ (bakerPkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward bakerPkh b)
                 | b <- _report_baked report
-                , delegatePkh <- _clientConfig_delegates clientConfig
+                , bakerPkh <- _clientConfig_bakers clientConfig
                 ]
           unless (null $ _report_baked report) $ void $ [executeQ|
-            INSERT INTO "PendingReward" (delegate, hash, level, amount)
+            INSERT INTO "PendingReward" (baker, hash, level, amount)
             SELECT d.id, x.hash, x.level, x.amount
-            FROM ?insertValues x (delegate_pkh, hash, level, amount)
-            JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
+            FROM ?insertValues x (baker_pkh, hash, level, amount)
+            JOIN "Baker" d ON d."publicKeyHash" = x.baker_pkh
             ON CONFLICT DO NOTHING |]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
@@ -163,11 +163,11 @@ clientWorker appCfg nds =
               -- what this SHOULD be
               -- reportClientOnForkError cid tooOld (_forkInfo_hash e) (_forkInfo_time e)
               return ()
-          return $ _clientConfig_delegates clientConfig
+          return $ _clientConfig_bakers clientConfig
 
         --case result of
         --  Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address alias
         --  Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
         pure []
 
-      insertClientDelegates (Set.fromList $ concat clientDelegates)
+      insertClientBakers (Set.fromList $ concat clientBakers)

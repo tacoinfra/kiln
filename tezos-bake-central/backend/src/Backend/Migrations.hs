@@ -37,6 +37,8 @@ preMigrate =
       migrateParameters
   >=> migratePublicNodeHead
   >=> dropTableIfExists (Nothing, "ErrorLogUpgradeNotice")
+  >=> renameTableIfExists (Nothing, "Delegate") "Baker"
+  >=> renameColumnIfExists (Nothing, "PendingReward") "delegate" "baker"
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -59,6 +61,32 @@ migratePublicNodeHead ta = do
     Nothing -> pure ta
     Just False -> dropTable table *> getTableAnalysis
     Just True -> pure ta
+
+renameColumnIfExists :: (Migrate m) => QualifiedName -> String -> String -> TableAnalysis m -> m (TableAnalysis m)
+renameColumnIfExists table columnFrom columnTo ta = do
+  maybeTableInfo <- analyzeTable ta table
+  let columnExists = do
+        tableInfo <- maybeTableInfo
+        return $ columnFrom `elem` fmap colName (tableColumns tableInfo)
+  case columnExists of
+    Just True -> renameColumn table columnFrom columnTo *> getTableAnalysis
+    _ -> pure ta
+
+renameColumn :: (Migrate m) => QualifiedName -> String -> String -> m ()
+renameColumn (schema, tableName) columnNameFrom columnNameTo = do
+  let sql = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" RENAME COLUMN \"" <> columnNameFrom <> "\" TO \"" <> columnNameTo <> "\""
+  $(logInfoS) "SQL" (tshow sql) *> void (execute_ $ fromString sql)
+
+renameTableIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
+renameTableIfExists tableFrom tableTo ta = do
+  analyzeTable ta tableFrom >>= \case
+    Nothing -> pure ta
+    Just _ -> renameTable tableFrom tableTo *> getTableAnalysis
+
+renameTable :: (Migrate m) => QualifiedName -> String -> m ()
+renameTable (schema, tableNameFrom) tableNameTo = do
+  let sql = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableNameFrom <> "\" RENAME TO \"" <> tableNameTo <> "\""
+  $(logInfoS) "SQL" (tshow sql) *> void (execute_ $ fromString sql)
 
 dropTableIfExists :: (Migrate m) => QualifiedName -> TableAnalysis m -> m (TableAnalysis m)
 dropTableIfExists table ta = do

@@ -26,7 +26,7 @@ import Control.Concurrent.MVar (MVar, isEmptyMVar, modifyMVar, modifyMVar_, newE
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, readTVarIO, retry)
 import Control.Lens (TraversableWithIndex, re)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
+import Control.Monad.Except (ExceptT(..), MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), logDebugSH, logErrorSH, logInfo, logWarnSH)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
@@ -431,14 +431,14 @@ withCache dft action = do
   protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
 
-calculateDelegateStats ::
+calculateBakerStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f
   , MonadReader r m, HasNodeDataSource r
   , MonadIO m
   )
   => f a
   -> m (f (First (Maybe (BakeEfficiency, Account)), a))
-calculateDelegateStats pkhs = do
+calculateBakerStats pkhs = do
   dataSourceHead >>= \case
     -- I think i should probably just ask for a `forall b. f b` to pass on the no heads case
     Nothing -> return $ fmap (First Nothing,) pkhs
@@ -473,8 +473,8 @@ calculateBakeEfficiency ::
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency branch len delegate = do
-  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, delegate)
+calculateBakeEfficiency branch len baker = do
+  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, baker)
 
   let
     branchLevel = branch ^. level
@@ -485,19 +485,19 @@ calculateBakeEfficiency branch len delegate = do
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
   bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
   let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, delegate, result)
+  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, baker, result)
   return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
-    efficiencyOfBlock rights baker = BakeEfficiency
-      { _bakeEfficiency_bakedBlocks = if baker == delegate then 1 else 0
-      , _bakeEfficiency_bakingRights = case (Map.lookup baker rights, Map.lookup delegate rights) of
+    efficiencyOfBlock rights blockBaker = BakeEfficiency
+      { _bakeEfficiency_bakedBlocks = if blockBaker == baker then 1 else 0
+      , _bakeEfficiency_bakingRights = case (Map.lookup blockBaker rights, Map.lookup baker rights) of
           (_, Nothing) -> 0
           (Just them, Just us) -> if us <= them then 1 else 0
           (Nothing, _) -> 0 -- error "Very wrong"
       }
 
-    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from delegate to
+    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from baker to
     bakingRightsMap xs = Map.fromList
       [ (d, prio)
       | BakingRights _lvl d prio _ <- toList xs

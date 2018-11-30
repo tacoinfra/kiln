@@ -66,8 +66,8 @@ data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
   , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
-  , _bakeViewSelector_delegateStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
+  , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeViewSelector_bakers :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
@@ -87,8 +87,8 @@ data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
   , _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
   , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
-  , _bakeView_delegateStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
+  , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeView_bakers :: !(RangeView' PublicKeyHash (Deletable ()) a)
   -- TODO: I'm more than a little concerned about this approach for dealing
   -- with deletes in IntervalView.  I think in this particular case, we can get
   -- away with it; since we never go from Resolved to Unresolved, so the
@@ -129,7 +129,7 @@ data ErrorLogView
   | ErrorLogView_NodeWrongChain ErrorLogNodeWrongChain
   | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
   | ErrorLogView_BadNodeHead ErrorLogBadNodeHead
-  | ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate
+  | ErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
@@ -140,7 +140,7 @@ nodeIdForErrorLogView = \case
   ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
   ErrorLogView_BakerNoHeartbeat _ -> Nothing
   ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
-  ErrorLogView_MultipleBakersForSameDelegate _ -> Nothing
+  ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView
@@ -162,8 +162,8 @@ cropBakeView vs v = BakeView
   , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
   , _bakeView_publicNodeHeads = cropView (_bakeViewSelector_publicNodeHeads vs) (_bakeView_publicNodeHeads v)
   , _bakeView_nodes = cropView (_bakeViewSelector_nodes vs) (_bakeView_nodes v)
-  , _bakeView_delegates = cropView (_bakeViewSelector_delegates vs) (_bakeView_delegates v)
-  , _bakeView_delegateStats = cropView (_bakeViewSelector_delegateStats vs) (_bakeView_delegateStats v)
+  , _bakeView_bakers = cropView (_bakeViewSelector_bakers vs) (_bakeView_bakers v)
+  , _bakeView_bakerStats = cropView (_bakeViewSelector_bakerStats vs) (_bakeView_bakerStats v)
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
   , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
@@ -183,8 +183,8 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = fmapMaybe f $ _bakeViewSelector_publicNodeConfig a
     , _bakeViewSelector_publicNodeHeads = fmapMaybe f $ _bakeViewSelector_publicNodeHeads a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
-    , _bakeViewSelector_delegates = fmapMaybe f $ _bakeViewSelector_delegates a
-    , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
+    , _bakeViewSelector_bakers = fmapMaybe f $ _bakeViewSelector_bakers a
+    , _bakeViewSelector_bakerStats = fmapMaybe f $ _bakeViewSelector_bakerStats a
     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
@@ -205,8 +205,8 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = nil
     , _bakeViewSelector_publicNodeHeads = nil
     , _bakeViewSelector_nodes = nil
-    , _bakeViewSelector_delegates = nil
-    , _bakeViewSelector_delegateStats = nil
+    , _bakeViewSelector_bakers = nil
+    , _bakeViewSelector_bakerStats = nil
     , _bakeViewSelector_mailServer = nil
     , _bakeViewSelector_summary = nil
     , _bakeViewSelector_nodeAddresses = nil
@@ -227,8 +227,8 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = f' _bakeViewSelector_publicNodeConfig
     , _bakeViewSelector_publicNodeHeads = f' _bakeViewSelector_publicNodeHeads
     , _bakeViewSelector_nodes = f' _bakeViewSelector_nodes
-    , _bakeViewSelector_delegates = f' _bakeViewSelector_delegates
-    , _bakeViewSelector_delegateStats = f' _bakeViewSelector_delegateStats
+    , _bakeViewSelector_bakers = f' _bakeViewSelector_bakers
+    , _bakeViewSelector_bakerStats = f' _bakeViewSelector_bakerStats
     , _bakeViewSelector_mailServer = f' _bakeViewSelector_mailServer
     , _bakeViewSelector_summary = f' _bakeViewSelector_summary
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
@@ -252,8 +252,8 @@ instance FunctorMaybe BakeView where
     , _bakeView_publicNodeConfig = fmapMaybe f $ _bakeView_publicNodeConfig a
     , _bakeView_publicNodeHeads = fmapMaybe f $ _bakeView_publicNodeHeads a
     , _bakeView_nodes = fmapMaybe f $ _bakeView_nodes a
-    , _bakeView_delegates = fmapMaybe f $ _bakeView_delegates a
-    , _bakeView_delegateStats = fmapMaybe f $ _bakeView_delegateStats a
+    , _bakeView_bakers = fmapMaybe f $ _bakeView_bakers a
+    , _bakeView_bakerStats = fmapMaybe f $ _bakeView_bakerStats a
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
@@ -283,8 +283,8 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = (<>) (_bakeViewSelector_publicNodeConfig u) (_bakeViewSelector_publicNodeConfig v)
     , _bakeViewSelector_publicNodeHeads = (<>) (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
     , _bakeViewSelector_nodes = (<>) (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
-    , _bakeViewSelector_delegates = (<>) (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
-    , _bakeViewSelector_delegateStats = (<>) (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
+    , _bakeViewSelector_bakers = (<>) (_bakeViewSelector_bakers u) (_bakeViewSelector_bakers v)
+    , _bakeViewSelector_bakerStats = (<>) (_bakeViewSelector_bakerStats u) (_bakeViewSelector_bakerStats v)
     , _bakeViewSelector_mailServer = (<>) (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
@@ -305,8 +305,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = mempty
     , _bakeViewSelector_publicNodeHeads = mempty
     , _bakeViewSelector_nodes = mempty
-    , _bakeViewSelector_delegates = mempty
-    , _bakeViewSelector_delegateStats = Compose mempty
+    , _bakeViewSelector_bakers = mempty
+    , _bakeViewSelector_bakerStats = Compose mempty
     , _bakeViewSelector_mailServer = mempty
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_errors = mempty
@@ -333,8 +333,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_publicNodeConfig = mempty
     , _bakeView_publicNodeHeads = mempty
     , _bakeView_nodes = mempty
-    , _bakeView_delegates = mempty
-    , _bakeView_delegateStats = mempty
+    , _bakeView_bakers = mempty
+    , _bakeView_bakerStats = mempty
     , _bakeView_mailServer = mempty
     -- , _bakeView_graphs = mempty
     -- , _bakeView_summaryGraph = mempty
@@ -358,8 +358,8 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
     , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
-    , _bakeView_delegates = _bakeView_delegates u <> _bakeView_delegates v
-    , _bakeView_delegateStats = _bakeView_delegateStats u <> _bakeView_delegateStats v
+    , _bakeView_bakers = _bakeView_bakers u <> _bakeView_bakers v
+    , _bakeView_bakerStats = _bakeView_bakerStats u <> _bakeView_bakerStats v
     , _bakeView_mailServer = _bakeView_mailServer u <> _bakeView_mailServer v
     -- , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
     -- , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v

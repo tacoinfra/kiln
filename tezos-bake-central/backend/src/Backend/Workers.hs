@@ -11,10 +11,10 @@ import Database.Groundhog.Postgresql
 import Tezos.Types
 
 
-insertClientDelegates :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
-insertClientDelegates pkhs = do
-  existingPkhs :: [PublicKeyHash] <- project Delegate_publicKeyHashField CondEmpty
+insertClientBakers :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
+insertClientBakers pkhs = do
+  existingPkhs :: [PublicKeyHash] <- project Baker_publicKeyHashField CondEmpty
   let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
-  for_ newPkhs $ \pkh -> insertNotify $ Delegate pkh Nothing False
+  for_ newPkhs $ \pkh -> insertNotify $ Baker pkh Nothing False
 
 
