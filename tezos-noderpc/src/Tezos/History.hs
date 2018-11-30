@@ -59,9 +59,6 @@ emptyCache = CachedHistory Map.empty Map.empty 1
 class HasCachedHistory f s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (f (CachedHistory a)) (f (CachedHistory b))
 
-type ProgressFn f = BlockHash -> BlockHash -> Int -> Int -> f ()
-
-
 -- | Data type with the right instances for 'MonadReader' constraints required by 'accumHistory'.
 data AccumHistoryContext f a = AccumHistoryContext
   { _accumHistoryContext_cachedHistory :: !(f (CachedHistory a))
@@ -125,8 +122,8 @@ accumHistory
     , MonadReader r m, Monoid a, HasCachedHistory TVar r r a a, HasPublicNodeContext r
     , MonadError e m, AsPublicNodeError e
     )
-  => ProgressFn IO -> ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
-accumHistory progress chainId f blk = do
+  => ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
+accumHistory chainId f blk = do
   historyVar <- asks (view cachedHistory)
   history <- liftIO $ readTVarIO historyVar
   let minLevel = _cachedHistory_minLevel history
@@ -166,7 +163,6 @@ accumHistory progress chainId f blk = do
         modify $ accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
         let newBranchLength = length blks
         ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
-          --liftIO $ progress blkHash blkHash' i newBranchLength
           modify $ accumHistoryImpl blkHash' predhash' mempty
 
   liftIO $ atomically $ do

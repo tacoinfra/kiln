@@ -21,28 +21,12 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import System.Environment
 
-import System.ProgressBar
-
 import Tezos.History
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Types
 import Tezos.NodeRPC.Class
 import Tezos.Types
 import Tezos.NodeRPC.Sources
-
-
-scanProgress :: MonadIO m => BlockHash -> BlockHash -> Int -> Int -> m ()
-scanProgress _ currentHash i n = when (i `mod` 100 == 0) $ liftIO $ autoProgressBar (const "scan") (showProgress currentHash) 80
-  (Progress (fromIntegral i) (fromIntegral n))
-
-showProgress :: BlockHash -> Progress -> String
-showProgress blk (Progress x y) = T.unpack $ T.concat
-  [ T.pack $ show x
-  , "/"
-  , T.pack $ show y
-  , "@"
-  , toBase58Text blk
-  ]
 
 onRPCError :: PublicNodeError -> a
 onRPCError = \case
@@ -52,7 +36,7 @@ onRPCError = \case
   PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
 
 accum :: ChainId -> Block -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) Fitness
-accum chainId = accumHistory scanProgress chainId (^. fitness)
+accum chainId = accumHistory chainId (^. fitness)
 
 main :: IO ()
 main = do
@@ -77,7 +61,6 @@ main = do
       accum chainId blk
     b <- liftIO $ readTVarIO historyVar
 
-      -- scanProgress headBlk blk
     let (xHash, xPath):_ = Map.toList $ _cachedHistory_blocks b
     let xLevel :: Int = 2000 + fromIntegral (length xPath)
     xBlk <- nodeRPC $ rBlock chainId xHash

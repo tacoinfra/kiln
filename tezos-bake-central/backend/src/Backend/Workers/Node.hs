@@ -57,16 +57,6 @@ import ExtraPrelude
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
--- TODO: make this "configurable" implementation idea:  we could partition
--- history into horizontal level regions (say, every 10k levels) and require
--- each "slice" start on a boundary, and contain only the blocks within their
--- assigned slice.
-minCachedBlockLevel :: RawLevel
-minCachedBlockLevel = 1
-
-nodeMonitorBranchProgess :: (MonadLogger m) => BlockHash -> BlockHash -> Int -> Int -> m ()
-nodeMonitorBranchProgess branch current i n = when (i `mod` 1000 == 0) $ $(logInfoSH) ("catching up" :: Text, branch, current, i, n)
-
 haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
@@ -78,12 +68,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either PublicNodeError () <- runExceptT $
       flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
-        accumHistory
-          (\branch current i n -> runLoggingEnv (_nodeDataSource_logger nds) $ nodeMonitorBranchProgess branch current i n)
-          chainId
-          (const ())
-          headBlockInfo
-
+        accumHistory chainId (const ()) headBlockInfo
         $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
 
     case newStateRsp of

@@ -48,7 +48,6 @@ executable tezos-noderpc-smoketest
     , monad-logger
     , mtl
     , stm
-    , terminal-progress-bar
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
