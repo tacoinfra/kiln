@@ -29,6 +29,7 @@ library
     , monad-logger
     , mtl
     , safe-exceptions
+    , stm
     , text
     , tezos-bake-monitor-lib
     , time
@@ -46,7 +47,7 @@ executable tezos-noderpc-smoketest
     , lens
     , monad-logger
     , mtl
-    , terminal-progress-bar
+    , stm
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc

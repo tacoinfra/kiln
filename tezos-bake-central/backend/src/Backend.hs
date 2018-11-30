@@ -13,6 +13,7 @@
 
 module Backend where
 
+import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
@@ -60,8 +61,8 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (blankNodeDataSource)
-import Backend.Common (workerWithDelay)
+import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
+import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
@@ -211,6 +212,8 @@ backendImpl cfg serve = do
       -- Start a thread to send queued emails
       addFinalizer <=< workerWithDelay (pure 10) $ const $
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
+
+      addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
         appConfig = AppConfig emailFromAddress

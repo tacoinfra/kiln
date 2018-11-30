@@ -1,17 +1,21 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Tezos.Signature where
 
+import Control.DeepSeq (NFData)
 import Data.Typeable
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
 import Data.Aeson
+import Data.Hashable (Hashable)
 import Data.String
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 import Data.Text (Text)
+import GHC.Generics (Generic)
 
 import Tezos.Base58Check
 
@@ -20,7 +24,9 @@ data Signature
   | Signature_Secp256k1 Secp256k1Signature
   | Signature_P256 P256Signature
   | Signature_Unknown GenericSignature
-  deriving (Eq, Ord, Typeable)
+  deriving (Eq, Ord, Typeable, Generic)
+instance Hashable Signature
+instance NFData Signature
 
 signatureConstructorDecoders :: [TryDecodeBase58 Signature]
 signatureConstructorDecoders =

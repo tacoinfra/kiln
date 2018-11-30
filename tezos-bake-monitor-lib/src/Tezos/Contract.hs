@@ -1,18 +1,22 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.Contract where
 
+import Control.DeepSeq (NFData)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
+import Data.Hashable (Hashable)
 import Data.String
 import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import Data.Typeable
+import GHC.Generics (Generic)
 
 import Tezos.Base58Check
 import Tezos.PublicKeyHash
@@ -20,9 +24,11 @@ import Tezos.Micheline
 import Tezos.Json
 
 data ContractId
-  = Implicit PublicKeyHash
-  | Originated ContractHash
-  deriving (Eq, Ord, Typeable)
+  = Implicit !PublicKeyHash
+  | Originated !ContractHash
+  deriving (Eq, Ord, Generic, Typeable)
+instance Hashable ContractId
+instance NFData ContractId
 
 contractIdConstructorDecoders :: [TryDecodeBase58 ContractId]
 contractIdConstructorDecoders =

@@ -40,13 +40,13 @@ library
     , groundhog
     , groundhog-postgresql
     , groundhog-th
+    , hashable
     , http-client
     , http-client-tls
     , http-conduit
     , http-types
     , IntervalMap
     , lens
-    , lens-aeson
     , mime-mail
     , modern-uri
     , monad-control

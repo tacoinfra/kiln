@@ -19,6 +19,7 @@ import Data.Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
+import Data.Hashable (Hashable)
 import Data.String
 import Data.Text as T
 import Data.Text.Encoding as T
@@ -102,7 +103,7 @@ data HashType
   deriving (Eq, Ord, Show, Typeable, Enum)
 
 newtype HashedValue (tag :: HashType) = HashedValue { unHashedValue :: ShortByteString }
-  deriving (Eq, Ord, Generic, Typeable, NFData)
+  deriving (Eq, Ord, Generic, Typeable, NFData, Hashable)
 
 instance IsBase58Hash tag => ToJSON (HashedValue tag) where
   toJSON = toJSON . T.decodeUtf8 . toBase58

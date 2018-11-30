@@ -1,14 +1,18 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.BlockHeader where
 
+import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
+import Data.Hashable (Hashable)
 import Data.Time
 import Data.Typeable
 import Data.Word
+import GHC.Generics (Generic)
 
 import Tezos.Base16ByteString
 import Tezos.Base58Check
@@ -33,10 +37,11 @@ data BlockHeader = BlockHeader
   , _blockHeader_seedNonceHash :: !(Maybe NonceHash)
   , _blockHeader_signature :: !(Maybe Signature)
   }
-  deriving (Show, Eq, Ord, Typeable)
+  deriving (Show, Eq, Ord, Generic, Typeable)
+instance NFData BlockHeader
 
 newtype Priority = Priority { unPriority :: Word16 }
-  deriving (Eq, Ord, Typeable, Show, FromJSON, ToJSON)
+  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable)
 
 
 concat <$> traverse deriveTezosJson [ ''BlockHeader ]

@@ -10,6 +10,7 @@
 
 module Backend.ViewSelectorHandler where
 
+import Control.Concurrent.STM (atomically)
 import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
@@ -20,13 +21,12 @@ import Data.Pool (Pool)
 import Data.Time (UTCTime)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
-import Text.URI (URI)
-
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ, query)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, query, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
+import Text.URI (URI)
 
 import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
@@ -37,8 +37,8 @@ import Backend.CachedNodeRPC
 import Backend.Schema
 import Common.Alerts(AlertsFilter(..))
 import Common.App
-import qualified Common.AppendIntervalMap as AppendIMap
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
@@ -173,7 +173,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
-  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ runReaderT dataSourceHead nds
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
   return BakeView
     { _bakeView_config = config

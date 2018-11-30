@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -5,15 +6,17 @@
 
 module Tezos.ProtocolConstants where
 
-import Prelude hiding (cycle)
-
-import Control.Lens
+import Control.DeepSeq (NFData)
+import Control.Lens ((^.))
+import Control.Lens.TH (makeLenses)
 import Data.Aeson
 import qualified Data.Aeson.TH as Aeson
+import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Typeable
+import Data.Typeable (Typeable)
 import Data.Text (Text)
-import Data.Word
+import Data.Word (Word8, Word16)
+import GHC.Generics (Generic)
 
 import Tezos.Tez
 import Tezos.Json
@@ -47,8 +50,9 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_endorsementReward :: !Tez -- "endorsement_reward": { "$ref": "#/definitions/mutez" },
   , _protoInfo_costPerByte :: !Tez -- "cost_per_byte": { "$ref": "#/definitions/mutez" },
   , _protoInfo_hardStorageLimitPerOperation :: !TezosWord64 -- "hard_storage_limit_per_operation": { "$ref": "#/definitions/bignum" }
-  } deriving (Eq, Ord, Show, Typeable)
-
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance Hashable ProtoInfo
+instance NFData ProtoInfo
 makeLenses ''ProtoInfo
 
 -- Custom instance to support both protocol 002 and 003. We convert between the two.
@@ -85,7 +89,7 @@ levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (param
 -- cycle, as that would make the first cycle alone 1 block larger than all the
 -- others.
 firstLevelInCycle :: ProtoInfo -> Cycle -> RawLevel
-firstLevelInCycle params cycle = 1 + fromIntegral cycle * params ^. protoInfo_blocksPerCycle
+firstLevelInCycle params cycl = 1 + fromIntegral cycl * params ^. protoInfo_blocksPerCycle
 
 -- | We don't want the first block of the next cycle behind the fog of
 -- blockchain, but rather the last block we can see (which is the previous
