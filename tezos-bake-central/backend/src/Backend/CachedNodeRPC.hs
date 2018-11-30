@@ -169,6 +169,22 @@ branchPoint x y = do
     yPath = Map.lookup y $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
 
+-- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
+newBlockHashes
+  :: ( MonadSTM m
+     , MonadReader a m, HasNodeDataSource a
+     )
+  => BlockHash -> BlockHash -> m (Maybe ([BlockHash], [BlockHash]))
+newBlockHashes x y = do
+  dsrc <- asks (^. nodeDataSource)
+  history <- readTVar' $ _nodeDataSource_history dsrc
+  pure $ do
+    xPath <- Map.lookup x $ _cachedHistory_blocks history
+    yPath <- Map.lookup y $ _cachedHistory_blocks history
+    let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
+    pure (pathPrefix xPath, pathPrefix yPath)
+
+
 lookupBlock
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> BlockHash -> m (Maybe VeryBlockLike)

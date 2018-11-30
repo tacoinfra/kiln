@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -10,7 +11,7 @@ import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (logDebug, logErrorSH)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (execStateT, gets, modify)
-import Control.Monad.Trans.Maybe (runMaybeT)
+import Control.Monad.Trans.Maybe (MaybeT (..))
 import Data.List.NonEmpty (nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -26,6 +27,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Schema
+import Backend.STM (atomicallyWith)
 import Common.Schema
 import ExtraPrelude
 
@@ -46,11 +48,23 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
       maxLevel = maxRightsLevel protoInfo headLevel
       latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
     $(logDebug) $ "Head level is " <> tshow (unRawLevel headLevel) <> " in cycle " <> tshow (unRawLevel latestCycle)
-    bakers <- runDb (Identity db) $ do
+
+    -- get the exist configured bakers from the DB, and any info about them we've retrieved previously
+    bakers :: Map (Id Baker) (Baker, Maybe BakerDetails) <- runDb (Identity db) $ do
       bakers :: Map (Id Baker) Baker <- selectMap BakerConstructor (Baker_deletedField ==. False)
       bakerDetails0 :: Map (Id BakerDetails) BakerDetails <- selectMap BakerDetailsConstructor CondEmpty
       let bakerDetails = Map.fromList $ fmap (\x -> (_bakerDetails_publicKeyHash x, x)) $ toList bakerDetails0
       return $ flip fmap bakers $ \b -> (b, Map.lookup (_baker_publicKeyHash b) bakerDetails)
+
+    -- decide which blocks to operate on based on what we've done with the baker already
+    bakers1 :: Map (Id Baker) (Baker, Maybe BakerDetails, [BlockHash]) <- for bakers $ \(baker, maybeBakerDetails) -> do
+      newBHs <- runMaybeT $ do
+        bakerDetails <- MaybeT $ pure maybeBakerDetails
+        (_invalidatedBlockHashes, blockHashes) <- MaybeT $ atomicallyWith $
+          newBlockHashes (_bakerDetails_branch bakerDetails) headHash
+        pure blockHashes
+      pure (baker, maybeBakerDetails, maybe [headHash] id newBHs)
+
     let
       bakersSet = Set.fromList $ _baker_publicKeyHash . fst <$> Map.elems bakers
 
