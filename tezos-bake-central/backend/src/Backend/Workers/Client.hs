@@ -16,7 +16,7 @@ module Backend.Workers.Client where
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Common.Schema
 import Common.Verification (validateForkyBlocks)
-import Control.Concurrent.MVar
+import Control.Concurrent.STM (atomically, readTVar, retry)
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
@@ -28,7 +28,6 @@ import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
 import Data.Semigroup (Sum (..), getSum, (<>))
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
@@ -66,7 +65,7 @@ clientWorker
   -> IO (IO ())
 clientWorker appCfg nds =
   worker' $ (*> waitForNewHeadWithTimeout nds) $
-    readMVar (_nodeDataSource_parameters nds) >>= \protoInfo ->
+    atomically (maybe retry pure =<< readTVar (_nodeDataSource_parameters nds)) >>= \protoInfo ->
       runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
         runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 
@@ -86,7 +85,7 @@ clientWorker appCfg nds =
         ORDER BY updated NULLS FIRST
       |]
 
-      clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
+      _clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
               , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
@@ -123,7 +122,7 @@ clientWorker appCfg nds =
                 | b <- _report_baked report
                 , bakerPkh <- _clientConfig_bakers clientConfig
                 ]
-          unless (null $ _report_baked report) $ void $ [executeQ|
+          unless (null $ _report_baked report) $ void [executeQ|
             INSERT INTO "PendingReward" (baker, hash, level, amount)
             SELECT d.id, x.hash, x.level, x.amount
             FROM ?insertValues x (baker_pkh, hash, level, amount)

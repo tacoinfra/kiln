@@ -10,6 +10,7 @@
 
 module Backend.ViewSelectorHandler where
 
+import Control.Concurrent.STM (atomically)
 import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Bifunctor (first)
@@ -172,7 +173,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
-  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ runReaderT dataSourceHead nds
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
   return BakeView
     { _bakeView_config = config

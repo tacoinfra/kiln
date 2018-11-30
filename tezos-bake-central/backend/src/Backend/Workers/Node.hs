@@ -15,7 +15,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, writeTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTVar)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -71,13 +71,13 @@ haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode 
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let httpMgr = _nodeDataSource_httpMgr nds
   let chainId = _nodeDataSource_chain nds
-  let cacheVar = _nodeDataSource_history nds
-  oldHead <- runReaderT dataSourceHead nds
-  cache <- liftIO $ readMVar cacheVar
+  let historyVar = _nodeDataSource_history nds
+  oldHead <- liftIO $ atomically $ dataSourceHead nds
+  history <- liftIO $ readTVarIO historyVar
   newBlock <- do
-    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
+    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either PublicNodeError () <- runExceptT $
-      flip runReaderT (AccumHistoryContext cacheVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+      flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
         accumHistory
           (\branch current i n -> runLoggingEnv (_nodeDataSource_logger nds) $ nodeMonitorBranchProgess branch current i n)
           chainId
@@ -103,7 +103,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
-  updateNodeDataSource nds nodeAddr headBlockInfo
+  atomically $ updateNodeDataSource nds nodeAddr headBlockInfo
   haveNewHead nds Nothing nodeAddr headBlockInfo
 
   let db = _nodeDataSource_pool nds
@@ -305,7 +305,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @RpcError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
-      lcaBlock' <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+      lcaBlock' <- liftIO $ atomically $ branchPoint nds (nodeHead ^. hash) (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
       case lcaBlock' of
@@ -321,7 +321,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
              | levelsBehindHead < 2 -> return good
              | levelsBehindNode == 0 -> return bad
              | otherwise -> do
-                 history <- liftIO $ readMVar $ _nodeDataSource_history nds
+                 history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
                  let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
                      uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
                  latestParent <- nodeQueryDataSource (NodeQuery_Block parentHash)

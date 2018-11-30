@@ -1,5 +1,6 @@
 module ExtraPrelude
   ( Coercible
+  , Compose (..)
   , Const (..)
   , First (..)
   , Generic
@@ -95,6 +96,7 @@ import Data.Either (isLeft, isRight)
 import Data.Foldable (fold, for_, toList, traverse_)
 import Data.Function (on)
 import Data.Functor (void, ($>))
+import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Monoidal (MonoidalMap)

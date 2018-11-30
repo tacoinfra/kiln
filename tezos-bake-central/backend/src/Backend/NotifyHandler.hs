@@ -11,6 +11,7 @@ import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Concurrent.STM (atomically)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
@@ -112,7 +113,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
             True -> pure [(Bounded nid, First Nothing)]
           pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
       , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- runReaderT dataSourceHead nds
+          latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
@@ -199,7 +200,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
           pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
       , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- runReaderT dataSourceHead nds
+          latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 

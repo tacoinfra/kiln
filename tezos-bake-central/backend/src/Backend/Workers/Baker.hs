@@ -4,7 +4,7 @@
 
 module Backend.Workers.Baker where
 
-import Control.Concurrent.MVar (readMVar)
+import Control.Concurrent.STM (atomically, readTVar, retry)
 import Control.Monad (mzero)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (logDebug, logErrorSH)
@@ -34,9 +34,12 @@ bakerWorker
   => NodeDataSource
   -> m (IO ())
 bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters nds
+  (protoInfo, headM) <- liftIO $ atomically $
+    liftA2 (,)
+      (maybe retry pure =<< readTVar (_nodeDataSource_parameters nds))
+      (dataSourceHead nds)
+
   let db = _nodeDataSource_pool nds
-  headM <- runReaderT dataSourceHead nds
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     $(logDebug) "Update baker cycle."
     let

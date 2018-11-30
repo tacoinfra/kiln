@@ -10,10 +10,10 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 import Control.Lens ((^.))
-import Control.Concurrent.MVar (newMVar, readMVar)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Logger
+import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO)
 import qualified Data.Map as Map
 import Data.Semigroup ((<>))
 import qualified Data.Text as T
@@ -51,14 +51,14 @@ onRPCError = \case
   PublicNodeError_RpcError (RpcError_UnexpectedStatus code bad) -> error $ ("\n" <>) (show code <> show bad)
   PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
 
-accum :: ChainId -> Block -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext Fitness) (LoggingT IO)) Fitness
+accum :: ChainId -> Block -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) Fitness
 accum chainId = accumHistory scanProgress chainId (^. fitness)
 
 main :: IO ()
 main = do
   nodeAddr:_ <- getArgs
   httpMgr <- liftIO $ newManager tlsManagerSettings
-  historyVar <- newMVar emptyCache
+  historyVar <- newTVarIO emptyCache
 
   let
     ctx = AccumHistoryContext
@@ -75,7 +75,7 @@ main = do
 
     scanBranch headBlk 50000 50001 $ \blk -> do
       accum chainId blk
-    b <- liftIO $ readMVar historyVar
+    b <- liftIO $ readTVarIO historyVar
 
       -- scanProgress headBlk blk
     let (xHash, xPath):_ = Map.toList $ _cachedHistory_blocks b
@@ -89,5 +89,5 @@ main = do
     liftIO $ putStrLn "constants"
     void $ nodeRPC $ rProtoConstants chainId (_block_hash headBlk)
 
-runTest :: AccumHistoryContext Fitness -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext Fitness) (LoggingT IO)) () -> IO ()
+runTest :: AccumHistoryContext TVar Fitness -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) () -> IO ()
 runTest ctx action = runStderrLoggingT $ either onRPCError id <$> runReaderT (runExceptT action) ctx
