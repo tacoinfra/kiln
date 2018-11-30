@@ -252,5 +252,5 @@ settingsTab = do
               then changelogLink "" v $
                 text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
               else
-                text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
+                text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
             _ -> blank
