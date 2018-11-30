@@ -11,6 +11,7 @@ import Data.Time (UTCTime)
 import Safe (maximumByMay)
 
 import Backend.CachedNodeRPC
+import Backend.STM (atomicallyWith)
 import Common.Schema
 import Common.Verification
 import ExtraPrelude
@@ -43,7 +44,7 @@ checkChainHealth _now _delay seenBaked = do
     headBlock :: VeryBlockLike
       <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure
          =<< liftIO (atomically $ dataSourceHead nds)
-    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< liftIO (atomically $ branchPoint nds (headBlock ^. hash) (seenBaked ^. hash))
+    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< atomicallyWith (branchPoint (headBlock ^. hash) (seenBaked ^. hash))
     -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}
     if (seen ^. predecessor) == (ancestor ^. predecessor)
       then return () -- ForkStatus_Good

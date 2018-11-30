@@ -50,6 +50,7 @@ import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
+import Backend.STM (atomicallyWith)
 import Common.Schema
 import ExtraPrelude
 
@@ -290,7 +291,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @RpcError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
-      lcaBlock' <- liftIO $ atomically $ branchPoint nds (nodeHead ^. hash) (latestHead ^. hash)
+      lcaBlock' <- atomicallyWith $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
       case lcaBlock' of

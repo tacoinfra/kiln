@@ -25,7 +25,8 @@ import Control.Concurrent.STM (TQueue, TVar, atomically, newTQueueIO, newTVarIO,
 import Control.Lens (TraversableWithIndex, re)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (ExceptT(..), MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), logDebugSH, logErrorSH, logInfo, logWarnSH)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
@@ -64,8 +65,9 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWithTime, modifyTVar_', newTVar', readTVar',
-                    retry', writeTVar')
+import Backend.STM
+  ( HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime, modifyTVar_'
+  , newTVar', readTVar', retry', writeTVar')
 import qualified Backend.STM as Stm
 import Common (unixEpoch)
 import Common.Schema
@@ -157,10 +159,10 @@ unpackCacheResult (Compose var) = do
 
 -- get lca between two blocks
 branchPoint
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
-branchPoint nds x y = do
-  let dsrc = nds ^. nodeDataSource
+  :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
+  => BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
+branchPoint x y = do
+  dsrc <- asks (^. nodeDataSource)
   history <- readTVar' $ _nodeDataSource_history dsrc
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
@@ -359,10 +361,10 @@ nodeQueryDataSource q' = do
         Just avar -> pure (atomicallyWithTime $ unpackCacheResult avar) -- cache hit
         Nothing -> do
           liftSTM $ writeTQueue ioQueue $
-            runLoggingEnv logger $
+            runLoggingEnv logger $ flip runReaderT dsrc $
               tryFetchFromCache (_nodeDataSource_pool dsrc) q >>= \case
                 Just x -> populateKey x
-                Nothing -> liftIO (atomically (pickNode dsrc qBranch)) >>= \case
+                Nothing -> atomicallyWith (pickNode qBranch) >>= \case
                   Nothing -> pure ()
                   Just anyNode -> do
                     let
@@ -378,16 +380,16 @@ nodeQueryDataSource q' = do
           pure $ atomicallyWithTime $ maybe retry' unpackCacheResult . DMap.lookup q =<< readTVar' cacheVar
 
 pickNode
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> BlockHash -> m (Maybe URI)
-pickNode nds branch = do
-  let dsrc = nds ^. nodeDataSource
+  :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
+  => BlockHash -> m (Maybe URI)
+pickNode branch = do
+  dsrc <- asks (^. nodeDataSource)
   nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
   fmap (headMay . catMaybes) $ for (Map.toList $ Map.mapMaybe id nodeHeads) $ \(nodeUri, nodeHead) ->
     containsBranch nodeHead >>= \isCanditate ->
       pure $ if isCanditate then Just nodeUri else Nothing
   where
-    containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint nds (nodeHead ^. hash) branch
+    containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
 nodeQueryDataSourceImpl
   :: forall a.
@@ -496,7 +498,9 @@ calculateBakeEfficiency branch len baker = do
       | BakingRights _lvl d prio _ <- toList xs
       ]
 
-tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> LoggingT IO (Maybe a)
+tryFetchFromCache
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  => Pool Postgresql -> NodeQuery a -> m (Maybe a)
 tryFetchFromCache db q = do
   let
     qJson = Json $ requestToJSON q

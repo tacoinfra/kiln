@@ -11,6 +11,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
+
 module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
