@@ -74,7 +74,7 @@ instance IsString PublicKeyHash where
 --   parseBinary = parseTagged 0 "ed25519" PublicKeyHash_Ed25519
 --         `mplus` parseTagged 1 "secp256k1" PublicKeyHash_Secp256k1
 --         `mplus` parseTagged 2 "p246" PublicKeyHash_P256
--- 
+--
 --   encodeBinary (PublicKeyHash_Ed25519 x) = encodeBinary (0 :: Word8) <> encodeBinary x
 --   encodeBinary (PublicKeyHash_Secp256k1 x) = encodeBinary (1 :: Word8) <> encodeBinary x
 --   encodeBinary (PublicKeyHash_P256 x) = encodeBinary (2 :: Word8) <> encodeBinary x

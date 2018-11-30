@@ -12,7 +12,6 @@ import Control.Lens (Lens', iso, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
-import Tezos.ShortByteString (toShort, fromShort)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Coerce (coerce)
@@ -36,6 +35,7 @@ import Tezos.Json
 import Tezos.Level
 import Tezos.Operation
 import Tezos.PublicKeyHash
+import Tezos.ShortByteString (toShort, fromShort)
 import Tezos.Signature (Signature)
 import Tezos.TestChainStatus
 import Tezos.Tez (Tez)
@@ -125,7 +125,7 @@ data TzScanBlock = TzScanBlock
 newtype TzScanFitness = TzScanFitness Fitness
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance FromJSON TzScanFitness where
-  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList $
+  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList
     (Base16ByteString . toShort . fst . BS16.decode . T.encodeUtf8 <$> T.splitOn " " txt)
 instance ToJSON TzScanFitness where
   toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs

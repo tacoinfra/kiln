@@ -5,22 +5,16 @@
 module Backend.Workers.Baker where
 
 import Control.Concurrent.MVar (readMVar)
-import Control.Lens ((^.))
 import Control.Monad (mzero)
 import Control.Monad.Except (runExceptT)
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (logDebug, logErrorSH)
-import Control.Monad.Trans.Maybe (runMaybeT)
 import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.State (execStateT, modify)
-import qualified Control.Monad.State (get)
-import Data.Foldable (for_)
-import Data.Functor.Identity (Identity (..))
+import Control.Monad.State (execStateT, gets, modify)
+import Control.Monad.Trans.Maybe (runMaybeT)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Data.Semigroup ((<>))
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -39,7 +33,7 @@ bakerWorker
   :: forall m. MonadIO m
   => NodeDataSource
   -> m (IO ())
-bakerWorker nds = worker' $ (<* waitForNewHead nds) $ (runLoggingEnv $ _nodeDataSource_logger nds) $ do
+bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters nds
   let db = _nodeDataSource_pool nds
   headM <- runReaderT dataSourceHead nds
@@ -59,7 +53,7 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ (runLoggingEnv $ _nodeData
         let queries = flip fmap [headLevel..maxLevel] $ \lvl ->
               nodeQueryDataSource $ cacheQ headHash lvl
         for_ queries $ \query -> do
-          done <- (bakersSet `Set.isSubsetOf`) <$> Map.keysSet <$> Control.Monad.State.get
+          done <- gets $ (bakersSet `Set.isSubsetOf`) . Map.keysSet
           when done mzero
           stuff <- query
           for_ stuff $ \thing -> do
@@ -79,7 +73,7 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ (runLoggingEnv $ _nodeData
           }
       case nonEmpty existingIds of
         Nothing -> void $ insert newVal
-        Just brids -> for_ brids $ \brid -> updateId brid $
+        Just brids -> for_ brids $ \brid -> updateId brid
           [ BakerDetails_nextBakeRightsField =. _bakerDetails_nextBakeRights newVal
           , BakerDetails_nextEndorseRightsField =. _bakerDetails_nextEndorseRights newVal
           ]

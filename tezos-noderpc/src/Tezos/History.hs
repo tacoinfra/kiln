@@ -16,11 +16,13 @@ import Control.Concurrent.MVar (MVar, modifyMVar, readMVar)
 import Control.DeepSeq (NFData)
 import Control.Lens (Lens, ifor_, view, (%=), (^.))
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except
+import Control.Monad.Except (MonadError)
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Logger (MonadLogger)
-import Control.Monad.Reader
-import Control.Monad.State.Strict
-import Data.Foldable
+import Control.Monad.Reader (MonadReader, asks)
+import Control.Monad.State.Strict (MonadState, get, modify, runStateT)
+import Data.Foldable (for_)
+import Data.Functor (void)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)

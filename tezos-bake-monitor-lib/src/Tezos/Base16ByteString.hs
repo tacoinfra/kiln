@@ -7,18 +7,19 @@
 
 module Tezos.Base16ByteString where
 
+import Control.DeepSeq (NFData)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
 import Data.Aeson.Types
-import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS
 import qualified Data.Text.Encoding as T
-import Data.Typeable
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import Control.DeepSeq (NFData)
+
+import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
 
 newtype Base16ByteString a = Base16ByteString { unbase16ByteString :: a }

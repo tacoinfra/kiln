@@ -5,7 +5,6 @@
 module Tezos.Tez where
 
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toEncoding, toJSON)
--- import Data.Attoparsec.ByteString
 import Data.Fixed (E6, Fixed, Micro, resolution)
 import Data.Int (Int64)
 import Data.Proxy (Proxy (..))
@@ -40,8 +39,3 @@ instance ToJSON Tez where
 
 instance FromJSON Tez where
   parseJSON x = microTez <$> parseIntegralAsString @Word64 x
-
-
--- instance TezosBinary Tez where
---   parseBinary = microTez <$> (parseBinary :: Parser Int64)
---   encodeBinary = encodeBinary . getMicroTez

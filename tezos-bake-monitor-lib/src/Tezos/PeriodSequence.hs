@@ -3,11 +3,11 @@
 
 module Tezos.PeriodSequence where
 
-import Data.List.NonEmpty (NonEmpty (..))
-import GHC.Generics
-import Data.Typeable
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Function (fix)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 
 import Tezos.Json
 

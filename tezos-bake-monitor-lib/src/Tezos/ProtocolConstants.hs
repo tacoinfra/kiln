@@ -11,9 +11,9 @@ import Control.Lens
 import Data.Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
-import Data.Typeable
+import Data.Typeable (Typeable)
 import Data.Text (Text)
-import Data.Word
+import Data.Word (Word8, Word16)
 
 import Tezos.Tez
 import Tezos.Json

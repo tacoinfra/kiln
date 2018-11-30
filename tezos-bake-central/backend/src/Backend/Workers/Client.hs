@@ -20,7 +20,7 @@ import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
-import Control.Monad.Logger (logInfo, logErrorSH, logDebugSH)
+import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
 import Data.Function (on)

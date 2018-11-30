@@ -37,6 +37,7 @@ import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
@@ -67,6 +68,7 @@ import Backend.Schema
 import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
+
 
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
@@ -116,7 +118,7 @@ toCacheDelegateInfo di = CacheDelegateInfo
   }
 
 unpackCacheResult
-  :: forall m e a . ( MonadIO m , MonadError e m, AsRpcError e)
+  :: forall m e a. (MonadIO m , MonadError e m, AsRpcError e)
   => CachedResult a -> m a
 unpackCacheResult (CachedResult var) = join $ liftIO $ modifyMVar var $ either onErr onSuccess
   where
@@ -259,6 +261,7 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
           Left (e :: PublicNodeError) -> $(logErrorSH) e $> Nothing
           Right params -> $(logDebugSH) params $> Just params
       l' -> return l'
+
     onChainNodes = foldl step (return Nothing) theseNodes
 
   when needParams $ onChainNodes >>= \case
@@ -303,7 +306,7 @@ dataSourceNode = do
   dsrc <- asks (^. nodeDataSource)
   nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
-    maximumByMay (compare `on` snd) $ catMaybes $ fmap sequence $ Map.toList nodes
+    maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
 
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash

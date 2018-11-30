@@ -4,18 +4,15 @@
 
 module Backend.ChainHealth (scanForkInfo) where
 
-import Control.Lens ((^.))
 import Control.Monad.Except (runExceptT, throwError)
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader)
-import Data.Function (on)
-import Data.Maybe
 import Data.Time (UTCTime)
 import Safe (maximumByMay)
 
 import Backend.CachedNodeRPC
 import Common.Schema
 import Common.Verification
+import ExtraPrelude
 import Tezos.NodeRPC
 import Tezos.Types
 

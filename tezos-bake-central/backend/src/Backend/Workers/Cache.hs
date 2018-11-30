@@ -6,21 +6,21 @@
 module Backend.Workers.Cache where
 
 import Control.Concurrent.MVar (modifyMVar, tryReadMVar)
-import Control.Lens ((<&>))
 import Control.Monad.Logger (logDebugSH)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DSum (..))
-import Data.Text (Text)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
-import Data.Foldable (for_)
-import Data.Functor.Identity
 import Data.Maybe (catMaybes, listToMaybe)
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)
+import Rhyolite.Schema (Id (..), Json (..))
 
 import Tezos.Types (ChainId)
 
@@ -28,10 +28,7 @@ import Backend.CachedNodeRPC (CacheLine (..), CachedResult (..), NodeDataSource 
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Common.Schema (GenericCacheEntry (..))
-import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)
-import Rhyolite.Schema (Id (..), Json (..))
+import ExtraPrelude
 
 
 classifyCacheEntry :: ChainId -> UTCTime -> DSum NodeQuery CachedResult -> IO (Maybe (Either GenericCacheEntry (DSum NodeQuery CachedResult)))
@@ -66,7 +63,6 @@ cacheWorker delay dsrc = workerWithDelay (pure delay) $ \_ -> do
   let db = _nodeDataSource_pool dsrc
   let chainId = _nodeDataSource_chain dsrc
   let maxTTL = delay * 2
-  -- say "evicting cache"
   modifyMVar (_nodeDataSource_cache dsrc) $ \cache -> do
     now <- addUTCTime maxTTL <$> getCurrentTime
     (writeBackThese, retainThese) <- fmap (partitionEithers . catMaybes) $ traverse (classifyCacheEntry chainId now) $ DMap.toAscList cache

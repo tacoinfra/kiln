@@ -13,12 +13,12 @@ import Data.Semigroup
 -- import Data.Attoparsec.ByteString ((<?>))
 import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Base16 as BS16
-import Data.Function
+import Data.Function (on)
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Typeable
+import Data.Typeable (Typeable)
 import Text.Show (showListWith, showString)
 import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)

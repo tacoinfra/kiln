@@ -5,40 +5,32 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- TODO do everywhere
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.WebApi where
 
-import Control.Lens
-import Control.Monad ((<=<))
-import Control.Monad.Except (ExceptT(), runExceptT, throwError, MonadError)
-import Control.Monad.IO.Class
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT)
-import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
-import qualified Data.Map as Map
-import Data.Maybe (listToMaybe)
-import Data.Semigroup ((<>))
-import Data.String (fromString)
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import Data.Sequence (Seq())
-import qualified Snap.Core as Snap
-
 import qualified Control.Concurrent.MVar as MVar
+import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
+import Control.Monad.Reader (ReaderT)
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Map as Map
+import Data.Sequence (Seq)
+import Data.String (fromString)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Snap.Core (MonadSnap, route)
-import Tezos.Block (VeryBlockLike (..))
+import qualified Snap.Core as Snap
 
 import Tezos.Base58Check (fromBase58, toBase58)
-import Tezos.Types
+import Tezos.Block (VeryBlockLike (..))
 import Tezos.NodeRPC.Types
+import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Common.Schema (BlockBaker)
+import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapHead = maybe (Left "cache not ready") pure <$> dataSourceHead
@@ -80,9 +72,9 @@ snapBranchPoint = withCache (Left "nocache") $ \_proto -> runExceptT $ do
       Just b' -> return  b'
     Right _ -> throwError "not enough blocks requested"
 
-
 asTextExcept :: forall e m b. (Show e, MonadError Text m) => ExceptT e m b -> m b
 asTextExcept x = either (throwError . T.pack . show ) return =<< runExceptT x
+
 asTextMaybe :: MonadError Text m => Text -> m (Maybe b) -> m b
 asTextMaybe msg x = maybe (throwError msg) return =<< x
 
