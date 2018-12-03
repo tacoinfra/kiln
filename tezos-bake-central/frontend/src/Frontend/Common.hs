@@ -19,6 +19,7 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Text as T
@@ -34,8 +35,10 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
+import Tezos.Base58Check (HashBase58Error(..))
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
+import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common.App (Bake)
@@ -195,6 +198,35 @@ validateUri :: Validator.Validator t m Uri.URI
 validateUri = Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
+
+validateBakerAddr :: Validator.Validator t m PublicKeyHash
+validateBakerAddr = Validator.Validator
+  -- TODO human readable error message
+  checkBakerAddr
+  id
+
+checkBakerAddr :: Text -> Either Text PublicKeyHash
+checkBakerAddr v = do
+  when (not $ T.take 3 v `elem` okPrefixes) $ do
+    Left $ (if T.take 3 v == "KT1" then "\"KT1\" addresses cannot bake. Address" else "Baker address") <> " must begin with " <> conjList ", " " or " (NE.map tshow okPrefixes) <> "."
+  for_ (T.find (isNothing . flip T.find "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" . (==)) v) $ \ch ->
+    Left $ "The character " <> tshow ch <> " is not allowed in a baker address."
+  when (T.length v /= 36) $ Left $ "Baker address is too " <> (if T.length v < 36 then "short" else "long") <> " (must be 36 characters)."
+  flip first (tryReadPublicKeyHashText v) $ \case
+    HashBase58Error_InvalidPrefix _ _ -> "This address is outside the valid range for " <> T.take 3 v <> " addresses."
+    HashBase58Error_BadChecksum _ _ _ -> "This address failed the integrity check. Please check that it has been copied correctly."
+    e -> "An unknown error happened, please report this as a bug: " <> tshow e
+  where
+    okPrefixes :: NE.NonEmpty Text
+    okPrefixes = "tz1" :| ["tz2", "tz3"]
+
+conjList :: Text -> Text -> NE.NonEmpty Text -> Text
+conjList comma conj = go
+  where
+    go xs = case NE.uncons xs of
+      (x, Nothing) -> x
+      (x, Just (y :| [])) -> x <> conj <> y
+      (x, Just xs') -> x <> comma <> go xs'
 
 blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
 blockExplorerLink dPath f = do
