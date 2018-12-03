@@ -30,6 +30,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Common.Schema (BlockBaker)
+import Backend.STM (atomicallyWith)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
@@ -66,12 +67,11 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
 
 snapBranchPoint :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapBranchPoint = do
-  nds <- asks (^. nodeDataSource)
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
     blockBS <- asTextMaybe "missing param:block" $ params "block"
     case traverse fromBase58 blockBS of
       Left err -> throwError $ T.pack $ show err
-      Right (b1:b2:_) -> liftIO (atomically $ branchPoint nds b1 b2) >>= \case
+      Right (b1:b2:_) -> atomicallyWith (branchPoint b1 b2) >>= \case
         Nothing -> throwError "not found"
         Just b' -> return b'
       Right _ -> throwError "not enough blocks requested"

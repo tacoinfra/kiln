@@ -12,7 +12,7 @@ import Control.Concurrent.STM (STM, TVar, atomically, newTVar, readTVar, retry, 
 import Control.Lens (Lens')
 import Control.Monad.Except (ExceptT)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (ReaderT (runReaderT))
+import Control.Monad.Reader (ReaderT (runReaderT), MonadReader, ask)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Time (UTCTime, getCurrentTime)
 
@@ -32,6 +32,11 @@ class HasTimestamp r where
 
 instance HasTimestamp UTCTime where
   timestamp = id
+
+atomicallyWith :: forall s m a. (MonadReader s m, MonadIO m) => ReaderT s STM a -> m a
+atomicallyWith f = do
+  a <- ask
+  liftIO $ atomically $ runReaderT f a
 
 atomicallyWithTime :: MonadIO m => ReaderT UTCTime STM a -> m a
 atomicallyWithTime act = liftIO $ do
