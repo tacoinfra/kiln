@@ -170,12 +170,12 @@ branchPoint x y = do
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
 
 -- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
-newBlockHashes
+enumerateBranches
   :: ( MonadSTM m
      , MonadReader a m, HasNodeDataSource a
      )
   => BlockHash -> BlockHash -> m (Maybe ([BlockHash], [BlockHash]))
-newBlockHashes x y = do
+enumerateBranches x y = do
   dsrc <- asks (^. nodeDataSource)
   history <- readTVar' $ _nodeDataSource_history dsrc
   pure $ do
