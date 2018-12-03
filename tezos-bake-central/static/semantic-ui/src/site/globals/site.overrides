@@ -734,4 +734,11 @@ img.credits-obsidian {
   }
 }
 
+.modal-box.add-node {
+  .ui.button.primary {
+    display: inline-block;
+    width: 100%;
+  }
+}
+
 /* vim: set syntax=less : */
