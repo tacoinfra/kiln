@@ -195,7 +195,7 @@ elDynAttrWithModifyEvent' f ev = elDynAttrWithModifyConfig'
     addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const f))
 
 validateUri :: Validator.Validator t m Uri.URI
-validateUri = Validator.Validator mkRootUri setUrlType
+validateUri =  Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
