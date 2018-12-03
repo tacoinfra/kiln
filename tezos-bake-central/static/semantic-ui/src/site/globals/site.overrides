@@ -317,17 +317,26 @@ body {
 .ui.segment.app-gutter {
   padding-left: @30px;
   flex-grow: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
   > .ui.sub.header , > .ui.list > .item {
     margin-top: @12px;
     margin-bottom: @12px;
     padding-top: 0;
     padding-bottom: 0;
+    max-width: 100%;
+  }
+  > .ui.list > .item > .content {
+    display: block;
+    > * {
+      overflow-x: hidden;
+      text-overflow: ellipsis;
+    }
   }
   > .ui.button {
     margin-top: @14px;
     margin-bottom: @14px;
   }
-  overflow: auto;
   .ui.sub.header {
     color: @grey;
     font-weight: normal;
