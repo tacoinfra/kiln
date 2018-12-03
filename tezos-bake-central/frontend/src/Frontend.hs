@@ -277,6 +277,7 @@ appGutter =
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
     $ do
+        bakersList
         nodesList
 
 appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
@@ -623,6 +624,25 @@ sidebarList name nodes modal = do
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
     tellModal $ (<$ openAddItemOptions) $ cancelableModalWithClasses ["add-" <> T.toLower name] $ modal
+
+bakersList ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , HasModal t m
+  )
+  => m ()
+bakersList = do
+  bakers <- ((,,) <$> (toPublicKeyHashText . _bakerSummary_address) <*> _bakerSummary_alias <*> _bakerSummary_alertCount) <$$$> watchBakerAddresses
+  sidebarList "Baker" bakers addBakerModal
+
+addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
+addBakerModal close = mdo
+  el "h3" $ text "Add Baker"
+  divClass "basic small segment" $ text $
+    "Enter a Baker address to begin monitoring."
+  addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
+  added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
+  pure $ leftmost [added, close]
 
 nodeTitleSubtitle :: Text -> Maybe Text -> (Text, Maybe Text)
 nodeTitleSubtitle addr alias = (fromMaybe addr alias, addr <$ alias)

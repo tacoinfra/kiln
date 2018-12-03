@@ -743,6 +743,31 @@ img.credits-obsidian {
   }
 }
 
+.modal-box.add-baker {
+  width: unit(500 / @emSize, rem);
+  max-width: 95%;
+
+  h3 {
+    font-size: unit(24 / @emSize, rem);
+    margin-bottom: @10px;
+  }
+
+  .basic.small.segment {
+    margin-top: @10px;
+    margin-bottom: @20px;
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+  }
+}
+
 .modal-box.add-node {
   .ui.button.primary {
     display: inline-block;
