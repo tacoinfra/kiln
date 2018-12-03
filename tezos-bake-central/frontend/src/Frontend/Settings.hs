@@ -223,8 +223,9 @@ settingsTab = do
       divClass "ui medium header" $ text "Bakers"
       elClass "table" "ui celled striped compact table" $ do
         bakers <- watchBakerAddresses
-        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh _ -> el "tr" $ do
+        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
+          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerSummary_alias
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
