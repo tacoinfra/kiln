@@ -1,5 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -7,14 +7,17 @@ module Backend.Workers.Baker where
 
 import Control.Concurrent.STM (atomically)
 import Control.Monad (mzero)
-import Control.Monad.Except (runExceptT)
-import Control.Monad.Logger (logDebug, logErrorSH)
+import Control.Monad.Except (MonadError, runExceptT)
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Logger (logDebug, logDebugSH, logErrorSH)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Data.List.NonEmpty (nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Semigroup ((<>))
+import Data.Sequence (Seq())
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb, selectMap)
