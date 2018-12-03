@@ -215,7 +215,7 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri blank never "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." "Bake Daemon Address" "http://127.0.0.1:9732/" "My Bake Daemon"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     _bakersOptions :: m ()
@@ -229,7 +229,7 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "tz..."
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "Baker Wallet Address" "tz..." "My Baker"
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do

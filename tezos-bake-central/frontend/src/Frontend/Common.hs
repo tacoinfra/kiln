@@ -365,23 +365,23 @@ manageMenu click menuEl = mdo
 
 aliasedInputForm
   :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a -> m () -> Event t () -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-aliasedInputForm validator feedback reset label info placeholder = divClass "ui form fields" $ do
+  => Validator.Validator t m a -> m () -> Event t () -> Text -> Text -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
   (namedAddress, submitEvt) <- formWithSubmit $ do
     address <- formItem' "required"
       $ validatedInput validator
-      $ def & Txt.setPlaceholder placeholder
+      $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
             & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Address")
+            & Txt.addLabel (el "label" $ text fieldlabel)
             & Txt.setChangeEvent ("" <$ reset)
     alias <- formItem
       $ validatedInput (Validator.optional Validator.validateText)
-      $ def & Txt.setPlaceholder "alias"
+      $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
             & Txt.setFluid
             & Txt.addLabel (el "label" $ text "Alias")
             & Txt.setChangeEvent ("" <$ reset)
     feedback
-    _ <- submitButtonWithInfoCls "fluid primary" label info
+    _ <- submitButtonWithInfoCls "primary" label info
     let namedAddress = liftA2 (liftA2 (,)) address alias
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
