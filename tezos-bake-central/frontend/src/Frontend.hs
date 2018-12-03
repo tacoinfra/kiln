@@ -594,9 +594,8 @@ liveErrorsWidget nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
-nodeTitleSubtitle :: URI -> Maybe Text -> (Text, Maybe Text)
-nodeTitleSubtitle uri alias = (fromMaybe addr alias, addr <$ alias)
-  where addr = uriHostPortPath uri
+nodeTitleSubtitle :: Text -> Maybe Text -> (Text, Maybe Text)
+nodeTitleSubtitle addr alias = (fromMaybe addr alias, addr <$ alias)
 
 nodesOptions ::
   ( MonadRhyoliteFrontendWidget Bake t m
@@ -613,7 +612,7 @@ nodesOptions = do
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
       divClass "content" $ do
         let (title, subtitle) = splitDynPure $ ffor node $ \n ->
-              nodeTitleSubtitle (_nodeSummary_address n) (_nodeSummary_alias n)
+              nodeTitleSubtitle (uriHostPortPath $ _nodeSummary_address n) (_nodeSummary_alias n)
         divClass "header" $ dynText title
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
@@ -729,7 +728,7 @@ nodesTab =
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                 _ -> blank
 
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (_node_address <$> vDyn) (_node_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _node_address <$> vDyn) (_node_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
