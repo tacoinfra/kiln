@@ -24,6 +24,7 @@ import Data.Functor.Infix
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
+import Data.Dependent.Sum (DSum ((:=>)))
 import Database.Groundhog.Core (Field)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
@@ -312,6 +313,19 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             f "email" MailServerConfig_enabledField =<< (fst <$$> getDefaultMailServer)
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
+
+      PublicRequest_ResolveAlert (tag :=> lid) -> inDb $ do
+        elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
+          LogTag_InaccessibleNode -> pure Nothing
+          LogTag_NodeWrongChain -> pure Nothing
+          LogTag_BakerNoHeartbeat -> pure Nothing
+          LogTag_BadNodeHead -> pure Nothing
+          LogTag_MultipleBakersForSameBaker -> pure Nothing
+
+        for_ elid_notifier' $ \(elid, notifier) -> do
+          now <- getTime
+          updateId elid [ErrorLog_stoppedField =. Just now]
+          notify notifier
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
