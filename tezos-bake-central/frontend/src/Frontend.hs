@@ -496,14 +496,13 @@ liveErrorsWidget nodesDyn = void $ do
   SemUi.divider def
 
   let
-    (otherErrors, nodeErrors) = splitDynPure $ partitionErrors <$> filteredErrors
-
-    nodeErrorsWithNode :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Node))
-    nodeErrorsWithNode = liftA2 joinNodeErrors nodeErrors nodesDyn
-
-    combinedErrors = liftA2 (MMap.unionWith (error "Overlapping keys after partition"))
-      (fmap (\(a, b) -> (a, b, Nothing)) `fmap` otherErrors)
-      (fmap (_3 %~ Just) `fmap` nodeErrorsWithNode)
+    combinedErrors :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Maybe Node))
+    combinedErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
+      ffor errors $ \(errorLog, errorLogView) -> let
+        node = do
+          nodeId <- nodeIdForErrorLogView errorLogView
+          MMap.lookup nodeId nodes
+      in (errorLog, errorLogView, node)
 
     showWhenErrors p attrs = elDynAttr "div" (ffor combinedErrors $ \ce -> attrs <> bool ("style" =: "display: none") Map.empty (p ce))
 
@@ -535,24 +534,6 @@ liveErrorsWidget nodesDyn = void $ do
         || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
         || filterSelection == AlertsFilter_ResolvedOnly && isResolved
       where isResolved = isJust $ _errorLog_stopped log
-
-    partitionErrors
-      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-      -> ( MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-         , MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Id Node) )
-    partitionErrors = MMap.mapEither $ \row@(log, logView) ->
-      case nodeIdForErrorLogView logView of
-        Nothing -> Left row
-        Just nodeId -> Right (log, logView, nodeId)
-
-    joinNodeErrors
-      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Id Node)
-      -> MonoidalMap (Id Node) Node
-      -> MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Node)
-    joinNodeErrors errors nodes = flip MMap.mapMaybe errors $ \(log, logView, nodeId) ->
-      case MMap.lookup nodeId nodes of
-        Nothing -> Nothing
-        Just node -> Just (log, logView, node)
 
     logEntry :: (ErrorLog, ErrorLogView, Maybe Node) -> m ()
     logEntry (_, specificLog, node') =
