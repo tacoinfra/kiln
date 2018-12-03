@@ -18,6 +18,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-noderpc = ../tezos-noderpc;
 
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
+      dependent-sum-aeson-orphans = hackGet dep/dependent-sum-aeson-orphans;
       functor-infix = hackGet dep/functor-infix;
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
@@ -35,5 +36,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
       tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
       tezos-noderpc = dontHaddock super.tezos-noderpc;
+
+      # Must be here because it affects upstream rhyolite build
+      constraints-extras = self.callCabal2nix "constraints-extras" (hackGet dep/constraints-extras) {};
     });
   })

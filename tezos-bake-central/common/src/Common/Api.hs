@@ -11,6 +11,7 @@
 
 module Common.Api where
 
+import Data.Dependent.Sum (DSum)
 import Data.Text (Text)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.Class (Request)
@@ -21,8 +22,8 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, Bake, ErrorLogView, MailServerView)
-import Common.Schema (ErrorLog, Id)
+import Common.App (AlertNotificationMethod, Bake, LogTag, MailServerView)
+import Common.Schema (Id)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -70,11 +71,13 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> Bool -- whether is enabled
       -> PublicRequest Bake Bool -- True: success, False: no config to enable
     PublicRequest_ResolveAlert
-      :: Id ErrorLog
+      :: DSum LogTag Id
       -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-makeRequestForDataInstance ''PublicRequest ''Bake
-makeRequestForDataInstance ''PrivateRequest ''Bake
+fmap concat $ sequence
+  [ makeRequestForDataInstance ''PublicRequest ''Bake
+  , makeRequestForDataInstance ''PrivateRequest ''Bake
+  ]

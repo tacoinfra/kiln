@@ -2,15 +2,23 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
+-- 'deriveJSONGADT' produces seemingly redundant pattern matches.
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
 module Common.App
   ( module Common.App
@@ -21,9 +29,14 @@ module Common.App
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.Map.Monoidal as MMap
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Align (Align (alignWith, nil))
+import Data.Constraint.Extras.TH (deriveArgDict)
+import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
@@ -36,7 +49,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.Alerts (AlertsFilter(..))
+import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
 import Common.Schema
@@ -121,20 +134,29 @@ data MailServerView = MailServerView
   , _mailServerView_smtpProtocol :: !SmtpProtocol
   , _mailServerView_userName :: !Text
   , _mailServerView_enabled :: !Bool
-  , _mailServerView_notificatees :: !([Email])
+  , _mailServerView_notificatees :: ![Email]
   } deriving (Eq, Ord, Generic, Typeable, Read, Show)
 instance FromJSON MailServerView
 instance ToJSON MailServerView
 
+data LogTag a where
+  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
+  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
+  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
+
+-- TODO: Switch to 'DSum LogTag Identity'
 data ErrorLogView
-  = ErrorLogView_InaccessibleNode ErrorLogInaccessibleNode
-  | ErrorLogView_NodeWrongChain ErrorLogNodeWrongChain
-  | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
-  | ErrorLogView_BadNodeHead ErrorLogBadNodeHead
-  | ErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker
+  = ErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
+  | ErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
+  | ErrorLogView_BadNodeHead !ErrorLogBadNodeHead
+  | ErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
+
 
 nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
 nodeIdForErrorLogView = \case
@@ -414,9 +436,17 @@ instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
 
-concat <$> traverse makeLenses
-  [ 'BakeView
-  , 'BakeViewSelector
-  , 'MailServerView
-  , 'NodeSummary
+fmap concat $ sequence $ concat
+  [ map makeLenses
+    [ 'BakeView
+    , 'BakeViewSelector
+    , 'MailServerView
+    , 'NodeSummary
+    ]
+  , [ deriveArgDict ''LogTag
+    , deriveGCompare ''LogTag
+    , deriveGEq ''LogTag
+    , deriveGShow ''LogTag
+    , deriveJSONGADT ''LogTag
+    ]
   ]

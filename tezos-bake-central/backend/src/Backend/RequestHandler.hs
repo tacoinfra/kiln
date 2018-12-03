@@ -24,17 +24,17 @@ import Data.Functor.Infix
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
-import Database.Groundhog.Core (EntityConstr, Field, PersistEntity)
+import Data.Dependent.Sum (DSum ((:=>)))
+import Database.Groundhog.Core (Field)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
-import Rhyolite.Backend.DB (getTime, runDb, selectMap', project1)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId)
 import Rhyolite.Schema (Email, Id (..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
@@ -314,30 +314,18 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert eid -> inDb $ do
-        now <- getTime
-        updateId eid [ErrorLog_stoppedField =. Just now]
+      PublicRequest_ResolveAlert (tag :=> lid) -> inDb $ do
+        elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
+          LogTag_InaccessibleNode -> pure Nothing
+          LogTag_NodeWrongChain -> pure Nothing
+          LogTag_BakerNoHeartbeat -> pure Nothing
+          LogTag_BadNodeHead -> pure Nothing
+          LogTag_MultipleBakersForSameBaker -> pure Nothing
 
-        let
-          notifyMatching :: forall m' v cstr. (PersistBackend m', HasDefaultNotify (Id v)
-                                              , DefaultKey v ~ AutoKey v, DefaultKeyId v
-                                              , PersistEntity v, EntityConstr v cstr)
-                         => Field v cstr (Id ErrorLog) -> m' Bool
-          notifyMatching field = do
-              elog :: Maybe (Id v) <- toId <$$> project1 AutoKeyField (field ==. eid)
-              for_ elog $ notify . mkDefaultNotify
-              pure $ isJust elog
-
-        earlyExit
-          [ notifyMatching ErrorLogInaccessibleNode_logField
-          , notifyMatching ErrorLogNodeWrongChain_logField
-          , notifyMatching ErrorLogBakerNoHeartbeat_logField
-          , notifyMatching ErrorLogBadNodeHead_logField
-          , notifyMatching ErrorLogMultipleBakersForSameBaker_logField
-          ]
-
-        pure ()
-
+        for_ elid_notifier' $ \(elid, notifier) -> do
+          now <- getTime
+          updateId elid [ErrorLog_stoppedField =. Just now]
+          notify notifier
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
@@ -345,13 +333,6 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   where
     inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseControl IO m') => DbPersist Postgresql m' a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
-
-earlyExit :: Monad m => [m Bool] -> m Bool
-earlyExit = \case
-  []     -> pure False
-  (x:xs) -> x >>= \case
-    True  -> pure True
-    False -> earlyExit xs
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =
