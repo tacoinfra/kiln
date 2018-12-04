@@ -1,10 +1,10 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.STM where
 
@@ -12,7 +12,7 @@ import Control.Concurrent.STM (STM, TVar, atomically, newTVar, readTVar, retry, 
 import Control.Lens (Lens')
 import Control.Monad.Except (ExceptT)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (ReaderT (runReaderT), MonadReader, ask)
+import Control.Monad.Reader (MonadReader, ReaderT (runReaderT), ask)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Time (UTCTime, getCurrentTime)
 
@@ -32,6 +32,8 @@ class HasTimestamp r where
 
 instance HasTimestamp UTCTime where
   timestamp = id
+
+type STMWithTime r m = (MonadSTM m, MonadReader r m, HasTimestamp r)
 
 atomicallyWith :: forall s m a. (MonadReader s m, MonadIO m) => ReaderT s STM a -> m a
 atomicallyWith f = do

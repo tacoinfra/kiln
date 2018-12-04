@@ -20,11 +20,12 @@
 module Backend.CachedNodeRPC where
 
 import Control.Applicative (ZipList (..))
-import Control.Concurrent.STM (TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO, retry,
-                               writeTQueue, writeTVar)
+import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
+                               retry, writeTQueue, writeTVar)
+import Control.Exception.Safe (Exception, SomeException, withException)
 import Control.Lens (TraversableWithIndex, re)
-import Control.Lens.TH (makeLenses)
-import Control.Monad.Except (ExceptT(..), MonadError, runExceptT, throwError)
+import Control.Lens.TH (makeLenses, makePrisms)
+import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
@@ -41,8 +42,7 @@ import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import qualified Data.Text as T
-import Data.Time (NominalDiffTime, UTCTime)
+import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (runDb)
@@ -65,13 +65,31 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Backend.STM
-  ( HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime, modifyTVar_'
-  , newTVar', readTVar', retry', writeTVar')
+import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime, modifyTVar_',
+                    newTVar', readTVar', retry', writeTVar')
 import qualified Backend.STM as Stm
 import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
+
+data CacheError
+  = CacheError_RpcError !RpcError
+  | CacheError_NoSuitableNode
+  | CacheError_NotEnoughHistory
+  | CacheError_Timeout !NominalDiffTime
+  | CacheError_SomeException !SomeException
+  deriving (Show, Generic, Typeable)
+instance Exception CacheError
+makePrisms ''CacheError
+
+class AsCacheError e where
+  asCacheError :: Prism' e CacheError
+
+instance AsRpcError CacheError where
+  asRpcError = _CacheError_RpcError
+
+instance AsCacheError CacheError where
+  asCacheError = id
 
 
 data NodeQuery a where
@@ -81,7 +99,6 @@ data NodeQuery a where
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
-
 deriving instance Show (NodeQuery a)
 
 
@@ -338,32 +355,78 @@ getKey params hist = \case
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
 
+-- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
-  :: ( MonadIO m
-     , MonadReader s m, HasNodeDataSource s
-     , MonadError e m, AsRpcError e
-     )
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    )
   => NodeQuery a -> m a
-nodeQueryDataSource q' = do
+nodeQueryDataSource q = do
+  getResult <- nodeQueryDataSourceRaw q
+  now <- liftIO getCurrentTime
+  timeout' timeoutSeconds (atomically $ maybe retry pure =<< getResult now) >>= \case
+    Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
+    Just (Left e) -> throwError $ e ^. re asCacheError
+    Just (Right x) -> pure x
+  where
+    -- Base timeout
+    timeoutSeconds = 60*5
+
+-- Foundational caching query function exposing a low-level API to the underlying 'STM' operations.
+nodeQueryDataSourceRaw
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    )
+  => NodeQuery a -> m (UTCTime -> STM (Maybe (Either CacheError a)))
+nodeQueryDataSourceRaw q' = do
   dsrc <- asks $ view nodeDataSource
   updateCache dsrc >>= \case
-    Left e -> throwError $ e ^. re asRpcError
-    Right wait -> liftIO wait
+    Left e -> throwError $ e ^. re asCacheError
+    Right getResult -> pure getResult
 
   where
     updateCache dsrc = liftIO $ atomically $ runExceptT $ do
-      let
+      protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
+      history <- readTVar' (_nodeDataSource_history dsrc)
+
+      (qBranch, q) <- maybe (throwError $ CacheError_NotEnoughHistory ^. re asCacheError) pure $ getKey protoInfo history q'
+
+      cache <- readTVar' cacheVar
+      case DMap.lookup q cache of
+        -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
+        Just avar -> pure $ \time -> flip runReaderT time $
+          Just . Right <$> unpackCacheResult avar
+
+        -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
+        Nothing -> do
+          -- A separate TVar for keeping the actual API result (outside the cache structure)
+          apiResultVar <- newTVar' Nothing
+          let
+            -- Updates the cache key if the result is useful and sets the result 'TVar'.
+            writeResult a' = liftIO $ atomicallyWithTime $ do
+              case a' of
+                Right a -> populateKey q a
+                Left _ -> pure ()
+              writeTVar' apiResultVar $ Just a'
+
+          liftSTM $ writeTQueue ioQueue $
+            -- Try very hard to write *something* into the result TVar in case of exception.
+            (writeResult =<< makeRequestAndCache protoInfo q qBranch)
+              `withException` \e ->
+                atomically (writeTVar' apiResultVar $ Just $ Left $ CacheError_SomeException e)
+
+          pure $ \_ -> readTVar apiResultVar
+
+      where
         logger = _nodeDataSource_logger dsrc
         ioQueue = _nodeDataSource_ioQueue dsrc
         cacheVar = _nodeDataSource_cache dsrc
 
-      protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
-      history <- readTVar' (_nodeDataSource_history dsrc)
-
-      (qBranch, q) <- maybe (throwError $ RpcError_HttpException "NOT ENOUGH HISTORY" ^. re asRpcError) pure $ getKey protoInfo history q'
-
-      let
-        populateKey a = liftIO $ atomicallyWithTime $ do
+        populateKey q a = do
           cache <- readTVar' cacheVar
           case DMap.lookup q cache of
             Just _ -> pure ()
@@ -372,28 +435,19 @@ nodeQueryDataSource q' = do
               var <- newTVar' $ CacheLine a now
               writeTVar' cacheVar $ DMap.insert q (Compose var) cache
 
-      cache <- readTVar' cacheVar
-      case DMap.lookup q cache of
-        Just avar -> pure (atomicallyWithTime $ unpackCacheResult avar) -- cache hit
-        Nothing -> do
-          liftSTM $ writeTQueue ioQueue $
-            runLoggingEnv logger $ flip runReaderT dsrc $
-              tryFetchFromCache (_nodeDataSource_pool dsrc) q >>= \case
-                Just x -> populateKey x
-                Nothing -> atomicallyWith (pickNode qBranch) >>= \case
-                  Nothing -> pure ()
-                  Just anyNode -> do
-                    let
-                      ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+        makeRequestAndCache protoInfo q qBranch = runLoggingEnv logger $ flip runReaderT dsrc $
+          tryFetchFromCache (_nodeDataSource_pool dsrc) q >>= \case
+            Just x -> pure $ Right x
+            Nothing -> atomicallyWith (pickNode qBranch) >>= \case
+              Nothing -> pure $ Left CacheError_NoSuitableNode
+              Just anyNode -> do
+                let
+                  ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
 
-                      unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-                      unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-                    res' <- liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger unliftDataSrc q
-                    case res' of
-                      Left _ -> pure ()
-                      Right x -> populateKey x
+                  nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+                  nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
 
-          pure $ atomicallyWithTime $ maybe retry' unpackCacheResult . DMap.lookup q =<< readTVar' cacheVar
+                liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -413,9 +467,9 @@ nodeQueryDataSourceImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either RpcError b))
+  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
-  -> IO (Either RpcError a)
+  -> IO (Either CacheError a)
 nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
@@ -427,9 +481,10 @@ nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q 
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
   where
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
+    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
-    self :: forall b. NodeQuery b -> ExceptT RpcError IO b
+
+    self :: forall b. NodeQuery b -> ExceptT CacheError IO b
     self = ExceptT . self'
 
 
@@ -465,7 +520,7 @@ calculateBakerStats pkhs = do
 ancestors ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError RpcError m
+  , MonadError CacheError m
   )
   => RawLevel -> BlockHash -> m [BlockHash]
 ancestors (RawLevel n) branch = do
@@ -476,11 +531,10 @@ ancestors (RawLevel n) branch = do
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
-
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError RpcError m
+  , MonadError CacheError m
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
@@ -527,7 +581,7 @@ tryFetchFromCache db q = do
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
         Aeson.Success v -> return $ Just v
         Aeson.Error bad -> do
-          $(logWarnSH) (T.pack "tryFetchFromCache failed to decode:", bad)
+          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
           return Nothing
 
 deriveGEq ''NodeQuery

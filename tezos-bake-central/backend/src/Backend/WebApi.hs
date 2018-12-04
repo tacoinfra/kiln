@@ -25,7 +25,6 @@ import qualified Snap.Core as Snap
 
 import Tezos.Base58Check (fromBase58, toBase58)
 import Tezos.Block (VeryBlockLike (..))
-import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -115,7 +114,7 @@ snapBakingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
-  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
 
 snapEndorsingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq EndorsingRights))
 snapEndorsingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
@@ -125,7 +124,7 @@ snapEndorsingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
-  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
 
 snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
 snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
@@ -135,7 +134,7 @@ snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
-  asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel
 
 snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text CacheDelegateInfo)
 snapDelegateInfo = do
@@ -148,7 +147,7 @@ snapDelegateInfo = do
     delegate <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash delegateBS
     blockLevel <- maybe (throwError "block unknown") (return . view level) =<< liftIO (atomically $ lookupBlock nds branch)
 
-    asTextExcept @RpcError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
 
 withCacheIO
   :: forall a r m. (MonadIO m, MonadReader r m, HasNodeDataSource r)

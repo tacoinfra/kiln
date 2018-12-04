@@ -24,7 +24,6 @@ import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..))
 
-import Tezos.NodeRPC
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -75,7 +74,7 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
       bakersSet = Set.fromList $ _baker_publicKeyHash . fst <$> Map.elems bakers
 
       mkFillMap
-        :: forall m' s e a. (MonadIO m', MonadReader s m', HasNodeDataSource s, MonadError e m', AsRpcError e)
+        :: forall m' s e a. (MonadIO m', MonadReader s m', HasNodeDataSource s, MonadError e m', AsCacheError e)
         => (BlockHash -> RawLevel -> NodeQuery (Seq a)) -> (a -> PublicKeyHash) -> m' (Map PublicKeyHash a)
       mkFillMap cacheQ getter = flip execStateT Map.empty $ runMaybeT $ do
         let queries = flip fmap [headLevel..maxLevel] $ \lvl ->
@@ -112,4 +111,4 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
       notify $ mkDefaultNotify newVal
   case res of
     Right _ -> pure ()
-    Left (err :: RpcError) -> $(logErrorSH) ("bakerWorker" :: String, err)
+    Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
