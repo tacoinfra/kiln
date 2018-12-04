@@ -27,6 +27,7 @@ library
     , containers
     , data-default
     , dependent-map
+    , dependent-sum
     , dependent-sum-template
     -- , diagrams-core
     -- , diagrams-lib
