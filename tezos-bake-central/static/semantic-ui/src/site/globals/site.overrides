@@ -112,6 +112,15 @@ h6.ui.header {
 .shaded.grey { background-color: @blue; }
 .shaded.blue { background-color: #f8f9fc; }
 
+.faded {
+  opacity: 0.50;
+}
+
+.tooltip-medium[data-tooltip]:after {
+  width: 250px;
+  white-space: normal;
+}
+
 .ui.publicnodes {
   > .public-node.grid {
     border: @1px solid #CED4DA;
@@ -148,24 +157,6 @@ h6.ui.header {
 
   .header {
     font-weight: bold;
-  }
-}
-
-.topbar {
-  padding-left: @30px;
-
-  > .ui.horizontal.list .item .content {
-    font-weight: bold;
-    padding-left: @30px;
-
-    .metadescription {
-      font-weight: normal;
-    }
-    > .header {
-      font-weight: normal;
-      color: rgba(0, 0, 0, .6);
-      padding-bottom: @4px;
-    }
   }
 }
 
@@ -288,6 +279,27 @@ body {
     padding-top: @10px;
     padding-bottom: @10px;
     padding-right: @20px;
+
+    .topbar.column {
+      padding-left: @30px;
+      display: flex;
+      align-items: center;
+
+      > .ui.horizontal.list .item .content {
+        font-weight: bold;
+        padding-left: @30px;
+        margin-right: @40px;
+
+        .metadescription {
+          font-weight: normal;
+        }
+        > .header {
+          font-weight: normal;
+          color: rgba(0, 0, 0, .6);
+          padding-bottom: @4px;
+        }
+      }
+    }
   }
 }
 
