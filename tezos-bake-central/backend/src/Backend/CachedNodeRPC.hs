@@ -524,8 +524,6 @@ ancestors ::
   )
   => RawLevel -> BlockHash -> m [BlockHash]
 ancestors (RawLevel n) branch = do
-  -- it's a bit redundant, but how else can we be "sure" that we have the branch path
-  _ <- nodeQueryDataSource $ NodeQuery_Block branch
   hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
