@@ -37,17 +37,18 @@ classifyCacheEntry
   -> DSum NodeQuery (Compose TVar CacheLine)
   -> m (Maybe (Either GenericCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
 classifyCacheEntry chainId expireTime (q :=> Compose cx) =
-  readTVar' cx <&> \(CacheLine value used) -> if used < expireTime
+  readTVar' cx <&> \(CacheLine value used dirty) -> if used < expireTime
     then
       let
         kJson = requestToJSON q
         vJson = case requestResponseToJSON q of
           Dict -> Aeson.toJSON value
-      in Just $ Left GenericCacheEntry
+      in if dirty then Just $ Left GenericCacheEntry
           { _genericCacheEntry_chainId = chainId
           , _genericCacheEntry_key = Json kJson
           , _genericCacheEntry_value = Json vJson
           }
+         else Nothing
     else
       Just $ Right $ q :=> Compose cx
 
