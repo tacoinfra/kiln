@@ -13,7 +13,7 @@
 }
 
 .ui.secondary.menu .item:not(.active) .icon {
-  color: #98A0AD;
+  color: @slate;
 }
 
 /* vim: set syntax=less : */
