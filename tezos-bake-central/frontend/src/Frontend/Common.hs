@@ -41,11 +41,11 @@ import Tezos.ShortByteString (fromShort)
 import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
+import Common (humanizeDiffTime)
 import Common.App (Bake)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
-import Common (humanizeDiffTime)
 import ExtraPrelude
 
 data FrontendContext t = FrontendContext
@@ -369,25 +369,35 @@ manageMenu click menuEl = mdo
 
 
 aliasedInputForm
-  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a -> m () -> Event t () -> Text -> Text -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
+  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a
+  -> m () -- ^ Feedback after submit
+  -> Event t () -- ^ Reset the form
+  -> Text -- ^ Label
+  -> Text -- ^ Submit tooltip
+  -> Text -- ^ Field label
+  -> Text -- ^ Placeholder
+  -> Text -- ^ Alias field placeholder
+  -> m (Event t (a, Maybe Text))
 aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
   (namedAddress, submitEvt) <- formWithSubmit $ do
-    address <- formItem' "required"
-      $ validatedInput validator
-      $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text fieldlabel)
-            & Txt.setChangeEvent ("" <$ reset)
-    alias <- formItem
-      $ validatedInput (Validator.optional Validator.validateText)
-      $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Alias")
-            & Txt.setChangeEvent ("" <$ reset)
+    let
+      fields = (liftA2.liftA2.liftA2) (,)
+        (formItem' "required"
+          $ validatedInput validator
+          $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text fieldlabel))
+        (formItem
+          $ validatedInput (Validator.optional Validator.validateText)
+          $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text "Alias"))
+
+    namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
+
     feedback
-    _ <- submitButtonWithInfoCls "primary" label info
-    let namedAddress = liftA2 (liftA2 (,)) address alias
+    _ <- submitButtonWithInfoCls "fluid primary" label info
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
