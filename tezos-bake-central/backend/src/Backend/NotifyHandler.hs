@@ -127,7 +127,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         { _bakeView_bakerAddresses = toRangeView1
             bakerAddressesVS
             (Bounded $ _baker_publicKeyHash baker)
-            (Just $ First $ bool Nothing (Just $ BakerSummary <$> _baker_publicKeyHash <*> _baker_alias <*> const 0 $ baker) $ _baker_deleted baker)
+            (Just $ First $ bool (Just $ BakerSummary <$> _baker_publicKeyHash <*> _baker_alias <*> const 0 $ baker) Nothing $ _baker_deleted baker)
         }
     handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
       pure $ mempty
