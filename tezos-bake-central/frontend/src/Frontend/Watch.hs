@@ -171,6 +171,42 @@ watchErrors alerts intervals = do
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
   return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> v)
 
+watchErrorsByNode
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t (MonoidalMap (Id Node) (NonEmpty NodeErrorLogView)))
+watchErrorsByNode alertWindow = do
+  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
+    [ (k, pure t')
+    | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+    , Just t' <- [nodeErrorViewOnly t]
+    , let k = nodeIdForNodeErrorLogView t'
+    ]
+
+watchErrorsByBaker
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerErrorLogView)))
+watchErrorsByBaker alertWindow = do
+  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
+    [ (k, pure t')
+    | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+    , Just t' <- [bakerErrorViewOnly t]
+    , let k = bakerIdForBakerErrorLogView t'
+    ]
+
+watchAllNodesDown
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t Bool)
+watchAllNodesDown alertWindow = do
+  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+  ebn <- watchErrorsByNode alertWindow
+  holdUniqDyn $ ffor2 (MMap.keys <$> nodesDyn) ebn $ \nodeIds nodeErrors ->
+    and $ flip MMap.member nodeErrors <$> nodeIds
+
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
   (fmap . fmap) (getRangeView . _bakeView_publicNodeConfig) $

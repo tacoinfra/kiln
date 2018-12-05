@@ -310,11 +310,8 @@ appHeader
     )
   => m (Event t ())
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
-  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-  alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
-  disconnected <- holdUniqDyn $ ffor2 (MMap.keys <$> nodesDyn) (errorsByNode <$> alerts) $ \nodeIds nodeErrors -> and $ flip MMap.member nodeErrors <$> nodeIds
-
+  disconnected <- watchAllNodesDown alertWindow
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
@@ -788,11 +785,11 @@ nodesTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
+          ebn <- watchErrorsByNode alertWindow
           -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             unresolvedAlertsForThisNode <- holdUniqDyn $
-              foldMap toList . MMap.lookup nodeId . errorsByNode <$> alerts
+              foldMap toList . MMap.lookup nodeId <$> ebn
 
             let
               errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
@@ -908,16 +905,6 @@ nodesTab =
       where
         nbsp = "\x00A0"
 
-errorsByNode
-  :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-  -> MonoidalMap (Id Node) (NonEmpty NodeErrorLogView)
-errorsByNode xs = MMap.fromListWith (<>)
-  [ (k, pure t')
-  | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-  , Just t' <- [nodeErrorViewOnly t]
-  , let k = nodeIdForNodeErrorLogView t'
-  ]
-
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -941,12 +928,12 @@ bakersTab =
         False -> mdo
          showOverview <- holdUniqDyn $ any isNothing <$> joinDynThroughMap bakersDetails
          dyn_ $ ffor showOverview $ bool blank overview
+         ebb <- watchErrorsByBaker alertWindow
+         -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
          bakersDetails <- divClass "ui stackable cards" $ do
-          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
           listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
             unresolvedAlerts <- holdUniqDyn $
-              foldMap toList . MMap.lookup pkh . errorsByBaker <$> alerts
+              foldMap toList . MMap.lookup pkh <$> ebb
 
             let
               errorMessages = ffor unresolvedAlerts $ fmap $ \case
@@ -1026,16 +1013,6 @@ bakersTab =
 
       where
         nbsp = "\x00A0"
-
-    errorsByBaker
-      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-      -> MonoidalMap PublicKeyHash (NonEmpty BakerErrorLogView)
-    errorsByBaker xs = MMap.fromListWith (<>)
-      [ (k, pure t')
-      | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-      , Just t' <- [bakerErrorViewOnly t]
-      , let k = bakerIdForBakerErrorLogView t'
-      ]
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"
