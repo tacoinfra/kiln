@@ -125,7 +125,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         bIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
         let inIds = In bIds
         _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
-        _ <- [executeQ| DELETE FROM "BakerStats" ds WHERE ds.baker IN ?inIds |]
+        _ <- [executeQ| DELETE FROM "BakerDetails" ds WHERE ds."publicKeyHash" = ?pkh |]
         for_ bIds $ \bId -> do
           updateId bId [Baker_deletedField =. True]
           notify $ mkDefaultNotify $ Baker
