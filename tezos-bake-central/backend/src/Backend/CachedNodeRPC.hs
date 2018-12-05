@@ -22,9 +22,9 @@ module Backend.CachedNodeRPC where
 import Control.Applicative (ZipList (..))
 import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
                                retry, writeTQueue, writeTVar)
-import Control.Exception.Safe (Exception, SomeException, withException)
+import Control.Exception.Safe (withException)
 import Control.Lens (TraversableWithIndex, re)
-import Control.Lens.TH (makeLenses, makePrisms)
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -71,26 +71,6 @@ import qualified Backend.STM as Stm
 import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
-
-data CacheError
-  = CacheError_RpcError !RpcError
-  | CacheError_NoSuitableNode
-  | CacheError_NotEnoughHistory
-  | CacheError_Timeout !NominalDiffTime
-  | CacheError_SomeException !SomeException
-  deriving (Show, Generic, Typeable)
-instance Exception CacheError
-makePrisms ''CacheError
-
-class AsCacheError e where
-  asCacheError :: Prism' e CacheError
-
-instance AsRpcError CacheError where
-  asRpcError = _CacheError_RpcError
-
-instance AsCacheError CacheError where
-  asCacheError = id
-
 
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)

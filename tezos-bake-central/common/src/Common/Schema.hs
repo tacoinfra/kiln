@@ -25,6 +25,7 @@ module Common.Schema
   , Id
   ) where
 
+import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
@@ -37,7 +38,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
@@ -50,12 +51,31 @@ import qualified Text.URI as Uri
 
 import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.NodeRPC.Types (NetworkStat (..))
+import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
 import Tezos.Operation
 import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
+
+data CacheError
+  = CacheError_RpcError !RpcError
+  | CacheError_NoSuitableNode
+  | CacheError_NotEnoughHistory
+  | CacheError_Timeout !NominalDiffTime
+  | CacheError_SomeException !SomeException
+  deriving (Show, Generic, Typeable)
+instance Exception CacheError
+makePrisms ''CacheError
+
+class AsCacheError e where
+  asCacheError :: Prism' e CacheError
+
+instance AsRpcError CacheError where
+  asRpcError = _CacheError_RpcError
+
+instance AsCacheError CacheError where
+  asCacheError = id
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render

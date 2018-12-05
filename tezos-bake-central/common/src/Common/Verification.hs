@@ -12,7 +12,6 @@ import qualified Data.Text as T
 import Data.Time (UTCTime)
 import qualified Text.URI as Uri
 
-import Backend.CachedNodeRPC (AsCacheError (asCacheError), CacheError)
 import Common.Schema
 import Tezos.Types
 
