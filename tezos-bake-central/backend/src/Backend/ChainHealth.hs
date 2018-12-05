@@ -15,7 +15,6 @@ import Backend.STM (atomicallyWith)
 import Common.Schema
 import Common.Verification
 import ExtraPrelude
-import Tezos.NodeRPC
 import Tezos.Types
 
 -- problem:: many baked blocks do not appear on chain
@@ -42,7 +41,7 @@ checkChainHealth _now _delay seenBaked = do
     seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
     -- look for the head to give the newly seen block a chance to become the head
     headBlock :: VeryBlockLike
-      <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure
+      <- maybe (throwError $ ForkStatus_BadNode CacheError_NotEnoughHistory) pure
          =<< liftIO (atomically $ dataSourceHead nds)
     ancestor <- maybe (throwError ForkStatus_Forked) pure =<< atomicallyWith (branchPoint (headBlock ^. hash) (seenBaked ^. hash))
     -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}

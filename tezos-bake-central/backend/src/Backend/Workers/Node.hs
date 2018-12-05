@@ -289,7 +289,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
     selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
-    action' <- flip runReaderT nds $ runExceptT @RpcError $ do
+    action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
       lcaBlock' <- atomicallyWith $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
