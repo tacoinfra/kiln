@@ -123,10 +123,10 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           , _node_updated = updated
           })
 
-  let bakersVS = _bakeViewSelector_bakers vs
-  bakers :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null bakersVS) $ do
-    xs <- project Baker_publicKeyHashField (Baker_deletedField ==. False)
-    return $ toRangeView bakersVS $ (, First $ Just ()) . Bounded <$> xs
+  let bakerAddrVS = _bakeViewSelector_bakerAddresses vs
+  bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddrVS) $ do
+    -- TODO: bakerAddrVS is a RangeView.  select individual bakers upon request.
+    toRangeView bakerAddrVS <$> getBakerAddresses Nothing
 
   let bakerDetailsVS = _bakeViewSelector_bakerDetails vs
   bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a <- whenM (not $ null bakerDetailsVS) $
@@ -184,12 +184,12 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
+    , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
     -- , _bakeView_summaryGraph = summaryGraph
     , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
-    , _bakeView_bakers = bakers
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
@@ -327,6 +327,18 @@ getAlertCount =
       COUNT(*)
     FROM "ErrorLog" el
     WHERE el.stopped IS NULL|]
+
+getBakerAddresses
+  :: forall m. (Monad m, PostgresRaw m)
+  => Maybe (PublicKeyHash)
+  -> m [(WithInfinity PublicKeyHash, First (Maybe BakerSummary))]
+getBakerAddresses bid = do
+  rs :: [(PublicKeyHash, PublicKeyHash, Maybe Text, Int)] <- [queryQ|
+      SELECT b."publicKeyHash", b."publicKeyHash", b.alias, 0
+      FROM "Baker" b
+      WHERE NOT b.deleted
+        AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END|]
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (BakerSummary y z w)))) rs
 
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m)

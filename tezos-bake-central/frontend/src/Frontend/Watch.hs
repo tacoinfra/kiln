@@ -79,17 +79,19 @@ watchNodeAddressesValid = do
     }
   return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
 
+watchBakerAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
+watchBakerAddresses = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_bakerAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_bakerAddresses v')
+
 watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = viewRangeExactly cid 1
     }
   return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView (_bakeView_clients v)
-
-watchBakerPublicKeyHashes :: (MonadRhyoliteFrontendWidget Bake t m) => m (Dynamic t (Set PublicKeyHash))
-watchBakerPublicKeyHashes = do
-  theView <- watchViewSelector . pure $ mempty {_bakeViewSelector_bakers = viewRangeAll 1}
-  return $ ffor theView $ MMap.keysSet . getRangeView' . _bakeView_bakers
 
 watchBakerStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
 watchBakerStats bakers = do

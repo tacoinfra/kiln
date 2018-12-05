@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 

@@ -17,7 +17,6 @@ import Control.Monad (guard)
 import Data.Function (on)
 import Data.Functor.Infix
 import Data.List (intersperse)
-import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
@@ -216,20 +215,22 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri blank never "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." "Bake Daemon Address" "http://127.0.0.1:9732/" "My Bake Daemon"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
+    _bakersOptions :: m ()
     _bakersOptions = do
       divClass "ui medium header" $ text "Bakers"
       elClass "table" "ui celled striped compact table" $ do
-        bakers <- watchBakerPublicKeyHashes
-        _ <- listWithKey (Map.fromSet (const ()) <$> bakers) $ \pkh _ -> el "tr" $ do
+        bakers <- watchBakerAddresses
+        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
+          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerSummary_alias
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "tz..."
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "Baker Wallet Address" "tz..." "My Baker"
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do

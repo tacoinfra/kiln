@@ -18,6 +18,7 @@ import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Functor.Infix
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as Map
@@ -275,7 +276,9 @@ appGutter =
       & SemUi.classes SemUi.|~ "app-gutter"
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    nodesOptions
+    $ do
+        bakersList
+        nodesList
 
 appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
 appSideFooter =
@@ -376,7 +379,7 @@ nodesTabOrWelcome
   => m ()
 nodesTabOrWelcome = do
   _clientAddresses <- watchClientAddresses
-  _bakers <- watchBakerPublicKeyHashes
+  _bakers <- watchBakerAddresses
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
@@ -575,50 +578,87 @@ liveErrorsWidget nodesDyn = void $ do
       | (elId, row@(l, _, _)) <- MMap.toList errors
       ]
 
-nodeTitleSubtitle :: URI -> Maybe Text -> (Text, Maybe Text)
-nodeTitleSubtitle uri alias = (fromMaybe addr alias, addr <$ alias)
-  where addr = uriHostPortPath uri
+pluralOf :: Text -> Text
+pluralOf = (<> "s") -- good enough for all existing uses, lol
 
-nodesOptions ::
+-- tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8 Foundation Baker 8 or something
+
+sidebarList ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , HasModal t m
+  , Coercible a (Map.Map k (Text, Maybe Text, Int))
+  , Ord k
+  )
+  => Text -> Dynamic t a -> (Event t () -> ModalM m (Event t ())) -> m ()
+sidebarList name nodes modal = do
+  divClass "ui sub header" $ text (pluralOf name)
+  divClass "ui list" $ do
+    _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
+      let dHealth = (> 0) . (\(_,_,alerts) -> (alerts :: Int)) <$> node
+      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      divClass "content" $ do
+        let (title, subtitle) = splitDynPure $ ffor node $ \(address, alias, _) ->
+              nodeTitleSubtitle address alias
+        divClass "header" $ dynText title
+        divClass "description" $ dynText $ fromMaybe "" <$> subtitle
+
+    openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
+    tellModal $ (<$ openAddItemOptions) $ cancelableModalWithClasses ["add-" <> T.toLower name] $ modal
+
+bakersList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
   )
   => m ()
-nodesOptions = do
-  divClass "ui sub header" $ text "Nodes"
-  divClass "ui list" $ do
-    nodes <- watchNodeAddresses
-    _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
-      let dHealth = (> 0) . _nodeSummary_alertCount <$> node
-      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
-      divClass "content" $ do
-        let (title, subtitle) = splitDynPure $ ffor node $ \n ->
-              nodeTitleSubtitle (_nodeSummary_address n) (_nodeSummary_alias n)
-        divClass "header" $ dynText title
-        divClass "description" $ dynText $ fromMaybe "" <$> subtitle
+bakersList = do
+  bakers <- ((,,) <$> (toPublicKeyHashText . _bakerSummary_address) <*> _bakerSummary_alias <*> _bakerSummary_alertCount) <$$$> watchBakerAddresses
+  sidebarList "Baker" bakers addBakerModal
 
-    openAddNodeOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" "Add Node" "Configure Monitored Nodes"
-    tellModal $ (<$ openAddNodeOptions) $ cancelableModal $ \close -> do
-      el "h3" $ text "Add Nodes"
-      divClass "basic small segment" $ text $ T.unlines
-        [ "Choose from public nodes on the left, connect to your own nodes on the right."
-        , "We recommend adding at least one public node."
-        ]
-      divClass "ui grid" $ do
-        divClass "ten wide column" $ divClass "blue shaded" $ do
-          elClass "h5" "ui header" $ text "Connect to a Public Node"
-          publicNodeOptions
-        divClass "six wide column" $ divClass "blue shaded" $ mdo
-          let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
-                icon "check blue"
-                text "Node added!"
-          elClass "h5" "ui header" $ text "Connect via address"
-          addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "http://[host][:port]"
-          showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
-          hideMsg <- delay 3 showMsg
-          showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
-          pure close
+addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
+addBakerModal close = mdo
+  el "h3" $ text "Add Baker"
+  divClass "basic small segment" $ text $
+    "Enter a Baker address to begin monitoring."
+  addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
+  added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
+  pure $ leftmost [added, close]
+
+nodeTitleSubtitle :: Text -> Maybe Text -> (Text, Maybe Text)
+nodeTitleSubtitle addr alias = (fromMaybe addr alias, addr <$ alias)
+
+nodesList ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , HasModal t m
+  )
+  => m ()
+nodesList = do
+  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> _nodeSummary_alertCount) <$$$> watchNodeAddresses
+  sidebarList "Node" nodes addNodeModal
+
+addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
+addNodeModal close = do
+  el "h3" $ text "Add Nodes"
+  divClass "basic small segment" $ text $ T.unlines
+    [ "Choose from public nodes on the left, connect to your own nodes on the right."
+    , "We recommend adding at least one public node."
+    ]
+  divClass "ui grid" $ do
+    divClass "ten wide column" $ divClass "blue shaded" $ do
+      elClass "h5" "ui header" $ text "Connect to a Public Node"
+      publicNodeOptions
+    divClass "six wide column" $ divClass "blue shaded" $ mdo
+      let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+            icon "check blue"
+            text "Node added!"
+      elClass "h5" "ui header" $ text "Connect via address"
+      addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "Node Address" "127.0.0.1:8732" "Public Facing Node 1"
+      showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+      hideMsg <- delay 3 showMsg
+      showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+      pure close
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
@@ -710,7 +750,7 @@ nodesTab =
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
                 _ -> blank
 
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (_node_address <$> vDyn) (_node_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _node_address <$> vDyn) (_node_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 

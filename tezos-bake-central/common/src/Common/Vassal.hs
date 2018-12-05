@@ -20,6 +20,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- {-# OPTIONS_GHC -Wall -Werror -Wno-orphans -Wno-unused-imports -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 -- {-# OPTIONS_GHC -ddump-splices #-}
 
 module Common.Vassal where

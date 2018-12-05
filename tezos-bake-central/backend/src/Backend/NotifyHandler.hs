@@ -28,8 +28,8 @@ import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
-                   nodeIdForErrorLogView)
+import Common.App (BakeView (..), BakeViewSelector (..), BakerSummary (..), ErrorLogView (..),
+                   mailServerConfigToView, nodeIdForErrorLogView)
 import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
@@ -117,17 +117,17 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
-    bakersVS = _bakeViewSelector_bakers aggVS
+    bakerAddressesVS = _bakeViewSelector_bakerAddresses aggVS
     bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
-    handleBaker baker = whenM (viewSelects (Bounded $ _baker_publicKeyHash baker) bakersVS) $
+    handleBaker baker = whenM (viewSelects (Bounded $ _baker_publicKeyHash baker) bakerAddressesVS) $
       pure $ mempty
-        { _bakeView_bakers = toRangeView1
-            bakersVS
+        { _bakeView_bakerAddresses = toRangeView1
+            bakerAddressesVS
             (Bounded $ _baker_publicKeyHash baker)
-            (Just $ First $ bool Nothing (Just ()) $ _baker_deleted baker)
+            (Just $ First $ bool Nothing (Just $ BakerSummary <$> _baker_publicKeyHash <*> _baker_alias <*> const 0 $ baker) $ _baker_deleted baker)
         }
     handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
       pure $ mempty
