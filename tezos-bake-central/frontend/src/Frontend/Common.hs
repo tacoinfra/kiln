@@ -156,8 +156,10 @@ tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
 
 tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
-tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
+tooltipPos = tooltipPos' ""
 
+tooltipPos' :: (DomBuilder t m) => Text -> Text -> Text -> m a -> m a
+tooltipPos' cls p t = elAttr "div" ("class" =: cls <> "data-tooltip" =: t <> "data-position" =: p)
 
 -- | Builds a form element and captures the submit event.
 formWithSubmit :: (DomBuilder t m, PostBuild t m) => m a -> m (a, Event t ())

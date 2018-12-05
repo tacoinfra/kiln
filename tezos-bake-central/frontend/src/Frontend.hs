@@ -307,29 +307,55 @@ appHeader
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
-appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $
+appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
+  nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+  alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
+  alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  disconnected <- holdUniqDyn $ ffor2 (MMap.keys <$> nodesDyn) (errorsByNode <$> alerts) $ \nodeIds nodeErrors ->
+    let disconnectedError = \case
+          ErrorLogView_InaccessibleNode _ -> True
+          ErrorLogView_NodeWrongChain _ -> True
+          _ -> False
+        disconnectedNode nid = any disconnectedError $ maybe [] toList $ MMap.lookup nid nodeErrors
+    in and $ ffor nodeIds disconnectedNode
+
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
         latestHead <- watchLatestHead
-        let info title body = divClass "item" $ divClass "content" $ do
-              divClass "header" $ text title
-              body
+        let info faded title body = divClass "item" $
+              elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
+                divClass "header" $ text title
+                body
 
-        info "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+        info (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
         protoInfo <- watchProtoInfo
         cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> info "Cycle" $
+        whenJustDyn cyc $ \c -> info disconnected "Cycle" $
           text $ tshow $ unCycle c
 
-        whenJustDyn latestHead $ \b -> info "Block" $ el "span" $ do
+        whenJustDyn latestHead $ \b -> info disconnected "Block" $ el "span" $ do
           text $ tshow (unRawLevel $ b ^. level)
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
+      dyn_ $ ffor disconnected $ flip when $ tooltipPos' "tooltip-medium" "bottom center" disconnectedTooltip $
+        SemUi.icon "icon-disconnected"
+        (def
+          & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+          & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+          )
+
     divClass "four wide column right aligned" $ do
       headerBell
+
+  where
+    disconnectedTooltip = T.concat $ intersperse " "
+      [ "Kiln cannot gather data if no nodes are synced with the blockchain."
+      , "Data shown is stale."
+      , "Add a node from the left panel or make sure any nodes you’ve already added are healthy."
+      ]
 
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
@@ -885,14 +911,14 @@ nodesTab =
       response <- requestingIdentity $ public <$> mkRemoveReq sure
       pure $ leftmost [response, close]
 
-    errorsByNode
-      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-      -> MonoidalMap (Id Node) (NonEmpty ErrorLogView)
-    errorsByNode xs = MMap.fromListWith (<>)
-      [ (k, pure t)
-      | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-      , Just k <- [nodeIdForErrorLogView t]
-      ]
+errorsByNode
+  :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
+  -> MonoidalMap (Id Node) (NonEmpty ErrorLogView)
+errorsByNode xs = MMap.fromListWith (<>)
+  [ (k, pure t)
+  | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+  , Just k <- [nodeIdForErrorLogView t]
+  ]
 
 bakerTab
   :: forall r m t.
