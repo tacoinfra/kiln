@@ -499,6 +499,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
+data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe Node)
 
 liveErrorsWidget
   :: forall r m t.
@@ -524,13 +525,32 @@ liveErrorsWidget nodesDyn = void $ do
   SemUi.divider def
 
   let
-    combinedErrors :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView, Maybe Node))
-    combinedErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
+    combinedRealErrors
+      :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView'))
+    combinedRealErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
       ffor errors $ \(errorLog, errorLogView) -> let
-        node = do
+        mNode = do
           nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
           MMap.lookup nodeId nodes
-      in (errorLog, errorLogView, node)
+      in (errorLog, (ErrorLogView' errorLogView mNode))
+
+    combinedErrors
+      :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) ()))
+                            (ErrorLog, m ()))
+    combinedErrors =
+      fmap (errorsByTime Left)
+      $ (fmap . fmap . fmap) logEntry
+      $ combinedRealErrors
+
+    errorsByTime
+      :: Ord k1
+      => (k0 -> k1)
+      -> MonoidalMap k0 (ErrorLog, v)
+      -> Map.Map (Down (Time.UTCTime, k1)) (ErrorLog, v)
+    errorsByTime inj errors = Map.fromList
+      [ (Down (_errorLog_started l, inj elId), row)
+      | (elId, row@(l, _)) <- MMap.toList errors
+      ]
 
     showWhenErrors p attrs = elDynAttr "div" (ffor combinedErrors $ \ce -> attrs <> bool ("style" =: "display: none") Map.empty (p ce))
 
@@ -541,10 +561,10 @@ liveErrorsWidget nodesDyn = void $ do
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
-    listWithKey (errorsByTime Down <$> combinedErrors) $ \_ vDyn ->
-      dyn_ $ ffor vDyn $ \v@(log, _, _) -> do
+    listWithKey (combinedErrors) $ \_ vDyn ->
+      dyn_ $ ffor vDyn $ \(log, domBuilder) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-          logEntry v
+          domBuilder
           timestamped ("First seen", _errorLog_started log)
           timestamped $ maybe ("Last seen", _errorLog_lastSeen log) ("Stopped",) $ _errorLog_stopped log
   where
@@ -563,8 +583,8 @@ liveErrorsWidget nodesDyn = void $ do
         || filterSelection == AlertsFilter_ResolvedOnly && isResolved
       where isResolved = isJust $ _errorLog_stopped log
 
-    logEntry :: (ErrorLog, ErrorLogView, Maybe Node) -> m ()
-    logEntry (_, specificLog, node') =
+    logEntry :: ErrorLogView' -> m ()
+    logEntry (ErrorLogView' specificLog node') =
       let header = divClass "header" . text
           nodeLabel n = el "div" $ do
             let (primary, secondary) = nodeIdentification n
@@ -599,11 +619,6 @@ liveErrorsWidget nodesDyn = void $ do
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
-
-    errorsByTime direction errors = Map.fromList
-      [ (direction (_errorLog_started l, elId), row)
-      | (elId, row@(l, _, _)) <- MMap.toList errors
-      ]
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
