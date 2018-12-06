@@ -34,6 +34,7 @@ import GHCJS.DOM.Element (setInnerHTML)
 import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
+import Numeric (showFFloat)
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
 import Obelisk.Generated.Static (static)
@@ -405,17 +406,18 @@ nodesTabOrWelcome
   => m ()
 nodesTabOrWelcome = do
   _clientAddresses <- watchClientAddresses
-  _bakers <- watchBakerAddresses
+  bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
-  let haveNodesMaybe =
+  let haveTilesMaybe =
+        (liftA2 . liftA2) ((||) . not . null) bakersMaybe $
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-  dyn_ $ ffor haveNodesMaybe $ \case
+  dyn_ $ ffor haveTilesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just False -> divClass "app-content app-welcome" welcomeScreen
-    Just True -> divClass "app-content" nodesTab
+    Just True -> divClass "app-content" (bakersTab *> nodesTab)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -742,7 +744,7 @@ nodesTab
     )
   => m ()
 nodesTab =
-  divClass "nodes-dashboard" $ do
+  divClass "dashboard-section dashboard-section-nodes" $ do
     el "h4" $ text "Nodes"
     nodesDyn <- watchNodes $ pure $ viewRangeAll ()
     nodeTilesWidget nodesDyn
@@ -821,21 +823,10 @@ nodesTab =
       -> m ()
     nodeTile title subtitle mkRemoveReq getBlock errors' getPeerCount' getNetworkStats' node = do
       b <- maybeDyn $ getBlock <$> node
-      divClass "ui card node-tile" $ divClass "content" $ do
-        divClass "menu-section" $ divClass "span" $ mdo
-          menuTransition <- manageMenu (domEvent Click iconEl) uiEl
-          (iconEl, _) <- elClass' "i" "ui icon icon-ellipsis" blank
-          (uiEl, _) <- SemUi.ui' "span" (def
-            & SemUi.classes .~ "ui popup bottom center"
-            & SemUi.action .~ Just def
-              { SemUi._action_initialDirection = SemUi.Out
-              , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
-              , SemUi._action_transitionStateClasses = SemUi.forceVisible
-              }) $ do
-                SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ do
-                  remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Node"
-                  tellModal $ remove $> removeNodeModal mkRemoveReq
-          pure ()
+      divClass "ui card dashboard-tile node-tile" $ divClass "content" $ do
+        tileMenu $ do
+          remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Node"
+          tellModal $ remove $> removeItemModal "node" mkRemoveReq
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
@@ -892,24 +883,7 @@ nodesTab =
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
       where
-        withPlaceholder = withPlaceholder' "-"
-
-        withPlaceholder' :: Text -> Dynamic t (Maybe (m ())) -> m ()
-        withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
-          Nothing -> text placeholder
-          Just f -> f
-
-        withMaybeDyn :: Eq b => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
-        withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
-
         nbsp = "\x00A0"
-
-    removeNodeModal mkRemoveReq = cancelableModal $ \close -> do
-      el "h3" $ text "Remove this node?"
-      el "p" $ text "You can always add this node again from the \"Add Node\" button."
-      sure <- divClass "buttons" $ uiButton "primary" "Remove Node"
-      response <- requestingIdentity $ public <$> mkRemoveReq sure
-      pure $ leftmost [response, close]
 
 errorsByNode
   :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
@@ -919,6 +893,146 @@ errorsByNode xs = MMap.fromListWith (<>)
   | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
   , Just k <- [nodeIdForErrorLogView t]
   ]
+
+bakersTab
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    )
+  => m ()
+bakersTab =
+  divClass "dashboard-section dashboard-section-bakers" $ do
+    el "h4" $ text "Bakers"
+    tilesDyn <- watchBakerAddresses
+    tilesWidget tilesDyn
+  where
+    tilesWidget :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> m ()
+    tilesWidget tilesDyn = do
+      useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
+      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
+
+      dyn_ $ ffor useBlocker $ \case
+        True -> waitingForResponse
+        False -> divClass "ui stackable cards" $ do
+          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+          alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+          void $ listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
+            unresolvedAlerts <- holdUniqDyn $
+              foldMap toList . MMap.lookup pkh . errorsByBaker <$> alerts
+
+            let
+              errorMessages = ffor unresolvedAlerts $ fmap $ \case
+                ErrorLogView_InaccessibleNode{} -> text "Unable to connect."
+                ErrorLogView_NodeWrongChain{} -> text "On wrong network."
+                ErrorLogView_BadNodeHead l -> text $
+                  fst (badNodeHeadMessage Const (Const . const "") l) <> "."
+                _ -> blank
+
+            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
+            titleUniq <- holdUniqDyn title
+            subtitleUniq <- holdUniqDyn subtitle
+            details <- watchBakerDetails pkh
+
+            tile
+              (dynText titleUniq)
+              subtitleUniq
+              (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+              (const $ Nothing)
+              (const $ Nothing)
+              (const $ Just ("Dog explodes", 1000000))
+              (Just errorMessages)
+              vDyn
+              details
+
+    tile
+      :: m () -- ^ Title
+      -> Dynamic t (Maybe Text) -- ^ Subtitle
+      -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
+      -> (b -> Maybe Double) -- ^ (Optional) Function to get the bake success of the baker
+      -> (b -> Maybe Double) -- ^ (Optional) Function to get the endorsement success of the baker
+      -> (b -> Maybe (Text, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
+      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
+      -> Dynamic t a -- ^ Baker
+      -> Dynamic t (Maybe b) -- ^ Details
+      -> m ()
+    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' baker details' = do
+      divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
+        tileMenu $ do
+          remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
+          tellModal $ remove $> removeItemModal "baker" mkRemoveReq
+
+        divClass "title" $ do
+          for_ errors' $ \errors -> do
+            errorsEmpty <- holdUniqDyn $ null <$> errors
+            iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
+          title
+          divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+
+        for_ errors' $ \errors ->
+          dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+
+        (details'' :: Dynamic t (Maybe (Dynamic t b))) <- maybeDyn details'
+        dyn_ $ ffor details'' $ \case
+          Nothing -> text "Gathering baker data."
+          Just details -> el "dl" $ do
+            el "dt" (text "Bake Success:")
+            el "dd" $
+              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+
+            el "br" blank
+
+            el "dt" (text "Endorsement Success:")
+            el "dd" $ do
+              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+
+            el "br" blank
+
+      where
+        nbsp = "\x00A0"
+
+    errorsByBaker
+      :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
+      -> MonoidalMap PublicKeyHash (NonEmpty ErrorLogView)
+    errorsByBaker xs = MMap.fromListWith (<>)
+      [ (k, pure t)
+      | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+      , Just k <- [bakerIdForErrorLogView t]
+      ]
+
+withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
+withPlaceholder = withPlaceholder' "-"
+
+withPlaceholder' :: (DomBuilder t m, PostBuild t m) => Text -> Dynamic t (Maybe (m ())) -> m ()
+withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
+  Nothing -> text placeholder
+  Just f -> f
+
+withMaybeDyn :: (Eq b, MonadFix m, MonadHold t m, Reflex t) => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
+withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
+
+removeItemModal :: MonadRhyoliteFrontendWidget app t m => Text -> (Event t () -> Event t (PublicRequest app ())) -> Event t () -> m (Event t ())
+removeItemModal name mkRemoveReq = cancelableModal $ \close -> do
+  el "h3" $ text $ "Remove this " <> name <> "?"
+  el "p" $ text $ "You can always add this " <> name <> " again from the \"Add " <> T.toTitle name <> "\" button."
+  sure <- divClass "buttons" $ uiButton "primary" $ "Remove " <> T.toTitle name
+  response <- requestingIdentity $ public <$> mkRemoveReq sure
+  pure $ leftmost [response, close]
+
+tileMenu :: (DomBuilder t m, TriggerEvent t m, MonadIO (Performable m), PerformEvent t m, PostBuild t m, MonadHold t m, MonadFix m) => m b -> m ()
+tileMenu content =
+  divClass "menu-section" $ divClass "span" $ mdo
+    menuTransition <- manageMenu (domEvent Click iconEl) uiEl
+    (iconEl, _) <- elClass' "i" "ui icon icon-ellipsis" blank
+    (uiEl, _) <- SemUi.ui' "span" (def
+      & SemUi.classes .~ "ui popup bottom center"
+      & SemUi.action .~ Just def
+        { SemUi._action_initialDirection = SemUi.Out
+        , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
+        , SemUi._action_transitionStateClasses = SemUi.forceVisible
+        }) $ do
+          SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ content
+    pure ()
 
 bakerTab
   :: forall r m t.

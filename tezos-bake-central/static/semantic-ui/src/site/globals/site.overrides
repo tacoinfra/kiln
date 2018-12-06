@@ -611,12 +611,19 @@ img.credits-obsidian {
   }
 }
 
-.nodes-dashboard > .ui.cards {
+.dashboard-section > .ui.cards {
   margin-left: 0;
   margin-right: 0;
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
+  }
+
+  > .ui.card.baker-tile {
+    width: unit(280 / @emSize, rem);
+  }
+
+  > .ui.card.dashboard-tile {
     box-shadow: none;
 
     margin-left: 0;
@@ -663,6 +670,9 @@ img.credits-obsidian {
         font-size: @14px;
         font-weight: bold;
         line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
 
         .circle.icon {
           font-size: @8px;
@@ -673,6 +683,8 @@ img.credits-obsidian {
           font-size: @12px;
           font-weight: normal;
           color: @grey;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
       }
 

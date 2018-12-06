@@ -12,6 +12,7 @@
 @orange: #FF6705;
 @red: #D00101;
 @grey: #898989;
+@slate: #98A0AD;
 
 @hoverBlue: #5B9AFF;
 @activeBlue: #0047B7;

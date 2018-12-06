@@ -174,6 +174,14 @@ nodeIdForErrorLogView = \case
   ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
   ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
 
+bakerIdForErrorLogView :: ErrorLogView -> Maybe PublicKeyHash
+bakerIdForErrorLogView = \case
+  ErrorLogView_InaccessibleNode _ -> Nothing
+  ErrorLogView_NodeWrongChain _ -> Nothing
+  ErrorLogView_BakerNoHeartbeat _ -> Nothing
+  ErrorLogView_BadNodeHead _ -> Nothing
+  ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
+
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case
   ErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
