@@ -21,6 +21,7 @@ import Control.Monad.Reader (ReaderT)
 import Data.Functor.Infix
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
+import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down (..), comparing)
@@ -311,7 +312,10 @@ appHeader
   => m (Event t ())
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-  disconnected <- watchAllNodesDown alertWindow
+  collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
+  let disconnected = ffor collectedNodesStatus $ \case
+        Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
+        _ -> False -- TODO think about UI for the no configured nodes case
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
@@ -501,6 +505,11 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
 data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe Node)
 
+-- | Different constructor name because presumably more would be added
+newtype SynthError
+  = SynthError_BakersInformationDown (NonEmpty PublicKeyHash)
+  deriving (Eq, Ord, Show)
+
 liveErrorsWidget
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -516,17 +525,25 @@ liveErrorsWidget nodesDyn = void $ do
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
 
-  errorsDyn <- watchErrors filterDyn alertWindow
+  errorsDyn <- MMap.getMonoidalMap <$$> watchErrors filterDyn alertWindow
   filteredErrors <- holdUniqDyn $ liftA2
-    (\errors filterFn -> MMap.filter (filterFn . fst) errors)
+    (\errors filterFn -> Map.filter (filterFn . fst) errors)
     errorsDyn
     (passesFilter <$> filterDyn)
 
   SemUi.divider def
 
+  collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
+  let dAllNodesDownTime = ffor collectedNodesStatus $ \case
+        Left (CollectiveNodesFailure_AllNodesDownSince t) -> Just t
+        _ -> Nothing -- TODO think about alert for the no configured nodes case
+  dTimer <- asks $ view timer
+  -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
+  dBakerKeys <- MMap.keys <$$> watchBakerAddresses
+
   let
     combinedRealErrors
-      :: Dynamic t (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView'))
+      :: Dynamic t (Map.Map (Id ErrorLog) (ErrorLog, ErrorLogView'))
     combinedRealErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
       ffor errors $ \(errorLog, errorLogView) -> let
         mNode = do
@@ -534,22 +551,43 @@ liveErrorsWidget nodesDyn = void $ do
           MMap.lookup nodeId nodes
       in (errorLog, (ErrorLogView' errorLogView mNode))
 
+    -- There is no `Id SynthError` so just use whole thing.
+    synthErrors
+      :: Dynamic t (Map.Map SynthError (ErrorLog, SynthError))
+    synthErrors = ffor3 dBakerKeys dTimer dAllNodesDownTime $
+      \bakerKeys now allNodesDownTime ->
+        fromMaybe mempty $ do
+          keys1 <- NEL.nonEmpty bakerKeys
+          since <- allNodesDownTime
+          let k = SynthError_BakersInformationDown keys1
+          pure $ Map.singleton k $ (, k) $
+            ErrorLog
+              { _errorLog_started = since
+              , _errorLog_stopped = Nothing
+              , _errorLog_lastSeen = now
+              , _errorLog_noticeSentAt = Nothing
+              }
+
     combinedErrors
-      :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) ()))
+      :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, m ()))
-    combinedErrors =
-      fmap (errorsByTime Left)
-      $ (fmap . fmap . fmap) logEntry
-      $ combinedRealErrors
+    combinedErrors = fold
+      [ fmap (errorsByTime Left)
+        $ (fmap . fmap . fmap) logEntry
+        $ combinedRealErrors
+      , fmap (errorsByTime Right)
+        $ (fmap . fmap . fmap) synthEntry
+        $ synthErrors
+      ]
 
     errorsByTime
       :: Ord k1
       => (k0 -> k1)
-      -> MonoidalMap k0 (ErrorLog, v)
+      -> Map.Map k0 (ErrorLog, v)
       -> Map.Map (Down (Time.UTCTime, k1)) (ErrorLog, v)
     errorsByTime inj errors = Map.fromList
       [ (Down (_errorLog_started l, inj elId), row)
-      | (elId, row@(l, _)) <- MMap.toList errors
+      | (elId, row@(l, _)) <- Map.toList errors
       ]
 
     showWhenErrors p attrs = elDynAttr "div" (ffor combinedErrors $ \ce -> attrs <> bool ("style" =: "display: none") Map.empty (p ce))
@@ -583,13 +621,21 @@ liveErrorsWidget nodesDyn = void $ do
         || filterSelection == AlertsFilter_ResolvedOnly && isResolved
       where isResolved = isJust $ _errorLog_stopped log
 
+    header = divClass "header" . text
+    errorLabel primary secondary = el "div" $ do
+      el "label" $ text primary
+      for_ secondary $ elClass "label" "node-secondary-label" . text
+
+    synthEntry :: SynthError -> m ()
+    synthEntry (SynthError_BakersInformationDown pkhs) = do
+      header "Cannot gather baker data."
+      errorLabel "My Bakers" $ toPublicKeyHashText <$> pkhs
+      el "div" $
+        text $"Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
+
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' specificLog node') =
-      let header = divClass "header" . text
-          nodeLabel n = el "div" $ do
-            let (primary, secondary) = nodeIdentification n
-            el "label" $ text primary
-            for_ secondary $ elClass "label" "node-secondary-label" . text
+      let nodeLabel = uncurry errorLabel . nodeIdentification
       in case specificLog of
           ErrorLogView_NodeError ne -> case ne of
             NodeErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
@@ -800,7 +846,7 @@ nodesTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
-          ebn <- watchErrorsByNode alertWindow
+          ebn <- snd <$$$$> watchErrorsByNode alertWindow
           -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
           void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
             unresolvedAlertsForThisNode <- holdUniqDyn $
@@ -943,7 +989,7 @@ bakersTab =
         False -> mdo
          showOverview <- holdUniqDyn $ any isNothing <$> joinDynThroughMap bakersDetails
          dyn_ $ ffor showOverview $ bool blank overview
-         ebb <- watchErrorsByBaker alertWindow
+         ebb <- snd <$$$$> watchErrorsByBaker alertWindow
          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
          bakersDetails <- divClass "ui stackable cards" $ do
           listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
