@@ -36,6 +36,7 @@ import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
@@ -45,7 +46,7 @@ import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
@@ -133,11 +134,12 @@ data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
 type CachedHistory' = CachedHistory ()
+type DirtyBit = Maybe (Id GenericCacheEntry)
 
 data CacheLine a = CacheLine
   { _cacheLine_value :: !a
   , _cacheLine_used :: !UTCTime
-  , _cacheLine_dirty :: !Bool -- is this entry already in the database?
+  , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
   }
 
 data NodeDataSource = NodeDataSource
@@ -409,7 +411,7 @@ nodeQueryDataSourceRaw q' = do
           apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
           let
             -- Updates the cache key if the result is useful and sets the result 'TVar'.
-            writeResult :: Either CacheError (a, Bool) -> IO ()
+            writeResult :: Either CacheError (a, DirtyBit) -> IO ()
             writeResult a' = liftIO $ atomicallyWithTime $ do
               case a' of
                 Right (a, dirty) -> populateKey q a dirty
@@ -439,10 +441,10 @@ nodeQueryDataSourceRaw q' = do
               var <- newTVar' $ CacheLine a now dirty
               writeTVar' cacheVar $ DMap.insert q (Compose var) cache
 
-        makeRequestAndCache :: ProtoInfo -> NodeQuery a' -> BlockHash -> IO (Either CacheError (a', Bool))
+        makeRequestAndCache :: ProtoInfo -> NodeQuery a' -> BlockHash -> IO (Either CacheError (a', DirtyBit))
         makeRequestAndCache protoInfo q qBranch = runLoggingEnv logger $ flip runReaderT dsrc $
           tryFetchFromCache chainId (_nodeDataSource_pool dsrc) q >>= \case
-            Just x -> pure $ Right (x, False)
+            Just x -> pure $ Right $ fmap Just x
             Nothing -> atomicallyWith (pickNode qBranch) >>= \case
               Nothing -> pure $ Left CacheError_NoSuitableNode
               Just anyNode -> do
@@ -452,7 +454,7 @@ nodeQueryDataSourceRaw q' = do
                   nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
                   nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
 
-                liftIO $ (fmap.fmap) (,True) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
+                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -573,18 +575,18 @@ calculateBakeEfficiency branch len baker = do
 
 tryFetchFromCache
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => ChainId -> Pool Postgresql -> NodeQuery a -> m (Maybe a)
+  => ChainId -> Pool Postgresql -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
 tryFetchFromCache chainId db q = do
   let
     qJson = Json $ requestToJSON q
-  resultM <- fmap listToMaybe $ runDb (Identity db) $ select
+  resultM :: Map (Id GenericCacheEntry) GenericCacheEntry <- runDb (Identity db) $ selectMap GenericCacheEntryConstructor
     $  (GenericCacheEntry_keyField ==. qJson
     &&. GenericCacheEntry_chainIdField ==. chainId) -- we select this to use the unique constraint index
-  case resultM of
+  case nonEmpty $ Map.toList resultM of
     Nothing -> return Nothing
-    Just result -> case requestResponseFromJSON q of
+    Just ((rid, result) :| _) -> case requestResponseFromJSON q of
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-        Aeson.Success v -> return $ Just v
+        Aeson.Success v -> return $ Just (v, rid)
         Aeson.Error bad -> do
           $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
           return Nothing
