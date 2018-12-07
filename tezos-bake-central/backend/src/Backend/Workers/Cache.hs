@@ -9,7 +9,7 @@ module Backend.Workers.Cache where
 import Control.Concurrent.STM (TVar, atomically, orElse)
 import Control.Monad.Logger (logDebug)
 import qualified Data.Aeson as Aeson
-import Data.Constraint (Dict (..))
+import Data.Constraint (withDict)
 import Data.Dependent.Map (DSum (..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
@@ -37,17 +37,16 @@ classifyCacheEntry
   -> DSum NodeQuery (Compose TVar CacheLine)
   -> m (Maybe (Either GenericCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
 classifyCacheEntry chainId expireTime (q :=> Compose cx) =
-  readTVar' cx <&> \(CacheLine value used) -> if used < expireTime
+  readTVar' cx <&> \(CacheLine value used dirty) -> if used < expireTime
     then
-      let
-        kJson = requestToJSON q
-        vJson = case requestResponseToJSON q of
-          Dict -> Aeson.toJSON value
-      in Just $ Left GenericCacheEntry
-          { _genericCacheEntry_chainId = chainId
-          , _genericCacheEntry_key = Json kJson
-          , _genericCacheEntry_value = Json vJson
-          }
+      case dirty of
+        Nothing ->
+          Just $ Left GenericCacheEntry
+            { _genericCacheEntry_chainId = chainId
+            , _genericCacheEntry_key = Json (requestToJSON q)
+            , _genericCacheEntry_value = Json (requestResponseToJSON q `withDict` Aeson.toJSON value)
+            }
+        Just _ -> Nothing
     else
       Just $ Right $ q :=> Compose cx
 
