@@ -410,14 +410,19 @@ nodesTabOrWelcome = do
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
-  let haveTilesMaybe =
-        (liftA2 . liftA2) ((||) . not . null) bakersMaybe $
+  let haveBakersMaybe =
+        (fmap . fmap) (not . null) bakersMaybe
+      haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-  dyn_ $ ffor haveTilesMaybe $ \case
+      haveBakersHaveNodesMaybe =
+        (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+  dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just False -> divClass "app-content app-welcome" welcomeScreen
-    Just True -> divClass "app-content" (bakersTab *> nodesTab)
+    Just (False,False) -> divClass "app-content app-welcome" welcomeScreen
+    Just (haveBakers, haveNodes) -> divClass "app-content" $ do
+      when haveBakers bakersTab
+      when haveNodes nodesTab
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
