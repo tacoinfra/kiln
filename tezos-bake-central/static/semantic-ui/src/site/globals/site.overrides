@@ -611,6 +611,34 @@ img.credits-obsidian {
   }
 }
 
+.ui.loader.blue {
+  &:after {
+    border-top-color: @blue;
+  }
+  &:before {
+    border-color: fade(@blue, 10%);
+  }
+}
+
+.dashboard-section > .dashboard-section-overview {
+  display: flex;
+  .icon {
+    margin-right: @24px;
+  }
+
+  .ui.header {
+    margin-bottom: @13px;
+
+    .ui.loader {
+      margin-right: @10px;
+    }
+  }
+
+  .description {
+    color: @grey;
+  }
+}
+
 .dashboard-section > .ui.cards {
   margin-left: 0;
   margin-right: 0;
@@ -621,6 +649,10 @@ img.credits-obsidian {
 
   > .ui.card.baker-tile {
     width: unit(280 / @emSize, rem);
+
+    .ui.loader {
+      margin-right: @6px;
+    }
   }
 
   > .ui.card.dashboard-tile {
