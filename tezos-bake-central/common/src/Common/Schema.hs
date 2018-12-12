@@ -418,6 +418,7 @@ data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeWrongChain
 
+-- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
   , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
