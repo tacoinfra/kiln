@@ -154,49 +154,69 @@ data LogTag a where
   LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
   LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
 
--- TODO: Switch to 'DSum LogTag Identity'
+data NodeErrorLogView
+  = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
+  | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  | NodeErrorLogView_BadNodeHead !ErrorLogBadNodeHead
+  deriving (Eq, Ord, Generic, Typeable, Show)
+instance FromJSON NodeErrorLogView
+instance ToJSON NodeErrorLogView
+
+data BakerErrorLogView
+  = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
+  deriving (Eq, Ord, Generic, Typeable, Show)
+instance FromJSON BakerErrorLogView
+instance ToJSON BakerErrorLogView
+
+-- TODO: Switch to 'DSum LogTag Identity', also spit node and baker tags out of LogTag.
 data ErrorLogView
-  = ErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
-  | ErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  = ErrorLogView_NodeError NodeErrorLogView
+  | ErrorLogView_BakerError BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
-  | ErrorLogView_BadNodeHead !ErrorLogBadNodeHead
-  | ErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
+  -- ^ Misc baker *daemon* error.
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
+nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
+nodeErrorViewOnly = \case
+  ErrorLogView_NodeError v -> Just v
+  _ -> Nothing
 
-nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
-nodeIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode ein -> Just $ _errorLogInaccessibleNode_node ein
-  ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
-  ErrorLogView_BakerNoHeartbeat _ -> Nothing
-  ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
-  ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
+nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
+nodeIdForNodeErrorLogView = \case
+  NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_node ein
+  NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_node enwc
+  NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_node ebnh
 
-bakerIdForErrorLogView :: ErrorLogView -> Maybe PublicKeyHash
-bakerIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode _ -> Nothing
-  ErrorLogView_NodeWrongChain _ -> Nothing
-  ErrorLogView_BakerNoHeartbeat _ -> Nothing
-  ErrorLogView_BadNodeHead _ -> Nothing
-  ErrorLogView_MultipleBakersForSameBaker _ -> Nothing
+bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
+bakerErrorViewOnly = \case
+  ErrorLogView_BakerError v -> Just v
+  _ -> Nothing
+
+bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
+bakerIdForBakerErrorLogView = \case
+  BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
-  ErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
+  ErrorLogView_NodeError ne -> case ne of
+    NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
+    NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
+    NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
+  ErrorLogView_BakerError be -> case be of
+    BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
-  ErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
-  ErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
 
 manuallyResolvable :: ErrorLogView -> Bool
 manuallyResolvable = \case
-  ErrorLogView_InaccessibleNode _ -> False
-  ErrorLogView_NodeWrongChain _ -> False
+  ErrorLogView_NodeError ne -> case ne of
+    NodeErrorLogView_InaccessibleNode _ -> False
+    NodeErrorLogView_NodeWrongChain _ -> False
+    NodeErrorLogView_BadNodeHead _ -> False
+  ErrorLogView_BakerError be -> case be of
+    BakerErrorLogView_MultipleBakersForSameBaker _ -> False
   ErrorLogView_BakerNoHeartbeat _ -> False
-  ErrorLogView_BadNodeHead _ -> False
-  ErrorLogView_MultipleBakersForSameBaker _ -> False
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView

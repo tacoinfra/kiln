@@ -295,7 +295,7 @@ appSideFooter =
           (def
             & SemUi.menuConfig_secondary SemUi.|~ True
             & SemUi.menuConfig_vertical SemUi.|~ True
-          )
+            )
           $ do
               routeSelector UITab_Options SemUi.menuItem' def $ do
                 icon "icon-gear"
@@ -313,13 +313,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
   nodesDyn <- watchNodes $ pure $ viewRangeAll ()
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
-  disconnected <- holdUniqDyn $ ffor2 (MMap.keys <$> nodesDyn) (errorsByNode <$> alerts) $ \nodeIds nodeErrors ->
-    let disconnectedError = \case
-          ErrorLogView_InaccessibleNode _ -> True
-          ErrorLogView_NodeWrongChain _ -> True
-          _ -> False
-        disconnectedNode nid = any disconnectedError $ maybe [] toList $ MMap.lookup nid nodeErrors
-    in and $ ffor nodeIds disconnectedNode
+  disconnected <- holdUniqDyn $ ffor2 (MMap.keys <$> nodesDyn) (errorsByNode <$> alerts) $ \nodeIds nodeErrors -> and $ flip MMap.member nodeErrors <$> nodeIds
 
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
@@ -537,7 +531,7 @@ liveErrorsWidget nodesDyn = void $ do
     combinedErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
       ffor errors $ \(errorLog, errorLogView) -> let
         node = do
-          nodeId <- nodeIdForErrorLogView errorLogView
+          nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
           MMap.lookup nodeId nodes
       in (errorLog, errorLogView, node)
 
@@ -580,32 +574,34 @@ liveErrorsWidget nodesDyn = void $ do
             el "label" $ text primary
             for_ secondary $ elClass "label" "node-secondary-label" . text
       in case specificLog of
-          ErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
-            header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
-            nodeLabel n
-
-          ErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) ->
-            for_ node' $ \n -> do
-              header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
+          ErrorLogView_NodeError ne -> case ne of
+            NodeErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
+              header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
               nodeLabel n
-              el "div" $
-                text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+
+            NodeErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) ->
+              for_ node' $ \n -> do
+                header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
+                nodeLabel n
+                el "div" $
+                  text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+
+            NodeErrorLogView_BadNodeHead l ->
+              for_ node' $ \n -> do
+              let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
+              header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
+              nodeLabel n
+              el "div" message
+
+          ErrorLogView_BakerError ne -> case ne of
+            BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
+              header "Multiple bakers for same baker" -- TODO Fill this out
 
           ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
-
-          ErrorLogView_BadNodeHead l ->
-            for_ node' $ \n -> do
-            let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-            header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
-            nodeLabel n
-            el "div" message
-
-          ErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
-            header "Multiple bakers for same baker" -- TODO Fill this out
 
     errorsByTime direction errors = Map.fromList
       [ (direction (_errorLog_started l, elId), row)
@@ -800,11 +796,10 @@ nodesTab =
 
             let
               errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
-                ErrorLogView_InaccessibleNode{} -> text "Unable to connect."
-                ErrorLogView_NodeWrongChain{} -> text "On wrong network."
-                ErrorLogView_BadNodeHead l -> text $
+                NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
+                NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
+                NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-                _ -> blank
 
             let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _node_address <$> vDyn) (_node_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
@@ -915,11 +910,12 @@ nodesTab =
 
 errorsByNode
   :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-  -> MonoidalMap (Id Node) (NonEmpty ErrorLogView)
+  -> MonoidalMap (Id Node) (NonEmpty NodeErrorLogView)
 errorsByNode xs = MMap.fromListWith (<>)
-  [ (k, pure t)
+  [ (k, pure t')
   | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-  , Just k <- [nodeIdForErrorLogView t]
+  , Just t' <- [nodeErrorViewOnly t]
+  , let k = nodeIdForNodeErrorLogView t'
   ]
 
 bakersTab
@@ -954,11 +950,8 @@ bakersTab =
 
             let
               errorMessages = ffor unresolvedAlerts $ fmap $ \case
-                ErrorLogView_InaccessibleNode{} -> text "Unable to connect."
-                ErrorLogView_NodeWrongChain{} -> text "On wrong network."
-                ErrorLogView_BadNodeHead l -> text $
-                  fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-                _ -> blank
+                -- TODO
+                BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
 
             let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
@@ -1036,11 +1029,12 @@ bakersTab =
 
     errorsByBaker
       :: MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)
-      -> MonoidalMap PublicKeyHash (NonEmpty ErrorLogView)
+      -> MonoidalMap PublicKeyHash (NonEmpty BakerErrorLogView)
     errorsByBaker xs = MMap.fromListWith (<>)
-      [ (k, pure t)
+      [ (k, pure t')
       | (ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-      , Just k <- [bakerIdForErrorLogView t]
+      , Just t' <- [bakerErrorViewOnly t]
+      , let k = bakerIdForBakerErrorLogView t'
       ]
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()

@@ -290,19 +290,19 @@ getErrorLogsImpl flt intervalMap = do
     runQueries window = do
       leftBiasedUnions <$> sequenceA
         [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
+            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_NodeError $ NodeErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
             window
 
         , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
             (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
+                ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
             window
         , queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
           (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
             window
 
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
-          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_BadNodeHead
+          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead
                   ErrorLogBadNodeHead
                     { _errorLogBadNodeHead_log = elId
                     , _errorLogBadNodeHead_node = tNode
@@ -311,7 +311,7 @@ getErrorLogsImpl flt intervalMap = do
                     , _errorLogBadNodeHead_latestHead = tLatestHead
                     }) window
         , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_MultipleBakersForSameBaker $
+          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
         ]

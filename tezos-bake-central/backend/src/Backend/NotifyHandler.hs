@@ -28,8 +28,10 @@ import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
-import Common.App (BakeView (..), BakeViewSelector (..), BakerSummary (..), ErrorLogView (..),
-                   mailServerConfigToView, nodeIdForErrorLogView)
+import Common.App (BakeView (..), BakeViewSelector (..), BakerSummary (..),
+                   ErrorLogView (..), NodeErrorLogView (..), BakerErrorLogView (..),
+                   nodeIdForNodeErrorLogView, nodeErrorViewOnly,
+                   mailServerConfigToView)
 import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
@@ -50,11 +52,19 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_Client eid -> handleClient eid
       Notify_Baker baker -> handleBaker baker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
-      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log ErrorLogView_BadNodeHead eid
+      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
+        (ErrorLogView_NodeError . NodeErrorLogView_BadNodeHead)
+        eid
+      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log
+        (ErrorLogView_NodeError . NodeErrorLogView_InaccessibleNode)
+        eid
+      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
+        (ErrorLogView_NodeError . NodeErrorLogView_NodeWrongChain)
+        eid
+      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
+        (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
+        eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
-      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
-      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log ErrorLogView_MultipleBakersForSameBaker eid
-      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid
@@ -160,7 +170,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      logNodeSummary <- for (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
+      logNodeSummary <- for (fmap nodeIdForNodeErrorLogView . nodeErrorViewOnly . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId
           pure mempty
