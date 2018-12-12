@@ -25,6 +25,7 @@ import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down (..), comparing)
 import qualified Data.Set as Set
+import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
@@ -616,11 +617,23 @@ pluralOf = (<> "s") -- good enough for all existing uses, lol
 
 -- tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8 Foundation Baker 8 or something
 
+data MonitoredStatus
+  = MonitoredStatus_Healthy
+  | MonitoredStatus_Unhealthy
+  | MonitoredStatus_Unknown
+  deriving (Eq, Ord, Bounded, Enum, Show)
+
+statusColor :: IsString a => MonitoredStatus -> a
+statusColor = \case
+  MonitoredStatus_Healthy -> "green"
+  MonitoredStatus_Unhealthy -> "red"
+  MonitoredStatus_Unknown -> "grey"
+
 sidebarList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
-  , Coercible a (Map.Map k (Text, Maybe Text, Int))
+  , Coercible a (Map.Map k (Text, Maybe Text, MonitoredStatus))
   , Ord k
   )
   => Text -> Dynamic t a -> (Event t () -> ModalM m (Event t ())) -> m ()
@@ -628,8 +641,8 @@ sidebarList name nodes modal = do
   divClass "ui sub header" $ text (pluralOf name)
   divClass "ui list" $ do
     _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
-      let dHealth = (> 0) . (\(_,_,alerts) -> (alerts :: Int)) <$> node
-      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> (SemUi.Dyn $ bool "green" "red" <$> dHealth)) blank
+      let color = (\(_,_,s) -> statusColor s) <$> node
+      _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> SemUi.Dyn color) blank
       divClass "content" $ do
         let (title, subtitle) = splitDynPure $ ffor node $ \(address, alias, _) ->
               nodeTitleSubtitle address alias
@@ -646,8 +659,15 @@ bakersList ::
   )
   => m ()
 bakersList = do
+  let bakerStatus = \case
+        0 -> bool  MonitoredStatus_Unknown MonitoredStatus_Healthy . isJust
+        _ -> const MonitoredStatus_Unhealthy
+
   bakers <- ((,,) <$> (toPublicKeyHashText . _bakerSummary_address) <*> _bakerSummary_alias <*> _bakerSummary_alertCount) <$$$> watchBakerAddresses
-  sidebarList "Baker" bakers addBakerModal
+  bakers' <- fmap joinDynThroughMap $ listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh val -> do
+    details <- watchBakerDetails pkh
+    pure $ ffor2 val details $ \(addr, alias, alerts) d -> (addr, alias, bakerStatus alerts d)
+  sidebarList "Baker" bakers' addBakerModal
 
 addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addBakerModal close = mdo
@@ -668,7 +688,10 @@ nodesList ::
   )
   => m ()
 nodesList = do
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> _nodeSummary_alertCount) <$$$> watchNodeAddresses
+  let nodeStatus = \case
+        0 -> MonitoredStatus_Healthy
+        _ -> MonitoredStatus_Unhealthy
+  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> (nodeStatus . _nodeSummary_alertCount)) <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -919,10 +942,13 @@ bakersTab =
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
-        False -> divClass "ui stackable cards" $ do
+        False -> mdo
+         showOverview <- holdUniqDyn $ any isNothing <$> joinDynThroughMap bakersDetails
+         dyn_ $ ffor showOverview $ bool blank overview
+         bakersDetails <- divClass "ui stackable cards" $ do
           -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
           alerts <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
-          void $ listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
+          listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
             unresolvedAlerts <- holdUniqDyn $
               foldMap toList . MMap.lookup pkh . errorsByBaker <$> alerts
 
@@ -950,6 +976,18 @@ bakersTab =
               vDyn
               details
 
+            pure details
+         blank
+
+    overview :: m ()
+    overview = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+      el "div" $ icon "icon-download big grey"
+      el "div" $ do
+        divClass "ui header" $ do
+          divClass "ui active inline loader small blue" blank
+          text "Gathering baker data..."
+        divClass "description" $ text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker."
+
     tile
       :: m () -- ^ Title
       -> Dynamic t (Maybe Text) -- ^ Subtitle
@@ -970,7 +1008,7 @@ bakersTab =
         divClass "title" $ do
           for_ errors' $ \errors -> do
             errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
+            iconDyn $ ffor2 details' errorsEmpty $ \d e -> "tiny circle " <> maybe "grey" (\_ -> bool "red" "green" e) d
           title
           divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
@@ -979,7 +1017,7 @@ bakersTab =
 
         (details'' :: Dynamic t (Maybe (Dynamic t b))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
-          Nothing -> text "Gathering baker data."
+          Nothing -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
           Just details -> el "dl" $ do
             el "dt" (text "Bake Success:")
             el "dd" $
