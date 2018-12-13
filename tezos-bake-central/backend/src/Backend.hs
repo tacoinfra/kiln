@@ -238,7 +238,7 @@ backendImpl cfg serve = do
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< bakerWorker dataSrc
+      addFinalizer =<< bakerWorker dataSrc appConfig
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db

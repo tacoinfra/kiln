@@ -8,10 +8,11 @@ import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..))
+import Common.Schema (Baker(..), ErrorLog(..), ErrorLogBadNodeHead (..),
+                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), bakerIdentification)
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -81,3 +82,46 @@ badNodeHeadMessage text blockHashLink l =
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
 
+data BakerErrorDescriptions = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title :: !Text
+  , _bakerErrorDescriptions_tile :: !Text
+  , _bakerErrorDescriptions_notification :: !Text
+  , _bakerErrorDescriptions_problem :: !Text
+  , _bakerErrorDescriptions_warning :: !(Maybe Text)
+  , _bakerErrorDescriptions_fix :: !Text
+  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  }
+
+bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
+bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
+  , _bakerErrorDescriptions_tile = "Will be marked as inactive."
+  , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost 5 cycles and will soon be marked as inactive."
+  , _bakerErrorDescriptions_problem = "In the past 4 cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
+  , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> rightsReturn <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
+  , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
+  , _bakerErrorDescriptions_resolved = \b ->
+      let (primary, secondary) = bakerIdentification b
+      in ("Resolved: Baker no longer at risk of being marked as inactive."
+         , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " is no longer at risk of being marked as inactive."
+         )
+  }
+  where
+    rightsReturn = tshow $ 2 + _errorLogBakerDeactivationRisk_preservedCycles elog
+
+bakerDeactivatedDescriptions :: ErrorLogBakerDeactivated -> BakerErrorDescriptions
+bakerDeactivatedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker has been marked as inactive."
+  , _bakerErrorDescriptions_tile = "Has been marked as inactive."
+  , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for 5 cycles and has been marked as inactive."
+  , _bakerErrorDescriptions_problem = "This baker has not had any activity for 5 cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Re-register this baker."
+  , _bakerErrorDescriptions_resolved = \b ->
+      let (primary, secondary) = bakerIdentification b
+      in ("Resolved: Baker no longer inactive"
+         , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " has been re-registered. The earliest signing operation may be assigned to this baker is " <> rightsReturn <> " cycles."
+         )
+  }
+  where
+    rightsReturn = tshow $ 2 + _errorLogBakerDeactivated_preservedCycles elog

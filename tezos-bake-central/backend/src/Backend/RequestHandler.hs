@@ -322,6 +322,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_BadNodeHead -> pure Nothing
           LogTag_MultipleBakersForSameBaker -> pure Nothing
+          LogTag_BakerDeactivated -> pure Nothing
+          LogTag_BakerDeactivationRisk -> pure Nothing
 
         for_ elid_notifier' $ \(elid, notifier) -> do
           now <- getTime

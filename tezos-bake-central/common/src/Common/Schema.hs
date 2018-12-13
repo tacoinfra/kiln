@@ -332,11 +332,25 @@ data Baker = Baker
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Baker
 
+-- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
+-- we'd probably want to cache it seperately  (it changes way slower anyhow)
+data CacheDelegateInfo = CacheDelegateInfo
+  { _cacheDelegateInfo_balance :: !Tez
+  , _cacheDelegateInfo_frozenBalance :: !Tez
+  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
+  , _cacheDelegateInfo_stakingBalance :: !Tez
+  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
+  , _cacheDelegateInfo_delegatedBalance :: !Tez
+  , _cacheDelegateInfo_deactivated :: !Bool
+  , _cacheDelegateInfo_gracePeriod :: !Cycle
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
   , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
   , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
   , _bakerDetails_branch :: !BlockHash
+  , _bakerDetails_delegateInfo :: !(Maybe (Json CacheDelegateInfo))
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails
 
@@ -438,6 +452,22 @@ data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameBaker
 
+data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
+  { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
+  , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivated_preservedCycles :: !Cycle
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerDeactivated
+
+data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
+  { _errorLogBakerDeactivationRisk_log :: !(Id ErrorLog)
+  , _errorLogBakerDeactivationRisk_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivationRisk_gracePeriod :: !Cycle
+  , _errorLogBakerDeactivationRisk_latestCycle :: !Cycle
+  , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerDeactivationRisk
+
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
@@ -517,6 +547,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEvent
   , ''BakedEventOperation
   , ''BlockBaker
+  , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
@@ -527,6 +558,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
@@ -559,6 +592,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBakerDeactivated
+  , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
@@ -599,3 +634,15 @@ instance BlockLike PublicNodeHead where
   fitness = publicNodeHead_headBlock . fitness
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
+
+
+aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
+aliasedIdentification getMain getFallback x =
+  let fallback = getFallback x
+  in maybe (fallback, Nothing) (, Just fallback) $ getMain x
+
+nodeIdentification :: Node -> (Text, Maybe Text)
+nodeIdentification = aliasedIdentification _node_alias $ Uri.render . _node_address
+
+bakerIdentification :: Baker -> (Text, Maybe Text)
+bakerIdentification = aliasedIdentification _baker_alias $ tshow . _baker_publicKeyHash

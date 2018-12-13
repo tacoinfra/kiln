@@ -41,9 +41,10 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common (humanizeDiffTime)
-import Common.App (Bake)
+import Common.App (Bake, BakerSummary(..), bakerSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
+import Common.Schema (Node(..), nodeIdentification)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -430,6 +431,16 @@ aliasedInputForm validator feedback reset label info fieldlabel placeholder alia
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
+errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
+errorLabel primary secondary = el "div" $ do
+  el "label" $ text primary
+  for_ secondary $ elClass "label" "secondary-label" . text
+
+nodeLabel :: DomBuilder t m => Node -> m ()
+nodeLabel = uncurry errorLabel . nodeIdentification
+
+bakerSummaryLabel :: DomBuilder t m => BakerSummary -> m ()
+bakerSummaryLabel = uncurry errorLabel . bakerSummaryIdentification
 
 makeLenses ''FrontendContext
 

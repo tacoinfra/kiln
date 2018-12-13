@@ -90,6 +90,8 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
+  | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -122,6 +124,10 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivated
+instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivationRisk
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 
@@ -280,6 +286,8 @@ instance FromField Micro where
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
+instance NeverNull (Json CacheDelegateInfo)
+instance NeverNull Cycle
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
@@ -558,6 +566,8 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
+  - entity: ErrorLogBakerDeactivated
+  - entity: ErrorLogBakerDeactivationRisk
   - entity: ErrorLogNodeWrongChain
   - entity: CachedProtocolConstants
     constructors:
@@ -599,6 +609,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
+  , (''ErrorLogBakerDeactivated, 'ErrorLogBakerDeactivatedKey)
+  , (''ErrorLogBakerDeactivationRisk, 'ErrorLogBakerDeactivationRiskKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)

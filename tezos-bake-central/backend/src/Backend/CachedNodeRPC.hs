@@ -57,7 +57,6 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History
-import Tezos.Json (deriveTezosJson)
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
@@ -82,19 +81,6 @@ data NodeQuery a where
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
 deriving instance Show (NodeQuery a)
 
-
--- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
--- we'd probably want to cache it seperately  (it changes way slower anyhow)
-data CacheDelegateInfo = CacheDelegateInfo
-  { _cacheDelegateInfo_balance :: !Tez
-  , _cacheDelegateInfo_frozenBalance :: !Tez
-  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
-  , _cacheDelegateInfo_stakingBalance :: !Tez
-  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
-  , _cacheDelegateInfo_delegatedBalance :: !Tez
-  , _cacheDelegateInfo_deactivated :: !Bool
-  , _cacheDelegateInfo_gracePeriod :: !Cycle
-  }
 
 toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
@@ -575,9 +561,6 @@ deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
 makeRequestForData ''NodeQuery
-concat <$> traverse deriveTezosJson
-  [ ''CacheDelegateInfo
-  ]
 
 -- TODO: Is this worth keeping?
 instance Hashable (NodeQuery a) where

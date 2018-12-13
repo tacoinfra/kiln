@@ -15,6 +15,7 @@
 module Backend.Alerts where
 
 import Control.Monad.Logger (MonadLogger, logDebugSH)
+import qualified Data.Text as T
 import Data.Time (NominalDiffTime, addUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Core
@@ -32,9 +33,11 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (badNodeHeadMessage)
+import Common.Alerts (BakerErrorDescriptions(..), badNodeHeadMessage
+                     , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Schema
 import ExtraPrelude
+import Prelude hiding (log)
 
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
@@ -91,6 +94,103 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   when (not $ null lids) $ queueAlert Nothing $
     Alert Resolved "Resolved: Baker has now seen a block" $
     "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
+
+unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
+unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
+  [ Just $ _bakerErrorDescriptions_problem dsc
+  , _bakerErrorDescriptions_warning dsc
+  ]
+
+resolvedBakerAlert :: BakerErrorDescriptions -> Baker -> Alert
+resolvedBakerAlert dsc = uncurry (Alert Resolved) . _bakerErrorDescriptions_resolved dsc
+
+reportBakerDeactivated
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Id Baker -> ProtoInfo -> m ()
+reportBakerDeactivated bakerId protoInfo = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
+      JOIN "Baker" b ON b.id = t.node
+     WHERE t.baker = ?bakerId
+       AND NOT b.deleted
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Nothing -> do
+      baker' <- get $ fromId bakerId
+      for_ baker' $ \baker -> do
+        (logId, log) <- insertErrorLog $ \logId ->
+          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) (_protoInfo_preservedCycles protoInfo)
+        queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
+
+clearBakerDeactivated
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Id Baker -> m ()
+clearBakerDeactivated bakerId = do
+  lids :: [Id ErrorLogBakerDeactivated] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerDeactivated" t
+    WHERE t.log = el.id AND t.baker = ?bakerId AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notify . mkDefaultNotify
+  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  baker' <- get (fromId bakerId)
+  log' <- for (listToMaybe lids) $ get . fromId
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerDeactivatedDescriptions log) baker
+
+reportBakerDeactivationRisk
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Id Baker -> Cycle -> Cycle -> ProtoInfo -> m ()
+reportBakerDeactivationRisk bakerId gracePeriod latestCycle protoInfo = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
+      JOIN "Baker" b ON b.id = t.node
+     WHERE t.baker = ?bakerId
+       AND NOT b.deleted
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Nothing -> do
+      baker' <- get $ fromId bakerId
+      for_ baker' $ \baker -> do
+        (logId, log) <- insertErrorLog $ \logId ->
+          ErrorLogBakerDeactivationRisk logId (_baker_publicKeyHash baker) gracePeriod latestCycle (_protoInfo_preservedCycles protoInfo)
+        queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivationRiskDescriptions log
+
+clearBakerDeactivationRisk
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Id Baker -> m ()
+clearBakerDeactivationRisk bakerId = do
+  lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerDeactivationRisk" t
+    WHERE t.log = el.id AND t.baker = ?bakerId AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notify . mkDefaultNotify
+  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  baker' <- get (fromId bakerId)
+  log' <- for (listToMaybe lids) $ get . fromId
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
 reportInaccessibleNodeError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
