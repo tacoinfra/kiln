@@ -60,18 +60,34 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
-        existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+        existingIds :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> NodeExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
-          Nothing -> let node = mkNode addr alias in notify . flip Notify_Node node =<< insert' node
+          Nothing -> do
+            nid <- insert' Node
+            let nodeData = NodeExternalData
+                  { _nodeExternalData_address = addr
+                  , _nodeExternalData_alias = alias
+                  , _nodeExternalData_deleted = False
+                  }
+                node = NodeExternal
+                  { _nodeExternal_id = nid
+                  , _nodeExternal_data = nodeData
+                  }
+            insert node
+            notify $ Notify_NodeExternal nid $ Just nodeData
           Just nids -> for_ nids $ \nid -> do
-            updateId nid [Node_deletedField =. False, Node_aliasField =. alias]
-            getId nid >>= traverse_ (notify . Notify_Node nid)
+            update
+              [ NodeExternal_dataField ~> NodeExternalData_deletedSelector =. False
+              , NodeExternal_dataField ~> NodeExternalData_aliasSelector =. alias
+              ]
+              (NodeExternal_idField ==. nid)
+            project NodeExternal_dataField (NodeExternal_idField ==. nid) >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
       PublicRequest_RemoveNode addr -> inDb $ do
-        nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+        nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> NodeExternalData_addressSelector ==. addr)
         for_ nids $ \nid -> do
-          updateId nid [Node_deletedField =. True]
-          getId nid >>= traverse_ (notify . Notify_Node nid)
+          update [NodeExternal_dataField ~> NodeExternalData_deletedSelector =. True] (NodeExternal_idField ==. nid)
+          notify $ Notify_NodeExternal nid Nothing
 
           elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
           elnwc <- selectMap' ErrorLogNodeWrongChainConstructor (ErrorLogNodeWrongChain_nodeField ==. nid)

@@ -23,12 +23,11 @@ import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, query, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, query, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
 import Text.URI (URI)
 
-import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Types
 
@@ -94,40 +93,17 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       (PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left namedChain)
       )
 
-  let nodesVS = _bakeViewSelector_nodes vs
-  nodes <- whenM (not $ null nodesVS) $ do
-    let
-      selNodesUniversal = isCompleteSelector nodesVS
-      selNodes = In $ iMapSelectorKeys nodesVS
-    rs <- [queryQ|
-      SELECT n.id
-        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockPred", n."headBlockBakedAt" AT TIME ZONE 'UTC'
-        , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
-        , n."fitness", n."updated" AT TIME ZONE 'UTC'
-      FROM "Node" n
-      WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
-    return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
-        (Bounded nid, First $ Just Node
-          { _node_address = addr
-          , _node_alias = alias
-          , _node_identity = ident
-          , _node_headLevel = headLevel
-          , _node_headBlockHash = headBlockHash
-          , _node_headBlockPred = headBlockPred
-          , _node_headBlockBakedAt = headBlockBakedAt
-          , _node_peerCount = peerCount
-          , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
-          , _node_fitness = blockFitness
-          , _node_deleted = False
-          , _node_updated = updated
-          })
+  -- TODO Dan Bornside says this could be more efficient.
+  let nodeDetailsVS = _bakeViewSelector_nodeDetails vs
+  nodeDetails :: RangeView' (Id Node) NodeDetailsData a <- whenM (not $ null nodeDetailsVS) $
+    toRangeView nodeDetailsVS . fmap (\x -> (Bounded $ _nodeDetails_id x, _nodeDetails_data x)) <$> select CondEmpty
 
   let bakerAddrVS = _bakeViewSelector_bakerAddresses vs
   bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddrVS) $ do
     -- TODO: bakerAddrVS is a RangeView.  select individual bakers upon request.
     toRangeView bakerAddrVS <$> getBakerAddresses Nothing
 
+  -- TODO Dan Bornside says this could be more efficient.
   let bakerDetailsVS = _bakeViewSelector_bakerDetails vs
   bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a <- whenM (not $ null bakerDetailsVS) $
     toRangeView bakerDetailsVS . fmap (\x -> (Bounded $ _bakerDetails_publicKeyHash x, First $ Just x)) <$> select CondEmpty
@@ -182,8 +158,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
-    , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
+    , _bakeView_nodeDetails = nodeDetails
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
@@ -233,7 +209,7 @@ getErrorLogsImpl flt intervalMap = do
       -> ClosedInterval (WithInfinity UTCTime)
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
     queryNodeAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Node", "id", "node"))
+      queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
     queryClientDaemonAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
@@ -343,7 +319,7 @@ getBakerAddresses bid = do
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m)
   => Maybe (Id Node)
-  -> m [(WithInfinity (Id Node), First (Maybe NodeSummary))]
+  -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
       SELECT n.id, n.address, n.alias,
@@ -365,7 +341,7 @@ getNodeAddresses nid = do
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-      FROM "Node" n
+      FROM "NodeExternal" n
       WHERE NOT n.deleted
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary y z w)) rs

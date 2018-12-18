@@ -92,7 +92,8 @@ data Notify
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
-  | Notify_Node !(Id Node) !Node
+  | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
+  | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
@@ -476,10 +477,30 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Node
     constructors:
       - name: Node
+  - entity: NodeExternal
+    autoKey: null
+    keys:
+      - name: NodeExternalId
+        default: true
+    constructors:
+      - name: NodeExternal
         uniques:
-          - name: _node_uniqueness
-            type: constraint
-            fields: [_node_address]
+          - name: NodeExternalId
+            type: primary
+            fields: [_nodeExternal_id]
+  - embedded: NodeExternalData
+  - entity: NodeDetails
+    autoKey: null
+    keys:
+      - name: NodeDetailsId
+        default: true
+    constructors:
+      - name: NodeDetails
+        uniques:
+          - name: NodeDetailsId
+            type: primary
+            fields: [_nodeDetails_id]
+  - embedded: NodeDetailsData
   - entity: PublicNodeConfig
     constructors:
     - name: PublicNodeConfig

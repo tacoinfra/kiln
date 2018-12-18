@@ -201,11 +201,10 @@ appMain = do
         (\f -> SemUi.menu
           (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
           $ do
-            nodesDyn <- watchNodes $ pure $ viewRangeAll ()
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-            liveErrorsWidget nodesDyn
+            liveErrorsWidget
             pure e)
         -- Accompanying content
         $ do
@@ -503,7 +502,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe Node)
+data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
@@ -515,9 +514,9 @@ liveErrorsWidget
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t (MonoidalMap (Id Node) Node)
-  -> m ()
-liveErrorsWidget nodesDyn = void $ do
+  => m ()
+liveErrorsWidget = void $ do
+  nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
@@ -610,10 +609,10 @@ liveErrorsWidget nodesDyn = void $ do
       el "label" $ text lbl
       localTimestamp $ pure ts
 
-    nodeIdentification :: Node -> (Text, Maybe Text)
+    nodeIdentification :: NodeSummary -> (Text, Maybe Text)
     nodeIdentification ns =
-      let addr = Uri.render $ _node_address ns
-      in maybe (addr, Nothing) (, Just addr) $ _node_alias ns
+      let addr = Uri.render $ _nodeSummary_address ns
+      in maybe (addr, Nothing) (, Just addr) $ _nodeSummary_alias ns
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
@@ -652,7 +651,7 @@ liveErrorsWidget nodesDyn = void $ do
             NodeErrorLogView_BadNodeHead l ->
               for_ node' $ \n -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-              header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
+              header $ heading <> ": " <> fromMaybe (Uri.render $ _nodeSummary_address n) (_nodeSummary_alias n)
               nodeLabel n
               el "div" message
 
@@ -828,10 +827,10 @@ nodesTab
 nodesTab =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
-    nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+    nodesDyn <- watchNodeAddresses
     nodeTilesWidget nodesDyn
   where
-    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) NodeSummary) -> m ()
     nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -859,19 +858,20 @@ nodesTab =
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
 
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _node_address <$> vDyn) (_node_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _nodeSummary_address <$> vDyn) (_nodeSummary_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
+            nodeDetails <- watchNodeDetails nodeId
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _node_address <$> current vDyn <@ ev)
-              getNodeHeadBlock
+              (\ev -> PublicRequest_RemoveNode . _nodeSummary_address <$> current vDyn <@ ev)
+              ((=<<) getNodeHeadBlock)
               (Just errorMessages)
-              (Just _node_peerCount)
-              (Just _node_networkStat)
-              vDyn
+              (Just $ (=<<) _nodeDetailsData_peerCount)
+              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              nodeDetails
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)

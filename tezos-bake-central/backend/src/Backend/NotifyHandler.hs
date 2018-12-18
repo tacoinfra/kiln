@@ -9,6 +9,7 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Control.Monad (guard)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
@@ -28,7 +29,8 @@ import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
-import Common.App (BakeView (..), BakeViewSelector (..), BakerSummary (..),
+import Common.App (BakeView (..), BakeViewSelector (..),
+                   NodeSummary (..), BakerSummary (..),
                    ErrorLogView (..), NodeErrorLogView (..), BakerErrorLogView (..),
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
                    mailServerConfigToView)
@@ -66,7 +68,8 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
-      Notify_Node eid ent -> handleNode eid ent
+      Notify_NodeExternal eid ent -> handleNodeExternal eid ent
+      Notify_NodeDetails eid ent -> handleNodeDetails eid ent
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
       Notify_PublicNodeConfig _eid ent -> handlePublicNodeConfig ent
@@ -110,18 +113,29 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           -- , _bakeView_bakerStats = bakerStatsView
           }
 
-    nodesVS = _bakeViewSelector_nodes aggVS
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
-    handleNode nid node' = mconcat <$> sequence
-      [ whenM (viewSelects (Bounded nid) nodesVS) $ do
-          let node = if _node_deleted node' then Nothing else Just node'
-          pure mempty
-            { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node)) }
-      , whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
-          alerts <- case _node_deleted node' of
-            False -> getNodeAddresses $ Just nid
-            True -> pure [(Bounded nid, First Nothing)]
-          pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
+    nodeDetailsVS = _bakeViewSelector_nodeDetails aggVS
+    handleNodeExternal nid nodeExternal = whenM (viewSelects (Bounded nid) nodeAddressesVS) $
+      pure $ mempty
+        { _bakeView_nodeAddresses = toRangeView1
+          nodeAddressesVS
+          (Bounded $ _nodeExternal_id nodeExternal)
+          $ Just $ First $ do
+            guard $ _nodeExternalData_deleted $ _nodeExternal_data nodeExternal
+            ne <- nodeExternal
+            pure $ NodeSummary <$> _nodeExternalData_address
+                               <*> _nodeExternalData_alias
+                               <*> const 0
+                 $ ne
+        }
+    handleNodeDetails nodeDetails = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded $ _nodeDetails_id nodeDetails) nodeDetailsVS) $
+        pure $ mempty
+          { _bakeView_nodeDetails = toRangeView1
+              nodeDetailsVS
+              (Bounded $ _nodeDetails_id nodeDetails)
+              (Just $ _nodeDetails_data nodeDetails)
+          }
       , whenM (viewSelects () latestHeadVS) $ do
           latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
@@ -137,7 +151,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         { _bakeView_bakerAddresses = toRangeView1
             bakerAddressesVS
             (Bounded $ _baker_publicKeyHash baker)
-            (Just $ First $ bool (Just $ BakerSummary <$> _baker_publicKeyHash <*> _baker_alias <*> const 0 $ baker) Nothing $ _baker_deleted baker)
+            $ Just $ First $ do
+              guard $ _baker_deleted baker
+              pure $ BakerSummary <$> _baker_publicKeyHash
+                                  <*> _baker_alias
+                                  <*> const 0
+                   $ baker
         }
     handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
       pure $ mempty

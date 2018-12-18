@@ -101,7 +101,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
        AND NOT n.deleted
        AND el.stopped IS NULL
@@ -110,11 +110,11 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     |]
   case existingLog of
     Nothing -> do
-      node' <- get (fromId nodeId)
+      node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node)
         queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
-          "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+          "Unable to connect to node, " <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
@@ -127,11 +127,11 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- get (fromId nodeId)
+  node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
-        "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+        "Able to again connect to node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
 
 reportNodeWrongChainError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
@@ -142,7 +142,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
@@ -153,11 +153,11 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
     |]
   case existingLog of
     Nothing -> do
-      node' <- get $ fromId nodeId
+      node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node) expectedChainId actualChainId
         queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
-          "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
@@ -173,10 +173,10 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
-  node' <- get $ fromId nodeId
+  node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
-       "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
+       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
@@ -190,7 +190,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
        AND NOT n.deleted
        AND el.stopped IS NULL
@@ -214,11 +214,11 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        node <- getId nodeId
+        node <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
         for_ node $ \n -> do
           let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
           queueAlert (Just logId) $ Alert Unresolved heading $
-            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
+            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> "\n\n" <> message
 
 clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
                           MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
@@ -229,15 +229,17 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node <- get $ fromId nodeId
+  node <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   specErrs <- catMaybes <$> for lids getId
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
-        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
+        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> " is now in sync."
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
-nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)
+nodeNotDeleted nodeId = fmap (all not)
+  $ project (NodeExternal_dataField ~> NodeExternalData_deletedSelector)
+  $ (NodeExternal_idField ==. nodeId) `limitTo` 1
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
 insertErrorLog mkErrorLog = do

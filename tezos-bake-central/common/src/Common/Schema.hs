@@ -45,7 +45,7 @@ import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
-import Rhyolite.Schema (Email, HasId, Id, Json)
+import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -159,45 +159,74 @@ data ClientInfo = ClientInfo
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ClientInfo
 
+-- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
 data Node = Node
-  { _node_address :: !URI
-  , _node_alias :: !(Maybe Text)
-  , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
-  , _node_headLevel :: !(Maybe RawLevel)
-  , _node_headBlockHash :: !(Maybe BlockHash)
-  , _node_headBlockPred :: !(Maybe BlockHash)
-  , _node_headBlockBakedAt :: !(Maybe UTCTime)
-  , _node_peerCount :: !(Maybe Word64)
-  , _node_networkStat :: !NetworkStat
-  , _node_fitness :: !(Maybe Fitness)
-  , _node_deleted :: !Bool
-  , _node_updated :: !(Maybe UTCTime)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockPred = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
+-- data NodeExternal = NodeExternal (WithId (Id Node) (Deletable NodeExternal'))
+
+data NodeExternal = NodeExternal
+  { _nodeExternal_id :: !(Id Node)
+  , _nodeExternal_data :: !NodeExternalData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+-- TODO remove instance, should just be on `NodeExternalData`
+instance HasId NodeExternal where
+  type IdData NodeExternal = Id Node
+
+data NodeExternalData = NodeExternalData
+  { _nodeExternalData_address :: !URI
+  , _nodeExternalData_alias :: !(Maybe Text)
+  , _nodeExternalData_deleted :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId NodeExternalData where
+  type IdData NodeExternalData = Id Node
+
+-- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
+
+data NodeDetails = NodeDetails
+  { _nodeDetails_id :: !(Id Node)
+  , _nodeDetails_data :: NodeDetailsData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+-- TODO remove instance, should just be on `NodeDetailsData`
+instance HasId NodeDetails where
+  type IdData NodeDetails = Id Node
+
+-- TODO don't need Maybes here probably.
+data NodeDetailsData = NodeDetailsData
+  { _nodeDetailsData_identity :: !(Maybe CryptoboxPublicKeyHash)
+  , _nodeDetailsData_headLevel :: !(Maybe RawLevel)
+  , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
+  , _nodeDetailsData_peerCount :: !(Maybe Word64)
+  , _nodeDetailsData_networkStat :: !NetworkStat
+  , _nodeDetailsData_fitness :: !(Maybe Fitness)
+  , _nodeDetailsData_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance HasId NodeDetailsData where
+  type IdData NodeDetailsData = Id Node
+
+mkNodeDetails :: NodeDetailsData
+mkNodeDetails = NodeDetailsData
+  { _nodeDetailsData_identity = Nothing -- TODO
+  , _nodeDetailsData_headLevel = Nothing
+  , _nodeDetailsData_headBlockHash = Nothing
+  , _nodeDetailsData_headBlockPred = Nothing
+  , _nodeDetailsData_headBlockBakedAt = Nothing
+  , _nodeDetailsData_peerCount = Nothing
+  , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
+  , _nodeDetailsData_fitness = Nothing
+  , _nodeDetailsData_updated = Nothing
   }
 
-getNodeHeadBlock :: Node -> Maybe VeryBlockLike
+getNodeHeadBlock :: NodeDetailsData -> Maybe VeryBlockLike
 getNodeHeadBlock n = VeryBlockLike
-  <$> _node_headBlockHash n
-  <*> _node_headBlockPred n
-  <*> _node_fitness n
-  <*> _node_headLevel n
-  <*> _node_headBlockBakedAt n
+  <$> _nodeDetailsData_headBlockHash n
+  <*> _nodeDetailsData_headBlockPred n
+  <*> _nodeDetailsData_fitness n
+  <*> _nodeDetailsData_headLevel n
+  <*> _nodeDetailsData_headBlockBakedAt n
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -325,12 +354,16 @@ data ClientConfig = ClientConfig
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+-- newtype Baker_ = Baker (WithId PublicKeyHash (Deletable Baker'))
+
 data Baker = Baker
   { _baker_publicKeyHash :: !PublicKeyHash
   , _baker_alias :: !(Maybe Text)
   , _baker_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Baker
+
+-- newtype BakerDetails = BakerDetails (WithId PublicKeyHash BakerDetails')
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
@@ -534,6 +567,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''Event
   , ''MailServerConfig
   , ''Node
+  , ''NodeExternal
+  , ''NodeExternalData
+  , ''NodeDetails
+  , ''NodeDetailsData
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
@@ -565,6 +602,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
+  , 'Node
+  , 'NodeExternal
+  , 'NodeExternalData
+  , 'NodeDetails
+  , 'NodeDetailsData
   , 'Parameters
   , 'PublicNodeConfig
   , 'PublicNodeHead

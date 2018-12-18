@@ -80,4 +80,3 @@ badNodeHeadMessage text blockHashLink l =
 
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
-
