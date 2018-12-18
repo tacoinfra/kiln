@@ -310,7 +310,6 @@ body {
   flex-grow: 1;
   &:not(.app-welcome) {
     padding-left: @30px;
-    padding-top: @35px;
   }
   overflow: auto;
 
@@ -568,6 +567,7 @@ img.credits-obsidian {
 }
 
 .version-section {
+  margin-top: @35px;
   > .check-for-updates {
     padding-top: @10px;
 
@@ -798,6 +798,14 @@ img.credits-obsidian {
       }
     }
   }
+}
+
+h4.dashboard-section-title {
+    text-transform: uppercase;
+    margin-top: @20px;
+    margin-bottom: @20px;
+    color: @slate;
+    font-size: @14px;
 }
 
 .modal-box.add-baker {

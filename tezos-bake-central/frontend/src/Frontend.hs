@@ -827,7 +827,7 @@ nodesTab
   => m ()
 nodesTab =
   divClass "dashboard-section dashboard-section-nodes" $ do
-    el "h4" $ text "Nodes"
+    elClass "h4" "dashboard-section-title" $ text "Nodes"
     nodesDyn <- watchNodes $ pure $ viewRangeAll ()
     nodeTilesWidget nodesDyn
   where
@@ -975,7 +975,7 @@ bakersTab
   => m ()
 bakersTab =
   divClass "dashboard-section dashboard-section-bakers" $ do
-    el "h4" $ text "Bakers"
+    elClass "h4" "dashboard-section-title" $ text "Bakers"
     tilesDyn <- watchBakerAddresses
     tilesWidget tilesDyn
   where
