@@ -9,7 +9,7 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Control.Monad.Logger (logWarn)
+import Control.Monad.Logger (logWarn, logDebugSH)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (fromJSON)
@@ -51,7 +51,8 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
       Notify_Baker baker -> handleBaker baker
-      Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
+      -- Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
+      Notify_BakerRightsProgress x y z -> $(logDebugSH) ("TODO: Notify_BakerRightsProgress" :: Text, x, y, z) *> pure mempty
       Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
         (ErrorLogView_NodeError . NodeErrorLogView_BadNodeHead)
         eid
@@ -128,7 +129,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       ]
 
     bakerAddressesVS = _bakeViewSelector_bakerAddresses aggVS
-    bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
+    -- bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
@@ -139,13 +140,13 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
             (Bounded $ _baker_publicKeyHash baker)
             (Just $ First $ bool (Just $ BakerSummary <$> _baker_publicKeyHash <*> _baker_alias <*> const 0 $ baker) Nothing $ _baker_deleted baker)
         }
-    handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
-      pure $ mempty
-        { _bakeView_bakerDetails = toRangeView1
-            bakerDetailsVS
-            (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
-            (Just $ First $ Just bakerDetails)
-        }
+    -- handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
+    --   pure $ mempty
+    --     { _bakeView_bakerDetails = toRangeView1
+    --         bakerDetailsVS
+    --         (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
+    --         (Just $ First $ Just bakerDetails)
+    --     }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS
     handleNotificatee _nid = whenM (viewSelects () mailServerVS) $ do

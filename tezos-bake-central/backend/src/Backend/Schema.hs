@@ -84,7 +84,7 @@ stripOnly = coerce
 data Notify
   = Notify_Client !(Id Client)
   | Notify_Baker !Baker
-  | Notify_BakerDetails !BakerDetails
+  | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
@@ -110,8 +110,6 @@ instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
 instance HasDefaultNotify Baker where
   mkDefaultNotify = Notify_Baker
-instance HasDefaultNotify BakerDetails where
-  mkDefaultNotify = Notify_BakerDetails
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -435,6 +433,12 @@ instance ToField ClientWorker where
 instance FromField ClientWorker where
   fromField f b = maybe (fail "Invalid value for ClientWorker") pure . readMaybe =<< fromField f b
 
+instance ToField RightKind where
+  toField = toField . show
+instance FromField RightKind where
+  fromField f b = maybe (fail "Invalid value for RightKind") pure . readMaybe =<< fromField f b
+
+
 instance ToField URI where
   toField = toField . Uri.render
 instance FromField URI where
@@ -519,12 +523,20 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_baker_publicKeyHash]
   - entity: BakerDetails
+  - entity: BakerRightsCycleProgress
     constructors:
-      - name: BakerDetails
+      - name: BakerRightsCycleProgress
         uniques:
-          - name: _bakerDetails_uniqueness
+          - name: _bakerRightsCycleProgress_branch
             type: constraint
-            fields: [_bakerDetails_publicKeyHash]
+            fields: [_bakerRightsCycleProgress_chainId, _bakerRightsCycleProgress_publicKeyHash, _bakerRightsCycleProgress_branch]
+  - entity: BakerRight
+    constructors:
+      - name: BakerRight
+        uniques:
+          - name: _bakerRights_right
+            type: constraint
+            fields: [_bakerRight_branch, _bakerRight_level, _bakerRight_right]
   - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
@@ -550,6 +562,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _mailServerConfig_enabled
             type: Bool
             default: "True"
+  - primitive: RightKind
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
@@ -593,7 +606,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
   , (''Baker, 'BakerKey)
-  , (''BakerDetails, 'BakerDetailsKey)
+  , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
+  , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)

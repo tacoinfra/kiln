@@ -108,6 +108,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
         for_ cids $ notify . mkDefaultNotify
 
+      -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ do
         existingIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
         let newVal = Baker

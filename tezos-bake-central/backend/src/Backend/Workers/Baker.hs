@@ -1,28 +1,42 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
 module Backend.Workers.Baker where
 
+import Prelude hiding (cycle)
+
+import Control.Arrow ((&&&), )
+import Control.Lens (set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex)
+import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
-import Control.Monad (mzero)
+import Control.Monad (guard, mzero)
 import Control.Monad.Except (MonadError, runExceptT)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (logDebug, logDebugSH, logErrorSH)
+import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH)
 import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.State (execStateT, gets, modify)
+import Control.Monad.State (MonadState, execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Data.List.NonEmpty (nonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Semigroup ((<>))
+import Data.Map.Monoidal (MonoidalMap(..))
+import qualified Data.Map.Monoidal as MMap
+import Data.Semigroup ((<>), Max(..))
 import Data.Sequence (Seq())
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
+import Reflex (fforMaybe)
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..))
+import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
 
@@ -30,85 +44,149 @@ import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Schema
 import Backend.STM (atomicallyWith)
+import Common (curryMap)
 import Common.Schema
 import ExtraPrelude
+
+import Data.Align
+import Data.These (These(..), these)
+import Algebra.Lattice ((/\))
+
+-- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)
 
 bakerWorker
   :: forall m. MonadIO m
   => NodeDataSource
   -> m (IO ())
 bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (protoInfo, headM) <- liftIO $ atomically $
-    liftA2 (,) (waitForParams nds) (dataSourceHead nds)
+  headM <- liftIO $ atomically $
+    waitForParams nds *> dataSourceHead nds
 
   let db = _nodeDataSource_pool nds
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     $(logDebug) "Update baker cycle."
     let
+      chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = headBlock ^. hash
-      headLevel :: RawLevel = headBlock ^. level
-      maxLevel = maxRightsLevel protoInfo headLevel
-      latestCycle = headLevel `div` fromIntegral (_protoInfo_blocksPerCycle protoInfo)
-    $(logDebug) $ "Head level is " <> tshow (unRawLevel headLevel) <> " in cycle " <> tshow (unRawLevel latestCycle)
+    cycleHashes :: [RightsCycleInfo] <- fmap (fromMaybe []) $ atomicallyWith $ cycleStartHashes headHash
+    let
+      minCycle = minimumDef 0 $ fmap _rightsCycleInfo_cycle cycleHashes
+      maxCycle = maximumDef (-1) $ fmap _rightsCycleInfo_cycle cycleHashes
+      -- well just swizzle these around
+      cycleHashesByCycle = Map.fromList $ (_rightsCycleInfo_cycle &&& id) <$> cycleHashes
 
-    -- get the exist configured bakers from the DB, and any info about them we've retrieved previously
-    bakers :: Map (Id Baker) (Baker, Maybe BakerDetails) <- runDb (Identity db) $ do
+    $(logDebug) $ "BAKER baseline " <> tshow (_rightsCycleInfo_branch <$> cycleHashes)
+
+
+    -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
+    -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
+    needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- runDb (Identity db) $ do
       bakers :: Map (Id Baker) Baker <- selectMap BakerConstructor (Baker_deletedField ==. False)
-      bakerDetails0 :: Map (Id BakerDetails) BakerDetails <- selectMap BakerDetailsConstructor
-        (BakerDetails_publicKeyHashField
-        `in_` toList (fmap _baker_publicKeyHash bakers))
 
-      let bakerDetails = Map.fromList $ fmap (\x -> (_bakerDetails_publicKeyHash x, x)) $ toList bakerDetails0
-      return $ flip fmap bakers $ \b -> (b, Map.lookup (_baker_publicKeyHash b) bakerDetails)
+      bakerRightsCycleProgress' :: Map (Id BakerRightsCycleProgress) BakerRightsCycleProgress <- selectMap BakerRightsCycleProgressConstructor
+        ( BakerRightsCycleProgress_publicKeyHashField `in_` toList (fmap _baker_publicKeyHash bakers)
+        &&. BakerRightsCycleProgress_chainIdField ==. chainId
+        &&. BakerRightsCycleProgress_branchField `in_` fmap _rightsCycleInfo_branch cycleHashes
+        &&. BakerRightsCycleProgress_cycleField >=. minCycle
+        &&. BakerRightsCycleProgress_cycleField <=. maxCycle
+        )
+      -- here's what we've got:
+      let
+        haveProgress :: MonoidalMap (Cycle,  PublicKeyHash) (Max BakerRightsCycleProgress)
+        haveProgress = flip foldMap bakerRightsCycleProgress' $
+          \p -> MMap.singleton (_bakerRightsCycleProgress_cycle &&& _bakerRightsCycleProgress_publicKeyHash $ p) (Max p)
 
-    -- decide which blocks to operate on based on what we've done with the baker already
-    bakers1 :: Map (Id Baker) (Baker, Maybe BakerDetails, [BlockHash]) <- for bakers $ \(baker, maybeBakerDetails) -> do
-      newBHs <- runMaybeT $ do
-        bakerDetails <- MaybeT $ pure maybeBakerDetails
-        (_invalidatedBlockHashes, blockHashes) <- MaybeT $ atomicallyWith $
-          enumerateBranches (_bakerDetails_branch bakerDetails) headHash
-        pure blockHashes
-      pure (baker, maybeBakerDetails, maybe [headHash] id newBHs)
+      -- this is all of the progress we could possibly want.  we indicate that the progress we've made is none by using the level just before the cycle starts.
+      return $ (haveProgress <>) $ MMap.fromList $ do
+            baker <- toList bakers
+            cycleHash <- cycleHashes
+            let
+              cycle = _rightsCycleInfo_cycle cycleHash
+              pkh = _baker_publicKeyHash baker
+              v = BakerRightsCycleProgress
+                { _bakerRightsCycleProgress_chainId = chainId
+                , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash
+                , _bakerRightsCycleProgress_publicKeyHash = pkh
+                , _bakerRightsCycleProgress_cycle = cycle
+                , _bakerRightsCycleProgress_progress = _rightsCycleInfo_minLevel cycleHash - 1
+                }
+            return ((cycle, pkh), (Max v))
+    $(logDebug) $ "BAKER-NEED-PROGRESS " <> tshow needProgress
 
     let
-      bakersSet = Set.fromList $ _baker_publicKeyHash . fst <$> Map.elems bakers
+      pkhs :: Set PublicKeyHash
+      pkhs = Set.fromList $ fmap (_bakerRightsCycleProgress_publicKeyHash . getMax) $ toList needProgress
+      -- drop the already completed bakers.
+      unfinished :: MonoidalMap Cycle (NonEmpty BakerRightsCycleProgress)
+      unfinished = MMap.mapMaybe (nonEmpty . toList) $ curryMap $ flip MMap.mapMaybe needProgress $ \(Max p) -> do
+        cycle' <- Map.lookup (_bakerRightsCycleProgress_cycle p) cycleHashesByCycle
+        -- if we're already at maxLevel, then we're done here.
+        guard (_bakerRightsCycleProgress_progress p < _rightsCycleInfo_maxLevel cycle')
+        return p
 
-      mkFillMap
-        :: forall m' s e a. (MonadIO m', MonadReader s m', HasNodeDataSource s, MonadError e m', AsCacheError e)
-        => (BlockHash -> RawLevel -> NodeQuery (Seq a)) -> (a -> PublicKeyHash) -> m' (Map PublicKeyHash a)
-      mkFillMap cacheQ getter = flip execStateT Map.empty $ runMaybeT $ do
-        let queries = flip fmap [headLevel..maxLevel] $ \lvl ->
-              nodeQueryDataSource $ cacheQ headHash lvl
-        for_ queries $ \query -> do
-          done <- gets $ (bakersSet `Set.isSubsetOf`) . Map.keysSet
-          when done mzero
-          stuff <- query
-          for_ stuff $ \thing -> do
-            modify $ Map.insertWith (\_new old -> old) (getter thing) thing
-      {-# INLINE mkFillMap #-}
+      mNextUnfinished :: Maybe (NonEmpty BakerRightsCycleProgress, RightsCycleInfo) = do
+        (cycle, x) <- Map.lookupMin $ MMap.getMonoidalMap unfinished
+        cycle' <- Map.lookup cycle cycleHashesByCycle
+        return (x, cycle')
 
-    bakingRights :: Map PublicKeyHash BakingRights <- mkFillMap NodeQuery_BakingRights _bakingRights_delegate
-    endorsingRights :: Map PublicKeyHash EndorsingRights <- mkFillMap NodeQuery_EndorsingRights _endorsingRights_delegate
-
-    runDb (Identity (_nodeDataSource_pool nds)) $ for_ bakers $ \(baker, _bakerDetails) -> do
-      let pkh = _baker_publicKeyHash baker
-      $(logDebug) $ "Updating rights data baker " <> toPublicKeyHashText pkh
-      existingIds :: [Id BakerDetails] <- fmap toId <$> project AutoKeyField (BakerDetails_publicKeyHashField ==. pkh)
+    $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
+    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> for_ [minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished .. _rightsCycleInfo_maxLevel aCycleInfo] $ \lvl -> do
+      -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on, 
+      reqBakers <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
+      reqEndorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash lvl
       let
-        newVal = BakerDetails
-          { _bakerDetails_publicKeyHash = pkh
-          , _bakerDetails_nextBakeRights = _bakingRights_level <$> Map.lookup pkh bakingRights
-          , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup pkh endorsingRights
-          , _bakerDetails_branch = headBlock ^. hash
+        pri1baker :: Maybe BakingRights
+        pri1baker = fmap NonEmpty.head . nonEmpty . (filter $ (flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
+        endorsers :: Seq EndorsingRights
+        endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
+        branch :: BlockHash
+        branch = _rightsCycleInfo_branch aCycleInfo
+
+        bakerRightCycleInfo :: PublicKeyHash -> BakerRightsCycleProgress
+        bakerRightCycleInfo pkh = BakerRightsCycleProgress
+          { _bakerRightsCycleProgress_chainId = chainId
+          , _bakerRightsCycleProgress_branch = branch
+          , _bakerRightsCycleProgress_publicKeyHash = pkh
+          , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
+          , _bakerRightsCycleProgress_progress = lvl
           }
-      case nonEmpty existingIds of
-        Nothing -> void $ insert newVal
-        Just brids -> for_ brids $ \brid -> updateId brid
-          [ BakerDetails_nextBakeRightsField =. _bakerDetails_nextBakeRights newVal
-          , BakerDetails_nextEndorseRightsField =. _bakerDetails_nextEndorseRights newVal
-          , BakerDetails_branchField =. _bakerDetails_branch newVal
-          ]
-      notify $ mkDefaultNotify newVal
+        bakerRights :: Maybe (Id BakerRightsCycleProgress) -> PublicKeyHash -> [BakerRight]
+        bakerRights pid pkh =
+          [ BakerRight pid' lvl RightKind_Baking Nothing
+            | pid' <- toList pid
+            , pri1' <- toList pri1baker
+            , _bakingRights_delegate pri1' == pkh
+            ] ++
+          [ BakerRight pid' lvl RightKind_Endorsing (Just $ length $ _endorsingRights_slots end)
+            | pid' <- toList pid
+            , end <- toList endorsers
+            , _endorsingRights_delegate end == pkh
+            ]
+
+      runDb (Identity db) $ do
+        for_ pkhs $ \pkh -> do
+          let
+            newProgress = bakerRightCycleInfo pkh
+          progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
+            ( BakerRightsCycleProgress_publicKeyHashField ==. pkh
+            &&. BakerRightsCycleProgress_chainIdField ==. chainId
+            &&. BakerRightsCycleProgress_branchField ==. branch
+            )
+          progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
+            Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
+            Just ((pId, p):|_)
+              -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
+              | _bakerRightsCycleProgress_progress p < lvl -> do
+                updateId pId
+                  [ BakerRightsCycleProgress_progressField =. lvl
+                  ]
+                return $ Just pId
+              | otherwise -> return Nothing -- already have this progress, do nothing.
+          rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
+          traverse_ notify $ Notify_BakerRightsProgress <$> progressId <*> pure newProgress <*> pure rights
+
   case res of
     Right _ -> pure ()
     Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
+
+  $(logDebug) $ "BAKER STEP" <> tshow res

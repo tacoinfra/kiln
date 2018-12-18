@@ -19,6 +19,8 @@
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
+import Prelude hiding (cycle)
+
 import Control.Applicative (ZipList (..))
 import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
                                retry, writeTQueue, writeTVar)
@@ -316,6 +318,47 @@ dataSourceNode nds = do
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
     maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
 
+takeWhileJust :: [Maybe a] -> [a]
+takeWhileJust [] = []
+takeWhileJust (Just x: xs) = x:takeWhileJust xs
+takeWhileJust (Nothing: _) = []
+
+
+data RightsCycleInfo = RightsCycleInfo
+  { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in the cycle that confers rights
+  , _rightsCycleInfo_cycle :: !Cycle       -- the cycle in which rights are confered
+  , _rightsCycleInfo_minLevel :: !RawLevel -- the first level in that cycle
+  , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level in that cycle
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
+cycleStartHashes
+  :: forall nds m. (HasNodeDataSource nds, MonadReader nds m, MonadSTM m)
+  => BlockHash -> m (Maybe [RightsCycleInfo]) -- Nothing when the branch is not in history.
+cycleStartHashes blkHash = do
+  dsrc <- asks (^. nodeDataSource)
+  protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
+  history <- readTVar' $ _nodeDataSource_history dsrc
+  return $ do
+    branch <- blkHash `Map.lookup` (_cachedHistory_blocks history)
+    let
+      minLvl = _cachedHistory_minLevel history
+      lvl = minLvl + RawLevel (length branch)
+      cycle = levelToCycle protoInfo lvl
+      preservedCycles = _protoInfo_preservedCycles protoInfo
+      cycles = [max 0 (cycle - (2 + preservedCycles)) .. cycle]
+      minLevels = firstLevelInCycle protoInfo <$> cycles
+      maxLevels = pred . firstLevelInCycle protoInfo . succ <$> cycles
+      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . unRawLevel . subtract minLvl <$> minLevels
+    return $ getZipList $ RightsCycleInfo
+      <$> ZipList branches
+      <*> ZipList cycles
+      <*> ZipList minLevels
+      <*> ZipList maxLevels
+
+
+
+
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash
   where
@@ -470,6 +513,7 @@ nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q 
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
+    {-# INLINE nodeRPC' #-}
 
     self :: forall b. NodeQuery b -> ExceptT CacheError IO b
     self = ExceptT . self'

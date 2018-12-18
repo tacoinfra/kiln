@@ -334,16 +334,54 @@ instance HasId Baker
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
-  , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
-  , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
   , _bakerDetails_branch :: !BlockHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails
+
+data BakerRightsCycleProgress = BakerRightsCycleProgress
+  { _bakerRightsCycleProgress_chainId :: !ChainId
+  , _bakerRightsCycleProgress_branch :: !BlockHash -- The hash of the first block in the cycle that confers rights.
+  -- | we reuse this table to also give us clues about which cycles we've ever
+  -- tried to cache, so we can start caching before any delegates have been
+  -- configured.
+  , _bakerRightsCycleProgress_publicKeyHash :: !PublicKeyHash
+  , _bakerRightsCycleProgress_cycle :: !Cycle
+  , _bakerRightsCycleProgress_progress :: !RawLevel
+    -- ranging over the first level in this cycle to the last
+    -- this indicates that the amount already computed is from
+    -- the first level in the cycle to 'progress', inclusive
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerRightsCycleProgress
+
+data RightKind = RightKind_Baking | RightKind_Endorsing
+  deriving (Eq, Ord, Show, Read, Enum, Bounded)
+instance Aeson.FromJSONKey RightKind
+instance Aeson.ToJSONKey RightKind
+
+-- It's an explicit choice not to include either the priority; this reduces the
+-- amount of reduntant data since we only really care about expected returns
+-- rather than all possible.  For the same reason we *do* include endorsement
+-- slots, since that affects expected returns.
+data BakerRight = BakerRight
+  { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
+  , _bakerRight_level :: !RawLevel
+  , _bakerRight_right :: !RightKind
+  , _bakerRight_slots :: !(Maybe Int)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerRight
+
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
   , _bakeEfficiency_bakingRights :: !Word64
   -- TODO:
+  -- { _bakeEfficiency_bakerSucecss :: Sum Int
+  -- , _bakeEfficiency_bakerTotal :: Sum Int
+  -- , _bakeEfficiency_endorseOperationSuccess
+  -- , _bakeEfficiency_endorseOperationTotal
+  -- , _bakeEfficiency_endorseSlotsSuccess
+  -- , _bakeEfficiency_endorseSlotsTotal
+  -- , _bakeEfficiency_bakingRights :: !Word64
   -- , _bakeEfficiency_endorsedBlocks :: !Word64
   -- , _bakeEfficiency_endorsingRights :: !Word64
   -- , _bakeEfficiency_endorsedSlots :: !Word64
@@ -516,13 +554,15 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
+  , ''Baker
+  , ''BakerDetails
+  , ''BakerRight
+  , ''BakerRightsCycleProgress
   , ''BlockBaker
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
-  , ''Baker
-  , ''BakerDetails
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
@@ -538,6 +578,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
+  , ''RightKind
   , ''SeenEvent
   , ''AlertNotificationMethod
   , ''SmtpProtocol
@@ -547,13 +588,15 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpgradeCheckError
   , ''UpstreamVersion
   ] ++ map makeLenses
-  [ 'BakedEvent
+  [ 'BakeEfficiency
+  , 'BakedEvent
   , 'BakedEventOperation
-  , 'BakeEfficiency
-  , 'BlockBaker
-  , 'CachedProtocolConstants
   , 'Baker
   , 'BakerDetails
+  , 'BakerRight
+  , 'BakerRightsCycleProgress
+  , 'BlockBaker
+  , 'CachedProtocolConstants
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
