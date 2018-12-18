@@ -342,6 +342,7 @@ body {
     display: block;
     > * {
       overflow-x: hidden;
+      overflow-y: hidden;
       text-overflow: ellipsis;
     }
   }
