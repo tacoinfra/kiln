@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -13,15 +14,15 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, writeTVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
-import Control.Monad.State (execStateT)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import qualified Data.Map as Map
+import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
@@ -35,7 +36,7 @@ import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History (CachedHistory (..), accumHistory)
+import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
@@ -49,6 +50,7 @@ import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
+import Backend.STM (atomicallyWith)
 import Common.Schema
 import ExtraPrelude
 
@@ -56,32 +58,23 @@ import ExtraPrelude
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
--- TODO: make this "configurable" implementation idea:  we could partition
--- history into horizontal level regions (say, every 10k levels) and require
--- each "slice" start on a boundary, and contain only the blocks within their
--- assigned slice.
-minCachedBlockLevel :: RawLevel
-minCachedBlockLevel = 1
-
-nodeMonitorBranchProgess :: (MonadLogger m) => BlockHash -> BlockHash -> Int -> Int -> m ()
-nodeMonitorBranchProgess branch current i n = when (i `mod` 1000 == 0) $ $(logInfoSH) ("catching up" :: Text, branch, current, i, n)
-
 haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  let httpMgr = _nodeDataSource_httpMgr nds
-  let chainId = _nodeDataSource_chain nds
-  let cacheVar = _nodeDataSource_history nds
-  oldHead <- runReaderT dataSourceHead nds
-  newBlock <- liftIO $ modifyMVar cacheVar $ \cache -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks cache)
-    newStateRsp :: Either PublicNodeError CachedHistory' <- runExceptT $
-      flip runReaderT (PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $
-        flip execStateT cache $ do
-          _ <- accumHistory nodeMonitorBranchProgess chainId (const ()) headBlockInfo
-          $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+  let
+    httpMgr = _nodeDataSource_httpMgr nds
+    chainId = _nodeDataSource_chain nds
+    historyVar = _nodeDataSource_history nds
+  (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
+  newBlock <- do
+    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+    newStateRsp :: Either PublicNodeError () <- runExceptT $
+      flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+        accumHistory chainId (const ()) headBlockInfo
+        $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+
     case newStateRsp of
-      Left e -> $(logWarnSH) e $> (cache, Left e)
-      Right good -> return (good, Right newBlock)
+      Left e -> $(logWarnSH) e $> Left e
+      Right () -> pure $ Right newBlock
 
   when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
     updatedLevel <- liftIO $ atomically $ do
@@ -96,8 +89,9 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
-  updateNodeDataSource nds nodeAddr headBlockInfo
-  haveNewHead nds Nothing nodeAddr headBlockInfo
+  atomically $ do
+    updateNodeDataSource nds nodeAddr headBlockInfo
+    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
 
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
@@ -111,6 +105,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
       , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
       , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
       , Node_updatedField =. Just now
+      , Node_headBlockPredField =. Just (headBlockInfo ^. monitorBlock_predecessor)
       ]
     getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 
@@ -150,7 +145,6 @@ nodeWorker
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  -- IO
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
 
@@ -280,6 +274,11 @@ updateDataSource nds (pn, chain, uri) = do
                 ]
               notify . Notify_PublicNodeHead eid =<< getId eid
 
+{- Send a 'bad branch' alert if either:
+ - 1) last common ancestor is at least 3 levels old (on either branch)
+ - 2) last common ancestor is 2 levels old (on the best branch) and the node is still on it
+ - 3) last common ancestor is 2 levels old (on the best branch) and the best branch's parent was better than what the other branch had on the same level
+ -}
 nodeAlertWorker
   :: NodeDataSource
   -> AppConfig
@@ -290,25 +289,31 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
     selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
-    nodeHeadAndLca :: Either RpcError (Block, Maybe VeryBlockLike)
-      <- flip runReaderT nds $ runExceptT $ do
-        nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
-        bp <- branchPoint (nodeHead ^. hash) (latestHead ^. hash)
-        pure (nodeHead, bp)
-
-    for_ nodeHeadAndLca $ \(nodeHead, lcaBlock') -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $
+    action' <- flip runReaderT nds $ runExceptT @CacheError $ do
+      nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
+      lcaBlock' <- atomicallyWith $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+      let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
+          good = clearBadNodeHeadError nodeId
       case lcaBlock' of
-        Nothing -> reportBadNodeHeadError nodeId latestHead nodeHead (Nothing :: Maybe VeryBlockLike)
+        Nothing -> return bad
         Just lcaBlock -> do
           let
             -- Two cases to consider:
             --   * Node is behind, so the LCA block and node block will be the same
             --   * Node is branched, so the LCA block will be behind both the node *and* the latest
             levelsBehindHead = latestHead ^. level - lcaBlock ^. level
-
-          if levelsBehindHead > 1
-            then reportBadNodeHeadError nodeId latestHead nodeHead (Just lcaBlock)
-            else clearBadNodeHeadError nodeId
+            levelsBehindNode = nodeHead ^. level - lcaBlock ^. level
+          if | max levelsBehindHead levelsBehindNode > 2 -> return bad
+             | levelsBehindHead < 2 -> return good
+             | levelsBehindNode == 0 -> return bad
+             | otherwise -> do
+                 history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
+                 let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
+                     uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
+                 latestParent <- nodeQueryDataSource (NodeQuery_Block parentHash)
+                 latestUncle <- nodeQueryDataSource (NodeQuery_Block uncleHash)
+                 if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
+    for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
 updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
 updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do

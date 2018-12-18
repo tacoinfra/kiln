@@ -160,6 +160,9 @@ intersecting m = AppendIntervalMap . IMap.intersecting (unAppendIntervalMap m)
 within :: forall k v e. (IsInterval k e) => AppendIntervalMap k v -> k -> AppendIntervalMap k v
 within m = AppendIntervalMap . IMap.within (unAppendIntervalMap m)
 
+empty :: AppendIntervalMap k v
+empty = AppendIntervalMap (IMap.empty)
+
 
 -- | Builds a new 'AppendIntervalMap' with a function that can combine adjacent intervals.
 -- Returning 'Nothing' from the combining function means that the two elements should not be combined.
@@ -203,8 +206,9 @@ instance Bounded (WithInfinity a) where
 
 getBounded :: WithInfinity a -> Maybe a
 getBounded = \case
+  UpperInfinity -> Nothing
   Bounded a -> Just a
-  _ -> Nothing
+  LowerInfinity -> Nothing
 
 flattenIntervals
   :: (Ord e, Semigroup a)

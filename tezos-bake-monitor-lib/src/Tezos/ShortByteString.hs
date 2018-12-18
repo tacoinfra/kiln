@@ -1,19 +1,28 @@
 {-# LANGUAGE CPP #-}
 
+#if defined(ghcjs_HOST_OS)
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+#endif
+
 module Tezos.ShortByteString (ShortByteString, toShort, fromShort) where
 
 #if defined(ghcjs_HOST_OS)
+
+import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
-#else
-import Data.ByteString.Short (ShortByteString, toShort, fromShort)
-#endif
+import Data.Hashable (Hashable)
 
+newtype ShortByteString = ShortByteString { fromShort :: ByteString }
+  deriving (Eq, Ord, NFData, Hashable)
 
-#if defined(ghcjs_HOST_OS)
-newtype ShortByteString = ShortByteString { fromShort :: ByteString } deriving (Eq, Ord)
 toShort :: ByteString -> ShortByteString
 toShort = ShortByteString
 {-# INLINE toShort #-}
+
+#else
+
+import Data.ByteString.Short (ShortByteString, fromShort, toShort)
+
 #endif
 
 

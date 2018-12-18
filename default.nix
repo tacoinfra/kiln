@@ -5,13 +5,7 @@
 let
   obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
 
-  tezos-bake-platform = import (pkgs.fetchgit {
-    url = "https://gitlab.com/obsidian.systems/tezos-baking-platform.git";
-    rev = "d9fce6eaa1401c981e5fc524a260892a21ed3335";
-    sha256 = "0svndkkibkygnzvjvybbxgiyw15kaiq4l9f5m4m1680fmrqwjdxi";
-    fetchSubmodules = false;
-  }) {};
-
+  tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
 
   nodeConfigOptions = {
@@ -33,7 +27,7 @@ let
       network = "mainnet";
       p2pPort = 9732;
       rpcPort = 8732;
-      tzKit = tezos.betanet.kit;
+      tzKit = tezos.mainnet.kit;
       monitorPort = 8000;
     };
   };
@@ -83,10 +77,12 @@ let
     , user ? monitorName
     , rpcPort
     , monitorPort
+    , appConfig
+    , version
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = obApp.linuxExe;
+          exe = obApp.linuxExeConfigurable appConfig version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -262,7 +258,7 @@ let
 
 in obApp // {
   inherit dockerExe dockerImage;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, ... }:
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
@@ -276,7 +272,11 @@ in obApp // {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
           (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig))
+          (mkMonitorModule (args // nodeConfig // {
+              appConfig = config;
+              version = version;
+            })
+          )
           syslog-ngModule
           usersModule
         ];

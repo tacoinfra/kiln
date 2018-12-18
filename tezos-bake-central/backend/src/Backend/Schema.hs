@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
@@ -14,6 +15,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
@@ -26,6 +28,8 @@ module Backend.Schema
   , toId
   ) where
 
+import Control.Lens (Field1, Field2)
+import Data.Time (UTCTime)
 import Data.Aeson (FromJSON, ToJSON, toJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -48,9 +52,9 @@ import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary)
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
 import Database.PostgreSQL.Simple.FromField hiding (Binary)
-import Database.PostgreSQL.Simple.ToField (ToField (toField))
+import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
@@ -69,6 +73,7 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Backend.Version (parseVersion)
+import Common.AppendIntervalMap (WithInfinity(..))
 import Common.Schema
 import ExtraPrelude
 
@@ -78,20 +83,21 @@ stripOnly = coerce
 
 data Notify
   = Notify_Client !(Id Client)
-  | Notify_Delegate !(Id Delegate) --TODO: Use PublicKeyHash instead
+  | Notify_Baker !Baker
+  | Notify_BakerDetails !BakerDetails
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
-  | Notify_ErrorLogMultipleBakersForSameDelegate !(Id ErrorLogMultipleBakersForSameDelegate)
+  | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
-  | Notify_MailServerConfig !(Id MailServerConfig)
+  | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
   | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
-  | Notify_TelegramConfig !(Id TelegramConfig) TelegramConfig
+  | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
   deriving (Eq, Ord, Typeable, Generic, Show)
 instance ToJSON Notify
@@ -102,22 +108,30 @@ class HasDefaultNotify f where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
-instance HasDefaultNotify (Id Delegate) where
-  mkDefaultNotify = Notify_Delegate
+instance HasDefaultNotify Baker where
+  mkDefaultNotify = Notify_Baker
+instance HasDefaultNotify BakerDetails where
+  mkDefaultNotify = Notify_BakerDetails
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
   mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
   mkDefaultNotify = Notify_ErrorLogInaccessibleNode
-instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameDelegate) where
-  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameDelegate
+instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
+  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
-instance HasDefaultNotify (Id MailServerConfig) where
-  mkDefaultNotify = Notify_MailServerConfig
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
+
+class HasDefaultNotifyUnique f where
+  mkDefaultNotifyUnique :: Id f -> f -> Notify
+
+instance HasDefaultNotifyUnique MailServerConfig where
+  mkDefaultNotifyUnique = Notify_MailServerConfig
+instance HasDefaultNotifyUnique TelegramConfig where
+  mkDefaultNotifyUnique = Notify_TelegramConfig
 
 notify :: (PersistBackend m) => Notify -> m ()
 notify n = do
@@ -156,8 +170,29 @@ updateIdNotify tid dt = do
   updateId tid dt
   notify $ mkDefaultNotify tid
 
-insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m ()
-insertNotify a = notify . mkDefaultNotify =<< insert' a
+updateIdNotifyUnique
+  :: (HasDefaultNotifyUnique a, EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  => Id a
+  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> m ()
+updateIdNotifyUnique tid dt = do
+  updateId tid dt
+  newRow <- getId tid >>= \case
+    Nothing -> fail "impossible got nothing back after insertion in DB transaction"
+    Just x -> pure x
+  notify $ mkDefaultNotifyUnique tid newRow
+
+insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotify a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotify primaryKey
+  pure primaryKey
+
+insertNotifyUnique :: (HasDefaultNotifyUnique a, EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
+insertNotifyUnique a = do
+  primaryKey <- insert' a
+  notify $ mkDefaultNotifyUnique primaryKey a
+  pure primaryKey
 
 selectIds
   :: forall a (m :: * -> *) v (c :: (* -> *) -> *) t.
@@ -405,6 +440,19 @@ instance ToField URI where
 instance FromField URI where
   fromField f b = fromMaybe (error "Invalid URI") . Uri.mkURI <$> fromField f b
 
+
+instance ToField (WithInfinity UTCTime) where
+  toField = \case
+    UpperInfinity -> Plain "'infinity'::timestamp"
+    Bounded x -> toField x
+    LowerInfinity -> Plain "'-infinity'::timestamp"
+
+instance Field1 (a :. b) (a' :. b) a a' where
+  _1 a2fb (a :. b) = (:. b) <$> a2fb a
+
+instance Field2 (a :. b) (a :. b') b b' where
+  _2 a2fb (a :. b) = (a :.) <$> a2fb b
+
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: Client
     constructors:
@@ -462,14 +510,21 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: _pendingReward_uniqueness
             type: constraint
-            fields: [_pendingReward_delegate, _pendingReward_hash]
-  - entity: Delegate
+            fields: [_pendingReward_baker, _pendingReward_hash]
+  - entity: Baker
     constructors:
-      - name: Delegate
+      - name: Baker
         uniques:
-          - name: _delegate_uniqueness
+          - name: _baker_uniqueness
             type: constraint
-            fields: [_delegate_publicKeyHash]
+            fields: [_baker_publicKeyHash]
+  - entity: BakerDetails
+    constructors:
+      - name: BakerDetails
+        uniques:
+          - name: _bakerDetails_uniqueness
+            type: constraint
+            fields: [_bakerDetails_publicKeyHash]
   - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
@@ -491,6 +546,10 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               - _mailServerConfig_smtpProtocol
               - _mailServerConfig_userName
               - _mailServerConfig_password
+        fields:
+          - name: _mailServerConfig_enabled
+            type: Bool
+            default: "True"
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
@@ -498,7 +557,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
-  - entity: ErrorLogMultipleBakersForSameDelegate
+  - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
   - entity: CachedProtocolConstants
     constructors:
@@ -533,12 +592,13 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
-  , (''Delegate, 'DelegateKey)
+  , (''Baker, 'BakerKey)
+  , (''BakerDetails, 'BakerDetailsKey)
   , (''ErrorLog, 'ErrorLogKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
-  , (''ErrorLogMultipleBakersForSameDelegate, 'ErrorLogMultipleBakersForSameDelegateKey)
+  , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)

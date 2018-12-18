@@ -40,11 +40,6 @@ instance (Reflex t, Monad m) => HasModal t (ModalT t m) where
   type ModalM (ModalT t m) = m
   tellModal = ModalT . tellEvent . fmap First
 
--- TODO: Remove this after upgrading reflex: https://github.com/reflex-frp/reflex/commit/4a32a8202e180f0919ec36e6770f6af5ce88818e
-instance PrimMonad m => PrimMonad (EventWriterT t w m) where
-  type PrimState (EventWriterT t w m) = PrimState m
-  primitive = lift . primitive
-
 newtype ModalT t m a
   = ModalT { unModalT :: EventWriterT t (First (Event t () -> m (Event t ()))) m a }
   deriving
@@ -82,6 +77,7 @@ instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t m
   runWithReplace a0 a' = ModalT $ runWithReplace (unModalT a0) (fmapCheap unModalT a')
   traverseDMapWithKeyWithAdjust f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjust (coerce f) dm0 dm'
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjustWithMove (coerce f) dm0 dm'
+  traverseIntMapWithKeyWithAdjust f im0 im' = ModalT $ traverseIntMapWithKeyWithAdjust (coerce f) im0 im'
 
 runModalT
   :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m, MonadJSM m, TriggerEvent t m)
@@ -111,11 +107,10 @@ withModals
 withModals backdropCfg open body = do
   b <- body
   document <- DOM.currentDocumentUnchecked
+  escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
+    key <- getKeyEvent
+    pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
   rec
-    escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
-      key <- getKeyEvent
-      pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
-
     isVisible <- holdDyn False $ leftmost [True <$ open, False <$ close]
     (backdropEl, _) <- elDynAttr' "div"
       (ffor isVisible $ \isVis ->

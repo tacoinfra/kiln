@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -5,8 +6,11 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Frontend.Common where
@@ -15,22 +19,30 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
+import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (TimeZone, UTCTime)
+import Data.Time (TimeZone, UTCTime, diffUTCTime)
 import qualified Data.Time as Time
-import qualified Data.Time.Format.Human as HumanTime
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
+import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
+import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
+import Tezos.Base58Check (HashBase58Error(..))
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
+import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
+import Common (humanizeDiffTime)
+import Common.App (Bake)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
@@ -60,23 +72,39 @@ isEnabled Enabled = True
 isEnabled Disabled = False
 
 urlLink :: DomBuilder t m => Uri.URI -> m a -> m a
-urlLink url = elAttr "a" ("href"=:Uri.render url <> "target"=:"_blank")
+urlLink = hrefLink . Uri.render
+
+hrefLink :: DomBuilder t m => Text -> m a -> m a
+hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
 tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
 
-localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" $
-    Time.utcToZonedTime tz t
+  dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .
+    Time.utcToZonedTime tz <$> t
 
-localHumanizedTimestamp :: (DomBuilder t m, PostBuild t m, MonadReader r m, HasTimeZone r, HasTimer t r) => Dynamic t Time.UTCTime -> m ()
-localHumanizedTimestamp tDyn = do
+localHumanizedTimestamp
+  ::
+    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+    , MonadReader r m, HasTimeZone r, HasTimer t r
+    )
+  => Dynamic t (Maybe Text)
+  -> Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  dynText $ ffor2 currentTime tDyn $ \c t ->
-    T.pack $ HumanTime.humanReadableTimeI18N' HumanTime.defaultHumanTimeLocale { HumanTime.timeZone = tz } c t
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" .  Time.utcToZonedTime tz <$> tDyn
+
+  elDynAttr "span" (fold
+    [ Map.fromList . fmap ("data-title",) . toList <$> titleDyn -- TODO: title doesn't work!
+    , Map.singleton "data-tooltip" <$> ltDyn
+    , pure $ Map.fromList [("data-position", "bottom center")]
+    ]) $ dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
+      humanizeDiffTime (diffUTCTime c t)
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
@@ -105,10 +133,10 @@ modalOpeningButton :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 modalOpeningButton = buttonWithInfoCls ""
 
 buttonIconWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> Text -> m (Event t ())
-buttonIconWithInfoCls icon classes label t =
+buttonIconWithInfoCls i classes label t =
   fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
-  elClass "i" ("icon " <> icon) blank
-  text label
+    icon i
+    text label
 
 buttonWithInfo :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 buttonWithInfo = buttonWithInfoCls ""
@@ -128,13 +156,15 @@ tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
 
 tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
-tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
+tooltipPos = tooltipPos' ""
 
+tooltipPos' :: (DomBuilder t m) => Text -> Text -> Text -> m a -> m a
+tooltipPos' cls p t = elAttr "div" ("class" =: cls <> "data-tooltip" =: t <> "data-position" =: p)
 
 -- | Builds a form element and captures the submit event.
 formWithSubmit :: (DomBuilder t m, PostBuild t m) => m a -> m (a, Event t ())
 formWithSubmit f = do
-  (el_, r) <- elDynAttrWithPreventDefaultEvent' Submit "form" (pure $ "class"=:"ui form") f
+  (el_, r) <- elDynAttrWithModifyEvent' preventDefault Submit "form" (pure $ "class"=:"ui form") f
   pure (r, domEvent Submit el_)
 
 -- | Like 'elDynAttr'' but allows you to modify the element configuration.
@@ -152,39 +182,70 @@ elDynAttrWithModifyConfig' f elementTag attrs child = do
   notReadyUntil =<< getPostBuild
   pure result
 
--- | Like 'elDynAttr'' but configures "prevent default" on the given event.
-elDynAttrWithPreventDefaultEvent'
+
+-- | Like 'elDynWithModifyConfig'' but only configures the 'EventFlags'.
+elDynAttrWithModifyEvent'
   :: forall en t m a. (DomBuilder t m, PostBuild t m)
-  => EventName en              -- ^ Event on the element to configure with 'preventDefault'
+  => EventFlags
+  -> EventName en              -- ^ Event on the element to configure with 'preventDefault'
   -> Text                      -- ^ Element tag
   -> Dynamic t (Map Text Text) -- ^ Element attributes
   -> m a                       -- ^ Child of element
   -> m (Element EventResult (DomBuilderSpace m) t, a) -- An element and the result of the child
-elDynAttrWithPreventDefaultEvent' ev = elDynAttrWithModifyConfig'
+elDynAttrWithModifyEvent' f ev = elDynAttrWithModifyConfig'
   (\elCfg -> elCfg & elementConfig_eventSpec %~
-    addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const preventDefault))
+    addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const f))
 
 validateUri :: Validator.Validator t m Uri.URI
-validateUri = Validator.Validator mkRootUri setUrlType
+validateUri =  Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
 
-blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => Text -> m a -> m a
-blockExplorerLink path f = do
+validateBakerAddr :: Validator.Validator t m PublicKeyHash
+validateBakerAddr = Validator.Validator
+  -- TODO human readable error message
+  checkBakerAddr
+  id
+
+checkBakerAddr :: Text -> Either Text PublicKeyHash
+checkBakerAddr v = do
+  when (not $ T.take 3 v `elem` okPrefixes) $ do
+    Left $ (if T.take 3 v == "KT1" then "\"KT1\" addresses cannot bake. Address" else "Baker address") <> " must begin with " <> conjList ", " " or " (NE.map tshow okPrefixes) <> "."
+  for_ (T.find (isNothing . flip T.find "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" . (==)) v) $ \ch ->
+    Left $ "The character " <> tshow ch <> " is not allowed in a baker address."
+  when (T.length v /= 36) $ Left $ "Baker address is too " <> (if T.length v < 36 then "short" else "long") <> " (must be 36 characters)."
+  flip first (tryReadPublicKeyHashText v) $ \case
+    HashBase58Error_InvalidPrefix _ _ -> "This address is outside the valid range for " <> T.take 3 v <> " addresses."
+    HashBase58Error_BadChecksum _ _ _ -> "This address failed the integrity check. Please check that it has been copied correctly."
+    e -> "An unknown error happened, please report this as a bug: " <> tshow e
+  where
+    okPrefixes :: NE.NonEmpty Text
+    okPrefixes = "tz1" :| ["tz2", "tz3"]
+
+conjList :: Text -> Text -> NE.NonEmpty Text -> Text
+conjList comma conj = go
+  where
+    go xs = case NE.uncons xs of
+      (x, Nothing) -> x
+      (x, Just (y :| [])) -> x <> conj <> y
+      (x, Just xs') -> x <> comma <> go xs'
+
+blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
+blockExplorerLink dPath f = do
   chain <- asks (^. frontendConfig . frontendConfig_chain)
   case chain of
     Right _chainId -> f
     Left namedChain ->
-      elAttr "a" ("href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
+      elDynAttr "a" (ffor dPath $ \path -> "href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
 
-blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m ()
-blockHashLink blockHash = blockHashLinkAs blockHash (text $ T.take 14 $ toBase58Text blockHash)
+blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m ()
+blockHashLink blockHash = blockHashLinkAs blockHash (dynText $ T.take 14 . toBase58Text <$> blockHash)
 
-blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => BlockHash -> m a -> m a
-blockHashLinkAs blockHash = blockExplorerLink (toBase58Text blockHash)
+blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m a -> m a
+blockHashLinkAs blockHash = blockExplorerLink (toBase58Text <$> blockHash)
 
-publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m) => PublicKeyHash -> m ()
-publicKeyHashLink pkh = blockExplorerLink hash (text hash)
+publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => PublicKeyHash -> m ()
+publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)
   where hash = toPublicKeyHashText pkh
 
 fitnessText :: Fitness -> Text
@@ -201,6 +262,15 @@ changelogLink cls version f = do
   where
     versionText = T.pack (showVersion version)
     versionAnchor = "anchor-" <> T.filter (/='.') versionText
+
+iconClass :: Text -> Text
+iconClass i = "ui " <> i <> " icon"
+
+icon :: DomBuilder t m => Text -> m ()
+icon i = elClass "i" (iconClass i) blank
+
+iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
+iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
@@ -248,9 +318,89 @@ basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
 
 cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModal f close = elAttr "div" ("class"=:"modal-box") $ do
+cancelableModal = cancelableModalWithClasses []
+
+cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+
+data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
+  deriving (Eq, Show, Ord)
+
+manageMenu
+  :: forall menu m t.
+    ( PerformEvent t m, TriggerEvent t m, MonadHold t m, MonadFix m, MonadIO (Performable m)
+    , HasDomEvent t menu 'MouseleaveTag, HasDomEvent t menu 'MouseenterTag
+    )
+  => Event t ()
+  -> menu
+  -> m (Event t SemUi.Direction)
+manageMenu click menuEl = mdo
+  afterPendingClose <- delay 1 $ ffilter (== MenuState_PendingClose) $ updated menuState
+  menuState <- holdUniqDyn <=< foldDyn ($) MenuState_Closed $ leftmost
+    [ click $> \case
+        MenuState_Closed -> MenuState_PendingClose
+        MenuState_Opened -> MenuState_Closed
+        MenuState_PendingClose -> MenuState_Closed
+    , domEvent Mouseleave menuEl $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_PendingClose
+        MenuState_PendingClose -> MenuState_PendingClose
+    , domEvent Mouseenter menuEl $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_Opened
+        MenuState_PendingClose -> MenuState_Opened
+    , afterPendingClose $> \case
+        MenuState_Closed -> MenuState_Closed
+        MenuState_Opened -> MenuState_Opened
+        MenuState_PendingClose -> MenuState_Closed
+    ]
+  open <- transitionEvent
+    (\a b -> if a == MenuState_Closed && b /= MenuState_Closed then Just () else Nothing)
+    MenuState_Closed
+    (updated menuState)
+  close <- transitionEvent
+    (\a b -> if a /= MenuState_Closed && b == MenuState_Closed then Just () else Nothing)
+    MenuState_Closed
+    (updated menuState)
+
+  pure $ leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+
+
+aliasedInputForm
+  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a
+  -> m () -- ^ Feedback after submit
+  -> Event t () -- ^ Reset the form
+  -> Text -- ^ Label
+  -> Text -- ^ Submit tooltip
+  -> Text -- ^ Field label
+  -> Text -- ^ Placeholder
+  -> Text -- ^ Alias field placeholder
+  -> m (Event t (a, Maybe Text))
+aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
+  (namedAddress, submitEvt) <- formWithSubmit $ do
+    let
+      fields = (liftA2.liftA2.liftA2) (,)
+        (formItem' "required"
+          $ validatedInput validator
+          $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text fieldlabel))
+        (formItem
+          $ validatedInput (Validator.optional Validator.validateText)
+          $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text "Alias"))
+
+    namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
+
+    feedback
+    _ <- submitButtonWithInfoCls "fluid primary" label info
+    return namedAddress
+  return $ filterRight $ tag (current namedAddress) submitEvt
+
 
 makeLenses ''FrontendContext
 

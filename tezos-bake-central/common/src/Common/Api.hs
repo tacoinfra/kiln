@@ -11,6 +11,7 @@
 
 module Common.Api where
 
+import Data.Dependent.Sum (DSum)
 import Data.Text (Text)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.Class (Request)
@@ -21,7 +22,8 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (Bake, MailServerView)
+import Common.App (AlertNotificationMethod, Bake, LogTag, MailServerView)
+import Common.Schema (Id)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -39,24 +41,20 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveClient
       :: URI -- address of client to unsubscribe from
       -> PublicRequest Bake ()
+    -- TODO think harder about update versus initial set
     PublicRequest_SetMailServerConfig
       :: MailServerView
-      -> Text -- password
-      -> PublicRequest Bake ()
-    PublicRequest_AddNotificatee
-      :: Email
-      -> PublicRequest Bake ()
-    PublicRequest_RemoveNotificatee
-      :: Email
+      -> [Email]
+      -> Maybe Text -- password
       -> PublicRequest Bake ()
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
-    PublicRequest_AddDelegate
+    PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text
       -> PublicRequest Bake ()
-    PublicRequest_RemoveDelegate
+    PublicRequest_RemoveBaker
       :: PublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
@@ -68,9 +66,18 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddTelegramConfig
       :: Text
       -> PublicRequest Bake ()
+    PublicRequest_SetAlertNotificationMethodEnabled
+      :: AlertNotificationMethod -- which one
+      -> Bool -- whether is enabled
+      -> PublicRequest Bake Bool -- True: success, False: no config to enable
+    PublicRequest_ResolveAlert
+      :: DSum LogTag Id
+      -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-makeRequestForDataInstance ''PublicRequest ''Bake
-makeRequestForDataInstance ''PrivateRequest ''Bake
+fmap concat $ sequence
+  [ makeRequestForDataInstance ''PublicRequest ''Bake
+  , makeRequestForDataInstance ''PrivateRequest ''Bake
+  ]

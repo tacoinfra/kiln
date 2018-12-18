@@ -13,6 +13,7 @@
 
 module Backend where
 
+import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
@@ -20,7 +21,6 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
-import Data.Either.Combinators (leftToMaybe)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Pool (Pool)
@@ -61,8 +61,8 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (blankNodeDataSource)
-import Backend.Common (workerWithDelay)
+import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
+import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
@@ -77,7 +77,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
-import Backend.Workers.Delegate (delegateWorker)
+import Backend.Workers.Baker (bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -139,17 +139,17 @@ backendImpl cfg serve = do
 
   !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.tzscanApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.tzscanApiUri
     , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
     ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.blockscaleApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
     ]
   !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_obsidianApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.obsidianApiUri
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.obsidianApiUri
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
@@ -213,6 +213,8 @@ backendImpl cfg serve = do
       addFinalizer <=< workerWithDelay (pure 10) $ const $
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
+      addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+
       let
         appConfig = AppConfig emailFromAddress
         frontendConfig = Config.FrontendConfig
@@ -227,16 +229,16 @@ backendImpl cfg serve = do
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
         (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
-        (viewSelectorHandler frontendConfig (leftToMaybe chain) dataSrc db)
+        (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      addFinalizer =<< cacheWorker 30 dataSrc
+      addFinalizer =<< cacheWorker 90 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< delegateWorker dataSrc
+      addFinalizer =<< bakerWorker dataSrc
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db
@@ -393,7 +395,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile' (Aeson.eitherDecodeStrict . T.encodeUtf8) $ configPath Config.route)
+        (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.route)
 
       let
         staticHead :: DomBuilder t m => m ()

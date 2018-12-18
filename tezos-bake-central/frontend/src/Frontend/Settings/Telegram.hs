@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -6,10 +7,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Frontend.Settings.Telegram where
+module Frontend.Settings.Telegram
+  ( viewCfg
+  , editCfg
+  ) where
 
 import Data.Function (on)
-import Data.Map.Monoidal (MonoidalMap)
+import Data.Map (Map)
+import Data.Map.Monoidal (getMonoidalMap)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
@@ -21,20 +26,48 @@ import Safe (headMay)
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
 import Common.Schema hiding (Event)
-import Common.Vassal (getMaybeView, getRangeView', viewJust, viewRangeAll)
+import Common.Vassal (getRangeView', viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, uiButton, uiDynSubmit, updatedWithInit)
+import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, icon, uiButton,
+                        uiDynSubmit, updatedWithInit)
 
-settings :: forall m t. MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
-settings = switchHold never <=< workflowView $ Workflow $ do
-  cfg <- watchTelegramConfig
+-- We take a dynamic `Maybe TelegramConfig` parameter rather than watching to
+-- get `Maybe (Maybe TelegramConfig)`, so the caller can handle the
+-- uninitialized case.
+
+viewCfg
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t TelegramConfig
+  -> m (Event t ())
+viewCfg cfg = do
+  (reopener, _) <- elClass "p" "edit-link" $ do
+    el' "a" $ text "Reconfigure Telegram"
+
+  recipients <- watchTelegramRecipients
+  elClass "table" "settings-table" $ do
+    el "tr" $ do
+      el "th" $ text "Recipient"
+      el "th" $ text "Bot Name"
+    void $ listWithKey recipients $ \_ recipient -> do
+      el "tr" $ do
+        el "td" $ dynText $ fmap telegramRecipientFullName recipient
+        el "td" $ dynText $ fmap (view $ telegramConfig_botName . _Just) cfg
+
+  return $ domEvent Click reopener
+
+editCfg
+  :: forall m t
+  .  MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Maybe TelegramConfig)
+  -> m (Event t ())
+editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
   recipients <- watchTelegramRecipients
   let
     validated = _Just . telegramConfig_validated . _Just
 
     validatedRecipient :: Dynamic t (Maybe TelegramRecipient) = zipDynWith
       (\c recips -> if c ^? validated == Just True
-        then headMay $ fmapMaybe id $ toList recips
+        then headMay $ toList recips
         else Nothing
       )
       cfg recipients
@@ -49,7 +82,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
         rec
           let submitResult = tagPromptlyDyn validatedRecipient gotResponse
           widgetHold_ blank $ ffor (isJust <$> submitResult) $ \isValid -> if isValid then blank else elClass "p" "error" $ do
-            elClass "i" "icon-warning-circle red icon" blank
+            icon "red icon-warning-circle"
             text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
 
           let submit = filterRight $ tag (current botApiKey) $ gate (not <$> current isLoading) submitClick
@@ -61,7 +94,7 @@ settings = switchHold never <=< workflowView $ Workflow $ do
             (\loading key -> if loading then Nothing else Just $ either (const Disabled) (const Enabled) key)
             isLoading botApiKey
 
-        horizontallyCentered $ do
+        divClass "buttons" $
           uiDynSubmit submitState $ text "Connect Telegram"
 
         pure (submit, submitResult)
@@ -72,17 +105,20 @@ settings = switchHold never <=< workflowView $ Workflow $ do
 
   where
     heading = el "h3"
-    horizontallyCentered = elAttr "div" ("style"=:"text-align:center")
 
     successPage recipient = do
       heading $ text "Bot Connection Successful!"
       el "p" $ do
         text "We’ve sent a test message and will be sending notifications to "
-        el "strong" $ text $
-          _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
+        el "strong" $ text $ telegramRecipientFullName recipient
         text " from your bot."
-      done <- horizontallyCentered $ uiButton "primary" "Close"
+      done <- divClass "buttons" $ uiButton "primary" "Close"
       pure (done, never)
+
+telegramRecipientFullName
+  :: TelegramRecipient
+  -> Text
+telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
 settingsForm
   :: MonadRhyoliteFrontendWidget Bake t m
@@ -97,7 +133,7 @@ settingsForm cfg = holdUniqDyn =<< do
       text "Send \"/newbot\" to the Telegram BotFather bot and create a bot that will be used to send you notifications regarding your Kiln systems. If you've already made a bot, skip to the next step."
       el "p" $
         elAttr "a" ("href"=:"https://telegram.me/BotFather" <> "target"=:"_blank") $ do
-          text "Start BotFather conversation " *> elClass "i" "icon-pop-out icon" blank
+          text "Start BotFather conversation " *> icon "icon-pop-out"
 
     el "li" $ text "Send \"/start\" to your new bot, or if you've already started your bot, just send any random message. This allows us to look up your recent conversation ID and use it to send you alerts."
     el "li" $ do
@@ -109,14 +145,8 @@ settingsForm cfg = holdUniqDyn =<< do
           & Txt.setFluid
           & Txt.setChangeEvent (fromMaybe "" <$> botApiKeyEvent)
 
-watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
+watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
 watchTelegramRecipients =
-  (fmap . fmap) (fmap getFirst . getRangeView' . _bakeView_telegramRecipients) $
+  (fmap . fmap) (getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_telegramRecipients) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
-
-watchTelegramConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe TelegramConfig))
-watchTelegramConfig =
-  (fmap . fmap) (getMaybeView . _bakeView_telegramConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_telegramConfig = viewJust 1 }

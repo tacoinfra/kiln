@@ -18,7 +18,10 @@ library
     Frontend.Common
     Frontend.Modal.Base
     Frontend.Modal.Class
+    Frontend.Settings
+    Frontend.Settings.Mail
     Frontend.Settings.Telegram
+    Frontend.Watch
 
   build-depends:
       base
@@ -30,7 +33,7 @@ library
     , data-default
     , exceptions
     , file-embed
-    , friendly-time
+    , functor-infix
     , ghcjs-dom
     , IntervalMap
     , jsaddle
@@ -55,6 +58,7 @@ library
     , tezos-bake-monitor-lib
     , these
     , time
+    , universe
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
 

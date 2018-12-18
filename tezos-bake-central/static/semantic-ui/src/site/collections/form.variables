@@ -2,4 +2,13 @@
     User Variable Overrides
 *******************************/
 
+@inputBackground: #FCFCFC;
+@inputBorder: @1px solid #CED4DA;
+@inputBorderRadius: @3px;
+
+@inputFocusBackground: @inputBackground;
+@inputFocusBoxShadow: 0 0 @4px 0 rgba(18, 105, 243, 0.2);
+@inputFocusBorderColor: #9BC1FF;
+@inputFocusBorderRadius: @inputBorderRadius;
+
 /* vim: set syntax=less : */

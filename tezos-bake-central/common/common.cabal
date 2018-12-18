@@ -21,11 +21,15 @@ library
     , bytestring
     , cases
     , constraints
+    , constraints-extras
     , containers
     , cryptohash
     , cryptonite
     , data-default
     , dependent-sum
+    , dependent-sum-aeson-orphans
+    , dependent-sum-template
+    , either
     , file-embed
     , hashing
     , lens
@@ -48,6 +52,8 @@ library
     , these
     , time
     , transformers-compat
+    , universe
+    , universe-base
     , uri-encode
     , writer-cps-mtl
 

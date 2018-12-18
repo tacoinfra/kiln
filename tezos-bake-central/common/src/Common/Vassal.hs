@@ -20,6 +20,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- {-# OPTIONS_GHC -Wall -Werror -Wno-orphans -Wno-unused-imports -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 -- {-# OPTIONS_GHC -ddump-splices #-}
 
 module Common.Vassal where
@@ -29,8 +30,8 @@ import Prelude hiding (lookup, null, (.))
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as IMap
 import Control.Category ((.))
-import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex, ifor, imap, itraverse)
-import Control.Monad.Writer.CPS (Writer, WriterT, runWriter, runWriterT, tell)
+import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex, imap, itraverse)
+import Control.Monad.Writer.CPS (Writer, runWriter, tell)
 import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSON, ToJSON1, ToJSONKey, liftParseJSON,
                    liftToEncoding, liftToJSON, parseJSON, toEncoding, toJSON)
 import Data.Aeson.TH (defaultOptions, mkLiftParseJSON, mkLiftToEncoding, mkLiftToJSON, mkParseJSON,
@@ -38,28 +39,28 @@ import Data.Aeson.TH (defaultOptions, mkLiftParseJSON, mkLiftToEncoding, mkLiftT
 import Data.Align
 import Data.AppendMap ()
 import Data.Constraint
-import Data.Foldable (foldr', null, toList, traverse_)
+import Data.Foldable (null, toList, traverse_)
 import Data.Functor.Classes
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Const (Const (..))
-import Data.Functor.Identity (Identity (..))
 import qualified Data.IntervalMap.Generic.Lazy as BaseIMap
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isJust)
-import Data.Monoid (All (..))
-import Data.Proxy (Proxy)
-import Data.Reflection (Reifies)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.These (These (..))
 import Reflex.FunctorMaybe
-import Unsafe.Coerce (unsafeCoerce)
 
 import Common.WrappedShow1
+
+-- horray, orphans!
+deriving instance Ord k => Align (MonoidalMap k)
+deriving instance FunctorMaybe Option
+
 
 -- we have the general problem of needing to send "incremental" updates to a
 -- (view of) a shared data set.  The general idea is to have an initial query
@@ -102,9 +103,6 @@ chop f vs = iMapMaybe $ \i b -> maybe Nothing (flip f b) $ lookup i vs
 cropView :: (Semigroup a, ViewSelector t) => t a -> View t b -> View t a
 cropView vs = iMapMaybe $ \i _ -> lookup i vs
 
--- horray, orphans!
-deriving instance FunctorMaybe Option
-
 class ( TraversableWithIndex (ViewIndex f) (View f)
       , FunctorMaybe (View f)
       -- these two shouldn't really be needed, rhyolite doesn't actually use
@@ -134,8 +132,8 @@ type ComposeView f g a = View (Compose f g) a
 
 
 instance
-  ( ViewSelector f, Eq1 (View f)
-  , ViewSelector g, Eq1 (View g)
+  ( ViewSelector f
+  , ViewSelector g
   , Ord (ViewIndex f)
   )
   => ViewSelector (Compose f g) where
@@ -358,7 +356,7 @@ newtype IntervalSelector e (i :: *) (v :: *) a = IntervalSelector
 
 type IntervalSelector' e = IntervalSelector (WithInfinity e)
 
-viewInterval :: Ord e => (e, e) -> a -> IntervalSelector e i v a
+viewInterval :: (e, e) -> a -> IntervalSelector e i v a
 viewInterval (lb, ub) = IntervalSelector . IMap.singleton (ClosedInterval lb ub)
 
 viewIntervalSet :: Ord e => Set (ClosedInterval e) -> a -> IntervalSelector e i v a
@@ -380,7 +378,7 @@ instance (Ord i, Ord e) => ViewSelector (IntervalSelector e i v) where
 
   lookup k (IntervalSelector xs) = getOption $ foldMap (Option . Just) $ IMap.intersecting xs k
 
-getIntervalViewI :: forall e i v a. (Ord i, Ord e) => View(IntervalSelector e i v) a -> AppendIntervalMap (ClosedInterval e) (NonEmpty (i, v))
+getIntervalViewI :: forall e i v a. Ord e => View (IntervalSelector e i v) a -> AppendIntervalMap (ClosedInterval e) (NonEmpty (i, v))
 getIntervalViewI (IntervalView _ entries) = IMap.fromList $ (\(i, First (v, k)) -> (k, pure (i, v))) <$> MMap.toList entries
 
 instance (Ord i, Ord e, Semigroup a) => Monoid (View (IntervalSelector e i v) a ) where
@@ -430,13 +428,13 @@ newtype RangeSelector e (v :: *) a = RangeSelector
 
 type RangeSelector' e = RangeSelector (WithInfinity e)
 
-viewRangeAll :: (Bounded e, Ord e) => a -> RangeSelector e v a
+viewRangeAll :: Bounded e => a -> RangeSelector e v a
 viewRangeAll = RangeSelector . IMap.singleton (ClosedInterval minBound maxBound)
 
-viewRangeBetween :: Ord e => (e, e) -> a -> RangeSelector e v a
+viewRangeBetween :: (e, e) -> a -> RangeSelector e v a
 viewRangeBetween (k1, k2) = RangeSelector . IMap.singleton (ClosedInterval k1 k2)
 
-viewRangeExactly :: Ord e => e -> a -> RangeSelector e v a
+viewRangeExactly :: e -> a -> RangeSelector e v a
 viewRangeExactly k = RangeSelector . IMap.singleton (ClosedInterval k k)
 
 viewRangeSet :: Ord e => Set e -> a -> RangeSelector e v a
@@ -447,7 +445,7 @@ viewRangeSet ks a = RangeSelector $ IMap.fromSet (const a) (Set.mapMonotonic eqK
 type RangeView e v = View (RangeSelector e v)
 type RangeView' e v = View (RangeSelector (WithInfinity e) v)
 
-instance (Ord v, Ord e) => ViewSelector (RangeSelector e v) where
+instance Ord e => ViewSelector (RangeSelector e v) where
   data View (RangeSelector e v) a = RangeView
     { _rangeView_support :: AppendIntervalMap (ClosedInterval e) a
     , _rangeView_points :: MonoidalMap e v
@@ -500,7 +498,7 @@ instance Ord e => TraversableWithIndex e (View (RangeSelector e v)) where
   itraverse f (RangeView i xs) = RangeView <$> itraverse (\(ClosedInterval lb _) x -> f lb x) i <*> pure xs -- xs <$> iWither _f i
 
 -- produce a view that covers a single point, useful for NotifyHandlers
-toRangeView1 :: (Semigroup a, Ord v, Ord e) => RangeSelector e v a -> e -> Maybe v -> View (RangeSelector e v) a
+toRangeView1 :: (Semigroup a, Ord e) => RangeSelector e v a -> e -> Maybe v -> View (RangeSelector e v) a
 toRangeView1 vs e xs = RangeView (IMap.fromList $ toList $ (k,) <$> vs') (MMap.fromList $ toList $ (,) <$> e' <*> xs)
   where
     k = ClosedInterval e e
@@ -513,7 +511,7 @@ toRangeView (RangeSelector vs) v = RangeView vs $ MMap.fromList v
 
 toMaybeView :: MaybeSelector v a -> Maybe v -> View (MaybeSelector v) a
 toMaybeView (MaybeSelector vs) (Just v) = MaybeView $ fmap (First v,) vs
-toMaybeView (MaybeSelector vs) Nothing = MaybeView $ Option Nothing
+toMaybeView (MaybeSelector _) Nothing = MaybeView $ Option Nothing
 
 -- these are a terrible hack to get through the release.  the real deal would be
 -- to make the query just test each range
@@ -523,7 +521,7 @@ isCompleteSelector (RangeSelector (IMap.AppendIntervalMap vs)) = isJust $ BaseIM
 tightenView :: ViewSelector v => View v a -> View v a
 tightenView = fmapMaybe Just
 
-iMapSelectorKeys :: Ord k => RangeSelector' k v a -> [k]
+iMapSelectorKeys :: RangeSelector' k v a -> [k]
 iMapSelectorKeys (RangeSelector vs) = fmapMaybe f $ IMap.keys vs
   where
     f (ClosedInterval l _) = case l of
@@ -580,9 +578,6 @@ instance (ToJSON k, Ord k, ToJSON v, ToJSONKey k) => ToJSON1 (View (RangeSelecto
 instance (Ord k, Semigroup a, ToJSON k, ToJSON a, ToJSON v, ToJSONKey k) => ToJSON (View (RangeSelector k v) a) where
   toEncoding = $(mkToEncoding defaultOptions 'RangeView)
   toJSON = $(mkToJSON defaultOptions 'RangeView)
-
-deriving instance (Ord k, FromJSONKey k) => FromJSON1 (MonoidalMap k)
-deriving instance ToJSONKey k => ToJSON1 (MonoidalMap k)
 
 instance (FromJSON (View v a), FromJSON a, FromJSON1 (View w), ViewSelector v, ViewSelector w, Ord (ViewIndex v), FromJSONKey (ViewIndex v)) => FromJSON (View (Compose v w) a) where
   parseJSON = $(mkParseJSON defaultOptions 'ComposeView)

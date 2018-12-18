@@ -16,11 +16,10 @@ module Backend.Workers.Client where
 import Backend.Config (AppConfig (..), HasAppConfig, getAppConfig)
 import Common.Schema
 import Common.Verification (validateForkyBlocks)
-import Control.Concurrent.MVar
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (unless, void)
-import Control.Monad.Logger (logInfo, logErrorSH, logDebugSH)
+import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
 import Data.Function (on)
@@ -28,7 +27,6 @@ import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
 import Data.Semigroup (Sum (..), getSum, (<>))
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
@@ -49,7 +47,6 @@ import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
 import Backend.Schema
-import Backend.Workers
 
 data ClientWorkerContext = ClientWorkerContext
   { _clientWorkerContext_appConfig :: !AppConfig
@@ -67,7 +64,7 @@ clientWorker
   -> IO (IO ())
 clientWorker appCfg nds =
   worker' $ (*> waitForNewHeadWithTimeout nds) $
-    readMVar (_nodeDataSource_parameters nds) >>= \protoInfo ->
+    withParams nds $ \protoInfo ->
       runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
         runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 
@@ -87,7 +84,7 @@ clientWorker appCfg nds =
         ORDER BY updated NULLS FIRST
       |]
 
-      clientDelegates <- for toUpdate $ \(cid, address, _alias) -> do
+      _clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
               , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
@@ -114,21 +111,21 @@ clientWorker appCfg nds =
           -- know if the baker itself is active.  The reqards should be computed
           -- based on nodes reporting new blocks.  Even if we baked, if that was
           -- a different branch, there's no reward.
-          let bakingReward delegate blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
+          let bakingReward baker blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees baker . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
               rewardDelay l =
                 let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
                     rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
                 in rc * _protoInfo_blocksPerCycle protoInfo
               insertValues = Values ["text", "varchar", "int8", "int8"]
-                [ (delegatePkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward delegatePkh b)
+                [ (bakerPkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward bakerPkh b)
                 | b <- _report_baked report
-                , delegatePkh <- _clientConfig_delegates clientConfig
+                , bakerPkh <- _clientConfig_bakers clientConfig
                 ]
-          unless (null $ _report_baked report) $ void $ [executeQ|
-            INSERT INTO "PendingReward" (delegate, hash, level, amount)
+          unless (null $ _report_baked report) $ void [executeQ|
+            INSERT INTO "PendingReward" (baker, hash, level, amount)
             SELECT d.id, x.hash, x.level, x.amount
-            FROM ?insertValues x (delegate_pkh, hash, level, amount)
-            JOIN "Delegate" d ON d."publicKeyHash" = x.delegate_pkh
+            FROM ?insertValues x (baker_pkh, hash, level, amount)
+            JOIN "Baker" d ON d."publicKeyHash" = x.baker_pkh
             ON CONFLICT DO NOTHING |]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
@@ -163,11 +160,18 @@ clientWorker appCfg nds =
               -- what this SHOULD be
               -- reportClientOnForkError cid tooOld (_forkInfo_hash e) (_forkInfo_time e)
               return ()
-          return $ _clientConfig_delegates clientConfig
+          return $ _clientConfig_bakers clientConfig
 
         --case result of
         --  Nothing -> [] <$ reportInaccessibleEndpointError EndpointType_Client address alias
         --  Just xs -> xs <$ clearInaccessibleEndpointError EndpointType_Client address
         pure []
 
-      insertClientDelegates (Set.fromList $ concat clientDelegates)
+      --insertClientBakers (Set.fromList $ concat clientBakers)
+      pure ()
+
+--insertClientBakers :: (Monad m, PersistBackend m) => Set PublicKeyHash -> m ()
+--insertClientBakers pkhs = do
+--  existingPkhs :: [PublicKeyHash] <- project Baker_publicKeyHashField CondEmpty
+--  let newPkhs = pkhs `Set.difference` Set.fromList existingPkhs
+--  for_ newPkhs $ \pkh -> insertNotify $ Baker pkh Nothing False

@@ -44,10 +44,10 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Paths_tezos_noderpc (version)
-import Tezos.Types
 import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Types
 import Tezos.NodeRPC.Sources
+import Tezos.NodeRPC.Types
+import Tezos.Types
 
 nodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
@@ -78,7 +78,7 @@ nodeRPCImpl :: forall m a s e.
   , MonadError e m , AsRpcError e
   )
   => Http.Method -> Text -> m a
-nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode
+nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode'
 
 nodeRPCImpl' :: forall m a s e.
   ( MonadIO m, MonadLogger m
@@ -122,7 +122,7 @@ nodeRPCChunkedImpl :: forall a r s e m.
   -> Http.Method
   -> Text
   -> m r
-nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode
+nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode'
 
 
 nodeRPCChunkedImpl' :: forall a r s e m.

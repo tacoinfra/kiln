@@ -2,22 +2,41 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Common.App where
+-- 'deriveJSONGADT' produces seemingly redundant pattern matches.
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
+
+module Common.App
+  ( module Common.App
+
+  -- Re-exports
+  , AlertNotificationMethod (..)
+  ) where
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Align (Align (alignWith, nil))
+import Data.Constraint.Extras.TH (deriveArgDict)
+import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
@@ -30,6 +49,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
 import Common.Schema
@@ -47,6 +67,14 @@ getErrorInterval ei@(el, _) = First (ei, ClosedInterval
 
 type Deletable a = First (Maybe a)
 
+data BakerSummary = BakerSummary
+  { _bakerSummary_address :: PublicKeyHash
+  , _bakerSummary_alias :: Maybe Text
+  , _bakerSummary_alertCount :: Int
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON BakerSummary
+instance ToJSON BakerSummary
+
 data NodeSummary = NodeSummary
   { _nodeSummary_address :: URI
   , _nodeSummary_alias :: Maybe Text
@@ -59,20 +87,20 @@ data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
   , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
-  , _bakeViewSelector_delegateStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_delegates :: !(RangeSelector' PublicKeyHash (Deletable ()) a)
-  , _bakeViewSelector_errors :: !(IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a)
+  , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
+  , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
+  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
   , _bakeViewSelector_nodes :: !(RangeSelector' (Id Node) (Deletable Node) a)
-  , _bakeViewSelector_notificatees :: !(RangeSelector' (Id Notificatee) (Deletable Email) a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
-  , _bakeViewSelector_telegramConfig :: !(MaybeSelector TelegramConfig a)
+  , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
@@ -81,20 +109,26 @@ data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
   , _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
   , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
-  , _bakeView_delegateStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeView_delegates :: !(RangeView' PublicKeyHash (Deletable ()) a)
-  , _bakeView_errors :: !(IntervalView' UTCTime (Id ErrorLog) ErrorInfo a)
+  , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
+  , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
+  , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
+  -- TODO: I'm more than a little concerned about this approach for dealing
+  -- with deletes in IntervalView.  I think in this particular case, we can get
+  -- away with it; since we never go from Resolved to Unresolved, so the
+  -- relevant selection window should *eventually* roll off for the resolved
+  -- things and be dropped anyway.  In other cases, this approach is likely to
+  -- leak memory in Reflex (deletes never really get to go away)
+  , _bakeView_errors :: !(MonoidalMap AlertsFilter (IntervalView' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodes :: !(RangeView' (Id Node) (Deletable Node) a)
-  , _bakeView_notificatees :: !(RangeView' (Id Notificatee) (Deletable Email) a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
-  , _bakeView_telegramConfig :: !(MaybeView TelegramConfig a)
+  , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
   -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
@@ -103,38 +137,95 @@ data BakeView a = BakeView
 
 
 data MailServerView = MailServerView
-  { _mailServerView_hostName :: Text
-  , _mailServerView_portNumber :: Word16
-  , _mailServerView_smtpProtocol :: SmtpProtocol
-  , _mailServerView_userName :: Text
+  { _mailServerView_hostName :: !Text
+  , _mailServerView_portNumber :: !Word16
+  , _mailServerView_smtpProtocol :: !SmtpProtocol
+  , _mailServerView_userName :: !Text
+  , _mailServerView_enabled :: !Bool
+  , _mailServerView_notificatees :: ![Email]
   } deriving (Eq, Ord, Generic, Typeable, Read, Show)
 instance FromJSON MailServerView
 instance ToJSON MailServerView
 
+data LogTag a where
+  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
+  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
+  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
+
+data NodeErrorLogView
+  = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
+  | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  | NodeErrorLogView_BadNodeHead !ErrorLogBadNodeHead
+  deriving (Eq, Ord, Generic, Typeable, Show)
+instance FromJSON NodeErrorLogView
+instance ToJSON NodeErrorLogView
+
+data BakerErrorLogView
+  = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
+  deriving (Eq, Ord, Generic, Typeable, Show)
+instance FromJSON BakerErrorLogView
+instance ToJSON BakerErrorLogView
+
+-- TODO: Switch to 'DSum LogTag Identity', also spit node and baker tags out of LogTag.
 data ErrorLogView
-  = ErrorLogView_InaccessibleNode ErrorLogInaccessibleNode
-  | ErrorLogView_NodeWrongChain ErrorLogNodeWrongChain
-  | ErrorLogView_BakerNoHeartbeat ErrorLogBakerNoHeartbeat
-  | ErrorLogView_BadNodeHead ErrorLogBadNodeHead
-  | ErrorLogView_MultipleBakersForSameDelegate ErrorLogMultipleBakersForSameDelegate
+  = ErrorLogView_NodeError NodeErrorLogView
+  | ErrorLogView_BakerError BakerErrorLogView
+  | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
+  -- ^ Misc baker *daemon* error.
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
-nodeIdForErrorLogView :: ErrorLogView -> Maybe (Id Node)
-nodeIdForErrorLogView = \case
-  ErrorLogView_InaccessibleNode ein -> Just $ _errorLogInaccessibleNode_node ein
-  ErrorLogView_NodeWrongChain enwc -> Just $ _errorLogNodeWrongChain_node enwc
-  ErrorLogView_BakerNoHeartbeat _ -> Nothing
-  ErrorLogView_BadNodeHead ebnh -> Just $ _errorLogBadNodeHead_node ebnh
-  ErrorLogView_MultipleBakersForSameDelegate _ -> Nothing
+nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
+nodeErrorViewOnly = \case
+  ErrorLogView_NodeError v -> Just v
+  _ -> Nothing
 
-mailServerConfigToView :: MailServerConfig -> MailServerView
-mailServerConfigToView x = MailServerView
+nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
+nodeIdForNodeErrorLogView = \case
+  NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_node ein
+  NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_node enwc
+  NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_node ebnh
+
+bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
+bakerErrorViewOnly = \case
+  ErrorLogView_BakerError v -> Just v
+  _ -> Nothing
+
+bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
+bakerIdForBakerErrorLogView = \case
+  BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
+
+errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
+errorLogIdForErrorLogView = \case
+  ErrorLogView_NodeError ne -> case ne of
+    NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
+    NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
+    NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
+  ErrorLogView_BakerError be -> case be of
+    BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
+  ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
+
+manuallyResolvable :: ErrorLogView -> Bool
+manuallyResolvable = \case
+  ErrorLogView_NodeError ne -> case ne of
+    NodeErrorLogView_InaccessibleNode _ -> False
+    NodeErrorLogView_NodeWrongChain _ -> False
+    NodeErrorLogView_BadNodeHead _ -> False
+  ErrorLogView_BakerError be -> case be of
+    BakerErrorLogView_MultipleBakersForSameBaker _ -> False
+  ErrorLogView_BakerNoHeartbeat _ -> False
+
+mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
+mailServerConfigToView x ns = MailServerView
   { _mailServerView_hostName = _mailServerConfig_hostName x
   , _mailServerView_portNumber = _mailServerConfig_portNumber x
   , _mailServerView_smtpProtocol = _mailServerConfig_smtpProtocol x
   , _mailServerView_userName = _mailServerConfig_userName x
+  , _mailServerView_enabled = _mailServerConfig_enabled x
+  , _mailServerView_notificatees = ns
   }
 
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView b -> BakeView a
@@ -147,12 +238,12 @@ cropBakeView vs v = BakeView
   , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
   , _bakeView_publicNodeHeads = cropView (_bakeViewSelector_publicNodeHeads vs) (_bakeView_publicNodeHeads v)
   , _bakeView_nodes = cropView (_bakeViewSelector_nodes vs) (_bakeView_nodes v)
-  , _bakeView_delegates = cropView (_bakeViewSelector_delegates vs) (_bakeView_delegates v)
-  , _bakeView_delegateStats = cropView (_bakeViewSelector_delegateStats vs) (_bakeView_delegateStats v)
-  , _bakeView_notificatees = cropView (_bakeViewSelector_notificatees vs) (_bakeView_notificatees v)
+  , _bakeView_bakerAddresses = cropView (_bakeViewSelector_bakerAddresses vs) (_bakeView_bakerAddresses v)
+  , _bakeView_bakerDetails = cropView (_bakeViewSelector_bakerDetails vs) (_bakeView_bakerDetails v)
+  , _bakeView_bakerStats = cropView (_bakeViewSelector_bakerStats vs) (_bakeView_bakerStats v)
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
-  , _bakeView_errors = cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
+  , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
   , _bakeView_upstreamVersion = cropView (_bakeViewSelector_upstreamVersion vs) (_bakeView_upstreamVersion v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
@@ -169,13 +260,13 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = fmapMaybe f $ _bakeViewSelector_publicNodeConfig a
     , _bakeViewSelector_publicNodeHeads = fmapMaybe f $ _bakeViewSelector_publicNodeHeads a
     , _bakeViewSelector_nodes = fmapMaybe f $ _bakeViewSelector_nodes a
-    , _bakeViewSelector_delegates = fmapMaybe f $ _bakeViewSelector_delegates a
-    , _bakeViewSelector_delegateStats = fmapMaybe f $ _bakeViewSelector_delegateStats a
-    , _bakeViewSelector_notificatees = fmapMaybe f $ _bakeViewSelector_notificatees a
+    , _bakeViewSelector_bakerAddresses = fmapMaybe f $ _bakeViewSelector_bakerAddresses a
+    , _bakeViewSelector_bakerDetails = fmapMaybe f $ _bakeViewSelector_bakerDetails a
+    , _bakeViewSelector_bakerStats = fmapMaybe f $ _bakeViewSelector_bakerStats a
     , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
-    , _bakeViewSelector_errors = fmapMaybe f $ _bakeViewSelector_errors a
+    , _bakeViewSelector_errors = (fmap.fmapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_upstreamVersion = fmapMaybe f $ _bakeViewSelector_upstreamVersion a
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
@@ -192,9 +283,9 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = nil
     , _bakeViewSelector_publicNodeHeads = nil
     , _bakeViewSelector_nodes = nil
-    , _bakeViewSelector_delegates = nil
-    , _bakeViewSelector_delegateStats = nil
-    , _bakeViewSelector_notificatees = nil
+    , _bakeViewSelector_bakerAddresses = nil
+    , _bakeViewSelector_bakerDetails = nil
+    , _bakeViewSelector_bakerStats = nil
     , _bakeViewSelector_mailServer = nil
     , _bakeViewSelector_summary = nil
     , _bakeViewSelector_nodeAddresses = nil
@@ -215,13 +306,13 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = f' _bakeViewSelector_publicNodeConfig
     , _bakeViewSelector_publicNodeHeads = f' _bakeViewSelector_publicNodeHeads
     , _bakeViewSelector_nodes = f' _bakeViewSelector_nodes
-    , _bakeViewSelector_delegates = f' _bakeViewSelector_delegates
-    , _bakeViewSelector_delegateStats = f' _bakeViewSelector_delegateStats
-    , _bakeViewSelector_notificatees = f' _bakeViewSelector_notificatees
+    , _bakeViewSelector_bakerAddresses = f' _bakeViewSelector_bakerAddresses
+    , _bakeViewSelector_bakerDetails = f' _bakeViewSelector_bakerDetails
+    , _bakeViewSelector_bakerStats = f' _bakeViewSelector_bakerStats
     , _bakeViewSelector_mailServer = f' _bakeViewSelector_mailServer
     , _bakeViewSelector_summary = f' _bakeViewSelector_summary
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
-    , _bakeViewSelector_errors = f' _bakeViewSelector_errors
+    , _bakeViewSelector_errors = alignWith (these (fmap $ f . This) (fmap $ f . That) (alignWith f)) (_bakeViewSelector_errors xs) (_bakeViewSelector_errors ys)
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
     , _bakeViewSelector_upstreamVersion = f' _bakeViewSelector_upstreamVersion
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
@@ -241,13 +332,13 @@ instance FunctorMaybe BakeView where
     , _bakeView_publicNodeConfig = fmapMaybe f $ _bakeView_publicNodeConfig a
     , _bakeView_publicNodeHeads = fmapMaybe f $ _bakeView_publicNodeHeads a
     , _bakeView_nodes = fmapMaybe f $ _bakeView_nodes a
-    , _bakeView_delegates = fmapMaybe f $ _bakeView_delegates a
-    , _bakeView_delegateStats = fmapMaybe f $ _bakeView_delegateStats a
-    , _bakeView_notificatees = fmapMaybe f $ _bakeView_notificatees a
+    , _bakeView_bakerAddresses = fmapMaybe f $ _bakeView_bakerAddresses a
+    , _bakeView_bakerDetails = fmapMaybe f $ _bakeView_bakerDetails a
+    , _bakeView_bakerStats = fmapMaybe f $ _bakeView_bakerStats a
     , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
     , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
-    , _bakeView_errors = fmapMaybe f $ _bakeView_errors a
+    , _bakeView_errors = (fmap.fmapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
     , _bakeView_upstreamVersion = fmapMaybe f $ _bakeView_upstreamVersion a
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
@@ -273,9 +364,9 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = (<>) (_bakeViewSelector_publicNodeConfig u) (_bakeViewSelector_publicNodeConfig v)
     , _bakeViewSelector_publicNodeHeads = (<>) (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
     , _bakeViewSelector_nodes = (<>) (_bakeViewSelector_nodes u) (_bakeViewSelector_nodes v)
-    , _bakeViewSelector_delegates = (<>) (_bakeViewSelector_delegates u) (_bakeViewSelector_delegates v)
-    , _bakeViewSelector_delegateStats = (<>) (_bakeViewSelector_delegateStats u) (_bakeViewSelector_delegateStats v)
-    , _bakeViewSelector_notificatees = (<>) (_bakeViewSelector_notificatees u) (_bakeViewSelector_notificatees v)
+    , _bakeViewSelector_bakerAddresses = (<>) (_bakeViewSelector_bakerAddresses u) (_bakeViewSelector_bakerAddresses v)
+    , _bakeViewSelector_bakerDetails = (<>) (_bakeViewSelector_bakerDetails u) (_bakeViewSelector_bakerDetails v)
+    , _bakeViewSelector_bakerStats = (<>) (_bakeViewSelector_bakerStats u) (_bakeViewSelector_bakerStats v)
     , _bakeViewSelector_mailServer = (<>) (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
@@ -296,9 +387,9 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = mempty
     , _bakeViewSelector_publicNodeHeads = mempty
     , _bakeViewSelector_nodes = mempty
-    , _bakeViewSelector_delegates = mempty
-    , _bakeViewSelector_delegateStats = Compose mempty
-    , _bakeViewSelector_notificatees = mempty
+    , _bakeViewSelector_bakerAddresses = mempty
+    , _bakeViewSelector_bakerDetails = mempty
+    , _bakeViewSelector_bakerStats = Compose mempty
     , _bakeViewSelector_mailServer = mempty
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_errors = mempty
@@ -325,9 +416,9 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_publicNodeConfig = mempty
     , _bakeView_publicNodeHeads = mempty
     , _bakeView_nodes = mempty
-    , _bakeView_delegates = mempty
-    , _bakeView_delegateStats = mempty
-    , _bakeView_notificatees = mempty
+    , _bakeView_bakerAddresses = mempty
+    , _bakeView_bakerDetails = mempty
+    , _bakeView_bakerStats = mempty
     , _bakeView_mailServer = mempty
     -- , _bakeView_graphs = mempty
     -- , _bakeView_summaryGraph = mempty
@@ -351,9 +442,9 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
     , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
     , _bakeView_nodes = _bakeView_nodes u <> _bakeView_nodes v
-    , _bakeView_delegates = _bakeView_delegates u <> _bakeView_delegates v
-    , _bakeView_delegateStats = _bakeView_delegateStats u <> _bakeView_delegateStats v
-    , _bakeView_notificatees = _bakeView_notificatees u <> _bakeView_notificatees v
+    , _bakeView_bakerAddresses = _bakeView_bakerAddresses u <> _bakeView_bakerAddresses v
+    , _bakeView_bakerDetails = _bakeView_bakerDetails u <> _bakeView_bakerDetails v
+    , _bakeView_bakerStats = _bakeView_bakerStats u <> _bakeView_bakerStats v
     , _bakeView_mailServer = _bakeView_mailServer u <> _bakeView_mailServer v
     -- , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
     -- , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v
@@ -381,9 +472,17 @@ instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
 
-concat <$> traverse makeLenses
-  [ 'BakeView
-  , 'BakeViewSelector
-  , 'MailServerView
-  , 'NodeSummary
+fmap concat $ sequence $ concat
+  [ map makeLenses
+    [ 'BakeView
+    , 'BakeViewSelector
+    , 'MailServerView
+    , 'NodeSummary
+    ]
+  , [ deriveArgDict ''LogTag
+    , deriveGCompare ''LogTag
+    , deriveGEq ''LogTag
+    , deriveGShow ''LogTag
+    , deriveJSONGADT ''LogTag
+    ]
   ]

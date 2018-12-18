@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,46 +14,41 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
 
-import Prelude hiding (length)
-
-import Control.Applicative
-import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, readTVarIO, retry)
-import Control.Lens (Lens', TraversableWithIndex, ifor, re, view, (<&>), (^.), (^?), _1, _Just)
+import Control.Applicative (ZipList (..))
+import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
+                               retry, writeTQueue, writeTVar)
+import Control.Exception.Safe (withException)
+import Control.Lens (TraversableWithIndex, re)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except
-import Control.Monad.Logger (LoggingT (..), logDebugSH, logInfo, logWarnSH)
-import Control.Monad.Reader
+import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Foldable (fold, length, toList)
-import Data.Function (on)
-import Data.Functor.Identity (Identity (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
+import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
-import Data.Semigroup (First (..))
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
-import Data.Traversable (for)
-import Data.Typeable (Typeable)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
-import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Request.Class
+import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
 import Safe (headMay)
@@ -61,6 +57,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History
+import Tezos.Json (deriveTezosJson)
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
@@ -69,107 +66,145 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Common.Schema
-import Rhyolite.Backend.Logging
+import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime, modifyTVar_',
+                    newTVar', readTVar', retry', writeTVar')
+import qualified Backend.STM as Stm
 import Common (unixEpoch)
-
+import Common.Schema
+import ExtraPrelude
 
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
+  NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
+  NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
 deriving instance Show (NodeQuery a)
+
+
+-- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
+-- we'd probably want to cache it seperately  (it changes way slower anyhow)
+data CacheDelegateInfo = CacheDelegateInfo
+  { _cacheDelegateInfo_balance :: !Tez
+  , _cacheDelegateInfo_frozenBalance :: !Tez
+  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
+  , _cacheDelegateInfo_stakingBalance :: !Tez
+  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
+  , _cacheDelegateInfo_delegatedBalance :: !Tez
+  , _cacheDelegateInfo_deactivated :: !Bool
+  , _cacheDelegateInfo_gracePeriod :: !Cycle
+  }
+
+toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
+toCacheDelegateInfo di = CacheDelegateInfo
+  { _cacheDelegateInfo_balance = _delegateInfo_balance di
+  , _cacheDelegateInfo_frozenBalance = _delegateInfo_frozenBalance di
+  , _cacheDelegateInfo_frozenBalanceByCycle = _delegateInfo_frozenBalanceByCycle di
+  , _cacheDelegateInfo_stakingBalance = _delegateInfo_stakingBalance di
+  -- , _cacheDelegateInfo_delegatedContracts = _delegateInfo_delegatedContracts di
+  , _cacheDelegateInfo_delegatedBalance = _delegateInfo_delegatedBalance di
+  , _cacheDelegateInfo_deactivated = _delegateInfo_deactivated di
+  , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
+  }
+
 
 
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
 type CachedHistory' = CachedHistory ()
+type DirtyBit = Maybe (Id GenericCacheEntry)
 
 data CacheLine a = CacheLine
   { _cacheLine_value :: !a
   , _cacheLine_used :: !UTCTime
+  , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
   }
-newtype CachedResult a = CachedResult { unCacheResult :: MVar (Either RpcError (CacheLine a)) }
+
+data NodeDataSource = NodeDataSource
+  { _nodeDataSource_history :: !(TVar CachedHistory')
+  , _nodeDataSource_nodes :: !(TVar (Map URI (Maybe VeryBlockLike)))
+  , _nodeDataSource_cache :: !(TVar (DMap NodeQuery (Compose TVar CacheLine)))
+  , _nodeDataSource_chain :: !ChainId
+  , _nodeDataSource_parameters :: !(TVar (Maybe ProtoInfo))
+  , _nodeDataSource_httpMgr :: !Http.Manager
+  , _nodeDataSource_pool :: !(Pool Postgresql)
+  , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
+  , _nodeDataSource_logger :: !LoggingEnv
+  , _nodeDataSource_ioQueue :: TQueue (IO ())
+  } deriving (Typeable, Generic)
+makeLenses 'NodeDataSource
+
+class HasNodeDataSource a where
+  nodeDataSource :: Lens' a NodeDataSource
+
+instance HasNodeDataSource NodeDataSource where
+  nodeDataSource = id
+
+waitForParams :: (HasNodeDataSource r, MonadSTM m) => r -> m ProtoInfo
+waitForParams r = maybe retry' pure =<< readTVar' (r ^. nodeDataSource . nodeDataSource_parameters)
+
+withParams :: (HasNodeDataSource r, MonadIO m) => r -> (ProtoInfo -> m a) -> m a
+withParams r act = liftIO (atomically (waitForParams r)) >>= act
 
 unpackCacheResult
-  :: forall m e a . ( MonadIO m , MonadError e m, AsRpcError e)
-  => CachedResult a -> m a
-unpackCacheResult (CachedResult var) = join $ liftIO $ modifyMVar var $ either onErr onSuccess
-  where
-    onErr :: RpcError -> IO (Either RpcError b, m a)
-    onErr bad = pure (Left bad, throwError (bad ^. re asRpcError))
-    onSuccess :: CacheLine a -> IO (Either RpcError (CacheLine a), m a)
-    onSuccess result = do
-      now <- getCurrentTime
-      return (Right result {_cacheLine_used = now}, return $ _cacheLine_value result)
+  :: forall a r m. (MonadSTM m, MonadReader r m, HasTimestamp r)
+  => Compose TVar CacheLine a -> m a
+unpackCacheResult (Compose var) = do
+  result <- readTVar' var
+  now <- asks (^. Stm.timestamp)
+  writeTVar' var $ result{_cacheLine_used = now}
+  pure $ _cacheLine_value result
 
 -- get lca between two blocks
 branchPoint
-  :: ( MonadIO m
-     , MonadReader a m, HasNodeDataSource a
-     )
+  :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
 branchPoint x y = do
   dsrc <- asks (^. nodeDataSource)
-  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  history <- readTVar' $ _nodeDataSource_history dsrc
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
     yPath = Map.lookup y $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< LCA.lca <$> xPath <*> yPath
 
-lookupBlock ::
-  ( MonadIO m
-  , MonadReader a m, HasNodeDataSource a
-  )
-  => BlockHash -> m (Maybe VeryBlockLike)
-lookupBlock x = do
+-- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
+enumerateBranches
+  :: ( MonadSTM m
+     , MonadReader a m, HasNodeDataSource a
+     )
+  => BlockHash -> BlockHash -> m (Maybe ([BlockHash], [BlockHash]))
+enumerateBranches x y = do
   dsrc <- asks (^. nodeDataSource)
-  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  history <- readTVar' $ _nodeDataSource_history dsrc
+  pure $ do
+    xPath <- Map.lookup x $ _cachedHistory_blocks history
+    yPath <- Map.lookup y $ _cachedHistory_blocks history
+    let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
+    pure (pathPrefix xPath, pathPrefix yPath)
+
+
+lookupBlock
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> BlockHash -> m (Maybe VeryBlockLike)
+lookupBlock nds x = do
+  let dsrc = nds ^. nodeDataSource
+  history <- readTVar' $ _nodeDataSource_history dsrc
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
     f :: LCA.Path BlockHash () -> VeryBlockLike
     f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
   return $ fmap f xPath
 
-data NodeDataSource = NodeDataSource
-  { _nodeDataSource_history :: !(MVar CachedHistory')
-  , _nodeDataSource_nodes :: !(MVar (Map URI (Maybe VeryBlockLike)))
-  , _nodeDataSource_cache :: !(MVar (DMap NodeQuery CachedResult)) -- we add elements to the cache to ind
-  , _nodeDataSource_chain :: !ChainId
-  , _nodeDataSource_parameters :: !(MVar ProtoInfo)
-  , _nodeDataSource_httpMgr :: !Http.Manager
-  , _nodeDataSource_pool :: !(Pool Postgresql)
-  , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
-  , _nodeDataSource_logger :: !LoggingEnv
-  }
-
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
 blankNodeDataSource db chain protoInfo' mgr logger = do
-  nodes <- newMVar mempty
-  hist <- newEmptyMVar
-  cache <- newEmptyMVar
-  protoInfoVar <- newEmptyMVar
+  nodes <- newTVarIO mempty
+  hist <- newTVarIO emptyCache
+  cache <- newTVarIO mempty
+  protoInfoVar <- newTVarIO protoInfo'
   latestHead <- newTVarIO Nothing
-
-  let
-    fill = do
-      putMVar hist emptyCache
-      putMVar cache mempty
-
-  case protoInfo' of
-    Just protoInfo -> do
-      putMVar protoInfoVar protoInfo
-      fill
-      runLoggingEnv logger $ $(logInfo) "Cache pre-initialized"
-
-    Nothing ->
-      void $ forkIO $ do
-        -- wait for someone else to put something in protoInfo, then fill the rest of the MVars.
-        _ <- readMVar protoInfoVar
-        fill
-        runLoggingEnv logger $ $(logInfo) "Cache ready!"
+  ioQueue <- newTQueueIO
 
   return NodeDataSource
     { _nodeDataSource_history = hist
@@ -181,13 +216,8 @@ blankNodeDataSource db chain protoInfo' mgr logger = do
     , _nodeDataSource_pool = db
     , _nodeDataSource_latestHead = latestHead
     , _nodeDataSource_logger = logger
+    , _nodeDataSource_ioQueue = ioQueue
     }
-
-class HasNodeDataSource a where
-  nodeDataSource :: Lens' a NodeDataSource
-
-instance HasNodeDataSource NodeDataSource where
-  nodeDataSource = id
 
 withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
 withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
@@ -201,7 +231,7 @@ calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBe
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
 waitForNewHeadWithTimeout nds = do
   -- TODO: This shouldn't be necessary once we have a way to know the parameters better. Foundation nodes should give us params.
-  timeLimit <- maybe 60 calcTimeBetweenBlocks <$> tryReadMVar (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  timeLimit <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   void $ timeout' timeLimit $ waitForNewHead nds
 
 waitForNewHead :: NodeDataSource -> IO VeryBlockLike
@@ -219,35 +249,40 @@ histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixE
     blkLevel = minLevel + fromIntegral (length path) + 1
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
-updateNodeDataSource :: BlockLike b => NodeDataSource -> URI -> b -> IO ()
-updateNodeDataSource nds nodeAddr blk =
-  modifyMVar_ (_nodeDataSource_nodes nds) $ return . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
+updateNodeDataSource
+  :: forall nds b m. (HasNodeDataSource nds, BlockLike b, MonadSTM m)
+  => nds -> URI -> b -> m ()
+updateNodeDataSource nds nodeAddr blk = do
+  let nodesVar = nds ^. nodeDataSource . nodeDataSource_nodes
+  modifyTVar_' nodesVar $ pure . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
 
--- Make sure that the protocol parameters have been loaded and the datasource initialzied.
+-- Make sure that the protocol parameters have been loaded and the datasource initialized.
 initParams :: Foldable f => NodeDataSource -> f (Maybe PublicNode, URI) -> IO Bool
 initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  needParams <- liftIO $ isEmptyMVar $ _nodeDataSource_parameters nds
+  needParams <- fmap isNothing $ liftIO $ readTVarIO $ _nodeDataSource_parameters nds
+  case needParams of
+    False -> pure True
+    True -> onChainNodes >>= \case
+      Nothing -> $(logInfo) "Still no params" $> False
+      Just params -> do
+        void $ liftIO $ atomically $ writeTVar (_nodeDataSource_parameters nds) $ Just params
+        insertParams params
+        pure True
 
-  let
+  where
+    chainId = _nodeDataSource_chain nds
+
     step :: LoggingT IO (Maybe ProtoInfo) -> (Maybe PublicNode, URI) -> LoggingT IO (Maybe ProtoInfo)
     step l (pn, someNode) = l >>= \case
       Nothing -> do
         let ctx = PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render someNode)) pn
-        runExceptT (runReaderT (getProtoConstants chainId) ctx) <&> \case
-          Left (_ :: PublicNodeError) -> Nothing
-          Right params -> Just params
+        runExceptT (runReaderT (getProtoConstants chainId) ctx) >>= \case
+          Left (e :: PublicNodeError) -> $(logErrorSH) e $> Nothing
+          Right params -> $(logDebugSH) params $> Just params
       l' -> return l'
+
     onChainNodes = foldl step (return Nothing) theseNodes
 
-  when needParams $ onChainNodes >>= \case
-    Nothing -> $(logInfo) "Still no params"
-    Just params -> do
-      void $ liftIO $ tryPutMVar (_nodeDataSource_parameters nds) params
-      insertParams params
-
-  liftIO $ fmap not $ isEmptyMVar $ _nodeDataSource_parameters nds
-  where
-    chainId = _nodeDataSource_chain nds
     insertParams params = runDb (Identity $ _nodeDataSource_pool nds) $ do
       have :: Maybe (Id Parameters) <- fmap toId . listToMaybe <$> project AutoKeyField (Parameters_chainField ==. chainId)
       case have of
@@ -263,25 +298,23 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
 
 -- | extrats the fittest known branch from cache
 dataSourceHead
-  :: ( MonadIO m , MonadReader s m, HasNodeDataSource s)
-  => m (Maybe VeryBlockLike)
-dataSourceHead = withCache Nothing $ \_ -> do
-  dsrc <- asks (^. nodeDataSource)
-  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> m (Maybe VeryBlockLike)
+dataSourceHead nds = withCache nds Nothing $ \_ -> do
+  let dsrc = nds ^. nodeDataSource
+  history <- readTVar' $ _nodeDataSource_history dsrc
   let branches = _cachedHistory_branches history
   pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
 -- | extrats the fittest known node from cache
-dataSourceNode ::
-  ( MonadIO m
-  , MonadReader s m, HasNodeDataSource s
-  )
-  => m (Maybe NodeRPCContext)
-dataSourceNode = do
-  dsrc <- asks (^. nodeDataSource)
-  nodes <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
+dataSourceNode
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> m (Maybe NodeRPCContext)
+dataSourceNode nds = do
+  let dsrc = nds ^. nodeDataSource
+  nodes <- readTVar' $ _nodeDataSource_nodes dsrc
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
-    maximumByMay (compare `on` snd) $ catMaybes $ fmap sequence $ Map.toList nodes
+    maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
 
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash
@@ -290,17 +323,10 @@ levelAncestor hist lvl ctx = ctxBlockHash
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
     ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
 
-
+-- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
+-- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
-rightsContext params hist ctx lvl = ctxBlockHash
-    -- for this case, we want the first block in the cycle that sits
-    -- PRESERVED_CYCLES before the requested level, that is on the correct
-    -- branch.
-    where
-      reqCycle :: Cycle = max 0 $ fromIntegral $ (lvl - 1) `div` _protoInfo_blocksPerCycle params
-      ctxCycle = max 0 (reqCycle - _protoInfo_preservedCycles params)
-      ctxLvl :: RawLevel = 1 + fromIntegral ctxCycle * _protoInfo_blocksPerCycle params
-      ctxBlockHash = levelAncestor hist ctxLvl ctx
+rightsContext params hist ctx lvl = levelAncestor hist (rightsContextLevel params lvl) ctx
 
 -- Recontextualize a query for maximum cache friendliness, and also return the least block
 getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
@@ -309,62 +335,113 @@ getKey params hist = \case
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
+  NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
+  NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
 
-nodeQueryDataSource ::
-  ( MonadIO m
-  , MonadReader s m
-  , HasNodeDataSource s
-  , MonadError e m, AsRpcError e
-  )
+-- | Caching query function simplified by blocking until we get a result.
+nodeQueryDataSource
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    )
   => NodeQuery a -> m a
-nodeQueryDataSource q' = do
+nodeQueryDataSource q = do
+  getResult <- nodeQueryDataSourceRaw q
+  now <- liftIO getCurrentTime
+  timeout' timeoutSeconds (atomically $ maybe retry pure =<< getResult now) >>= \case
+    Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
+    Just (Left e) -> throwError $ e ^. re asCacheError
+    Just (Right x) -> pure x
+  where
+    -- Base timeout
+    timeoutSeconds = 60*5
+
+-- Foundational caching query function exposing a low-level API to the underlying 'STM' operations.
+nodeQueryDataSourceRaw
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    )
+  => NodeQuery a -> m (UTCTime -> STM (Maybe (Either CacheError a)))
+nodeQueryDataSourceRaw q' = do
   dsrc <- asks $ view nodeDataSource
-  let logger = _nodeDataSource_logger dsrc
-  protoInfo <- liftIO $ readMVar $ _nodeDataSource_parameters dsrc
-  history <- liftIO $ readMVar $ _nodeDataSource_history dsrc
+  updateCache dsrc >>= \case
+    Left e -> throwError $ e ^. re asCacheError
+    Right getResult -> pure getResult
 
-  (qBranch, q) <- maybe (throwError $ RpcError_HttpException "NOT ENOUGH HISTORY" ^. re asRpcError) pure $ getKey protoInfo history q'
+  where
+    updateCache :: NodeDataSource -> m (Either CacheError (UTCTime -> STM (Maybe (Either CacheError a))))
+    updateCache dsrc = liftIO $ atomically $ runExceptT $ do
+      protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
+      history <- readTVar' (_nodeDataSource_history dsrc)
 
-  resultM <- liftIO $ modifyMVar (_nodeDataSource_cache dsrc) $ \cache -> case DMap.lookup q cache of
-    Just avar -> pure (cache, avar) -- cache hit
-    Nothing -> do
-      newVar <- liftIO newEmptyMVar
-      let
-        mkResult now v = CacheLine
-          { _cacheLine_value = v
-          , _cacheLine_used = now
-          }
-      _ <- liftIO $ forkIO $ do
-        fromDB <- runLoggingEnv logger $ tryFetchFromCache (_nodeDataSource_pool dsrc) q
-        case fromDB of
-          Just x -> do
-            now <- getCurrentTime
-            putMVar newVar $ Right $ mkResult now x
-          Nothing -> runReaderT (pickNode qBranch) dsrc >>= \case
+      (qBranch, q) <- maybe (throwError $ CacheError_NotEnoughHistory ^. re asCacheError) pure $ getKey protoInfo history q'
+
+      cache <- readTVar' cacheVar
+      case DMap.lookup q cache of
+        -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
+        Just avar -> pure $ \time -> flip runReaderT time $
+          Just . Right <$> unpackCacheResult avar
+
+        -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
+        Nothing -> do
+          -- A separate TVar for keeping the actual API result (outside the cache structure)
+          apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
+          let
+            -- Updates the cache key if the result is useful and sets the result 'TVar'.
+            writeResult :: Either CacheError (a, DirtyBit) -> IO ()
+            writeResult a' = liftIO $ atomicallyWithTime $ do
+              case a' of
+                Right (a, dirty) -> populateKey q a dirty
+                Left _ -> pure ()
+              writeTVar' apiResultVar $ Just $ fmap fst a'
+
+          liftSTM $ writeTQueue ioQueue $
+            -- Try very hard to write *something* into the result TVar in case of exception.
+            (writeResult =<< makeRequestAndCache protoInfo q qBranch)
+              `withException` \e ->
+                atomically (writeTVar' apiResultVar $ Just $ Left $ CacheError_SomeException e)
+
+          pure $ \_ -> readTVar apiResultVar
+
+      where
+        logger = _nodeDataSource_logger dsrc
+        ioQueue = _nodeDataSource_ioQueue dsrc
+        cacheVar = _nodeDataSource_cache dsrc
+        chainId = _nodeDataSource_chain dsrc
+
+        populateKey q a dirty = do
+          cache <- readTVar' cacheVar
+          case DMap.lookup q cache of
+            Just _ -> pure ()
             Nothing -> do
-              putMVar newVar $ Left $ RpcError_HttpException "No suitable node"
-            Just anyNode -> do
-              let
-                ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+              now <- asks (^. Stm.timestamp)
+              var <- newTVar' $ CacheLine a now dirty
+              writeTVar' cacheVar $ DMap.insert q (Compose var) cache
 
-                unliftDataSrc :: NodeQuery a -> IO (Either RpcError a)
-                unliftDataSrc = flip runReaderT dsrc . runExceptT . nodeQueryDataSource
-              res' <- nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger unliftDataSrc q
-              now <- getCurrentTime
-              putMVar newVar $ mkResult now <$> res'
-      pure (DMap.insert q (CachedResult newVar) cache, CachedResult newVar)
+        makeRequestAndCache :: ProtoInfo -> NodeQuery a' -> BlockHash -> IO (Either CacheError (a', DirtyBit))
+        makeRequestAndCache protoInfo q qBranch = runLoggingEnv logger $ flip runReaderT dsrc $
+          tryFetchFromCache chainId (_nodeDataSource_pool dsrc) q >>= \case
+            Just x -> pure $ Right $ fmap Just x
+            Nothing -> atomicallyWith (pickNode qBranch) >>= \case
+              Nothing -> pure $ Left CacheError_NoSuitableNode
+              Just anyNode -> do
+                let
+                  ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
 
-  unpackCacheResult resultM
+                  nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+                  nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
+
+                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
 
 pickNode
-  :: forall m a.
-  ( MonadIO m
-  , MonadReader a m, HasNodeDataSource a
-  )
+  :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => BlockHash -> m (Maybe URI)
 pickNode branch = do
   dsrc <- asks (^. nodeDataSource)
-  nodeHeads <- liftIO $ readMVar $ _nodeDataSource_nodes dsrc
+  nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
   fmap (headMay . catMaybes) $ for (Map.toList $ Map.mapMaybe id nodeHeads) $ \(nodeUri, nodeHead) ->
     containsBranch nodeHead >>= \isCanditate ->
       pure $ if isCanditate then Just nodeUri else Nothing
@@ -377,10 +454,10 @@ nodeQueryDataSourceImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either RpcError b))
+  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
-  -> IO (Either RpcError a)
-nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q of
+  -> IO (Either CacheError a)
+nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -388,30 +465,34 @@ nodeQueryDataSourceImpl chainId _proto ctx logger _self q = runExceptT $ case q 
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract chainId branch contractId
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
+  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
   where
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT RpcError IO c
+    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
 
+    self :: forall b. NodeQuery b -> ExceptT CacheError IO b
+    self = ExceptT . self'
 
-withCache ::
-  ( MonadReader r m , HasNodeDataSource r
-  , MonadIO m
-  )
-  => a -> (ProtoInfo -> m a) -> m a
-withCache dft action = do
-  dsrc <- asks (^. nodeDataSource)
-  protoInfo <- liftIO $ tryReadMVar $ _nodeDataSource_parameters dsrc
+
+withCache
+  :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> a -> (ProtoInfo -> m a) -> m a
+withCache nds dft action = do
+  let dsrc = nds ^. nodeDataSource
+  protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
 
-calculateDelegateStats ::
+calculateBakerStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f
   , MonadReader r m, HasNodeDataSource r
   , MonadIO m
   )
   => f a
   -> m (f (First (Maybe (BakeEfficiency, Account)), a))
-calculateDelegateStats pkhs = do
-  dataSourceHead >>= \case
+calculateBakerStats pkhs = do
+  nds <- asks (^. nodeDataSource)
+  liftIO (atomically (dataSourceHead nds)) >>= \case
     -- I think i should probably just ask for a `forall b. f b` to pass on the no heads case
     Nothing -> return $ fmap (First Nothing,) pkhs
     Just currentHead -> ifor pkhs $ \(pkh, lvl) a -> do
@@ -426,27 +507,24 @@ calculateDelegateStats pkhs = do
 ancestors ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError RpcError m
+  , MonadError CacheError m
   )
   => RawLevel -> BlockHash -> m [BlockHash]
 ancestors (RawLevel n) branch = do
-  -- it's a bit redundant, but how else can we be "sure" that we have the branch path
-  _ <- nodeQueryDataSource $ NodeQuery_Block branch
-  hist <- liftIO . readMVar =<< asks (_nodeDataSource_history . view nodeDataSource)
+  hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
-
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError RpcError m
+  , MonadError CacheError m
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency branch len delegate = do
-  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, delegate)
+calculateBakeEfficiency branch len baker = do
+  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, baker)
 
   let
     branchLevel = branch ^. level
@@ -457,40 +535,50 @@ calculateBakeEfficiency branch len delegate = do
   rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
   bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
   let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, delegate, result)
+  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, baker, result)
   return result
   where
     efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
-    efficiencyOfBlock rights baker = BakeEfficiency
-      { _bakeEfficiency_bakedBlocks = if baker == delegate then 1 else 0
-      , _bakeEfficiency_bakingRights = case (Map.lookup baker rights, Map.lookup delegate rights) of
+    efficiencyOfBlock rights blockBaker = BakeEfficiency
+      { _bakeEfficiency_bakedBlocks = if blockBaker == baker then 1 else 0
+      , _bakeEfficiency_bakingRights = case (Map.lookup blockBaker rights, Map.lookup baker rights) of
           (_, Nothing) -> 0
           (Just them, Just us) -> if us <= them then 1 else 0
           (Nothing, _) -> 0 -- error "Very wrong"
       }
 
-    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from delegate to
+    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from baker to
     bakingRightsMap xs = Map.fromList
       [ (d, prio)
       | BakingRights _lvl d prio _ <- toList xs
       ]
 
-tryFetchFromCache :: Pool Postgresql -> NodeQuery a -> LoggingT IO (Maybe a)
-tryFetchFromCache db q = do
+tryFetchFromCache
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  => ChainId -> Pool Postgresql -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
+tryFetchFromCache chainId db q = do
   let
     qJson = Json $ requestToJSON q
-  resultM <- fmap listToMaybe $ runDb (Identity db) $ select $ GenericCacheEntry_keyField ==. qJson
-  case resultM of
+  resultM :: Map (Id GenericCacheEntry) GenericCacheEntry <- runDb (Identity db) $ selectMap GenericCacheEntryConstructor
+    $  (GenericCacheEntry_keyField ==. qJson
+    &&. GenericCacheEntry_chainIdField ==. chainId) -- we select this to use the unique constraint index
+  case nonEmpty $ Map.toList resultM of
     Nothing -> return Nothing
-    Just result -> case requestResponseFromJSON q of
+    Just ((rid, result) :| _) -> case requestResponseFromJSON q of
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-        Aeson.Success v -> return $ Just v
+        Aeson.Success v -> return $ Just (v, rid)
         Aeson.Error bad -> do
-          $(logWarnSH) (T.pack "tryFetchFromCache failed to decode:", bad)
+          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
           return Nothing
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
 makeRequestForData ''NodeQuery
-makeLenses 'NodeDataSource
+concat <$> traverse deriveTezosJson
+  [ ''CacheDelegateInfo
+  ]
+
+-- TODO: Is this worth keeping?
+instance Hashable (NodeQuery a) where
+  hashWithSalt s = hashWithSalt s . requestToJSON

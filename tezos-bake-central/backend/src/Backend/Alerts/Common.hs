@@ -1,55 +1,61 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RankNTypes #-}
 
 module Backend.Alerts.Common where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Reader (MonadReader)
-import Data.Foldable (for_)
-import Data.Text (Text)
-import qualified Data.Text.Encoding as T
+import Control.Monad.Logger (MonadLogger, logInfoS, logErrorS)
 import qualified Data.Text.Lazy as TL
 import Database.Groundhog.Core (Cond (CondEmpty), select)
-import Database.Groundhog.Postgresql (PersistBackend)
+import Database.Groundhog.Postgresql (PersistBackend, (=.))
 import Network.Mail.Mime (Address (..), simpleMail')
-import Reflex.Dom.Core (DomBuilder, renderStatic)
+import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
-import Backend.Schema ()
+import Backend.Schema
 import Common.Schema
+import ExtraPrelude
+
+data AlertType = Unresolved | Resolved
 
 data Alert = Alert
-  { _alert_subject :: !Text
-  , _alert_content :: !(forall t m. DomBuilder t m => m ())
+  { _alert_type :: !AlertType
+  , _alert_subject :: !Text
+  , _alert_content :: !Text
   }
 
 queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a
+     , MonadReader a m, HasAppConfig a, MonadLogger m
      )
-  => Alert -> m ()
-queueAlert alert = do
+  => Maybe (Id ErrorLog) -> Alert -> m ()
+queueAlert maybeLogId alert = do
   queueEmailAlert alert
   queueTelegramAlert alert
+  let
+    logger = case _alert_type alert of
+      Resolved -> $(logInfoS)
+      Unresolved -> $(logErrorS)
+  logger "Kiln" (_alert_subject alert <> ": " <> _alert_content alert)
+  for_ maybeLogId $ \logId -> do
+    now <- getTime
+    updateId logId [ErrorLog_noticeSentAtField =. Just now]
 
 queueTelegramAlert
-  :: (PersistBackend m, PostgresRaw m, MonadIO m)
+  :: (PersistBackend m, PostgresRaw m)
   => Alert -> m ()
 queueTelegramAlert alert = do
-  body <- fmap (T.decodeUtf8 . snd) $ liftIO $ renderStatic $ _alert_content alert
-  let message = _alert_subject alert <> "\n\n" <> body
-  _ <- [executeQ|
+  let message = _alert_subject alert <> "\n\n" <> _alert_content alert
+  void [executeQ|
     INSERT INTO "TelegramMessageQueue" (recipient, message, created)
     SELECT tr.id recipient, ?message message, NOW() created
     FROM "TelegramRecipient" tr
     JOIN "TelegramConfig" tc ON tc.id = tr.config
     WHERE tc.enabled AND NOT tr.deleted
   |]
-  pure ()
 
 
 queueEmailAlert
@@ -60,11 +66,10 @@ queueEmailAlert
 queueEmailAlert message = do
   recipients <- select CondEmpty
   fromAddr <- _appConfig_emailFromAddress <$> askAppConfig
-  content <- fmap (TL.fromStrict . T.decodeUtf8 . snd) $ liftIO $ renderStatic $ _alert_content message
   for_ recipients $ \n -> do
     let mail = simpleMail'
           (Address Nothing $ _notificatee_email n) -- to
           fromAddr                                 -- from
           (_alert_subject message)                 -- subject
-          content
+          (TL.fromStrict $ _alert_content message)
     queueEmail mail Nothing

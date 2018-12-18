@@ -4,9 +4,11 @@
 
 module Tezos.Json where
 
+import Control.DeepSeq (NFData)
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON, Value, camelTo2, encode, parseJSON, toEncoding, toJSON)
 import Data.Bits (Bits)
+import Data.Hashable (Hashable)
 import Data.List (uncons)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
@@ -66,7 +68,7 @@ data JsonValue
   deriving (Eq, Ord, Typeable)
 
 instance Show JsonValue where
-  show x = "decode \"" <> (T.unpack $ T.decodeUtf8 $ LBS.toStrict $ encode $ fromJsonValue x) <> "\""
+  show x = "decode \"" <> T.unpack (T.decodeUtf8 $ LBS.toStrict $ encode $ fromJsonValue x) <> "\""
 
 toJsonValue :: Aeson.Value -> JsonValue
 toJsonValue (Aeson.Object x) = JsonObject $ Map.fromList $ HashMap.toList $ fmap toJsonValue x
@@ -74,7 +76,7 @@ toJsonValue (Aeson.Array x) = JsonArray $ fmap toJsonValue x
 toJsonValue (Aeson.String x) = JsonString x
 toJsonValue (Aeson.Number x) = JsonNumber x
 toJsonValue (Aeson.Bool x) = JsonBool x
-toJsonValue (Aeson.Null) = JsonNull
+toJsonValue Aeson.Null = JsonNull
 
 fromJsonValue :: JsonValue -> Aeson.Value
 fromJsonValue (JsonObject x) = Aeson.Object $ HashMap.fromList $ Map.toList $ fmap fromJsonValue x
@@ -82,7 +84,7 @@ fromJsonValue (JsonArray x) = Aeson.Array $ fmap fromJsonValue x
 fromJsonValue (JsonString x) = Aeson.String x
 fromJsonValue (JsonNumber x) = Aeson.Number x
 fromJsonValue (JsonBool x) = Aeson.Bool x
-fromJsonValue (JsonNull) = Aeson.Null
+fromJsonValue JsonNull = Aeson.Null
 
 instance ToJSON JsonValue where
   toJSON = fromJsonValue
@@ -94,7 +96,7 @@ instance FromJSON JsonValue where
 
 -- | Tezos RPC JSON encodes 64-bit numbers as strings.
 newtype TezosWord64 = TezosWord64 { unTezosWord64 :: Word64 }
-  deriving (Eq, Ord, Show, Bounded, Enum, Typeable, Num, Integral, Bits, Real)
+  deriving (Eq, Ord, Show, Bounded, Enum, Typeable, Num, Integral, Bits, Real, NFData, Hashable)
 
 instance FromJSON TezosWord64 where
   parseJSON x = TezosWord64 <$> parseIntegralAsString x

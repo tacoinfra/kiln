@@ -3,19 +3,24 @@
 *******************************/
 @fontName: 'Helvetica Neue';
 @fontWeight: 500;
-@primaryColor:@blue;
+@primaryColor: @blue;
 
+@white: white;
+@black: #000000;
 @blue: #1269F3;
 @green: #19D201;
 @orange: #FF6705;
 @red: #D00101;
 @grey: #898989;
+@slate: #98A0AD;
 
-@hoverBlue: #5b9aff;
-@activeBlue: #0047b7;
-@visitedBlue: #5b9aff;
+@hoverBlue: #5B9AFF;
+@activeBlue: #0047B7;
+@visitedBlue: #5B9AFF;
 
 @transparentBlack: rgba(0,0,0,0.25);
+
+@sidebarBackground: #F5F5F5;
 
 /*
   Sizes are all expressed in terms of 14px/em (default em)

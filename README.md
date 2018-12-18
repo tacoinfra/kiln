@@ -5,20 +5,20 @@
 The Software alerts users within the GUI if a Monitored Node:
 
 * Is on the wrong network
-* Is on the wrong branch
+* Is not on the fittest branch
 * Falls behind the current head block level
 * Cannot be reached by the Monitoring Software (e.g. is offline)
 
 In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choice.
 
-This version (v0.1) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
+This version (v0.2.3) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
 * Improving the UI and user-flow
 * Expanding to monitoring bakers
 * Introducing new alert pathways
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
-#### Running a Node
+#### Running a node
 
 This Monitor assumes that you are running at least one Tezos node. Options for running a node include:
 
@@ -51,109 +51,148 @@ Now you can download and run the monitor like this:
 On Linux:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.3 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.2.3 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.2.3 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
-# Known Issues
+## Updating an older Docker container
 
-  * If the frontend page loses connection to the server it will stop showing live data. This might happen if, for example, your computer goes to sleep with the page open. For now, you need to manually refresh the page to reconnect. This will be fixed in a future release.
+Updating to a newer pre-built Docker image is simple because all your data is stored separately in the PostgreSQL database.
 
-# Building the Monitor from Source
+### Making a backup of your data
+
+Ideally you should make a backup of your database before upgrading, just in case something goes wrong.
+
+If you started your PostgreSQL database in Docker (as described above) you can use `docker commit` to save a copy of you current database before the upgrade:
+
+```shell
+docker commit tezos-monitor-postgres tezos-monitor-postgres:backup1
+```
+
+Use `docker image ls` to see your backup image listed. `docker image rm tezos-monitor-postgres:backup1` will delete it.
+
+Alternatively, if you have a compatible version of `pg_dump` installed, you can make a more lightweight backup by connecting to your database:
+
+```shell
+pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > tezos-monitor-postgres-backup1.sql
+```
+
+### Running the newer version
+
+Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
+
+```shell
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.2.3 ...
+```
+
+you can replace `0.2.3` with another available version.
+
+You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
+
+# System Requirements
+
+**Disk:** The monitor uses PostgreSQL for *all* storage. The entire database typically uses about 1-2GB.
+
+**Memory:** Idle memory usage is typically under 1GB. When initializing history (usually right after start-up or adding your first node) memory can spike to about 3GB for a short time.
+
+**CPU:** Running with at least 2 cores is recommended.
+
+# Building from Source
 
 ## Prerequisites
 
-These builds have only been tested on Linux. They previously worked on MacOS, but have not been tested recently.
+These builds have only been tested on Linux.
 
-##### Gitlab SSH Keys
+### Configuring the Nix cache (Recommended)
 
-This project is hosted on Gitlab. If you have not already, you should make an account and [set up SSH keys with Gitlab](https://docs.gitlab.com/ee/gitlab-basics/create-your-ssh-keys.html).
+If you have not done so already, we recommend you add our Nix caches to your Nix configuration to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md).
 
-##### Setting up Nix Caching (Recommended)
-
-If you have not already, we recommend you setup Nix caching to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md).
-
-##### Cloning the Repo
-
-Clone the Tezos Bake Monitor repo and checkout the develop branch.
+### Cloning the repository
 
 ```shell
-$ git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
-$ cd tezos-bake-monitor/
-$ git checkout develop
+git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
+cd tezos-bake-monitor/
 ```
 
-The monitoring software uses Git submodules, which allow a Git repository to be kept as a subdirectory of another Git repository. Sync and update Tezos Bake Monitor’s submodules.
+By default you will be on the `develop` branch which is the latest unstable version. For a stable version, checkout `master` or one of the specific version tags.
+
+## Running the build
 
 ```shell
-$ git submodule sync
-$ git submodule update --recursive --init
-```
-
-## Running the Build
-
-Enter the Tezos Bake Central subdirectory:
-
-```shell
-$ cd tezos-bake-central/
-```
-
-Build the Monitor by running the following command. This also returns a path which you will link to in a couple steps.
-
-```shell
-$ nix-build -A exe --out-link result
-```
-
-Once complete, still within tezos-bake-monitor/tezos-bake-central, create a directory called ‘app’
-
-```shell
-$ mkdir app
+mkdir app
 ```
 
 Then run this command to link the build’s path to the app directory.
 
 ```shell
-$ ln -s $(nix-build -A exe --no-out-link)/* app/
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
 ```
 
-### Starting the Monitor
+### Starting the monitor
 
-To run the Monitor, enter the app directory and initiate the backend. Replace <network> with your desired Tezos network, i.e. zeronet, alphanet, mainnet.
+To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `alphanet`, `mainnet`, or with a specific chain ID.
 
 ```shell
-$ cd app
-$ ./backend --network <network>
+cd app
+./backend --network <network>
 ```
 
-If you completed these steps correctly, your Monitor should now be running at http://127.0.01:8000.
+If you completed these steps correctly, your Monitor should now be running at http://127.0.0.1:8000.
+
+### Updating from an older source build
+
+To update your source build, simply checkout the newer version and `git pull`. For example:
+
+```shell
+git checkout master
+git pull
+```
+
+Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `ln` command.
+
+```shell
+ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
+```
+
+## Building the Docker image
+
+To build the Docker image you must be running on Linux or have at least one Linux remote builder configured.
+
+```shell
+nix-build -A dockerImage --no-out-link
+```
+
+The result of this command will be the path to a Docker image. You can load it with `docker load -i <path>`.
 
 # Initial Setup
 
-### Adding Monitored Nodes
+### Adding monitored nodes
 
-When you open the Monitor in your browser, you will be taken to the Options Tab. Under ‘Monitored Nodes’, enter the IP address and port of the node you would like to monitor and click ‘Add Node’. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC port. If you do not know the RPC port of the node, the Monitor will not be able to retrieve information from the node.
+Click *Add Node* from the left panel and enter the address of the node you would like to monitor under *Connect via address*. Then click *Add Node*. For example, if you would like to add a local node with an RPC interface on the default port of `8732`, you can enter `http://localhost:8732`\*. You can add any node URL to which you know the RPC address. If you do not know the RPC address of the node or if the node wasn't started with `--rpc-addr`, the monitor will not be able to retrieve information from the node.
 
-\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal`. For example, `http://host.docker.internal:8732`. This is also true on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
+\* If you're running the monitor from Docker on macOS, `localhost` will not point to your *host*'s network. Instead you can use `host.docker.internal` instead of `localhost`, e.g. `http://host.docker.internal:8732`. `localhost` will also not work on Linux if you run the container without `--network host`, but you can't use `host.docker.internal` in this case.
 
-Once you’ve added at least one Monitored or Public Node, the Nodes Tab should appear. There you can view information about your Monitored Node(s) alongside the Public Nodes you have also chosen.
+Once you’ve added at least one node or Public Node, the Dashboard will show you statistics.
 
-### Adding Public Nodes
+### Adding public nodes
 
-On the Options Tab, you’ll see a section called ‘Public Nodes’, which lists a button for each Public Node you’re able to observe. By default, none of these are selected. To observe them, toggle on the button for that node. It should then appear on the Node Tab.
+Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Email Configuration
+### Configuring email notifications
 
-Within the Options Tab of the Monitor you can configure your own SMTP email server to send alerts if a node is on the wrong chain or network, more than five blocks behind, or has gone offline. To link your email server to the Monitor, enter the location information (host, port, and protocol), as well as the authentication information (username and password). When you have finished filling in the fields, hit ‘Save’ and move on to ‘Notification Recipients’. Add the email addresses of whomever you would like to receive the email alerts.
+Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
 
-Once you’ve added a notification recipient, an orange ‘Send Test’ button will appear next to their email address. Pressing that button will send a test email to that address, confirming that the SMTP server has been configured correctly.
+### Configuring Telegram notifications
+
+Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.

@@ -13,26 +13,24 @@ import Data.Time (UTCTime)
 import qualified Text.URI as Uri
 
 import Common.Schema
-import Tezos.NodeRPC.Types
 import Tezos.Types
 
 data ForkInfo = ForkInfo
   { _forkInfo_forkStatus :: Either ForkStatus ()
   , _forkInfo_time :: UTCTime
   , _forkInfo_hash :: BlockHash
-  } deriving (Eq, Ord, Show)
+  } deriving (Show)
 
 data ForkStatus
   = ForkStatus_TooNew
   | ForkStatus_TooOld
   | ForkStatus_Forked
-  | ForkStatus_BadNode RpcError
-  deriving (Eq, Ord, Show)
-
+  | ForkStatus_BadNode CacheError
+  deriving (Show)
 makePrisms ''ForkStatus
 
-instance AsRpcError ForkStatus where
-  asRpcError = _ForkStatus_BadNode
+instance AsCacheError ForkStatus where
+  asCacheError = _ForkStatus_BadNode
 
 class AsForkStatus e where
   asForkStatus :: Prism' e ForkStatus

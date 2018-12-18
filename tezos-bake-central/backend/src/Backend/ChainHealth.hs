@@ -4,19 +4,17 @@
 
 module Backend.ChainHealth (scanForkInfo) where
 
-import Control.Lens ((^.))
+import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (runExceptT, throwError)
-import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader)
-import Data.Function (on)
-import Data.Maybe
 import Data.Time (UTCTime)
 import Safe (maximumByMay)
 
 import Backend.CachedNodeRPC
+import Backend.STM (atomicallyWith)
 import Common.Schema
 import Common.Verification
-import Tezos.NodeRPC
+import ExtraPrelude
 import Tezos.Types
 
 -- problem:: many baked blocks do not appear on chain
@@ -37,12 +35,15 @@ checkChainHealth
   -> b
   -> m ForkInfo
 checkChainHealth _now _delay seenBaked = do
+  nds <- asks (^. nodeDataSource)
   seen <- runExceptT $ do
     -- try really hard to get seenBaked into history
     seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
     -- look for the head to give the newly seen block a chance to become the head
-    headBlock :: VeryBlockLike <- maybe (throwError $ ForkStatus_BadNode $ RpcError_HttpException "NO HISTORY") pure =<< dataSourceHead
-    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< branchPoint (headBlock ^. hash) (seenBaked ^. hash)
+    headBlock :: VeryBlockLike
+      <- maybe (throwError $ ForkStatus_BadNode CacheError_NotEnoughHistory) pure
+         =<< liftIO (atomically $ dataSourceHead nds)
+    ancestor <- maybe (throwError ForkStatus_Forked) pure =<< atomicallyWith (branchPoint (headBlock ^. hash) (seenBaked ^. hash))
     -- TODO: compare the time between now and the blocks we're looking at to throw ForkStatus_Too{Old,New}
     if (seen ^. predecessor) == (ancestor ^. predecessor)
       then return () -- ForkStatus_Good

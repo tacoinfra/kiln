@@ -55,11 +55,12 @@ library
     , containers
     , cryptohash
     , cryptonite
+    , deepseq
     , groups
+    , hashable
     , hashing
     , http-types
     , lens
-    , lens-aeson
     , memory
     , modern-uri
     , mtl

@@ -2,17 +2,23 @@
          Site Overrides
 *******************************/
 
+.ui.checkbox {
+  display: inline;
+}
+
 /* Switch NORMAL */
 
 .ui.toggle.checkbox {
-  min-height: @toggleHeight;
-  margin-top: @2px; /* this is a little hacky, to get some room around the toggle buttons themselves.  in the default theme, the buttons are smaller than the labels, so their own boxes don't need any gutter.*/
+  min-height: @toggleHeight + @2px; /* this is a little hacky, to get some room around the toggle buttons themselves.  in the default theme, the buttons are smaller than the labels, so their own boxes don't need any gutter.*/
 }
 
 /* Input */
 .ui.toggle.checkbox input {
   width: @toggleWidth;
   height: @toggleHeight;
+  position: absolute;
+  top: initial;
+  bottom: 0;
 }
 
 /* Label */
@@ -30,6 +36,8 @@
 .ui.toggle.checkbox .box:before,
 .ui.toggle.checkbox label:before {
   /* top: @toggleLaneVerticalOffset; */
+  top: initial;
+  bottom: 0;
 
   width: @toggleLaneWidth;
   height: @toggleLaneHeight;
@@ -40,7 +48,8 @@
 .ui.toggle.checkbox label:after {
   width: @toggleHandleSize;
   height: @toggleHandleSize;
-  top: @toggleHandleOffset;
+  top: initial;
+  bottom: @toggleHandleOffset;
 
 }
 
@@ -91,7 +100,7 @@
 .ui.toggle.checkbox.big label:after {
   width: @toggleHandleSizeBig;
   height: @toggleHandleSizeBig;
-  top: @toggleHandleOffsetBig;
+  bottom: @toggleHandleOffsetBig;
 
 }
 
@@ -142,7 +151,7 @@
 .ui.toggle.checkbox.huge label:after {
   width: @toggleHandleSizeHuge;
   height: @toggleHandleSizeHuge;
-  top: @toggleHandleOffsetHuge;
+  bottom: @toggleHandleOffsetHuge;
 
 }
 

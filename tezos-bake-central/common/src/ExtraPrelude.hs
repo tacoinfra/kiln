@@ -1,5 +1,6 @@
 module ExtraPrelude
   ( Coercible
+  , Compose (..)
   , Const (..)
   , First (..)
   , Generic
@@ -49,6 +50,7 @@ module ExtraPrelude
   , liftA2
   , liftA3
   , listToMaybe
+  , on
   , preview
   , runReaderT
   , second
@@ -73,6 +75,7 @@ module ExtraPrelude
   , ($>)
 
   , tshow
+  , when'
   , whenJust
   , whenM
   ) where
@@ -91,7 +94,9 @@ import Data.Coerce (Coercible, coerce)
 import Data.Default (def)
 import Data.Either (isLeft, isRight)
 import Data.Foldable (fold, for_, toList, traverse_)
+import Data.Function (on)
 import Data.Functor (void, ($>))
+import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Monoidal (MonoidalMap)
@@ -115,3 +120,6 @@ whenJust (Just x) f = f x
 
 whenM :: (Applicative m, Monoid b) => Bool -> m b -> m b
 whenM x true = if x then true else pure mempty
+
+when' :: (Monad m, Monoid b) => m Bool -> m b -> m b
+when' x true = x >>= \v -> if v then true else pure mempty

@@ -15,7 +15,8 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall -fno-warn-orphans #-}
+-- TODO do everywhere
+{-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
 
 module Common.Schema
   ( module Common.Schema
@@ -24,19 +25,25 @@ module Common.Schema
   , Id
   ) where
 
-import Control.Lens.TH (makeLenses, makePrisms)
+import Control.Exception.Safe (Exception, SomeException)
+import Control.Lens
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Function (on)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
+import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
+import Data.Universe
+import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
-import Data.Word (Word16, Word64)
+import Data.Word
 import GHC.Generics (Generic)
 import Rhyolite.Schema (Email, HasId, Id, Json)
 import Text.URI (URI)
@@ -44,11 +51,31 @@ import qualified Text.URI as Uri
 
 import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.NodeRPC.Types (NetworkStat (..))
+import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
+import Tezos.Operation
 import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
+
+data CacheError
+  = CacheError_RpcError !RpcError
+  | CacheError_NoSuitableNode
+  | CacheError_NotEnoughHistory
+  | CacheError_Timeout !NominalDiffTime
+  | CacheError_SomeException !SomeException
+  deriving (Show, Generic, Typeable)
+instance Exception CacheError
+makePrisms ''CacheError
+
+class AsCacheError e where
+  asCacheError :: Prism' e CacheError
+
+instance AsRpcError CacheError where
+  asRpcError = _CacheError_RpcError
+
+instance AsCacheError CacheError where
+  asCacheError = id
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render
@@ -57,10 +84,10 @@ instance Aeson.FromJSON Uri.URI where
   parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
 sumFees :: PublicKeyHash -> Operation -> Tez
-sumFees delegate = getSum . views balanceUpdates getFee
+sumFees baker = getSum . views balanceUpdates getFee
   where
     getFee :: BalanceUpdate -> Sum Tez
-    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == delegate = Sum (_freezerUpdate_change x)
+    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
     getFee _ = Sum 0
 
 type Baked = Event BakedEvent
@@ -83,6 +110,31 @@ knownProtocols =
   , "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -- MAINNET
   ]
 
+data BlockBaker = BlockBaker
+  { _blockBaker_publicKeyHash :: !PublicKeyHash
+  , _blockBaker_priority :: !Priority
+  , _blockBaker_endorsements :: !(Map PublicKeyHash (Seq Word8))
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
+getBakerFromBlock :: Block -> BlockBaker
+getBakerFromBlock block = BlockBaker
+  { _blockBaker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
+  , _blockBaker_priority = block ^. block_header . blockHeader_priority
+  , _blockBaker_endorsements = block ^. block_operations
+    . traverse
+    . traverse
+    . operation_contents
+    . traverse
+    . _OperationContents_Endorsement
+    . operationContentsEndorsement_metadata
+    . to f
+  }
+  where
+    f :: EndorsementMetadata -> Map PublicKeyHash (Seq Word8)
+    f em = Map.singleton
+      (_endorsementMetadata_delegate em)
+      (_endorsementMetadata_slots em)
+
 data Client = Client
   { _client_address :: !URI
   , _client_alias :: !(Maybe Text)
@@ -92,7 +144,7 @@ data Client = Client
 instance HasId Client
 
 data PendingReward = PendingReward
-  { _pendingReward_delegate :: !(Id Delegate)
+  { _pendingReward_baker :: !(Id Baker)
   , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
   , _pendingReward_level :: !TezosWord64
   , _pendingReward_amount :: !Tez
@@ -122,6 +174,22 @@ data Node = Node
   , _node_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
+
+mkNode :: URI -> Maybe Text -> Node
+mkNode addr alias = Node
+  { _node_address = addr
+  , _node_alias = alias
+  , _node_identity = Nothing -- TODO
+  , _node_headLevel = Nothing
+  , _node_headBlockHash = Nothing
+  , _node_headBlockPred = Nothing
+  , _node_headBlockBakedAt = Nothing
+  , _node_peerCount = Nothing
+  , _node_networkStat = NetworkStat 0 0 0 0
+  , _node_fitness = Nothing
+  , _node_deleted = False
+  , _node_updated = Nothing
+  }
 
 getNodeHeadBlock :: Node -> Maybe VeryBlockLike
 getNodeHeadBlock n = VeryBlockLike
@@ -161,22 +229,6 @@ data PublicNodeHead = PublicNodeHead
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockPred = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
-  }
-
 data Parameters = Parameters
   { _parameters_chain :: !ChainId
   , _parameters_protoInfo :: !ProtoInfo
@@ -192,7 +244,7 @@ data BakedEvent = BakedEvent
   { _bakedEvent_hash :: BlockHash
   , _bakedEvent_operations :: [[BakedEventOperation]]
   , _bakedEvent_signedHeader :: BlockHeader
-  , _bakedEvent_delegate :: !PublicKeyHash
+  , _bakedEvent_baker :: !PublicKeyHash
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SeenEvent = SeenEvent
@@ -224,7 +276,7 @@ data EndorseEvent = EndorseEvent
   { _endorseEvent_hash :: BlockHash
   , _endorseEvent_level :: Int
   , _endorseEvent_slot :: Int -- todo, pluralize
-  , _endorseEvent_delegate :: PublicKeyHash
+  , _endorseEvent_baker :: PublicKeyHash
   , _endorseEvent_name :: String
   , _endorseEvent_oph :: OperationHash
   } deriving (Show, Eq, Typeable, Generic)
@@ -245,8 +297,8 @@ blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
   where
     blockHeader = _bakedEvent_signedHeader $ _event_detail b
     nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
-    delegate = _bakedEvent_delegate $ _event_detail b
-    fees = getSum $ (foldMap.foldMap) (Sum . sumFees delegate . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
+    baker = _bakedEvent_baker $ _event_detail b
+    fees = getSum $ (foldMap.foldMap) (Sum . sumFees baker . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
 
 endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tez
 endorsementReward b p = Tez $ getTez (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
@@ -268,17 +320,25 @@ data ClientDaemonWorker
 
 data ClientConfig = ClientConfig
   { _clientConfig_startTime :: UTCTime
-  , _clientConfig_delegates :: [PublicKeyHash] -- Ident
+  , _clientConfig_bakers :: [PublicKeyHash] -- Ident
   , _clientConfig_workers :: [ClientDaemonWorker]
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
-data Delegate = Delegate
-  { _delegate_publicKeyHash :: !PublicKeyHash
-  , _delegate_alias :: !(Maybe Text)
-  , _delegate_deleted :: !Bool
+data Baker = Baker
+  { _baker_publicKeyHash :: !PublicKeyHash
+  , _baker_alias :: !(Maybe Text)
+  , _baker_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Delegate
+instance HasId Baker
+
+data BakerDetails = BakerDetails
+  { _bakerDetails_publicKeyHash :: !PublicKeyHash
+  , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
+  , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
+  , _bakerDetails_branch :: !BlockHash
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDetails
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
@@ -304,11 +364,29 @@ data Notificatee = Notificatee
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 
+data AlertNotificationMethod
+  = AlertNotificationMethod_Email
+  | AlertNotificationMethod_Telegram
+  deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
+
+instance Aeson.ToJSONKey AlertNotificationMethod where
+  toJSONKey = Aeson.ToJSONKeyText (tshow) (AesonE.text . tshow)
+
+-- show match show!
+instance Aeson.FromJSONKey AlertNotificationMethod where
+  fromJSONKey = Aeson.FromJSONKeyTextParser $ \case
+    "AlertNotificationMethod_Email" -> pure AlertNotificationMethod_Email
+    "AlertNotificationMethod_Telegram" -> pure AlertNotificationMethod_Telegram
+    _ -> fail "unknown alert notification method"
+
 data SmtpProtocol
   = SmtpProtocol_Plain
   | SmtpProtocol_Ssl
   | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
+
+instance Universe SmtpProtocol where universe = universeDef
+instance Finite SmtpProtocol
 
 data MailServerConfig = MailServerConfig
   { _mailServerConfig_hostName :: Text
@@ -316,7 +394,9 @@ data MailServerConfig = MailServerConfig
   , _mailServerConfig_smtpProtocol :: SmtpProtocol
   , _mailServerConfig_userName :: Text
   , _mailServerConfig_password :: Text
+  -- TODO this `madeDefaultAt` seems to be for old design
   , _mailServerConfig_madeDefaultAt :: UTCTime
+  , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
@@ -338,6 +418,7 @@ data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeWrongChain
 
+-- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
   , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
@@ -349,13 +430,13 @@ instance HasId ErrorLogBakerNoHeartbeat
 data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 
-data ErrorLogMultipleBakersForSameDelegate = ErrorLogMultipleBakersForSameDelegate
-  { _errorLogMultipleBakersForSameDelegate_log :: !(Id ErrorLog)
-  , _errorLogMultipleBakersForSameDelegate_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameDelegate_client :: !(Id Client)
-  , _errorLogMultipleBakersForSameDelegate_worker :: !ClientWorker
+data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
+  { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
+  , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
+  , _errorLogMultipleBakersForSameBaker_client :: !(Id Client)
+  , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogMultipleBakersForSameDelegate
+instance HasId ErrorLogMultipleBakersForSameBaker
 
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
@@ -435,26 +516,30 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
+  , ''BlockBaker
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
-  , ''Delegate
+  , ''Baker
+  , ''BakerDetails
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
-  , ''ErrorLogMultipleBakersForSameDelegate
+  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
   , ''Event
+  , ''MailServerConfig
   , ''Node
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
   , ''SeenEvent
+  , ''AlertNotificationMethod
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -465,8 +550,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ 'BakedEvent
   , 'BakedEventOperation
   , 'BakeEfficiency
+  , 'BlockBaker
   , 'CachedProtocolConstants
-  , 'Delegate
+  , 'Baker
+  , 'BakerDetails
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
@@ -474,7 +561,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBadNodeHead
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
-  , 'ErrorLogMultipleBakersForSameDelegate
+  , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
