@@ -29,7 +29,7 @@ import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
-import Common.App (BakeView (..), BakeViewSelector (..),
+import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
                    NodeSummary (..), BakerSummary (..),
                    ErrorLogView (..), NodeErrorLogView (..), BakerErrorLogView (..),
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
@@ -113,28 +113,27 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           -- , _bakeView_bakerStats = bakerStatsView
           }
 
+    nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
     nodeDetailsVS = _bakeViewSelector_nodeDetails aggVS
-    handleNodeExternal nid nodeExternal = whenM (viewSelects (Bounded nid) nodeAddressesVS) $
+    handleNodeExternal :: (Monad m') => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
+    handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ 
       pure $ mempty
-        { _bakeView_nodeAddresses = toRangeView1
-          nodeAddressesVS
-          (Bounded $ _nodeExternal_id nodeExternal)
-          $ Just $ First $ do
-            guard $ _nodeExternalData_deleted $ _nodeExternal_data nodeExternal
-            ne <- nodeExternal
-            pure $ NodeSummary <$> _nodeExternalData_address
-                               <*> _nodeExternalData_alias
-                               <*> const 0
-                 $ ne
+        { _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ do
+          nodeExternalData <- mNodeExternalData
+          return $ First $ do
+              guard $ _nodeExternalData_deleted $ nodeExternalData
+              pure $ NodeSummary <$> _nodeExternalData_address
+                                 <*> _nodeExternalData_alias
+                                 <*> const 0
+                   $ nodeExternalData
         }
-    handleNodeDetails nodeDetails = mconcat <$> sequence
-      [ whenM (viewSelects (Bounded $ _nodeDetails_id nodeDetails) nodeDetailsVS) $
+
+    handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
+    handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) nodeDetailsVS) $
         pure $ mempty
-          { _bakeView_nodeDetails = toRangeView1
-              nodeDetailsVS
-              (Bounded $ _nodeDetails_id nodeDetails)
-              (Just $ _nodeDetails_data nodeDetails)
+          { _bakeView_nodeDetails = toRangeView1 nodeDetailsVS (Bounded nid) mNodeDetailsData
           }
       , whenM (viewSelects () latestHeadVS) $ do
           latestHead <- liftIO $ atomically $ dataSourceHead nds

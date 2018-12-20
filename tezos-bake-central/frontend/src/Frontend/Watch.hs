@@ -68,7 +68,7 @@ watchNodeAddressesValid = do
     }
   return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
 
-watchNodeDetails :: (MonadRhyoliteFrontendWidget Bake t m) => Id Node -> m (Dynamic t (Maybe NodeDetails))
+watchNodeDetails :: (MonadRhyoliteFrontendWidget Bake t m) => Id Node -> m (Dynamic t (Maybe NodeDetailsData))
 watchNodeDetails nid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeDetails = viewRangeExactly (Bounded nid) 1

@@ -41,7 +41,7 @@ preMigrate =
   >=> renameColumnIfExists (Nothing, "PendingReward") "delegate" "baker"
   >=> createNodeDetailsTable
   >=> createNodeExternalTable
-  >=> migrateNodesToSplitTable
+  -- >=> migrateNodesToSplitTable
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do

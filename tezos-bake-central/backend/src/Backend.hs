@@ -196,18 +196,22 @@ backendImpl cfg serve = do
 
       -- Set nodes overrides based on configuration
       for_ nodes $ \ns -> do
-        update [NodeExternalData_deletedField =. True] CondEmpty
-        update [NodeExternalData_deletedField =. False] (NodeExternalData_addressField `in_` toList ns)
-        enabled <- project NodeExternalData_addressField (NodeExternalData_deletedField ==. False)
+        update [NodeExternal_dataField ~> NodeExternalData_deletedSelector =. True] CondEmpty
+        update [NodeExternal_dataField ~> NodeExternalData_deletedSelector =. False]
+          ((NodeExternal_dataField ~> NodeExternalData_addressSelector) `in_` toList ns)
+        enabled <- project (NodeExternal_dataField ~> NodeExternalData_addressSelector)
+          ((NodeExternal_dataField ~> NodeExternalData_deletedSelector) ==. False)
 
         let needToAdd = ns `Set.difference` Set.fromList enabled
         for_ needToAdd $ \newAddress -> do
           nid <- insert' Node
           insert $ NodeExternal
             { _nodeExternal_id = nid
-            , _nodeExternalData_address = newAddress
-            , _nodeExternalData_alias = Nothing
-            , _nodeExternalData_deleted = False
+            , _nodeExternal_data = NodeExternalData
+              { _nodeExternalData_address = newAddress
+              , _nodeExternalData_alias = Nothing
+              , _nodeExternalData_deleted = False
+              }
             }
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
