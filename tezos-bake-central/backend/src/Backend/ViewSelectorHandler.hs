@@ -315,14 +315,14 @@ getErrorLogsImpl flt intervalMap = do
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
 
-        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles"]
-          (\elId (tPublicKeyHash, tPreservedCycles) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
-                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles)
+        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
+                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
           window
 
-        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles"]
-          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
-                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles)
+        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
+                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
           window
         ]
 

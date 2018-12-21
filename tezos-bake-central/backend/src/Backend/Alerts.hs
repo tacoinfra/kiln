@@ -108,10 +108,10 @@ reportBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Id Baker -> ProtoInfo -> m ()
-reportBakerDeactivated bakerId protoInfo = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+  => Id Baker -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivated bakerId protoInfo newFit = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated, Fitness) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
       JOIN "Baker" b ON b.id = t.node
@@ -122,24 +122,28 @@ reportBakerDeactivated bakerId protoInfo = do
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Just (logId, specificLogId, oldFit) -> updateErrorLogBy logId specificLogId
+      [ ErrorLogBakerDeactivated_fitnessField =. max newFit oldFit ]
     Nothing -> do
       baker' <- get $ fromId bakerId
       for_ baker' $ \baker -> do
         (logId, log) <- insertErrorLog $ \logId ->
-          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) (_protoInfo_preservedCycles protoInfo)
+          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) (_protoInfo_preservedCycles protoInfo) newFit
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
 
 clearBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Id Baker -> m ()
-clearBakerDeactivated bakerId = do
+  => Id Baker -> Fitness -> m ()
+clearBakerDeactivated bakerId newFit = do
   lids :: [Id ErrorLogBakerDeactivated] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivated" t
-    WHERE t.log = el.id AND t.baker = ?bakerId AND el.stopped IS NULL
+    WHERE t.log = el.id
+      AND t.baker = ?bakerId
+      AND el.stopped IS NULL
+      AND t.fitness < ?newFit
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
@@ -152,10 +156,10 @@ reportBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Id Baker -> Cycle -> Cycle -> ProtoInfo -> m ()
-reportBakerDeactivationRisk bakerId gracePeriod latestCycle protoInfo = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+  => Id Baker -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivationRisk bakerId gracePeriod latestCycle protoInfo newFit = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk, Fitness) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
       JOIN "Baker" b ON b.id = t.node
@@ -166,24 +170,28 @@ reportBakerDeactivationRisk bakerId gracePeriod latestCycle protoInfo = do
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Just (logId, specificLogId, oldFit) -> updateErrorLogBy logId specificLogId
+      [ ErrorLogBakerDeactivationRisk_fitnessField =. max newFit oldFit ]
     Nothing -> do
       baker' <- get $ fromId bakerId
       for_ baker' $ \baker -> do
         (logId, log) <- insertErrorLog $ \logId ->
-          ErrorLogBakerDeactivationRisk logId (_baker_publicKeyHash baker) gracePeriod latestCycle (_protoInfo_preservedCycles protoInfo)
+          ErrorLogBakerDeactivationRisk logId (_baker_publicKeyHash baker) gracePeriod latestCycle (_protoInfo_preservedCycles protoInfo) newFit
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivationRiskDescriptions log
 
 clearBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Id Baker -> m ()
-clearBakerDeactivationRisk bakerId = do
+  => Id Baker -> Fitness -> m ()
+clearBakerDeactivationRisk bakerId newFit = do
   lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivationRisk" t
-    WHERE t.log = el.id AND t.baker = ?bakerId AND el.stopped IS NULL
+    WHERE t.log = el.id
+      AND t.baker = ?bakerId
+      AND el.stopped IS NULL
+      AND t.fitness < ?newFit
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)

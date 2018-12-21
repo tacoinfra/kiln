@@ -456,6 +456,7 @@ data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
   , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
   , _errorLogBakerDeactivated_preservedCycles :: !Cycle
+  , _errorLogBakerDeactivated_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerDeactivated
 
@@ -465,6 +466,7 @@ data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
   , _errorLogBakerDeactivationRisk_gracePeriod :: !Cycle
   , _errorLogBakerDeactivationRisk_latestCycle :: !Cycle
   , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
+  , _errorLogBakerDeactivationRisk_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerDeactivationRisk
 
