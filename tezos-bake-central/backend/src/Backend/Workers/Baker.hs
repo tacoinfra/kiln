@@ -116,8 +116,11 @@ bakerWorker nds appConfig = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
           ]
       notify $ mkDefaultNotify newVal
 
-      let gracePeriod = _cacheDelegateInfo_gracePeriod di
-          fit = headBlock ^. fitness
+      -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
+      -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
+      let fit = headBlock ^. fitness
+          gracePeriod = _cacheDelegateInfo_gracePeriod di
+
       flip runReaderT appConfig $ do
         if _cacheDelegateInfo_deactivated di
           then reportBakerDeactivated bid protoInfo fit
