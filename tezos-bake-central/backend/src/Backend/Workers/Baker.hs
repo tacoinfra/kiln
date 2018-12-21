@@ -120,13 +120,12 @@ bakerWorker nds appConfig = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
           fit = headBlock ^. fitness
       flip runReaderT appConfig $ do
         if _cacheDelegateInfo_deactivated di
-        then reportBakerDeactivated bid protoInfo fit
-        else clearBakerDeactivated bid fit
-
-        if (1 >= gracePeriod - latestCycle)
-        then reportBakerDeactivationRisk bid gracePeriod latestCycle protoInfo fit
-        else clearBakerDeactivationRisk bid fit
-
+          then reportBakerDeactivated bid protoInfo fit
+          else do
+            clearBakerDeactivated bid fit
+            if (1 >= gracePeriod - latestCycle)
+              then reportBakerDeactivationRisk bid gracePeriod latestCycle protoInfo fit
+              else clearBakerDeactivationRisk bid fit
 
   case res of
     Right _ -> pure ()
