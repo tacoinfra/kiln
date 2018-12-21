@@ -801,11 +801,11 @@ img.credits-obsidian {
 }
 
 h4.dashboard-section-title {
-    text-transform: uppercase;
-    margin-top: @20px;
-    margin-bottom: @20px;
-    color: @slate;
-    font-size: @14px;
+  text-transform: uppercase;
+  margin-top: @20px;
+  margin-bottom: @20px;
+  color: @slate;
+  font-size: @14px;
 }
 
 .modal-box.add-baker {
