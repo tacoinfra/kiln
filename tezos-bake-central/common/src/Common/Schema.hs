@@ -379,6 +379,16 @@ data Accusation = Accusation
   , _accusation_isBake :: !Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+data BlockTodo = BlockTodo
+  { _blockTodo_hash :: !BlockHash
+  , _blockTodo_level :: !Int
+  , _blockTodo_chain :: !ChainId
+  , _blockTodo_claimedBy :: !(Maybe Int) -- TODO WIP do backends have IDs?  they probably should if they're going to claim jobs...
+  , _blockTodo_claimedAt :: !(Maybe UTCTime)
+  , _blockTodo_parsedParent :: !Bool
+  , _blockTodo_parsedAccusations :: !Bool
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
 
@@ -775,6 +785,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerRight
   , ''BakerRightsCycleProgress
   , ''BlockBaker
+  , ''BlockTodo
   , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
@@ -828,6 +839,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRight
   , 'BakerRightsCycleProgress
   , 'BlockBaker
+  , 'BlockTodo
   , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent

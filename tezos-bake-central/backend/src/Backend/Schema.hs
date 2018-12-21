@@ -533,6 +533,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     keys:
       - name: Accusation_hash
         default: true
+  - entity: BlockTodo
+    autoKey: null
+    constructors:
+      - name: BlockTodo
+        uniques:
+          - name: BlockTodo_hash
+            type: primary
+            fields: [_blockTodo_hash]
+    keys:
+      - name: BlockTodo_hash
+        default: true
   - entity: Client
     constructors:
       - name: Client
