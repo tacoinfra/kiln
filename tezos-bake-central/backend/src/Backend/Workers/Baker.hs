@@ -93,7 +93,7 @@ bakerWorker nds appConfig = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     bakingRights :: Map PublicKeyHash BakingRights <- mkFillMap NodeQuery_BakingRights _bakingRights_delegate
     endorsingRights :: Map PublicKeyHash EndorsingRights <- mkFillMap NodeQuery_EndorsingRights _endorsingRights_delegate
 
-    runDb (Identity (_nodeDataSource_pool nds)) $ ifor_ bakers $ \bid (baker, _bakerDetails) -> do
+    runDb (Identity (_nodeDataSource_pool nds)) $ for_ bakers $ \(baker, _bakerDetails) -> do
       let pkh = _baker_publicKeyHash baker
       $(logDebug) $ "Updating rights data baker " <> toPublicKeyHashText pkh
       existingIds :: [Id BakerDetails] <- fmap toId <$> project AutoKeyField (BakerDetails_publicKeyHashField ==. pkh)
@@ -123,12 +123,12 @@ bakerWorker nds appConfig = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
       flip runReaderT appConfig $ do
         if _cacheDelegateInfo_deactivated di
-          then reportBakerDeactivated bid protoInfo fit
+          then reportBakerDeactivated pkh protoInfo fit
           else do
-            clearBakerDeactivated bid fit
+            clearBakerDeactivated pkh fit
             if (1 >= gracePeriod - latestCycle)
-              then reportBakerDeactivationRisk bid gracePeriod latestCycle protoInfo fit
-              else clearBakerDeactivationRisk bid fit
+              then reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo fit
+              else clearBakerDeactivationRisk pkh fit
 
   case res of
     Right _ -> pure ()
