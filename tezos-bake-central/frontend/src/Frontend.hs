@@ -337,7 +337,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipped disconnectedTooltip $
+      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"
         (def
           & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
