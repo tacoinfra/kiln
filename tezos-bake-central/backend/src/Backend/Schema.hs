@@ -60,7 +60,7 @@ import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId)
+import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
 import Text.Read (readMaybe)
@@ -516,11 +516,15 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_pendingReward_baker, _pendingReward_hash]
   - entity: Baker
+    autoKey: null
+    keys:
+      - name: BakerKey
+        default: true
     constructors:
       - name: Baker
         uniques:
-          - name: _baker_uniqueness
-            type: constraint
+          - name: BakerKey
+            type: primary
             fields: [_baker_publicKeyHash]
   - entity: BakerDetails
   - entity: BakerRightsCycleProgress
@@ -605,7 +609,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
-  , (''Baker, 'BakerKey)
+  -- , (''Baker, 'BakerKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
@@ -627,3 +631,9 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
+
+instance -- DefaultKey Baker ~ PublicKeyHash => 
+    DefaultKeyId Baker where
+  toIdData _ (BakerKeyKey pkh) = pkh
+  fromIdData _ = BakerKeyKey
+

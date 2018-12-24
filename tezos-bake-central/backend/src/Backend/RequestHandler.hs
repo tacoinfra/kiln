@@ -110,7 +110,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ do
-        existingIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
         let newVal = Baker
               { _baker_publicKeyHash = pkh
               , _baker_alias = alias
@@ -119,16 +119,16 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         case nonEmpty existingIds of
           Nothing -> void $ insert newVal
           Just bIds -> for_ bIds $ \bId ->
-            updateId (bId :: Id Baker) [Baker_deletedField =. False, Baker_aliasField =. alias]
+            update [Baker_deletedField =. False, Baker_aliasField =. alias] (BakerKey ==. fromId bId)
         notify $ mkDefaultNotify newVal
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
-        bIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
         let inIds = In bIds
         _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
         _ <- [executeQ| DELETE FROM "BakerDetails" ds WHERE ds."publicKeyHash" = ?pkh |]
         for_ bIds $ \bId -> do
-          updateId bId [Baker_deletedField =. True]
+          update [Baker_deletedField =. True] (BakerKey ==. fromId bId)
           notify $ mkDefaultNotify $ Baker
             { _baker_publicKeyHash = pkh
             , _baker_alias = Nothing

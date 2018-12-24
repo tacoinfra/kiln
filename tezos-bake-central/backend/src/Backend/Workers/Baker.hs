@@ -81,10 +81,10 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
     -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- runDb (Identity db) $ do
-      bakers :: Map (Id Baker) Baker <- selectMap BakerConstructor (Baker_deletedField ==. False)
+      bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_deletedField ==. False)
 
       bakerRightsCycleProgress' :: Map (Id BakerRightsCycleProgress) BakerRightsCycleProgress <- selectMap BakerRightsCycleProgressConstructor
-        ( BakerRightsCycleProgress_publicKeyHashField `in_` toList (fmap _baker_publicKeyHash bakers)
+        ( BakerRightsCycleProgress_publicKeyHashField `in_` bakerPKHs
         &&. BakerRightsCycleProgress_chainIdField ==. chainId
         &&. BakerRightsCycleProgress_branchField `in_` fmap _rightsCycleInfo_branch cycleHashes
         &&. BakerRightsCycleProgress_cycleField >=. minCycle
@@ -98,11 +98,10 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
 
       -- this is all of the progress we could possibly want.  we indicate that the progress we've made is none by using the level just before the cycle starts.
       return $ (haveProgress <>) $ MMap.fromList $ do
-            baker <- toList bakers
+            pkh <- bakerPKHs
             cycleHash <- cycleHashes
             let
               cycle = _rightsCycleInfo_cycle cycleHash
-              pkh = _baker_publicKeyHash baker
               v = BakerRightsCycleProgress
                 { _bakerRightsCycleProgress_chainId = chainId
                 , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash

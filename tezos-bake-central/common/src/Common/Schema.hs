@@ -45,7 +45,7 @@ import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
-import Rhyolite.Schema (Email, HasId, Id, Json)
+import Rhyolite.Schema (Email, HasId, IdData, Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -330,7 +330,9 @@ data Baker = Baker
   , _baker_alias :: !(Maybe Text)
   , _baker_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Baker
+
+instance HasId Baker where
+  type IdData Baker = PublicKeyHash
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
