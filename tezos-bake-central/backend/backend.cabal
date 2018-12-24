@@ -48,6 +48,7 @@ library
     , http-types
     , IntervalMap
     , lens
+    , lens-aeson
     , mime-mail
     , modern-uri
     , monad-control

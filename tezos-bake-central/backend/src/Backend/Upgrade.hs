@@ -10,6 +10,7 @@ module Backend.Upgrade where
 import Control.Exception.Safe (try)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (logInfo)
+import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import Data.Pool (Pool)
 import qualified Data.Text as T
@@ -75,8 +76,22 @@ setUpstreamVersion v = do
         ]
       getId existingId >>= traverse_ (notify . Notify_UpstreamVersion existingId)
 
+getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> m (Either Text Text)
+getTezosBranch httpMgr branch = do
+  let url = gitlabApiBaseUrl <> "/projects/3836952/repository/branches/" <> branch
+  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $ do
+    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
+  return $ case resp' of
+    Left ex -> Left $ T.pack $ show ex
+    Right body -> case Http.getResponseBody body ^? key "commit" . key "id" . _String of
+      Nothing -> Left "No commit found for this branch"
+      Just commit -> Right commit
+
+gitlabApiBaseUrl :: Text
+gitlabApiBaseUrl = "https://gitlab.com/api/v4"
+
 upstreamGitLab :: Text -> Text
-upstreamGitLab branch = "https://gitlab.com/api/v4/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
+upstreamGitLab branch = gitlabApiBaseUrl <> "/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
 
 getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Text -> Http.Manager -> m V.Version
 getUpstreamVersion upgradeBranch httpMgr = do
