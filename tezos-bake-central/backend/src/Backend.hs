@@ -240,8 +240,9 @@ backendImpl cfg serve = do
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerWorker dataSrc
 
+      let namedChain = either Just (const Nothing) chain
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker namedChain upgradeBranch (60 * 60) logger httpMgr db
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

@@ -553,12 +553,15 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
+  - primitive: NamedChain
+    representation: enum
   - entity: ErrorLog
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
+  - entity: ErrorLogUpgradeAvailable
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -600,6 +603,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
+  , (''ErrorLogUpgradeAvailable, 'ErrorLogUpgradeAvailableKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

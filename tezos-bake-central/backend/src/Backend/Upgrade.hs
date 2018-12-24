@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -8,11 +9,14 @@
 module Backend.Upgrade where
 
 import Control.Exception.Safe (try)
+import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (logInfo)
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
+import Data.Maybe
 import Data.Pool (Pool)
+import Data.IORef
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime)
@@ -22,24 +26,53 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
+import Rhyolite.Backend.Schema
 
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
-import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..))
+import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogUpgradeAvailable(..))
 import ExtraPrelude
+import Tezos.Chain
 
 upgradeCheckWorker
   :: MonadIO m
-  => Text
+  => Maybe NamedChain
+  -> Text
   -> NominalDiffTime
   -> LoggingEnv
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker upgradeBranch delay logger httpMgr db =
+upgradeCheckWorker mchain upgradeBranch delay logger httpMgr db = do
+  lastCommitRef <- liftIO $ newIORef Nothing
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
+    forM_ mchain $ \chain -> do
+      getTezosBranch httpMgr (showNamedChain chain) >>= \case
+        Left _ -> return ()
+        Right commitId -> do
+          lastCommit <- liftIO $ readIORef lastCommitRef
+          when (isJust lastCommit && lastCommit /= Just commitId) $ do
+            -- TODO insert notification into db
+            runLoggingEnv logger . runDb (Identity db) $ do
+              now <- getTime
+              let errorLog = ErrorLog
+                    { _errorLog_started = now
+                    , _errorLog_stopped = Nothing
+                    , _errorLog_lastSeen = now
+                    , _errorLog_noticeSentAt = Just now -- TODO is this right?
+                    }
+              eid <- insert errorLog
+              let notification = ErrorLogUpgradeAvailable
+                    { _errorLogUpgradeAvailable_log = toId eid
+                    , _errorLogUpgradeAvailable_namedChain = chain
+                    , _errorLogUpgradeAvailable_commit = commitId
+                    }
+              _ <- insert notification -- TODO nofication
+              return ()
+            return ()
+          liftIO $ writeIORef lastCommitRef $ Just commitId
     void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
 
 updateUpstreamVersion

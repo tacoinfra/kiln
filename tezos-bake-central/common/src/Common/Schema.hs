@@ -400,6 +400,13 @@ data MailServerConfig = MailServerConfig
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
+data ErrorLogUpgradeAvailable = ErrorLogUpgradeAvailable
+  { _errorLogUpgradeAvailable_log :: !(Id ErrorLog)
+  , _errorLogUpgradeAvailable_namedChain :: !NamedChain
+  , _errorLogUpgradeAvailable_commit :: !Text
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogUpgradeAvailable
+
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
@@ -563,6 +570,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
+  , 'ErrorLogUpgradeAvailable
   , 'Event
   , 'MailServerConfig
   , 'Parameters
