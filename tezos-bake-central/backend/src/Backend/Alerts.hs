@@ -9,12 +9,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
 
 module Backend.Alerts where
 
+import Control.Lens ((<&>))
 import Control.Monad.Logger (MonadLogger, logDebugSH)
+import Data.Map (Map())
+import qualified Data.Map as Map
+import Data.List.NonEmpty (nonEmpty)
 import Data.Time (NominalDiffTime, addUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Core
@@ -22,7 +27,7 @@ import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend)
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id, Json (..))
 import qualified Text.URI as Uri
@@ -235,6 +240,77 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
+
+
+missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
+missedBakeLog right pkh lvl =
+  ([queryQ|
+    SELECT b."publicKeyHash", el.id, elbm.id, elbm.fitness
+    FROM "Baker" b
+    LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
+      ON b."publicKeyHash" = elbm."baker#baker#publicKeyHash"
+      AND elbm.right = ?right
+      AND elbm.level = ?lvl
+    JOIN "ErrorLog" el
+      ON el.id = elbm.log
+      AND el.stopped IS NULL
+    WHERE NOT b.deleted
+      AND b."publicKeyHash" = ?pkh
+  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
+
+bakerNotDeleted :: PersistBackend m => PublicKeyHash -> m Bool
+bakerNotDeleted pkh = all not <$> project Baker_deletedField ((Baker_publicKeyHashField ==. pkh) `limitTo` 1)
+
+reportMissedBake :: (MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m, MonadLogger m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_  $ \bid eids -> case nonEmpty eids of
+  Nothing -> do
+    (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
+      { _errorLogBakerMissed_log = eid
+      , _errorLogBakerMissed_baker = ErrorLogBaker
+        { _errorLogBaker_log = eid
+        , _errorLogBaker_baker = bid
+        }
+      , _errorLogBakerMissed_right = right
+      , _errorLogBakerMissed_level = lvl
+      , _errorLogBakerMissed_fitness = f
+      }
+    queueAlert (Just eid) alert
+  Just xs -> for_ xs $ \(eid, elbmid, f') -> when (f' <= f) $ do
+    updateErrorLogBy eid elbmid [ ErrorLogBakerMissed_fitnessField =. f ]
+    queueAlert (Just eid) alert
+  where
+    alert = Alert Unresolved
+      ("Missed " <> rightTxt <> " opportunity")
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl))
+    rightTxt = case right of
+      RightKind_Baking -> "bake"
+      RightKind_Endorsing -> "endorsement"
+
+
+clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake f right pkh lvl = do
+  lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
+      UPDATE "ErrorLog" el SET stopped = NOW()
+        FROM "ErrorLogBakerMissed" elbm
+        JOIN "Baker" b
+          ON b."publicKeyHash" = elbm."baker#baker#publicKeyHash"
+      WHERE elbm.log = el.id
+        AND NOT b.deleted
+        AND el.stopped IS NULL
+        AND elbm.fitness < ?f :: VARCHAR[] -- because groundhog
+        AND elbm.right = ?right
+        AND b."publicKeyHash" = ?pkh
+        AND elbm.level = ?lvl
+      RETURNING elbm.id |]
+  for_ lids $ notify . mkDefaultNotify
+  when (not $ null lids) $ queueAlert Nothing $
+    Alert Resolved
+      ("Resolved: Missed " <> rightTxt <> " opportunity")
+      ("Resolved: Baker with address:" <> toPublicKeyHashText pkh <> " " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl) <> " included due to branch reorganization")
+    where
+      rightTxt = case right of
+        RightKind_Baking -> "bake"
+        RightKind_Endorsing -> "endorsement"
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
 nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)

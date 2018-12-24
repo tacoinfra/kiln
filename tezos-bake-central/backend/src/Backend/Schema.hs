@@ -17,6 +17,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
@@ -77,7 +79,6 @@ import Common.AppendIntervalMap (WithInfinity(..))
 import Common.Schema
 import ExtraPrelude
 
-
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
 
@@ -90,6 +91,7 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -122,6 +124,8 @@ instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
+instance HasDefaultNotify (Id ErrorLogBakerMissed) where
+  mkDefaultNotify = Notify_ErrorLogBakerMissed
 
 class HasDefaultNotifyUnique f where
   mkDefaultNotifyUnique :: Id f -> f -> Notify
@@ -377,12 +381,16 @@ instance PersistField PublicKeyHash where
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
   where
-    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex (10 :: Int)
+    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex n
 
 unArray :: Groundhog.Array a -> [a]
 unArray (Groundhog.Array a) = a
 
 -- prefix fitness arrays with length so that they naturally order correctly
+--
+-- FOOTGUN ALERT: groundhog makes this look like VARCHAR[], but to
+-- postgresql-simple it looks like TEXT[].  you probably need a cast anyplace
+-- the two types may interact
 toDBFitness :: ToJSON a => FitnessF a -> [Text]
 toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . Aeson.encode) $ x
 fromDBFitness :: FromJSON a => [Text] -> FitnessF a
@@ -576,6 +584,8 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
+  - embedded: ErrorLogBaker
+  - entity: ErrorLogBakerMissed
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -609,10 +619,10 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
-  -- , (''Baker, 'BakerKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogBakerMissed, 'ErrorLogBakerMissedKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
@@ -632,8 +642,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
 
-instance -- DefaultKey Baker ~ PublicKeyHash => 
-    DefaultKeyId Baker where
+instance DefaultKeyId Baker where
   toIdData _ (BakerKeyKey pkh) = pkh
   fromIdData _ = BakerKeyKey
 

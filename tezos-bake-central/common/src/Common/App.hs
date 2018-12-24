@@ -17,6 +17,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 -- 'deriveJSONGADT' produces seemingly redundant pattern matches.
 {-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
@@ -36,6 +38,7 @@ import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
@@ -43,7 +46,7 @@ import Data.Word (Word16)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
-import Rhyolite.Schema (Email, Id)
+import Rhyolite.Schema (Email, Id(..))
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -68,9 +71,10 @@ getErrorInterval ei@(el, _) = First (ei, ClosedInterval
 type Deletable a = First (Maybe a)
 
 data BakerSummary = BakerSummary
-  { _bakerSummary_address :: PublicKeyHash
-  , _bakerSummary_alias :: Maybe Text
+  { _bakerSummary_alias :: Maybe Text
   , _bakerSummary_alertCount :: Int
+  , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
+  , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary
@@ -162,8 +166,15 @@ data NodeErrorLogView
 instance FromJSON NodeErrorLogView
 instance ToJSON NodeErrorLogView
 
+-- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
+-- chain entity: Delegates, and the background process tezos-baker both
+-- referred to by the name "Baker".  that's confusing; especially when some
+-- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
+-- of a background process and a delegate. we should really rename one or both
+-- to minimize confusion between these two ideas.
 data BakerErrorLogView
   = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
+  | BakerErrorLogView_BakerMissed !ErrorLogBakerMissed
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON BakerErrorLogView
 instance ToJSON BakerErrorLogView
@@ -171,7 +182,7 @@ instance ToJSON BakerErrorLogView
 -- TODO: Switch to 'DSum LogTag Identity', also spit node and baker tags out of LogTag.
 data ErrorLogView
   = ErrorLogView_NodeError NodeErrorLogView
-  | ErrorLogView_BakerError BakerErrorLogView
+  | ErrorLogView_BakerError !BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
   -- ^ Misc baker *daemon* error.
   deriving (Eq, Ord, Generic, Typeable, Show)
@@ -197,6 +208,7 @@ bakerErrorViewOnly = \case
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
 bakerIdForBakerErrorLogView = \case
   BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
+  BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBaker_baker $ _errorLogBakerMissed_baker elbm
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case
@@ -206,6 +218,7 @@ errorLogIdForErrorLogView = \case
     NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
+    BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
 
 manuallyResolvable :: ErrorLogView -> Bool
@@ -216,6 +229,7 @@ manuallyResolvable = \case
     NodeErrorLogView_BadNodeHead _ -> False
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker _ -> False
+    BakerErrorLogView_BakerMissed _ -> True
   ErrorLogView_BakerNoHeartbeat _ -> False
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView

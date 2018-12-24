@@ -347,7 +347,7 @@ data BakerRightsCycleProgress = BakerRightsCycleProgress
   -- tried to cache, so we can start caching before any delegates have been
   -- configured.
   , _bakerRightsCycleProgress_publicKeyHash :: !PublicKeyHash
-  , _bakerRightsCycleProgress_cycle :: !Cycle
+  , _bakerRightsCycleProgress_cycle :: !Cycle -- the cycle in which rights are determined: if this is 6, the associated rights are in cycle 12
   , _bakerRightsCycleProgress_progress :: !RawLevel
     -- ranging over the first level in this cycle to the last
     -- this indicates that the amount already computed is from
@@ -487,6 +487,29 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead
 
+data ErrorLogBaker = ErrorLogBaker
+  { _errorLogBaker_log :: !(Id ErrorLog)
+  , _errorLogBaker_baker :: !(Id Baker)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBaker
+
+-- we wilfully ignore the branch issue; we mostly don't care on which branch you
+-- did or didn't take your rights.
+--
+-- in particular, there's two ways to "resolve" this type of alert, either a
+-- new uncle occurs in which the baker *did* exercise their rights, or the user
+-- manually acknowledges the error.  If the network is branch hopping; its
+-- possible for a user to acknowledge a miss, then for the same level missed to
+-- be re-reported;  we explicitly ignore that possibility.
+data ErrorLogBakerMissed = ErrorLogBakerMissed
+  { _errorLogBakerMissed_log :: !(Id ErrorLog)
+  , _errorLogBakerMissed_baker :: !ErrorLogBaker
+  , _errorLogBakerMissed_right :: !RightKind
+  , _errorLogBakerMissed_level :: !RawLevel
+  , _errorLogBakerMissed_fitness :: !Fitness
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerMissed
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -569,6 +592,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
+  , ''ErrorLogBaker
+  , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
@@ -604,6 +629,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBaker
+  , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker

@@ -10,14 +10,14 @@ module Backend.Workers.Baker where
 
 import Prelude hiding (cycle)
 
-import Control.Arrow ((&&&), )
-import Control.Lens (set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex)
+import Control.Arrow ((&&&))
+import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex)
 import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (guard, mzero)
-import Control.Monad.Except (MonadError, runExceptT)
+import Control.Monad.Except (MonadError, runExceptT, ExceptT(..))
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH)
+import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (MonadState, execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -39,11 +39,14 @@ import Rhyolite.Schema (Id (..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
+import Tezos.Operation
 
+import Backend.Config (AppConfig (..))
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Schema
 import Backend.STM (atomicallyWith)
+import Backend.Alerts (clearMissedBake, reportMissedBake)
 import Common (curryMap)
 import Common.Schema
 import ExtraPrelude
@@ -54,15 +57,24 @@ import Algebra.Lattice ((/\))
 
 -- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)
 
-bakerWorker
+bakerRightsWorker
   :: forall m. MonadIO m
   => NodeDataSource
   -> m (IO ())
-bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headM <- liftIO $ atomically $
-    waitForParams nds *> dataSourceHead nds
+bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  (protoInfo, headM) <- liftIO $ atomically $
+    (,) <$> waitForParams nds <*> dataSourceHead nds
 
-  let db = _nodeDataSource_pool nds
+  let
+    db = _nodeDataSource_pool nds
+
+    -- the levels returned by cycleStartHashes are the levels in the cycle that
+    -- determines those rights.  the level that those rights are applied to are
+    -- in the future of that.
+    rightsLookAhead :: RawLevel
+    rightsLookAhead = firstLevelInCycle protoInfo (1 + _protoInfo_preservedCycles protoInfo) - 1 -- cycle starts are offset by 1
+
+    thisCycleM = levelToCycle protoInfo . view level <$> headM
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     $(logDebug) "Update baker cycle."
     let
@@ -107,10 +119,9 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
                 , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash
                 , _bakerRightsCycleProgress_publicKeyHash = pkh
                 , _bakerRightsCycleProgress_cycle = cycle
-                , _bakerRightsCycleProgress_progress = _rightsCycleInfo_minLevel cycleHash - 1
+                , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
                 }
             return ((cycle, pkh), (Max v))
-    $(logDebug) $ "BAKER-NEED-PROGRESS " <> tshow needProgress
 
     let
       pkhs :: Set PublicKeyHash
@@ -120,8 +131,9 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
       unfinished = MMap.mapMaybe (nonEmpty . toList) $ curryMap $ flip MMap.mapMaybe needProgress $ \(Max p) -> do
         cycle' <- Map.lookup (_bakerRightsCycleProgress_cycle p) cycleHashesByCycle
         -- if we're already at maxLevel, then we're done here.
-        guard (_bakerRightsCycleProgress_progress p < _rightsCycleInfo_maxLevel cycle')
+        guard (_bakerRightsCycleProgress_progress p < rightsLookAhead + _rightsCycleInfo_maxLevel cycle')
         return p
+
 
       mNextUnfinished :: Maybe (NonEmpty BakerRightsCycleProgress, RightsCycleInfo) = do
         (cycle, x) <- Map.lookupMin $ MMap.getMonoidalMap unfinished
@@ -129,7 +141,7 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
         return (x, cycle')
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
-    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> for_ [minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished .. _rightsCycleInfo_maxLevel aCycleInfo] $ \lvl -> do
+    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> for_ [minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished .. rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo] $ \lvl -> do
       -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on, 
       reqBakers <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
       reqEndorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash lvl
@@ -162,6 +174,7 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
             , _endorsingRights_delegate end == pkh
             ]
 
+      when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
       runDb (Identity db) $ do
         for_ pkhs $ \pkh -> do
           let
@@ -183,9 +196,65 @@ bakerWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSo
               | otherwise -> return Nothing -- already have this progress, do nothing.
           rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
           traverse_ notify $ Notify_BakerRightsProgress <$> progressId <*> pure newProgress <*> pure rights
+          return ()
+
+  case res of
+    Right _ -> pure ()
+    Left (err :: CacheError) -> $(logErrorSH) ("bakerRightsWorker" :: String, err)
+
+  $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
+
+bakerWorker
+  :: forall m. MonadIO m
+  => AppConfig
+  -> NodeDataSource
+  -> m (IO ())
+bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  headM :: Maybe VeryBlockLike <- liftIO $ atomically $
+    waitForParams nds *> dataSourceHead nds
+  let
+    db = _nodeDataSource_pool nds
+
+  res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
+    let
+      headHash = headBlock ^. hash
+      headPred = headBlock ^. predecessor
+      headLvl = headBlock ^. level
+    currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
+      bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_deletedField ==. False)
+      details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project (BakerDetails_publicKeyHashField, BakerDetailsConstructor) (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
+      return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
+    for currentState $ \(baker, details) -> do
+      -- for each baker; follow the branch it was on previously to the new head
+      -- check at each level to see if the baker had rights there;
+      -- if so, examine the block to see if they exercized those rights
+      -- if not, report an error; if so, clear an error.
+      let detailsBranch :: BlockHash = maybe headPred _bakerDetails_branch details
+      -- we're only interested in the "good" branch, so we discard the part only on the baker's current branch
+      -- enumerateBranches reutrns a maybe if it coulnd't find enough history
+      -- to reasonably answer the question; so we'll just short curcuit and
+      -- behave as if we have never run before.
+      -- we don't actually need to know the hashes; headHash is sufficient, but we do need to know the levels.
+      headBranch :: [RawLevel] <- atomicallyWith $ zipWith const [headLvl, pred headLvl .. 1] . fst . fromMaybe ([headHash], []) <$> enumerateBranches headHash detailsBranch
+      for headBranch $ \lvl -> do
+        bakingRights <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
+        -- beware of the jellyfish
+        bakingAlerts :: [ReaderT AppConfig (DbPersist Postgresql (ReaderT NodeDataSource (ExceptT CacheError (LoggingT IO)))) ()] <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
+          thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
+          let action = (bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)) (headBlock ^. fitness) RightKind_Baking (baker ^. baker_publicKeyHash) headLvl
+          return $ pure $ action
+
+        -- endorsements *on* this block are *of* the previos block
+        endorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash (lvl - 1)
+        endorsingAlerts :: [ReaderT AppConfig (DbPersist Postgresql (ReaderT NodeDataSource (ExceptT CacheError (LoggingT IO)))) ()] <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
+          thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
+          let action = (bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) headLvl
+          return $ pure $ action
+
+        runDb (Identity db) $ flip runReaderT appConfig $ sequence_ $ bakingAlerts <> endorsingAlerts
 
   case res of
     Right _ -> pure ()
     Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
+  $(logDebug) $ "bakerWorker STEP" <> tshow res
 
-  $(logDebug) $ "BAKER STEP" <> tshow res

@@ -326,7 +326,7 @@ takeWhileJust (Nothing: _) = []
 
 data RightsCycleInfo = RightsCycleInfo
   { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in the cycle that confers rights
-  , _rightsCycleInfo_cycle :: !Cycle       -- the cycle in which rights are confered
+  , _rightsCycleInfo_cycle :: !Cycle       -- the cycle in which rights are determined: if this is 6, the associated rights are in cycle 13
   , _rightsCycleInfo_minLevel :: !RawLevel -- the first level in that cycle
   , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level in that cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -346,7 +346,7 @@ cycleStartHashes blkHash = do
       lvl = minLvl + RawLevel (length branch)
       cycle = levelToCycle protoInfo lvl
       preservedCycles = _protoInfo_preservedCycles protoInfo
-      cycles = [max 0 (cycle - (2 + preservedCycles)) .. cycle]
+      cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
       minLevels = firstLevelInCycle protoInfo <$> cycles
       maxLevels = pred . firstLevelInCycle protoInfo . succ <$> cycles
       branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . unRawLevel . subtract minLvl <$> minLevels

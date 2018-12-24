@@ -41,7 +41,7 @@ import Tezos.ShortByteString (fromShort)
 import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common (humanizeDiffTime)
+import Common (humanizeTimestamp)
 import Common.App (Bake)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
@@ -104,7 +104,7 @@ localHumanizedTimestamp titleDyn tDyn = do
     , Map.singleton "data-tooltip" <$> ltDyn
     , pure $ Map.fromList [("data-position", "bottom center")]
     ]) $ dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
-      humanizeDiffTime (diffUTCTime c t)
+      humanizeTimestamp tz c t
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
