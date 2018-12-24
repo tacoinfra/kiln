@@ -90,6 +90,7 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogUpgradeAvailable !(Id ErrorLogUpgradeAvailable)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -122,6 +123,8 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogUpgradeAvailable) where
+  mkDefaultNotify = Notify_ErrorLogUpgradeAvailable
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 
@@ -256,6 +259,12 @@ instance ToField UpgradeCheckError where
   toField v = toField (show v)
 
 instance FromField UpgradeCheckError where
+  fromField f b = read <$> fromField f b
+
+instance ToField NamedChain where
+  toField v = toField (show v)
+
+instance FromField NamedChain where
   fromField f b = read <$> fromField f b
 
 instance PersistField Tez where
@@ -554,7 +563,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: UpgradeCheckError
   - primitive: PublicNode
   - primitive: NamedChain
-    representation: enum
   - entity: ErrorLog
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat

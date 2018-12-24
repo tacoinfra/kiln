@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -16,15 +17,15 @@ import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import Data.Maybe
 import Data.Pool (Pool)
-import Data.IORef
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Rhyolite.Backend.Schema
 
@@ -45,35 +46,49 @@ upgradeCheckWorker
   -> Pool Postgresql
   -> m (IO ())
 upgradeCheckWorker mchain upgradeBranch delay logger httpMgr db = do
-  lastCommitRef <- liftIO $ newIORef Nothing
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    forM_ mchain $ \chain -> do
-      getTezosBranch httpMgr (showNamedChain chain) >>= \case
-        Left _ -> return ()
-        Right commitId -> do
-          lastCommit <- liftIO $ readIORef lastCommitRef
-          when (isJust lastCommit && lastCommit /= Just commitId) $ do
-            -- TODO insert notification into db
-            runLoggingEnv logger . runDb (Identity db) $ do
-              now <- getTime
-              let errorLog = ErrorLog
-                    { _errorLog_started = now
-                    , _errorLog_stopped = Nothing
-                    , _errorLog_lastSeen = now
-                    , _errorLog_noticeSentAt = Just now -- TODO is this right?
-                    }
-              eid <- insert errorLog
-              let notification = ErrorLogUpgradeAvailable
-                    { _errorLogUpgradeAvailable_log = toId eid
-                    , _errorLogUpgradeAvailable_namedChain = chain
-                    , _errorLogUpgradeAvailable_commit = commitId
-                    }
-              _ <- insert notification -- TODO nofication
-              return ()
-            return ()
-          liftIO $ writeIORef lastCommitRef $ Just commitId
+    forM_ mchain $ \chain -> notifyChainUpgrade chain httpMgr (runLoggingEnv logger . runDb (Identity db))
     void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
+
+notifyChainUpgrade
+  :: (MonadIO m, PersistBackend db, PostgresRaw db)
+  => NamedChain
+  -> Http.Manager
+  -> (forall a. db a -> m a)
+  -> m ()
+notifyChainUpgrade namedChain httpMgr inDb =
+  getTezosBranch httpMgr (showNamedChain namedChain) >>= \case
+    Left err -> liftIO $ print err -- TODO use proper logging
+    Right commitId -> inDb $ do
+      lastCommit <- getLatestNamedChainUpgradeLog namedChain
+      when (preview (_Just . _3) lastCommit /= Just commitId) $ do
+        now <- getTime
+        let errorLog = ErrorLog
+              { _errorLog_started = now
+              , _errorLog_stopped = if isNothing lastCommit then Just now else Nothing
+              , _errorLog_lastSeen = now
+              , _errorLog_noticeSentAt = Just now
+              }
+        eid <- insert errorLog
+        _ <- insertNotify $ ErrorLogUpgradeAvailable
+          { _errorLogUpgradeAvailable_log = toId eid
+          , _errorLogUpgradeAvailable_namedChain = namedChain
+          , _errorLogUpgradeAvailable_commit = commitId
+          }
+        return ()
+
+getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, Text))
+getLatestNamedChainUpgradeLog namedChain =
+  listToMaybe <$> [queryQ|
+    SELECT el.id, el.stopped AT TIME ZONE 'UTC', elua.commit
+    FROM "ErrorLogUpgradeAvailable" elua
+    JOIN "ErrorLog" el
+    ON elua.log = el.id
+    WHERE elua."namedChain" = ?namedChain
+    ORDER BY el.started DESC
+    LIMIT 1
+    |]
 
 updateUpstreamVersion
   :: (MonadIO m, PersistBackend db)

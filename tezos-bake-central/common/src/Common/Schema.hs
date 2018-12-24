@@ -538,6 +538,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogUpgradeAvailable
   , ''Event
   , ''MailServerConfig
   , ''Node

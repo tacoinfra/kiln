@@ -164,22 +164,25 @@ watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
 -- TODO: filter by alert type (that is, ErrorLogView constructor, or logical groups of such)
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
-  => Dynamic t AlertsFilter
+  => Dynamic t (Maybe AlertsFilter)
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
-watchErrors alerts intervals = do
-  v <- watchViewSelector $ ffor2 alerts intervals $ \alert ivals -> mempty
-    { _bakeViewSelector_errors = MMap.singleton alert $ viewIntervalSet ivals 1
+watchErrors mAlert intervals = do
+  v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
+    { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> v)
+  return $ ffor2 mAlert v $ \mAlert' v' ->
+    fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ fold $ do
+      alert <- mAlert'
+      MMap.lookup alert $ _bakeView_errors v'
 
 watchErrorsByNode
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView))))
 watchErrorsByNode alertWindow = do
-  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
   pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
     [ (k, pure (l, t'))
     | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
@@ -192,7 +195,7 @@ watchErrorsByBaker
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))))
 watchErrorsByBaker alertWindow = do
-  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
   pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
     [ (k, pure (l, t'))
     | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs

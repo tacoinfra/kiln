@@ -314,6 +314,9 @@ getErrorLogsImpl flt intervalMap = do
           (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
+        , queryAlert "ErrorLogUpgradeAvailable" ["namedChain", "commit"] Nothing
+          (\elId (tNamedChain, tCommit) -> ErrorLogView_UpgradeAvailable $ ErrorLogUpgradeAvailable elId tNamedChain tCommit)
+            window
         ]
 
     leftBiasedUnions = MMap.unionsWith const

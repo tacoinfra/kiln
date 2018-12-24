@@ -520,14 +520,24 @@ liveErrorsWidget
   => Dynamic t (MonoidalMap (Id Node) Node)
   -> m ()
 liveErrorsWidget nodesDyn = void $ do
+  let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
     , (AlertsFilter_UnresolvedOnly, text "Unresolved")
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
-
-  errorsDyn <- MMap.getMonoidalMap <$$> watchErrors filterDyn alertWindow
+  let includesFilter f = \case
+        AlertsFilter_All -> True
+        f' -> f == f'
+      soleFilter f filterSel = do
+        guard $ includesFilter f filterSel
+        return f
+      unresolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
+      resolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
+  unresolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors unresolvedFilter everythingWindow
+  resolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors resolvedFilter alertWindow
+  let errorsDyn = zipDynWith (<>) unresolvedErrorsDyn resolvedErrorsDyn
   filteredErrors <- holdUniqDyn $ liftA2
     (\errors filterFn -> Map.filter (filterFn . fst) errors)
     errorsDyn
@@ -663,6 +673,12 @@ liveErrorsWidget nodesDyn = void $ do
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
+
+          ErrorLogView_UpgradeAvailable (ErrorLogUpgradeAvailable _ namedChain _) -> do
+            let chainText = "'" <> showNamedChain namedChain <> "'"
+            header $ T.unwords ["New", chainText, "version."]
+            el "div" $ do
+              text $ "There is a new version of the " <> chainText <> " software available on GitLab."
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol

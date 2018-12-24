@@ -174,6 +174,7 @@ data ErrorLogView
   | ErrorLogView_BakerError BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
   -- ^ Misc baker *daemon* error.
+  | ErrorLogView_UpgradeAvailable !ErrorLogUpgradeAvailable
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
@@ -207,6 +208,7 @@ errorLogIdForErrorLogView = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
+  ErrorLogView_UpgradeAvailable ua -> _errorLogUpgradeAvailable_log ua
 
 manuallyResolvable :: ErrorLogView -> Bool
 manuallyResolvable = \case
@@ -217,6 +219,7 @@ manuallyResolvable = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker _ -> False
   ErrorLogView_BakerNoHeartbeat _ -> False
+  ErrorLogView_UpgradeAvailable _ -> False
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView
