@@ -55,8 +55,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (humanBytes, uriHostPortPath, unixEpoch)
-import Common.Alerts (AlertsFilter(..), badNodeHeadMessage)
+import Common (humanBytes, unixEpoch, uriHostPortPath)
+import Common.Alerts (AlertsFilter (..), badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -548,7 +548,7 @@ liveErrorsWidget = void $ do
         mNode = do
           nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
           MMap.lookup nodeId nodes
-      in (errorLog, (ErrorLogView' errorLogView mNode))
+      in (errorLog, ErrorLogView' errorLogView mNode)
 
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
@@ -571,12 +571,8 @@ liveErrorsWidget = void $ do
       :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, m ()))
     combinedErrors = fold
-      [ fmap (errorsByTime Left)
-        $ (fmap . fmap . fmap) logEntry
-        $ combinedRealErrors
-      , fmap (errorsByTime Right)
-        $ (fmap . fmap . fmap) synthEntry
-        $ synthErrors
+      [ fmap (errorsByTime Left . (fmap . fmap) logEntry) combinedRealErrors
+      , fmap (errorsByTime Right . (fmap . fmap) synthEntry) synthErrors
       ]
 
     errorsByTime
@@ -598,7 +594,7 @@ liveErrorsWidget = void $ do
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
-    listWithKey (combinedErrors) $ \_ vDyn ->
+    listWithKey combinedErrors $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \(log, domBuilder) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           domBuilder
@@ -630,7 +626,7 @@ liveErrorsWidget = void $ do
       header "Cannot gather baker data."
       errorLabel "My Bakers" $ toPublicKeyHashText <$> pkhs
       el "div" $
-        text $"Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
+        text "Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' specificLog node') =
@@ -668,8 +664,6 @@ liveErrorsWidget = void $ do
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
 
--- tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8 Foundation Baker 8 or something
-
 data MonitoredStatus
   = MonitoredStatus_Healthy
   | MonitoredStatus_Unhealthy
@@ -703,7 +697,7 @@ sidebarList name nodes modal = do
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
-    tellModal $ (<$ openAddItemOptions) $ cancelableModalWithClasses ["add-" <> T.toLower name] $ modal
+    tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses ["add-" <> T.toLower name] modal
 
 bakersList ::
   ( MonadRhyoliteFrontendWidget Bake t m
@@ -725,7 +719,7 @@ bakersList = do
 addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addBakerModal close = mdo
   el "h3" $ text "Add Baker"
-  divClass "basic small segment" $ text $
+  divClass "basic small segment" $ text
     "Enter a Baker address to begin monitoring."
   addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
@@ -969,7 +963,7 @@ nodesTab =
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r m, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1010,8 +1004,8 @@ bakersTab =
               (dynText titleUniq)
               subtitleUniq
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-              (const $ Nothing)
-              (const $ Nothing)
+              (const Nothing)
+              (const Nothing)
               (const $ Just ("Dog explodes", 1000000))
               (Just errorMessages)
               vDyn
@@ -1062,13 +1056,13 @@ bakersTab =
           Just details -> el "dl" $ do
             el "dt" (text "Bake Success:")
             el "dd" $
-              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
 
             el "br" blank
 
             el "dt" (text "Endorsement Success:")
             el "dd" $ do
-              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
             el "br" blank
 
@@ -1106,7 +1100,7 @@ tileMenu content =
         , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
         , SemUi._action_transitionStateClasses = SemUi.forceVisible
         }) $ do
-          SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ content
+          SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) content
     pure ()
 
 bakerTab

@@ -21,7 +21,6 @@ import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
-import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime, diffUTCTime)
@@ -88,7 +87,7 @@ localTimestamp t = do
 
 localHumanizedTimestamp
   ::
-    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, PerformEvent t m, MonadIO (Performable m), TriggerEvent t m
     , MonadReader r m, HasTimeZone r, HasTimer t r
     )
   => Dynamic t (Maybe Text)
@@ -97,14 +96,44 @@ localHumanizedTimestamp
 localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" .  Time.utcToZonedTime tz <$> tDyn
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
 
-  elDynAttr "span" (fold
-    [ Map.fromList . fmap ("data-title",) . toList <$> titleDyn -- TODO: title doesn't work!
-    , Map.singleton "data-tooltip" <$> ltDyn
-    , pure $ Map.fromList [("data-position", "bottom center")]
-    ]) $ dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
+  tooltipped
+    (do
+      whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
+      dynText ltDyn
+    ) $
+    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
       humanizeDiffTime (diffUTCTime c t)
+
+tooltipped
+  :: forall a m t.
+    ( DomBuilder t m
+    , PostBuild t m
+    , MonadHold t m
+    , MonadFix m
+    , PerformEvent t m
+    , MonadIO (Performable m)
+    , TriggerEvent t m
+    )
+  => m () -> m a -> m a
+tooltipped tip w = do
+  (wEl, a) <- el' "span" w
+  let
+    hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    trueToJust = bool Nothing (Just ())
+  open <- transitionEvent (\wasHovering isHovering -> trueToJust $ not wasHovering && isHovering) False hovered
+  close <- transitionEvent (\wasHovering isHovering -> trueToJust $ wasHovering && not isHovering) False hovered
+  let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+  _ <- SemUi.ui "span" (def
+    & SemUi.classes .~ "ui popup bottom center"
+    & SemUi.style .~ "top: auto; right: auto; width: max-content; max-width: unset;"
+    & SemUi.action .~ Just def
+      { SemUi._action_initialDirection = SemUi.Out
+      , SemUi._action_transition = ffor changeEvent $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
+      , SemUi._action_transitionStateClasses = SemUi.forceVisible
+      }) tip
+  pure a
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
