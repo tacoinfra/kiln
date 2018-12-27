@@ -74,7 +74,6 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
     rightsLookAhead :: RawLevel
     rightsLookAhead = firstLevelInCycle protoInfo (1 + _protoInfo_preservedCycles protoInfo) - 1 -- cycle starts are offset by 1
 
-    thisCycleM = levelToCycle protoInfo . view level <$> headM
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     $(logDebug) "Update baker cycle."
     let
