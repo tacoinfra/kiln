@@ -57,8 +57,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (humanBytes, uriHostPortPath, unixEpoch)
-import Common.Alerts (AlertsFilter(..), badNodeHeadMessage)
+import Common (humanBytes, unixEpoch, uriHostPortPath)
+import Common.Alerts (AlertsFilter (..), badNodeHeadMessage)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -339,7 +339,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipPos' "tooltip-medium" "bottom center" disconnectedTooltip $
+      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"
         (def
           & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
@@ -350,12 +350,14 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       headerBell
 
   where
-    disconnectedTooltip = T.concat $ intersperse " "
-      [ "Kiln cannot gather data if no nodes are synced with the blockchain."
-      , "Data shown is stale."
-      , "Add a node from the left panel or make sure any nodes you’ve already added are healthy."
-      ]
-
+    disconnectedTooltip = divClass "disconnected-tooltip" $ do
+      el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
+      divClass "tooltip-description" $ do
+        el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
+        el "p" $ do
+          text "Add a node from the left panel or make sure any nodes you’ve already added are"
+          icon "circle small green"
+          text "healthy."
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -551,7 +553,7 @@ liveErrorsWidget nodesDyn = void $ do
         mNode = do
           nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
           MMap.lookup nodeId nodes
-      in (errorLog, (ErrorLogView' errorLogView mNode))
+      in (errorLog, ErrorLogView' errorLogView mNode)
 
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
@@ -574,12 +576,8 @@ liveErrorsWidget nodesDyn = void $ do
       :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, m ()))
     combinedErrors = fold
-      [ fmap (errorsByTime Left)
-        $ (fmap . fmap . fmap) logEntry
-        $ combinedRealErrors
-      , fmap (errorsByTime Right)
-        $ (fmap . fmap . fmap) synthEntry
-        $ synthErrors
+      [ fmap (errorsByTime Left . (fmap . fmap) logEntry) combinedRealErrors
+      , fmap (errorsByTime Right . (fmap . fmap) synthEntry) synthErrors
       ]
 
     errorsByTime
@@ -601,7 +599,7 @@ liveErrorsWidget nodesDyn = void $ do
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
-    listWithKey (combinedErrors) $ \_ vDyn ->
+    listWithKey combinedErrors $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \(log, domBuilder) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           domBuilder
@@ -633,7 +631,7 @@ liveErrorsWidget nodesDyn = void $ do
       header "Cannot gather baker data."
       errorLabel "My Bakers" $ toPublicKeyHashText <$> pkhs
       el "div" $
-        text $"Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
+        text "Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' specificLog node') =
@@ -679,8 +677,6 @@ liveErrorsWidget nodesDyn = void $ do
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
 
--- tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8 Foundation Baker 8 or something
-
 data MonitoredStatus
   = MonitoredStatus_Healthy
   | MonitoredStatus_Unhealthy
@@ -714,7 +710,7 @@ sidebarList name nodes' modal = do
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
-    tellModal $ (<$ openAddItemOptions) $ cancelableModalWithClasses ["add-" <> T.toLower name] $ modal
+    tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses ["add-" <> T.toLower name] modal
 
 bakerStatus :: BakerSummary -> MonitoredStatus
 bakerStatus bakerSummary
@@ -739,7 +735,7 @@ bakersList = do
 addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addBakerModal close = mdo
   el "h3" $ text "Add Baker"
-  divClass "basic small segment" $ text $
+  divClass "basic small segment" $ text
     "Enter a Baker address to begin monitoring."
   addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
@@ -840,7 +836,7 @@ nodesTab
   => m ()
 nodesTab =
   divClass "dashboard-section dashboard-section-nodes" $ do
-    el "h4" $ text "Nodes"
+    elClass "h4" "dashboard-section-title" $ text "Nodes"
     nodesDyn <- watchNodes $ pure $ viewRangeAll ()
     nodeTilesWidget nodesDyn
   where
@@ -872,7 +868,7 @@ nodesTab =
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
 
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _node_address <$> vDyn) (_node_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath . _node_address <$> vDyn) (_node_alias <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
@@ -982,13 +978,13 @@ nodesTab =
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r m, HasTimer t r, HasTimeZone r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 bakersTab =
   divClass "dashboard-section dashboard-section-bakers" $ do
-    el "h4" $ text "Bakers"
+    elClass "h4" "dashboard-section-title" $ text "Bakers"
     tilesDyn <- watchBakerAddresses
     tilesWidget tilesDyn
   where
@@ -1004,7 +1000,7 @@ bakersTab =
          dyn_ $ ffor showOverview $ bool blank overview
          ebb <- snd <$$$$> watchErrorsByBaker alertWindow
          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-         bakersDetails <- divClass "ui stackable cards" $ do
+         _bakersDetails <- divClass "ui stackable cards" $ do
           listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
             unresolvedAlerts <- holdUniqDyn $
               foldMap toList . MMap.lookup pkh <$> ebb
@@ -1024,8 +1020,8 @@ bakersTab =
               (dynText titleUniq)
               subtitleUniq
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-              (const $ Nothing)
-              (const $ Nothing)
+              (const Nothing)
+              (const Nothing)
               -- if you have both a bake and endorse for the same level, you
               -- must *first* bake the block at that level, then you may
               -- immediately endorse that block.  the times are the same,
@@ -1066,7 +1062,7 @@ bakersTab =
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
-            errorsEmpty <- holdUniqDyn $ null <$> errors
+            _errorsEmpty <- holdUniqDyn $ null <$> errors
             iconDyn $ ("tiny circle " <>) . statusColor . bakerStatus <$> bakerDyn
           title
           divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
@@ -1084,13 +1080,13 @@ bakersTab =
           Just details -> el "dl" $ do
             el "dt" (text "Bake Success:")
             el "dd" $
-              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
 
             el "br" blank
 
             el "dt" (text "Endorsement Success:")
             el "dd" $ do
-              withPlaceholder $ ffor details $ (fmap $ text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
             el "br" blank
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
@@ -1141,7 +1137,7 @@ tileMenu content =
         , SemUi._action_transition = ffor menuTransition $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0.2 })
         , SemUi._action_transitionStateClasses = SemUi.forceVisible
         }) $ do
-          SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) $ content
+          SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) content
     pure ()
 
 bakerTab

@@ -19,12 +19,13 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (TimeZone, UTCTime, diffUTCTime)
+import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
@@ -88,7 +89,7 @@ localTimestamp t = do
 
 localHumanizedTimestamp
   ::
-    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, PerformEvent t m, MonadIO (Performable m), TriggerEvent t m
     , MonadReader r m, HasTimeZone r, HasTimer t r
     )
   => Dynamic t (Maybe Text)
@@ -97,14 +98,70 @@ localHumanizedTimestamp
 localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" .  Time.utcToZonedTime tz <$> tDyn
-
-  elDynAttr "span" (fold
-    [ Map.fromList . fmap ("data-title",) . toList <$> titleDyn -- TODO: title doesn't work!
-    , Map.singleton "data-tooltip" <$> ltDyn
-    , pure $ Map.fromList [("data-position", "bottom center")]
-    ]) $ dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
+  tooltipped TooltipPos_BottomLeft
+    (do
+      whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
+      dynText ltDyn
+    ) $
+    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
       humanizeTimestamp tz c t
+
+data TooltipPos
+  = TooltipPos_TopLeft
+  | TooltipPos_TopCenter
+  | TooltipPos_TopRight
+  | TooltipPos_CenterRight
+  | TooltipPos_CenterLeft
+  | TooltipPos_BottomLeft
+  | TooltipPos_BottomCenter
+  | TooltipPos_BottomRight
+
+tooltipped
+  :: forall a m t.
+    ( DomBuilder t m
+    , PostBuild t m
+    , MonadHold t m
+    , MonadFix m
+    , PerformEvent t m
+    , MonadIO (Performable m)
+    , TriggerEvent t m
+    )
+  => TooltipPos -> m () -> m a -> m a
+tooltipped pos tip w = mdo
+  let (cls, x, y, transform) = case pos of
+        TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
+        TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
+        TooltipPos_TopRight -> ("top right", "right: 0", "top: 0", "(0, -110%)")
+        TooltipPos_CenterLeft -> ("center left", "left: -10px", "top: 50%", "(-100%, -50%)")
+        TooltipPos_CenterRight -> ("center right", "left: 100%", "top: 50%", "(0, -50%)")
+        TooltipPos_BottomLeft -> ("bottom left", "left: 0", "top:100%", "(0,0)")
+        TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
+        TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
+
+  (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
+    a' <- w
+    let
+      hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
+    close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
+    let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+    _ <- SemUi.ui "span" (def
+      & SemUi.classes .~ ("ui popup" <> cls)
+      & SemUi.style .~ fromString (intercalate "; "
+                           [ "width: max-content"
+                           , "max-width: unset"
+                           , x
+                           , y
+                           , "transform: translate" <> transform
+                           ])
+      & SemUi.action .~ Just def
+        { SemUi._action_initialDirection = SemUi.Out
+        , SemUi._action_transition = ffor changeEvent $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0 }) -- oddly, the above "transform: translate" is visibly re-applied during a non-instant transition in the 'disconnected' tooltip
+        , SemUi._action_transitionStateClasses = SemUi.forceVisible
+        }) tip
+    pure a'
+  pure a
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case

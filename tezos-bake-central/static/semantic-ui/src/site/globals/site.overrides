@@ -116,11 +116,6 @@ h6.ui.header {
   opacity: 0.50;
 }
 
-.tooltip-medium[data-tooltip]:after {
-  width: 250px;
-  white-space: normal;
-}
-
 .ui.publicnodes {
   > .public-node.grid {
     border: @1px solid #CED4DA;
@@ -299,6 +294,30 @@ body {
           padding-bottom: @4px;
         }
       }
+
+      .disconnected-tooltip {
+        width: 260px;
+        white-space: normal;
+
+        p {
+          margin-bottom: @7px;
+        }
+
+        .tooltip-title {
+          font-weight: bold;
+          font-size: @13px;
+        }
+
+        .tooltip-description {
+          color: @grey;
+          font-size: @12px;
+
+          .icon.circle {
+            margin-left: @8px;
+            margin-right: @8px;
+          }
+        }
+      }
     }
   }
 }
@@ -310,7 +329,6 @@ body {
   flex-grow: 1;
   &:not(.app-welcome) {
     padding-left: @30px;
-    padding-top: @35px;
   }
   overflow: auto;
 
@@ -568,6 +586,7 @@ img.credits-obsidian {
 }
 
 .version-section {
+  margin-top: @35px;
   > .check-for-updates {
     padding-top: @10px;
 
@@ -798,6 +817,14 @@ img.credits-obsidian {
       }
     }
   }
+}
+
+h4.dashboard-section-title {
+  text-transform: uppercase;
+  margin-top: @20px;
+  margin-bottom: @20px;
+  color: @slate;
+  font-size: @14px;
 }
 
 .modal-box.add-baker {

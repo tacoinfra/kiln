@@ -280,7 +280,7 @@ getErrorLogsImpl flt intervalMap = do
                         " JOIN \"" <> relatedTbl
                         <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
           <> " WHERE "
-          <> bool "" "   NOT n.deleted" (isJust related)
+          <> bool " TRUE " "   NOT n.deleted" (isJust related)
           <> qFlt
         qFlt = case flt of
           AlertsFilter_All -> ""

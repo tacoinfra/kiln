@@ -54,6 +54,7 @@ library
     , rhyolite-frontend
     , safe
     , semantic-reflex
+    , semigroupoids
     , text
     , tezos-bake-monitor-lib
     , these
