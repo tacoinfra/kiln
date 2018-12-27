@@ -61,12 +61,15 @@ notifyChainUpgrade namedChain httpMgr inDb =
   getTezosBranch httpMgr (showNamedChain namedChain) >>= \case
     Left err -> liftIO $ print err -- TODO use proper logging
     Right commitId -> inDb $ do
-      lastCommit <- getLatestNamedChainUpgradeLog namedChain
-      when (preview (_Just . _3) lastCommit /= Just commitId) $ do
+      mLastCommit <- getLatestNamedChainUpgradeLog namedChain
+      when (preview (_Just . _3) mLastCommit /= Just commitId) $ do
         now <- getTime
+        forM_ mLastCommit $ \case
+          (logId, Nothing, _) -> update [ErrorLog_stoppedField =. Just now] (AutoKeyField ==. fromId logId)
+          _ -> return ()
         let errorLog = ErrorLog
               { _errorLog_started = now
-              , _errorLog_stopped = if isNothing lastCommit then Just now else Nothing
+              , _errorLog_stopped = if isNothing mLastCommit then Just now else Nothing
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Just now
               }
