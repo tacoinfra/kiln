@@ -666,7 +666,7 @@ liveErrorsWidget nodesDyn = void $ do
                   RightKind_Endorsing -> "an endorsement"
               header $ "Missed " <> rightTxt <> " opportunity"
               el "div" $ do
-                text $ toPublicKeyHashText (unId $ _errorLogBaker_baker $ _errorLogBakerMissed_baker elbm)
+                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
 
           ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
@@ -1009,7 +1009,7 @@ bakersTab =
               errorMessages = ffor unresolvedAlerts $ fmap $ \case
                 -- TODO
                 BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                BakerErrorLogView_BakerMissed elbm -> text $ "Baker missed." <> toPublicKeyHashText (unId $ _errorLogBaker_baker $ _errorLogBakerMissed_baker elbm)
+                BakerErrorLogView_BakerMissed elbm -> text $ "Baker missed." <> toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
 
             let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
             titleUniq <- holdUniqDyn title

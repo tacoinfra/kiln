@@ -208,7 +208,7 @@ bakerErrorViewOnly = \case
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
 bakerIdForBakerErrorLogView = \case
   BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
-  BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBaker_baker $ _errorLogBakerMissed_baker elbm
+  BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBakerMissed_baker elbm
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case

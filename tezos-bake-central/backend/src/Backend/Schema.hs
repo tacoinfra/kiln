@@ -584,7 +584,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
-  - embedded: ErrorLogBaker
   - entity: ErrorLogBakerMissed
   - entity: CachedProtocolConstants
     constructors:

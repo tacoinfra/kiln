@@ -59,8 +59,8 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
       Notify_ErrorLogBakerMissed eid -> handleErrorLog'
-        (handleBakerAddress . unId . _errorLogBaker_baker . _errorLogBakerMissed_baker)
-        (_errorLogBaker_log . _errorLogBakerMissed_baker)
+        (handleBakerAddress . unId . _errorLogBakerMissed_baker)
+        _errorLogBakerMissed_log
         (ErrorLogView_BakerError . BakerErrorLogView_BakerMissed)
         eid
       Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log

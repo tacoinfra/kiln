@@ -248,7 +248,7 @@ missedBakeLog right pkh lvl =
     SELECT b."publicKeyHash", el.id, elbm.id, elbm.fitness
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
-      ON b."publicKeyHash" = elbm."baker#baker#publicKeyHash"
+      ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm.right = ?right
       AND elbm.level = ?lvl
     JOIN "ErrorLog" el
@@ -266,10 +266,7 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
       { _errorLogBakerMissed_log = eid
-      , _errorLogBakerMissed_baker = ErrorLogBaker
-        { _errorLogBaker_log = eid
-        , _errorLogBaker_baker = bid
-        }
+      , _errorLogBakerMissed_baker = bid
       , _errorLogBakerMissed_right = right
       , _errorLogBakerMissed_level = lvl
       , _errorLogBakerMissed_fitness = f
@@ -293,7 +290,7 @@ clearMissedBake f right pkh lvl = do
       UPDATE "ErrorLog" el SET stopped = NOW()
         FROM "ErrorLogBakerMissed" elbm
         JOIN "Baker" b
-          ON b."publicKeyHash" = elbm."baker#baker#publicKeyHash"
+          ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       WHERE elbm.log = el.id
         AND NOT b.deleted
         AND el.stopped IS NULL

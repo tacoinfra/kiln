@@ -347,7 +347,7 @@ getBakerAddresses nds bid = do
           JOIN "ErrorLogBakerMissed" elbm
             ON elbm.log = e.id
           WHERE e.stopped IS NULL
-            AND elbm."baker#baker#publicKeyHash" = b."publicKeyHash"
+            AND elbm."baker#publicKeyHash" = b."publicKeyHash"
         )
       FROM "Baker" b
       WHERE NOT b.deleted

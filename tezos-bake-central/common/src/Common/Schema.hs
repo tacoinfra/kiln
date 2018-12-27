@@ -487,12 +487,6 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead
 
-data ErrorLogBaker = ErrorLogBaker
-  { _errorLogBaker_log :: !(Id ErrorLog)
-  , _errorLogBaker_baker :: !(Id Baker)
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBaker
-
 -- we wilfully ignore the branch issue; we mostly don't care on which branch you
 -- did or didn't take your rights.
 --
@@ -503,7 +497,7 @@ instance HasId ErrorLogBaker
 -- be re-reported;  we explicitly ignore that possibility.
 data ErrorLogBakerMissed = ErrorLogBakerMissed
   { _errorLogBakerMissed_log :: !(Id ErrorLog)
-  , _errorLogBakerMissed_baker :: !ErrorLogBaker
+  , _errorLogBakerMissed_baker :: !(Id Baker)
   , _errorLogBakerMissed_right :: !RightKind
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
@@ -592,7 +586,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
-  , ''ErrorLogBaker
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
@@ -629,7 +622,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
-  , 'ErrorLogBaker
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
