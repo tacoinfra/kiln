@@ -362,7 +362,7 @@ headerBell = do
   alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ ((<>) "ui circular big label ") . bool "basic" "red link" . (>0))
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
