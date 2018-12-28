@@ -56,7 +56,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
       Notify_Baker baker -> handleBakerAddress (_baker_publicKeyHash baker)
-      -- Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
+      Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
       Notify_ErrorLogBakerMissed eid -> handleErrorLog'
         (handleBakerAddress . unId . _errorLogBakerMissed_baker)
@@ -74,6 +74,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         eid
       Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
         (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
+        eid
+      Notify_ErrorLogBakerDeactivated eid -> handleErrorLog _errorLogBakerDeactivated_log
+        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivated)
+        eid
+      Notify_ErrorLogBakerDeactivationRisk eid -> handleErrorLog _errorLogBakerDeactivationRisk_log
+        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivationRisk)
         eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
@@ -139,7 +145,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       ]
 
     bakerAddressesVS = _bakeViewSelector_bakerAddresses aggVS
-    -- bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
+    bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
@@ -156,13 +162,13 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         (\x -> mempty {_bakeView_bakerAddresses = x}) . toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
 
 
-    -- handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
-    --   pure $ mempty
-    --     { _bakeView_bakerDetails = toRangeView1
-    --         bakerDetailsVS
-    --         (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
-    --         (Just $ First $ Just bakerDetails)
-    --     }
+    handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
+      pure $ mempty
+        { _bakeView_bakerDetails = toRangeView1
+            bakerDetailsVS
+            (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
+            (Just $ First $ Just bakerDetails)
+        }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS
     handleNotificatee _nid = whenM (viewSelects () mailServerVS) $ do

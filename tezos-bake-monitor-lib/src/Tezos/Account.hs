@@ -47,7 +47,7 @@ data FrozenBalanceByCycle = FrozenBalanceByCycle
   , _frozenBalanceByCycle_deposit :: !Tez
   , _frozenBalanceByCycle_fees :: !Tez
   , _frozenBalanceByCycle_rewards :: !Tez
-  }
+  } deriving (Eq, Ord, Show)
 
 data DelegateInfo = DelegateInfo
   { _delegateInfo_balance :: !Tez

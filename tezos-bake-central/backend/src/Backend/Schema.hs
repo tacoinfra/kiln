@@ -85,6 +85,7 @@ stripOnly = coerce
 data Notify
   = Notify_Client !(Id Client)
   | Notify_Baker !Baker
+  | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
@@ -92,6 +93,8 @@ data Notify
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
+  | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
+  | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -122,10 +125,16 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivated
+instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivationRisk
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 instance HasDefaultNotify (Id ErrorLogBakerMissed) where
   mkDefaultNotify = Notify_ErrorLogBakerMissed
+instance HasDefaultNotify BakerDetails where
+  mkDefaultNotify = Notify_BakerDetails
 
 class HasDefaultNotifyUnique f where
   mkDefaultNotifyUnique :: Id f -> f -> Notify
@@ -282,6 +291,8 @@ instance FromField Micro where
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
+instance NeverNull (Json CacheDelegateInfo)
+instance NeverNull Cycle
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
@@ -535,6 +546,16 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_baker_publicKeyHash]
   - entity: BakerDetails
+    autoKey: null
+    keys:
+     - name: BakerDetailsKey
+       default: true
+    constructors:
+     - name: BakerDetails
+       uniques:
+        - name: BakerDetailsKey
+          type: primary
+          fields: [_bakerDetails_publicKeyHash]
   - entity: BakerRightsCycleProgress
     constructors:
       - name: BakerRightsCycleProgress
@@ -583,6 +604,8 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
+  - entity: ErrorLogBakerDeactivated
+  - entity: ErrorLogBakerDeactivationRisk
   - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogBakerMissed
   - entity: CachedProtocolConstants
@@ -626,6 +649,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
+  , (''ErrorLogBakerDeactivated, 'ErrorLogBakerDeactivatedKey)
+  , (''ErrorLogBakerDeactivationRisk, 'ErrorLogBakerDeactivationRiskKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
@@ -644,4 +669,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
 instance DefaultKeyId Baker where
   toIdData _ (BakerKeyKey pkh) = pkh
   fromIdData _ = BakerKeyKey
+
+instance DefaultKeyId BakerDetails where
+  toIdData _ (BakerDetailsKeyKey pkh) = pkh
+  fromIdData _ = BakerDetailsKeyKey
 

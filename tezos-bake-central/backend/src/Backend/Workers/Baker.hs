@@ -20,6 +20,9 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (MonadState, execStateT, gets, modify)
+import Control.Monad.Logger (logDebug, logDebugSH, logErrorSH)
+import Control.Monad.Reader (ReaderT (..), lift)
+import Control.Monad.State (execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -34,16 +37,20 @@ import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import Reflex (fforMaybe)
 import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..))
+import Rhyolite.Schema (Id (..), Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
 import Tezos.Operation
 
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), HasAppConfig)
+import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
+import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
@@ -54,6 +61,8 @@ import ExtraPrelude
 import Data.Align
 import Data.These (These(..), these)
 import Algebra.Lattice ((/\))
+
+import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 
 -- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)
 
@@ -87,7 +96,6 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
       cycleHashesByCycle = Map.fromList $ (_rightsCycleInfo_cycle &&& id) <$> cycleHashes
 
     $(logDebug) $ "BAKER baseline " <> tshow (_rightsCycleInfo_branch <$> cycleHashes)
-
 
     -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
@@ -174,28 +182,27 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
             ]
 
       when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
-      runDb (Identity db) $ do
-        for_ pkhs $ \pkh -> do
-          let
-            newProgress = bakerRightCycleInfo pkh
-          progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
-            ( BakerRightsCycleProgress_publicKeyHashField ==. pkh
-            &&. BakerRightsCycleProgress_chainIdField ==. chainId
-            &&. BakerRightsCycleProgress_branchField ==. branch
-            )
-          progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
-            Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
-            Just ((pId, p):|_)
-              -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
-              | _bakerRightsCycleProgress_progress p < lvl -> do
-                updateId pId
-                  [ BakerRightsCycleProgress_progressField =. lvl
-                  ]
-                return $ Just pId
-              | otherwise -> return Nothing -- already have this progress, do nothing.
-          rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
-          traverse_ notify $ Notify_BakerRightsProgress <$> progressId <*> pure newProgress <*> pure rights
-          return ()
+      runDb (Identity db) $ for_ pkhs $ \pkh -> do
+        let
+          newProgress = bakerRightCycleInfo pkh
+        progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
+          ( BakerRightsCycleProgress_publicKeyHashField ==. pkh
+          &&. BakerRightsCycleProgress_chainIdField ==. chainId
+          &&. BakerRightsCycleProgress_branchField ==. branch
+          )
+        progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
+          Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
+          Just ((pId, p):|_)
+            -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
+            | _bakerRightsCycleProgress_progress p < lvl -> do
+              updateId pId
+                [ BakerRightsCycleProgress_progressField =. lvl
+                ]
+              return $ Just pId
+            | otherwise -> return Nothing -- already have this progress, do nothing.
+        rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
+        traverse_ notify $ Notify_BakerRightsProgress <$> progressId <*> pure newProgress <*> pure rights
+        return ()
 
   case res of
     Right _ -> pure ()
@@ -209,51 +216,126 @@ bakerWorker
   -> NodeDataSource
   -> m (IO ())
 bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headM :: Maybe VeryBlockLike <- liftIO $ atomically $
-    waitForParams nds *> dataSourceHead nds
+  (protoInfo, headM) :: (ProtoInfo, Maybe VeryBlockLike) <- liftIO $ atomically $ do
+    params <- waitForParams nds
+    dsh <- dataSourceHead nds
+    return (params, dsh)
+
   let
     db = _nodeDataSource_pool nds
 
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     let
-      headHash = headBlock ^. hash
-      headPred = headBlock ^. predecessor
-      headLvl = headBlock ^. level
     currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_deletedField ==. False)
-      details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project (BakerDetails_publicKeyHashField, BakerDetailsConstructor) (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
+      details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
+        (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
+        (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
       return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
-    for currentState $ \(baker, details) -> do
-      -- for each baker; follow the branch it was on previously to the new head
-      -- check at each level to see if the baker had rights there;
-      -- if so, examine the block to see if they exercized those rights
-      -- if not, report an error; if so, clear an error.
-      let detailsBranch :: BlockHash = maybe headPred _bakerDetails_branch details
-      -- we're only interested in the "good" branch, so we discard the part only on the baker's current branch
-      -- enumerateBranches reutrns a maybe if it coulnd't find enough history
-      -- to reasonably answer the question; so we'll just short curcuit and
-      -- behave as if we have never run before.
-      -- we don't actually need to know the hashes; headHash is sufficient, but we do need to know the levels.
-      headBranch :: [RawLevel] <- atomicallyWith $ zipWith const [headLvl, pred headLvl .. 1] . fst . fromMaybe ([headHash], []) <$> enumerateBranches headHash detailsBranch
-      for headBranch $ \lvl -> do
-        bakingRights <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
-        -- beware of the jellyfish
-        bakingAlerts :: [ReaderT AppConfig (DbPersist Postgresql (ReaderT NodeDataSource (ExceptT CacheError (LoggingT IO)))) ()] <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
-          thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
-          let action = (bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)) (headBlock ^. fitness) RightKind_Baking (baker ^. baker_publicKeyHash) headLvl
-          return $ pure $ action
 
-        -- endorsements *on* this block are *of* the previos block
-        endorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash (lvl - 1)
-        endorsingAlerts :: [ReaderT AppConfig (DbPersist Postgresql (ReaderT NodeDataSource (ExceptT CacheError (LoggingT IO)))) ()] <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
-          thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
-          let action = (bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) headLvl
-          return $ pure $ action
+    wantedActions <- for currentState $ \(baker, details) ->
+      getWantedAction protoInfo headBlock baker details
 
-        runDb (Identity db) $ flip runReaderT appConfig $ sequence_ $ bakingAlerts <> endorsingAlerts
+    -- beware of the jellyfish
+    runDb (Identity db) $ runReaderT (sequence_ wantedActions) appConfig
 
   case res of
-    Right _ -> pure ()
+    Right () -> $(logDebug) $ "bakerWorker DONE"
     Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
-  $(logDebug) $ "bakerWorker STEP" <> tshow res
 
+
+-- separating the monad that can do RPC(mPrepare) from the one that can do
+-- SQL(mCommit) makes it a little easier to set up the transactions to succeed.
+--
+-- Make sure that the mCommit action has enough information to bail out or do
+-- nothing if the data gathered in mPrepare can be stale
+{-# INLINE getWantedAction #-}
+getWantedAction
+  :: forall mPrepare e rP mCommit rC blk.
+  ( BlockLike blk
+  , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadError e mPrepare, AsCacheError e
+  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit
+  )
+  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> mPrepare (mCommit ())
+getWantedAction protoInfo headBlock baker details = do
+  let
+    headHash = headBlock ^. hash
+    headPred = headBlock ^. predecessor
+    headLvl = headBlock ^. level
+    headCycle = levelToCycle protoInfo headLvl
+    pkh = _baker_publicKeyHash baker
+    headFitness = headBlock ^. fitness
+    -- for each baker; follow the branch it was on previously to the new head
+    -- check at each level to see if the baker had rights there;
+    -- if so, examine the block to see if they exercized those rights
+    -- if not, report an error; if so, clear an error.
+    detailsBranch :: BlockHash = maybe headPred _bakerDetails_branch details
+  -- we're only interested in the "good" branch, so we discard the part only on the baker's current branch
+  -- enumerateBranches reutrns a maybe if it coulnd't find enough history
+  -- to reasonably answer the question; so we'll just short curcuit and
+  -- behave as if we have never run before.
+  -- we don't actually need to know the hashes; headHash is sufficient, but we do need to know the levels.
+  headBranch :: [RawLevel] <- atomicallyWith
+    $ zipWith const [headLvl, pred headLvl .. 1]
+    . fst
+    . fromMaybe ([headHash], [])
+    <$> enumerateBranches headHash detailsBranch
+  bakingEndorsingAlerts :: [mCommit ()] <- for headBranch $ \lvl -> do
+    bakingRights <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
+    bakingAlerts :: [mCommit ()]
+                 <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
+      thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
+      let action = (bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)) (headBlock ^. fitness) RightKind_Baking (baker ^. baker_publicKeyHash) headLvl
+      return $ pure $ action
+
+    -- endorsements *on* this block are *of* the previos block
+    endorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash (lvl - 1)
+    endorsingAlerts :: [mCommit ()]
+                    <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
+      thisBlock <- nodeQueryDataSource $ NodeQuery_Block headHash
+      let action = (bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) headLvl
+      return $ pure $ action
+
+    return $ sequence_ $ bakingAlerts <> endorsingAlerts
+
+  di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl pkh)
+  let
+    gracePeriod = _cacheDelegateInfo_gracePeriod di
+
+    updateDetails :: mCommit ()
+    updateDetails = do
+      existingIds <- project BakerDetails_publicKeyHashField (BakerDetails_publicKeyHashField ==. pkh)
+      let
+        newVal = BakerDetails
+          { _bakerDetails_publicKeyHash = pkh
+          -- , _bakerDetails_nextBakeRights = _bakingRights_level <$> Map.lookup pkh bakingRights
+          -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup pkh endorsingRights
+          , _bakerDetails_branch = headBlock ^. hash
+          , _bakerDetails_delegateInfo = Just $ Json di
+          }
+      case nonEmpty existingIds of
+        Nothing -> void $ insert newVal
+        Just brids -> for_ brids $ \brid ->
+          update
+            [ BakerDetails_branchField =. _bakerDetails_branch newVal
+            , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
+            ]
+            (BakerDetails_publicKeyHashField ==. brid)
+      notify $ mkDefaultNotify newVal
+
+    -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
+    -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
+    deactivationAlerts :: mCommit ()
+    deactivationAlerts =
+      if _cacheDelegateInfo_deactivated di
+        then reportBakerDeactivated pkh protoInfo headFitness
+        else do
+          clearBakerDeactivated pkh headFitness
+          if (1 >= gracePeriod - headCycle)
+            then reportBakerDeactivationRisk pkh gracePeriod headCycle protoInfo headFitness
+            else clearBakerDeactivationRisk pkh headFitness
+
+  return $ sequence_ $
+    [ deactivationAlerts
+    , updateDetails
+    ] ++ bakingEndorsingAlerts

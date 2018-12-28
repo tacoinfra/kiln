@@ -87,6 +87,12 @@ data NodeSummary = NodeSummary
 instance FromJSON NodeSummary
 instance ToJSON NodeSummary
 
+bakerSummaryIdentification :: (PublicKeyHash, BakerSummary) -> (Text, Maybe Text)
+bakerSummaryIdentification = aliasedIdentification (_bakerSummary_alias . snd) $ tshow . fst
+
+nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
+nodeSummaryIdentification = aliasedIdentification _nodeSummary_alias $ tshow . _nodeSummary_address
+
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
@@ -157,6 +163,8 @@ data LogTag a where
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
   LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
   LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
+  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
+  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
 
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
@@ -175,6 +183,8 @@ instance ToJSON NodeErrorLogView
 data BakerErrorLogView
   = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
   | BakerErrorLogView_BakerMissed !ErrorLogBakerMissed
+  | BakerErrorLogView_BakerDeactivated !ErrorLogBakerDeactivated
+  | BakerErrorLogView_BakerDeactivationRisk !ErrorLogBakerDeactivationRisk
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON BakerErrorLogView
 instance ToJSON BakerErrorLogView
@@ -209,6 +219,8 @@ bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
 bakerIdForBakerErrorLogView = \case
   BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
   BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBakerMissed_baker elbm
+  BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_publicKeyHash ebd
+  BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_publicKeyHash ebd
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case
@@ -219,6 +231,8 @@ errorLogIdForErrorLogView = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
     BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm
+    BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_log ebd
+    BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_log ebd
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
 
 manuallyResolvable :: ErrorLogView -> Bool
@@ -230,6 +244,8 @@ manuallyResolvable = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker _ -> False
     BakerErrorLogView_BakerMissed _ -> True
+    BakerErrorLogView_BakerDeactivated _ -> False
+    BakerErrorLogView_BakerDeactivationRisk _ -> False
   ErrorLogView_BakerNoHeartbeat _ -> False
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView

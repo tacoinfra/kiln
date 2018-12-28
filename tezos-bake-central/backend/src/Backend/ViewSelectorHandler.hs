@@ -320,6 +320,16 @@ getErrorLogsImpl flt intervalMap = do
           (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
+
+        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
+                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
+          window
+
+        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
+                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
+          window
         ]
 
     leftBiasedUnions = MMap.unionsWith const
