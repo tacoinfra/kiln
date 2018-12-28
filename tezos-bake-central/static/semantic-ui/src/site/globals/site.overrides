@@ -323,6 +323,35 @@ body {
 }
 
 .app-header {
+
+  &.notification-banner {
+    padding: @30px @30px 0;
+    display: flex;
+    .content {
+      h1 {
+        position: relative;
+      }
+      .img-wrapper {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: @30px;
+        height: 100%;
+        right: 100%;
+        width: 30px;
+      }
+      padding-left: 90px;
+      p {
+        color: @grey;
+      }
+      .button-wrapper {
+        display: flex;
+        justify-content: flex-end;
+      }
+    }
+  }
+
 }
 
 .app-content {

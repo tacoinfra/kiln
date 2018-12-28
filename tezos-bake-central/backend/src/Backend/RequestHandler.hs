@@ -322,6 +322,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_BadNodeHead -> pure Nothing
           LogTag_MultipleBakersForSameBaker -> pure Nothing
+          LogTag_UpgradeAvailable -> do
+            elua :: Maybe ErrorLogUpgradeAvailable <- get $ fromId lid
+            return $ flip fmap elua $ \elua' -> (_errorLogUpgradeAvailable_log elua', Notify_ErrorLogUpgradeAvailable lid)
 
         for_ elid_notifier' $ \(elid, notifier) -> do
           now <- getTime

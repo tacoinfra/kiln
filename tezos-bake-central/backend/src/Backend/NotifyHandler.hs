@@ -65,7 +65,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
         eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
-      Notify_ErrorLogUpgradeAvailable eid -> handleErrorLog _errorLogUpgradeAvailable_log ErrorLogView_UpgradeAvailable eid
+      Notify_ErrorLogUpgradeAvailable eid -> handleErrorLog _errorLogUpgradeAvailable_log (ErrorLogView_UpgradeAvailable eid) eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_Node eid ent -> handleNode eid ent
       Notify_Notificatee eid -> handleNotificatee eid

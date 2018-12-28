@@ -18,6 +18,7 @@ import Control.Lens ((<>~))
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Dependent.Sum (DSum(..))
 import Data.Functor.Infix
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
@@ -415,12 +416,42 @@ nodesTabOrWelcome = do
         (fmap . fmap) (not . null) nodesMaybe
       haveBakersHaveNodesMaybe =
         (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+
+  let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+  let mUpgradeLog = ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \lid -> \case
+        (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_UpgradeAvailable uaId ua) -> Just (lid, uaId, ua)
+        _ -> Nothing
+  dyn_ $ ffor mUpgradeLog $ \case
+    Just (_, uaId, elua) -> divClass "app-header notification-banner" $ networkUpgradeNotificationBanner uaId elua
+    Nothing -> return ()
+
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just (False,False) -> divClass "app-content app-welcome" welcomeScreen
     Just (haveBakers, haveNodes) -> divClass "app-content" $ do
       when haveBakers bakersTab
       when haveNodes nodesTab
+
+networkUpgradeNotificationBanner :: (MonadRhyoliteFrontendWidget Bake t m) => Id ErrorLogUpgradeAvailable -> ErrorLogUpgradeAvailable -> m ()
+networkUpgradeNotificationBanner uaId elua = do
+  divClass "ui segment" $ do
+    divClass "content" $ do
+      let namedChain = showNamedChain $ _errorLogUpgradeAvailable_namedChain elua
+      elClass "h1" "header" $ do
+        divClass "img-wrapper" $ elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()
+        text $ "New Tezos '" <> namedChain <> "' software version."
+      el "p" $ text $ mconcat
+        [ "There is a new version of the ", namedChain
+        , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
+        ]
+      el "p" $ do
+        text "Get the new software here  🡒  "
+        let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain
+        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+      resolve <- divClass "button-wrapper" $ uiButton "floated right primary" "Resolve"
+      requesting_ $ public (PublicRequest_ResolveAlert (LogTag_UpgradeAvailable :=> uaId)) <$ resolve
+      return ()
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -674,7 +705,7 @@ liveErrorsWidget nodesDyn = void $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
-          ErrorLogView_UpgradeAvailable (ErrorLogUpgradeAvailable _ namedChain _) -> do
+          ErrorLogView_UpgradeAvailable _ (ErrorLogUpgradeAvailable { _errorLogUpgradeAvailable_namedChain = namedChain }) -> do
             let chainText = "'" <> showNamedChain namedChain <> "'"
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do
