@@ -138,7 +138,7 @@ settingsTab = do
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
-                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H5
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
                 -- If nothing is set, return nothing
