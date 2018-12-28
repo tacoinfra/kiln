@@ -271,9 +271,10 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
-    padding-top: @10px;
-    padding-bottom: @10px;
+    padding-top: @6px;
+    padding-bottom: @6px;
     padding-right: @20px;
+    border-bottom-width: @2px;
 
     .topbar.column {
       padding-left: @30px;
