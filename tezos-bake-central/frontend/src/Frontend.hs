@@ -420,7 +420,7 @@ nodesTabOrWelcome = do
   let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
   dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
   let mUpgradeLog = ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \lid -> \case
-        (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_UpgradeAvailable uaId ua) -> Just (lid, uaId, ua)
+        (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate uaId ua) -> Just (lid, uaId, ua)
         _ -> Nothing
   dyn_ $ ffor mUpgradeLog $ \case
     Just (_, uaId, elua) -> divClass "app-header notification-banner" $ networkUpgradeNotificationBanner uaId elua
@@ -433,11 +433,11 @@ nodesTabOrWelcome = do
       when haveBakers bakersTab
       when haveNodes nodesTab
 
-networkUpgradeNotificationBanner :: (MonadRhyoliteFrontendWidget Bake t m) => Id ErrorLogUpgradeAvailable -> ErrorLogUpgradeAvailable -> m ()
+networkUpgradeNotificationBanner :: (MonadRhyoliteFrontendWidget Bake t m) => Id ErrorLogNetworkUpdate -> ErrorLogNetworkUpdate -> m ()
 networkUpgradeNotificationBanner uaId elua = do
   divClass "ui segment" $ do
     divClass "content" $ do
-      let namedChain = showNamedChain $ _errorLogUpgradeAvailable_namedChain elua
+      let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
       elClass "h1" "header" $ do
         divClass "img-wrapper" $ elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()
         text $ "New Tezos '" <> namedChain <> "' software version."
@@ -450,7 +450,7 @@ networkUpgradeNotificationBanner uaId elua = do
         let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       resolve <- divClass "button-wrapper" $ uiButton "floated right primary" "Resolve"
-      requesting_ $ public (PublicRequest_ResolveAlert (LogTag_UpgradeAvailable :=> uaId)) <$ resolve
+      requesting_ $ public (PublicRequest_ResolveAlert (LogTag_NetworkUpdate :=> uaId)) <$ resolve
       return ()
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
@@ -705,7 +705,7 @@ liveErrorsWidget nodesDyn = void $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
-          ErrorLogView_UpgradeAvailable _ (ErrorLogUpgradeAvailable { _errorLogUpgradeAvailable_namedChain = namedChain }) -> do
+          ErrorLogView_NetworkUpdate _ (ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain }) -> do
             let chainText = "'" <> showNamedChain namedChain <> "'"
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do

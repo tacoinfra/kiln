@@ -400,13 +400,13 @@ data MailServerConfig = MailServerConfig
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
-data ErrorLogUpgradeAvailable = ErrorLogUpgradeAvailable
-  { _errorLogUpgradeAvailable_log :: !(Id ErrorLog)
-  , _errorLogUpgradeAvailable_namedChain :: !NamedChain
-  , _errorLogUpgradeAvailable_commit :: !Text
-  , _errorLogUpgradeAvailable_gitLabProjectId :: !Text
+data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
+  { _errorLogNetworkUpdate_log :: !(Id ErrorLog)
+  , _errorLogNetworkUpdate_namedChain :: !NamedChain
+  , _errorLogNetworkUpdate_commit :: !Text
+  , _errorLogNetworkUpdate_gitLabProjectId :: !Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogUpgradeAvailable
+instance HasId ErrorLogNetworkUpdate
 
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
@@ -539,7 +539,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
-  , ''ErrorLogUpgradeAvailable
+  , ''ErrorLogNetworkUpdate
   , ''Event
   , ''MailServerConfig
   , ''Node
@@ -572,7 +572,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
-  , 'ErrorLogUpgradeAvailable
+  , 'ErrorLogNetworkUpdate
   , 'Event
   , 'MailServerConfig
   , 'Parameters

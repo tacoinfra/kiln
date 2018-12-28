@@ -153,7 +153,7 @@ data LogTag a where
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
   LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
   LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_UpgradeAvailable :: LogTag ErrorLogUpgradeAvailable
+  LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
 
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
@@ -175,7 +175,7 @@ data ErrorLogView
   | ErrorLogView_BakerError BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
   -- ^ Misc baker *daemon* error.
-  | ErrorLogView_UpgradeAvailable !(Id ErrorLogUpgradeAvailable) !ErrorLogUpgradeAvailable
+  | ErrorLogView_NetworkUpdate !(Id ErrorLogNetworkUpdate) !ErrorLogNetworkUpdate
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
@@ -209,7 +209,7 @@ errorLogIdForErrorLogView = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
-  ErrorLogView_UpgradeAvailable _ ua -> _errorLogUpgradeAvailable_log ua
+  ErrorLogView_NetworkUpdate _ ua -> _errorLogNetworkUpdate_log ua
 
 manuallyResolvable :: ErrorLogView -> Bool
 manuallyResolvable = \case
@@ -220,7 +220,7 @@ manuallyResolvable = \case
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker _ -> False
   ErrorLogView_BakerNoHeartbeat _ -> False
-  ErrorLogView_UpgradeAvailable {} -> False
+  ErrorLogView_NetworkUpdate {} -> False
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView

@@ -90,7 +90,7 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
-  | Notify_ErrorLogUpgradeAvailable !(Id ErrorLogUpgradeAvailable)
+  | Notify_ErrorLogNetworkUpdate !(Id ErrorLogNetworkUpdate)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -123,8 +123,8 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
-instance HasDefaultNotify (Id ErrorLogUpgradeAvailable) where
-  mkDefaultNotify = Notify_ErrorLogUpgradeAvailable
+instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
+  mkDefaultNotify = Notify_ErrorLogNetworkUpdate
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 
@@ -569,7 +569,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
-  - entity: ErrorLogUpgradeAvailable
+  - entity: ErrorLogNetworkUpdate
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -611,7 +611,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
-  , (''ErrorLogUpgradeAvailable, 'ErrorLogUpgradeAvailableKey)
+  , (''ErrorLogNetworkUpdate, 'ErrorLogNetworkUpdateKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

@@ -32,7 +32,7 @@ import Rhyolite.Backend.Schema
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
-import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogUpgradeAvailable(..))
+import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogNetworkUpdate(..))
 import ExtraPrelude
 import Tezos.Chain
 
@@ -75,11 +75,11 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr inDb =
               , _errorLog_noticeSentAt = Just now
               }
         eid <- insert errorLog
-        _ <- insertNotify $ ErrorLogUpgradeAvailable
-          { _errorLogUpgradeAvailable_log = toId eid
-          , _errorLogUpgradeAvailable_namedChain = namedChain
-          , _errorLogUpgradeAvailable_commit = commitId
-          , _errorLogUpgradeAvailable_gitLabProjectId = gitLabProjectId
+        _ <- insertNotify $ ErrorLogNetworkUpdate
+          { _errorLogNetworkUpdate_log = toId eid
+          , _errorLogNetworkUpdate_namedChain = namedChain
+          , _errorLogNetworkUpdate_commit = commitId
+          , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
           }
         return ()
 
@@ -87,7 +87,7 @@ getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain
 getLatestNamedChainUpgradeLog namedChain =
   listToMaybe <$> [queryQ|
     SELECT el.id, el.stopped AT TIME ZONE 'UTC', elua.commit
-    FROM "ErrorLogUpgradeAvailable" elua
+    FROM "ErrorLogNetworkUpdate" elua
     JOIN "ErrorLog" el
     ON elua.log = el.id
     WHERE elua."namedChain" = ?namedChain
