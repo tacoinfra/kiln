@@ -85,6 +85,9 @@ nodes = "nodes"
 parseNodes :: Text -> Set URI
 parseNodes = Set.fromList . map parseURIUnsafe . filter (not . T.null) . map T.strip . T.splitOn ","
 
+networkGitLabProjectId :: FilePath
+networkGitLabProjectId = "network-gitlab-project-id"
+
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
   , _frontendConfig_chainId :: !ChainId

@@ -131,6 +131,10 @@ backendImpl cfg serve = do
     (pure $ _opts_pgConnectionString cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
+  !(networkGitLabProjectId :: Maybe Text) <- liftA2 (<|>)
+    (pure $ _opts_networkGitLabProjectId cfg)
+    (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
+
   let
     maybeNamedChain = either Just (const Nothing) chain
 
@@ -240,9 +244,9 @@ backendImpl cfg serve = do
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerWorker dataSrc
 
-      let namedChain = either Just (const Nothing) chain
+      let namedChainAndProjectId = (,) <$> maybeNamedChain <*> networkGitLabProjectId
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker namedChain upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker namedChainAndProjectId upgradeBranch (60 * 60) logger httpMgr db
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
@@ -310,6 +314,7 @@ data Opts = Opts
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
   , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Set URI))
+  , _opts_networkGitLabProjectId :: !(Maybe Text)
   }
 
 instance Semigroup Opts where
@@ -325,10 +330,11 @@ instance Semigroup Opts where
     , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
     , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
     , _opts_nodes = _opts_nodes b <> _opts_nodes a -- Union the sets if there are multiple
+    , _opts_networkGitLabProjectId = _opts_networkGitLabProjectId b <|> _opts_networkGitLabProjectId a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -361,6 +367,9 @@ optsArgDescr =
 
   , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
+
+  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (\x -> mempty { _opts_networkGitLabProjectId = Just $ T.pack x })
+      "The GitLab project id to query for network updates. Defaults to off." -- TODO default
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg f var)

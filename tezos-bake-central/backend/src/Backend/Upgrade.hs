@@ -38,7 +38,7 @@ import Tezos.Chain
 
 upgradeCheckWorker
   :: MonadIO m
-  => Maybe NamedChain
+  => Maybe (NamedChain, Text)
   -> Text
   -> NominalDiffTime
   -> LoggingEnv
@@ -48,17 +48,18 @@ upgradeCheckWorker
 upgradeCheckWorker mchain upgradeBranch delay logger httpMgr db = do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    forM_ mchain $ \chain -> notifyChainUpgrade chain httpMgr (runLoggingEnv logger . runDb (Identity db))
+    forM_ mchain $ \(chain, projectId) -> notifyChainUpgrade chain projectId httpMgr (runLoggingEnv logger . runDb (Identity db))
     void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
 
 notifyChainUpgrade
   :: (MonadIO m, PersistBackend db, PostgresRaw db)
   => NamedChain
+  -> Text
   -> Http.Manager
   -> (forall a. db a -> m a)
   -> m ()
-notifyChainUpgrade namedChain httpMgr inDb =
-  getTezosBranch httpMgr (showNamedChain namedChain) >>= \case
+notifyChainUpgrade namedChain gitLabProjectId httpMgr inDb =
+  getTezosBranch httpMgr gitLabProjectId (showNamedChain namedChain) >>= \case
     Left err -> liftIO $ print err -- TODO use proper logging
     Right commitId -> inDb $ do
       mLastCommit <- getLatestNamedChainUpgradeLog namedChain
@@ -78,6 +79,7 @@ notifyChainUpgrade namedChain httpMgr inDb =
           { _errorLogUpgradeAvailable_log = toId eid
           , _errorLogUpgradeAvailable_namedChain = namedChain
           , _errorLogUpgradeAvailable_commit = commitId
+          , _errorLogUpgradeAvailable_gitLabProjectId = gitLabProjectId
           }
         return ()
 
@@ -127,9 +129,9 @@ setUpstreamVersion v = do
         ]
       getId existingId >>= traverse_ (notify . Notify_UpstreamVersion existingId)
 
-getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> m (Either Text Text)
-getTezosBranch httpMgr branch = do
-  let url = gitlabApiBaseUrl <> "/projects/3836952/repository/branches/" <> branch
+getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Text -> m (Either Text Text)
+getTezosBranch httpMgr projectId branch = do
+  let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/repository/branches/" <> branch
   resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $ do
     Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
   return $ case resp' of
