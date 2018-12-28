@@ -172,6 +172,7 @@ data Node = Node
   , _node_fitness :: !(Maybe Fitness)
   , _node_deleted :: !Bool
   , _node_updated :: !(Maybe UTCTime)
+  , _node_minPeerConnections :: !(Maybe Int)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
@@ -189,6 +190,7 @@ mkNode addr alias = Node
   , _node_fitness = Nothing
   , _node_deleted = False
   , _node_updated = Nothing
+  , _node_minPeerConnections = Nothing
   }
 
 getNodeHeadBlock :: Node -> Maybe VeryBlockLike

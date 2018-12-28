@@ -103,11 +103,11 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       SELECT n.id
         , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockPred", n."headBlockBakedAt" AT TIME ZONE 'UTC'
         , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
-        , n."fitness", n."updated" AT TIME ZONE 'UTC'
+        , n."fitness", n."updated" AT TIME ZONE 'UTC', n."minPeerConnections"
       FROM "Node" n
       WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
     return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
+      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated, minPeerConnections)) ->
         (Bounded nid, First $ Just Node
           { _node_address = addr
           , _node_alias = alias
@@ -121,6 +121,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           , _node_fitness = blockFitness
           , _node_deleted = False
           , _node_updated = updated
+          , _node_minPeerConnections = minPeerConnections
           })
 
   let bakerAddrVS = _bakeViewSelector_bakerAddresses vs

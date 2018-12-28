@@ -725,7 +725,7 @@ addBakerModal close = mdo
   divClass "basic small segment" $ text
     "Enter a Baker address to begin monitoring."
   addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
-  added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
+  added <- requestingIdentity $ fmap (\(addr,alias,_) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
 nodeTitleSubtitle :: Text -> Maybe Text -> (Text, Maybe Text)
@@ -761,7 +761,7 @@ addNodeModal close = do
             text "Node added!"
       elClass "h5" "ui header" $ text "Connect via address"
       addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "Node Address" "127.0.0.1:8732" "Public Facing Node 1"
-      showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+      showMsg <- requestingIdentity $ fmap (\(addr,alias,minPeerConn) -> public (PublicRequest_AddNode addr alias minPeerConn)) addE
       hideMsg <- delay 3 showMsg
       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
       pure close

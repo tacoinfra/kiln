@@ -30,6 +30,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddNode
       :: URI
       -> Maybe Text
+      -> Maybe Int
       -> PublicRequest Bake ()
     PublicRequest_RemoveNode
       :: URI

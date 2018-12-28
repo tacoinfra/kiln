@@ -436,11 +436,11 @@ aliasedInputForm
   -> Text -- ^ Field label
   -> Text -- ^ Placeholder
   -> Text -- ^ Alias field placeholder
-  -> m (Event t (a, Maybe Text))
+  -> m (Event t (a, Maybe Text, Maybe Int))
 aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
   (namedAddress, submitEvt) <- formWithSubmit $ do
     let
-      fields = (liftA2.liftA2.liftA2) (,)
+      fields = (liftA3.liftA3.liftA3) (,,)
         (formItem' "required"
           $ validatedInput validator
           $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
@@ -451,6 +451,11 @@ aliasedInputForm validator feedback reset label info fieldlabel placeholder alia
           $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
                 & Txt.setFluid
                 & Txt.addLabel (el "label" $ text "Alias"))
+        (formItem
+          $ validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Nothing) Nothing)
+          $ def & Txt.setPlaceholder ("e.g. " <> "TODO")
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text "Minimum Peer Connections"))
 
     namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
 

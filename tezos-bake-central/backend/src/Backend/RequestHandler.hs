@@ -59,10 +59,12 @@ requestHandler
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
-      PublicRequest_AddNode addr alias -> inDb $ do
+      PublicRequest_AddNode addr alias minPeerConn -> inDb $ do
         existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
         case nonEmpty existingIds of
-          Nothing -> let node = mkNode addr alias in notify . flip Notify_Node node =<< insert' node
+          Nothing ->
+            let node = (mkNode addr alias) { _node_minPeerConnections = minPeerConn }
+            in notify . flip Notify_Node node =<< insert' node
           Just nids -> for_ nids $ \nid -> do
             updateId nid [Node_deletedField =. False, Node_aliasField =. alias]
             getId nid >>= traverse_ (notify . Notify_Node nid)

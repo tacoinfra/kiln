@@ -16,6 +16,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
+import Control.Monad
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -125,6 +126,10 @@ updateNetworkStats httpMgr db nid before = do
     Right after -> do
       -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
       when (before /= after) $ inDb $ do
+        forM_ ((,) <$> _node_peerCount after <*> _node_minPeerConnections after) $ \(peerCount, minPeerCount) -> do
+          when (peerCount < fromIntegral minPeerCount) $ do
+            -- TODO notify min peer count limit has been reached
+            return ()
         updateId nid
           [ Node_peerCountField =. _node_peerCount after
           , Node_networkStatField =. _node_networkStat after
