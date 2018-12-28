@@ -172,7 +172,7 @@ settingsTab = do
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
                   divClass "notification-settings-description" $ text descr
-                  True <$$ uiButton "primary" ("Connect " <> name)
+                  True <$$ uiButton "fluid" ("Connect " <> name)
                 SettingsRoute_View dcfg -> do
                   divClass "notification-settings-description" $ text descr
                   True <$$ viewCfg dcfg

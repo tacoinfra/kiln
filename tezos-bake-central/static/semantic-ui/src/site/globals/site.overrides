@@ -523,6 +523,10 @@ img.credits-obsidian {
     margin-bottom: @20px;
   }
 
+  .ui.button.fluid {
+    width: 200px;
+  }
+
   .ui.form .fields {
     margin-left: 0;
     margin-right: 0;
