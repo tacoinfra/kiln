@@ -404,6 +404,7 @@ data ErrorLogUpgradeAvailable = ErrorLogUpgradeAvailable
   { _errorLogUpgradeAvailable_log :: !(Id ErrorLog)
   , _errorLogUpgradeAvailable_namedChain :: !NamedChain
   , _errorLogUpgradeAvailable_commit :: !Text
+  , _errorLogUpgradeAvailable_gitLabProjectId :: !Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogUpgradeAvailable
 
