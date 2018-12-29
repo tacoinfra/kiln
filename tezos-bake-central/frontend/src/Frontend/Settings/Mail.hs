@@ -126,10 +126,22 @@ mailServerForm (srv0, emails0) = do
       divClass "notification-settings-description" $ text "Enter email address to receive email notifications below."
 
       let
+        showSent = do
+          icon "icon-check green"
+          text "Sent!"
+          return never
+        sendLink = do
+          (e,_) <- elClass' "a" "send-test" $ text "Send Test Email"
+          return $ domEvent Click e
         emailWidget email = elClass "span" "email-buttons" $ do
           (remove, _) <- elClass' "a" "remove" $ icon "icon-x"
-          (send, _) <- elClass' "a" "send-test" $ text "Send Test Email"
-          void $ requestingIdentity $ public . PublicRequest_SendTestEmail <$> (current email <@ domEvent Click send)
+          rec
+            send <- widgetHold sendLink $ leftmost [ showSent <$ sent
+                                                   , sendLink <$ sentClear
+                                                   ]
+            let sendEv = switch (current send)
+            sent <- requestingIdentity $ public . PublicRequest_SendTestEmail <$> (current email <@ sendEv)
+            sentClear <- delay 2 sent
           pure $ domEvent Click remove
 
       listInput "Add email address" (isRight . Check.email) emailWidget emails0
