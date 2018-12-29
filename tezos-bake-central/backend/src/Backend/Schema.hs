@@ -90,6 +90,7 @@ data Notify
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogNodeInvalidPeerCount !(Id ErrorLogNodeInvalidPeerCount)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -122,6 +123,8 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
+  mkDefaultNotify = Notify_ErrorLogNodeInvalidPeerCount
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 
@@ -559,6 +562,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
   - entity: ErrorLogNodeWrongChain
+  - entity: ErrorLogNodeInvalidPeerCount
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -600,6 +604,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
+  , (''ErrorLogNodeInvalidPeerCount, 'ErrorLogNodeInvalidPeerCountKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

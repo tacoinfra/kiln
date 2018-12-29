@@ -45,10 +45,11 @@ import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
-                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError)
+                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
+                       reportNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
-import Backend.Config (AppConfig (..))
+import Backend.Config (HasAppConfig, AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -110,8 +111,10 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
       ]
     getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
 
-updateNetworkStats :: (MonadIO m, MonadLogger m, MonadBaseControl IO m) => Http.Manager -> Pool Postgresql -> Id Node -> Node -> m (Either RpcError ())
-updateNetworkStats httpMgr db nid before = do
+updateNetworkStats
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  => AppConfig -> Http.Manager -> Pool Postgresql -> Id Node -> Node -> m (Either RpcError ())
+updateNetworkStats appConfig httpMgr db nid before = do
   after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
@@ -127,9 +130,9 @@ updateNetworkStats httpMgr db nid before = do
       -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
       when (before /= after) $ inDb $ do
         forM_ ((,) <$> _node_peerCount after <*> _node_minPeerConnections after) $ \(peerCount, minPeerCount) -> do
+          -- TODO clear outstading invalid peer count notifications if count has become valid
           when (peerCount < fromIntegral minPeerCount) $ do
-            -- TODO notify min peer count limit has been reached
-            return ()
+            flip runReaderT appConfig $ reportNodeInvalidPeerCountError nid minPeerCount peerCount
         updateId nid
           [ Node_peerCountField =. _node_peerCount after
           , Node_networkStatField =. _node_networkStat after
@@ -159,7 +162,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     -- give them all a chance to
 
     ifor_ theseNodeRecords $ \nodeId node ->
-      updateNetworkStats httpMgr db nodeId node >>= \case
+      updateNetworkStats appConfig httpMgr db nodeId node >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 

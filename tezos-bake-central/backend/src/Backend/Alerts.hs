@@ -16,6 +16,7 @@ module Backend.Alerts where
 
 import Control.Monad.Logger (MonadLogger, logDebugSH)
 import Data.Time (NominalDiffTime, addUTCTime)
+import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
@@ -177,6 +178,34 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
+
+reportNodeInvalidPeerCountError
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadLogger m)
+  => Id Node -> Int -> Word64 -> m ()
+reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nodeNotDeleted nodeId) $ do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogInvalidPeerCount" t ON t.log = el.id
+      JOIN "Node" n ON n.id = t.node
+     WHERE t."minPeerCount" = ?minPeerCount
+       AND t."actualPeerCount" = ?actualPeerCount
+       AND t.node = ?nodeId
+       AND NOT n.deleted
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Nothing -> do
+      node' <- get $ fromId nodeId
+      for_ node' $ \node -> do
+        (logId, _) <- insertErrorLog $ \logId ->
+          ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
+        queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
+          "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
