@@ -279,6 +279,9 @@ body {
     .column {
       .ui.circular.label.link {
         cursor: pointer;
+        height: @40px;
+        font-size: 16px;
+        margin-top: 2px;
       }
     }
 
