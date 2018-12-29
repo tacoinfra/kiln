@@ -435,6 +435,7 @@ body {
       margin-bottom: @20px;
       margin-left: -@sidebar-horizontal-padding;
       margin-right: -@sidebar-horizontal-padding;
+      border-top-width: @2px;
     }
 
     .no-notifications {
