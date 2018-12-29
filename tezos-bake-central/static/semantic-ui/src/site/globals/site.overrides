@@ -289,6 +289,7 @@ body {
 
       > .ui.horizontal.list .item .content {
         font-weight: bold;
+        font-size: @13px;
         padding-left: @30px;
         margin-right: @40px;
 
@@ -296,6 +297,7 @@ body {
           font-weight: normal;
         }
         > .header {
+          font-size: @12px;
           font-weight: normal;
           color: rgba(0, 0, 0, .6);
           padding-bottom: @4px;
