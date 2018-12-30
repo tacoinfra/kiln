@@ -16,7 +16,7 @@
 module Backend.Alerts where
 
 import Control.Lens ((<&>))
-import Control.Monad.Logger (MonadLogger, logDebugSH)
+import Control.Monad.Logger (MonadLogger)
 import Data.Map (Map())
 import qualified Data.Map as Map
 import Data.List.NonEmpty (nonEmpty)
@@ -122,7 +122,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
     SELECT el.id, t.id, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
-      JOIN "Baker" b ON b.publicKeyHash = t.publicKeyHash
+      JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
        AND NOT b.deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
@@ -148,12 +148,12 @@ clearBakerDeactivated pkh newFit = do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivated" t
     WHERE t.log = el.id
-      AND t.publicKeyHash = ?pkh
+      AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
-      AND t.fitness < ?newFit
+      AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ get . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
@@ -169,7 +169,7 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
     SELECT el.id, t.id, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
-      JOIN "Baker" b ON b.publicKeyHash = t.publicKeyHash
+      JOIN "Baker" b ON b.publicKeyHash = t."publicKeyHash"
      WHERE NOT b.deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
@@ -195,12 +195,12 @@ clearBakerDeactivationRisk pkh newFit = do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivationRisk" t
     WHERE t.log = el.id
-      AND t.publicKeyHash = ?pkh
+      AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
-      AND t.fitness < ?newFit
+      AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ get . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
@@ -242,7 +242,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node' <- get (fromId nodeId)
-  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
@@ -360,7 +360,7 @@ missedBakeLog right pkh lvl =
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm.right = ?right
       AND elbm.level = ?lvl
-    JOIN "ErrorLog" el
+    LEFT OUTER JOIN "ErrorLog" el
       ON el.id = elbm.log
       AND el.stopped IS NULL
     WHERE NOT b.deleted
@@ -371,7 +371,7 @@ bakerNotDeleted :: PersistBackend m => PublicKeyHash -> m Bool
 bakerNotDeleted pkh = all not <$> project Baker_deletedField ((Baker_publicKeyHashField ==. pkh) `limitTo` 1)
 
 reportMissedBake :: (MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m, MonadLogger m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_  $ \bid eids -> case nonEmpty eids of
+reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
       { _errorLogBakerMissed_log = eid

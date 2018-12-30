@@ -349,7 +349,7 @@ data CacheDelegateInfo = CacheDelegateInfo
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
-  , _bakerDetails_branch :: !BlockHash
+  , _bakerDetails_branch :: !VeryBlockLike
   , _bakerDetails_delegateInfo :: !(Maybe (Json CacheDelegateInfo))
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where

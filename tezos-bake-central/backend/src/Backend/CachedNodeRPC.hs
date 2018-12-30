@@ -10,6 +10,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -48,7 +49,8 @@ import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (Manager)
-import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
@@ -589,10 +591,17 @@ tryFetchFromCache
 tryFetchFromCache chainId db q = do
   let
     qJson = Json $ requestToJSON q
-  resultM :: Map (Id GenericCacheEntry) GenericCacheEntry <- runDb (Identity db) $ selectMap GenericCacheEntryConstructor
-    $  (GenericCacheEntry_keyField ==. qJson
-    &&. GenericCacheEntry_chainIdField ==. chainId) -- we select this to use the unique constraint index
-  case nonEmpty $ Map.toList resultM of
+  -- although this is within the grasp of groundhog, this table is very hot,
+  -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
+  -- terrible:
+  -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
+  resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- runDb (Identity db) $ [queryQ|
+    SELECT "id", "chainId", "key", "value"
+    FROM "GenericCacheEntry"
+    WHERE "chainId" = ?chainId
+      AND "key" = ?qJson
+    |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
+  case nonEmpty $ resultM of
     Nothing -> return Nothing
     Just ((rid, result) :| _) -> case requestResponseFromJSON q of
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of

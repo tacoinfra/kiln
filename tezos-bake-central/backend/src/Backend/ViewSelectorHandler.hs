@@ -244,6 +244,8 @@ getErrorLogsImpl flt intervalMap = do
       queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
+    queryBakerAlert' sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "baker#publicKeyHash"))
 
     queryAlert
       :: (Monad f, PostgresRaw f, Pg.FromRow row)
@@ -329,6 +331,10 @@ getErrorLogsImpl flt intervalMap = do
         , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
           (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
                   ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
+          window
+        , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
+          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerMissed $
+                   ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness)
           window
         ]
 

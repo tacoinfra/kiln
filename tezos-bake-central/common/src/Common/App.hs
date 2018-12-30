@@ -165,6 +165,7 @@ data LogTag a where
   LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
   LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
   LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
+  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
 
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
