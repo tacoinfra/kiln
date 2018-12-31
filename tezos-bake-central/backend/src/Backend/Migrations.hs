@@ -41,7 +41,7 @@ preMigrate =
   >=> renameColumnIfExists (Nothing, "PendingReward") "delegate" "baker"
   >=> createNodeDetailsTable
   >=> createNodeExternalTable
-  -- >=> migrateNodesToSplitTable
+  >=> migrateNodesToSplitTable
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -149,18 +149,18 @@ createNodeDetailsTable ta = do
       let sqlCode = [sql|
             CREATE TABLE "NodeDetails"
               ( "id" INT8 NOT NULL
-              , "identity" BYTEA NULL
-              , "headLevel" INT8 NULL
-              , "headBlockHash" BYTEA NULL
-              , "headBlockPred" BYTEA NULL
-              , "headBlockBakedAt" TIMESTAMP NULL
-              , "peerCount" INT8 NULL
-              , "networkStat#totalSent" INT8 NOT NULL
-              , "networkStat#totalRecv" INT8 NOT NULL
-              , "networkStat#currentInflow" INT4 NOT NULL
-              , "networkStat#currentOutflow" INT4 NOT NULL
-              , "fitness" VARCHAR[] NULL
-              , "updated" TIMESTAMP NULL
+              , "data#identity" BYTEA NULL
+              , "data#headLevel" INT8 NULL
+              , "data#headBlockHash" BYTEA NULL
+              , "data#headBlockPred" BYTEA NULL
+              , "data#headBlockBakedAt" TIMESTAMP NULL
+              , "data#peerCount" INT8 NULL
+              , "data#networkStat#totalSent" INT8 NOT NULL
+              , "data#networkStat#totalRecv" INT8 NOT NULL
+              , "data#networkStat#currentInflow" INT4 NOT NULL
+              , "data#networkStat#currentOutflow" INT4 NOT NULL
+              , "data#fitness" VARCHAR[] NULL
+              , "data#updated" TIMESTAMP NULL
               );
             ALTER TABLE "NodeDetails" ADD CONSTRAINT "NodeDetailsId" PRIMARY KEY("id");
             ALTER TABLE "NodeDetails" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
@@ -177,9 +177,9 @@ createNodeExternalTable ta = do
       let sqlCode = [sql|
             CREATE TABLE "NodeExternal"
               ( "id" INT8 NOT NULL
-              , "address" VARCHAR NOT NULL
-              , "alias" VARCHAR NULL
-              , "deleted" BOOLEAN NOT NULL
+              , "data#address" VARCHAR NOT NULL
+              , "data#alias" VARCHAR NULL
+              , "data#deleted" BOOLEAN NOT NULL
               );
             ALTER TABLE "NodeExternal" ADD CONSTRAINT "NodeExternalId" PRIMARY KEY("id");
             ALTER TABLE "NodeExternal" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
@@ -199,9 +199,9 @@ migrateNodesToSplitTable ta = do
             sqlCode = [sql|
               INSERT INTO "NodeExternal"
                   ( "id"
-                  , "address"
-                  , "alias"
-                  , "deleted"
+                  , "data#address"
+                  , "data#alias"
+                  , "data#deleted"
                   )
                   SELECT "id"
                        , "address"
@@ -210,18 +210,18 @@ migrateNodesToSplitTable ta = do
                   FROM "Node";
               INSERT INTO "NodeDetails"
                   ( "id"
-                  , "identity"
-                  , "headLevel"
-                  , "headBlockHash"
-                  , "headBlockPred"
-                  , "headBlockBakedAt"
-                  , "peerCount"
-                  , "networkStat#totalSent"
-                  , "networkStat#totalRecv"
-                  , "networkStat#currentInflow"
-                  , "networkStat#currentOutflow"
-                  , "fitness"
-                  , "updated"
+                  , "data#identity"
+                  , "data#headLevel"
+                  , "data#headBlockHash"
+                  , "data#headBlockPred"
+                  , "data#headBlockBakedAt"
+                  , "data#peerCount"
+                  , "data#networkStat#totalSent"
+                  , "data#networkStat#totalRecv"
+                  , "data#networkStat#currentInflow"
+                  , "data#networkStat#currentOutflow"
+                  , "data#fitness"
+                  , "data#updated"
                   )
                   SELECT "id"
                        , "identity"
