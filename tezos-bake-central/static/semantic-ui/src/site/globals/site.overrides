@@ -116,11 +116,6 @@ h6.ui.header {
   opacity: 0.50;
 }
 
-.tooltip-medium[data-tooltip]:after {
-  width: 250px;
-  white-space: normal;
-}
-
 .ui.publicnodes {
   > .public-node.grid {
     border: @1px solid #CED4DA;
@@ -276,9 +271,19 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
-    padding-top: @10px;
-    padding-bottom: @10px;
+    padding-top: @6px;
+    padding-bottom: @6px;
     padding-right: @20px;
+    border-bottom-width: @2px;
+
+    .column {
+      .ui.circular.label.link {
+        cursor: pointer;
+        height: @40px;
+        font-size: 16px;
+        margin-top: 2px;
+      }
+    }
 
     .topbar.column {
       padding-left: @30px;
@@ -287,6 +292,7 @@ body {
 
       > .ui.horizontal.list .item .content {
         font-weight: bold;
+        font-size: @13px;
         padding-left: @30px;
         margin-right: @40px;
 
@@ -294,9 +300,34 @@ body {
           font-weight: normal;
         }
         > .header {
+          font-size: @12px;
           font-weight: normal;
           color: rgba(0, 0, 0, .6);
           padding-bottom: @4px;
+        }
+      }
+
+      .disconnected-tooltip {
+        width: 260px;
+        white-space: normal;
+
+        p {
+          margin-bottom: @7px;
+        }
+
+        .tooltip-title {
+          font-weight: bold;
+          font-size: @13px;
+        }
+
+        .tooltip-description {
+          color: @grey;
+          font-size: @12px;
+
+          .icon.circle {
+            margin-left: @8px;
+            margin-right: @8px;
+          }
         }
       }
     }
@@ -404,6 +435,7 @@ body {
       margin-bottom: @20px;
       margin-left: -@sidebar-horizontal-padding;
       margin-right: -@sidebar-horizontal-padding;
+      border-top-width: @2px;
     }
 
     .no-notifications {
@@ -495,6 +527,10 @@ img.credits-obsidian {
     font-size: @12px;
     margin-top: @30px;
     margin-bottom: @20px;
+  }
+
+  .ui.button.fluid {
+    width: 200px;
   }
 
   .ui.form .fields {
