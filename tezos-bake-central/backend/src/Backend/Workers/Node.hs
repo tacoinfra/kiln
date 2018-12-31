@@ -46,7 +46,7 @@ import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
-                       reportNodeInvalidPeerCountError)
+                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (HasAppConfig, AppConfig (..))
@@ -130,9 +130,10 @@ updateNetworkStats appConfig httpMgr db nid before = do
       -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
       when (before /= after) $ inDb $ do
         forM_ ((,) <$> _node_peerCount after <*> _node_minPeerConnections after) $ \(peerCount, minPeerCount) -> do
-          -- TODO clear outstading invalid peer count notifications if count has become valid
-          when (peerCount < fromIntegral minPeerCount) $ do
-            flip runReaderT appConfig $ reportNodeInvalidPeerCountError nid minPeerCount peerCount
+          flip runReaderT appConfig $
+            if (peerCount < fromIntegral minPeerCount)
+              then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+              else clearNodeInvalidPeerCountError nid
         updateId nid
           [ Node_peerCountField =. _node_peerCount after
           , Node_networkStatField =. _node_networkStat after
