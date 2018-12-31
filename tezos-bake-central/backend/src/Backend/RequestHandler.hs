@@ -316,7 +316,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert (tag :=> (Identity lid)) -> inDb $ do
+      PublicRequest_ResolveAlert (tag :=> (Identity specificLog)) -> inDb $ do
         -- TODO: this is not the only place we encode knowledge of which alert types can be manually resolved
         elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
           LogTag_InaccessibleNode -> pure Nothing
@@ -327,7 +327,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BakerDeactivated -> pure Nothing
           LogTag_BakerDeactivationRisk -> pure Nothing
           LogTag_BakerMissed -> do
-            let eid = _errorLogBakerMissed_log lid
+            let eid = _errorLogBakerMissed_log specificLog
             n <- fmap (Notify_ErrorLogBakerMissed . toId) . listToMaybe <$> project AutoKeyField (ErrorLogBakerMissed_logField `in_` [eid])
             return $ (,) <$> pure eid <*> n
 

@@ -369,6 +369,12 @@ getBakerAddresses nds bid = do
       WHERE NOT b.deleted
         AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
     |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
+  -- TODO: this is rather inelegant: we need something like this; to give you
+  -- your next rights we need to know what level we're at now.  there's not an
+  -- elegant way to do that today, from the postgres level.  a "current level"
+  --
+  -- we need to do this *here* instead of, say, on bakerdetails, because we
+  -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
   rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- flip runReaderT nds $ atomicallyWith $
     withCache nds (Nothing, Nothing, []) $ \protoInfo -> do

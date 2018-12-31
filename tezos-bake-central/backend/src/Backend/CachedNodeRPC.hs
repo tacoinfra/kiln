@@ -313,10 +313,10 @@ takeWhileJust (Nothing: _) = []
 
 
 data RightsCycleInfo = RightsCycleInfo
-  { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in the cycle that confers rights
-  , _rightsCycleInfo_cycle :: !Cycle       -- the cycle in which rights are determined: if this is 6, the associated rights are in cycle 13
-  , _rightsCycleInfo_minLevel :: !RawLevel -- the first level in that cycle
-  , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level in that cycle
+  { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle
+  , _rightsCycleInfo_cycle :: !Cycle
+  , _rightsCycleInfo_minLevel :: !RawLevel -- the first level of _rightsCycleInfo_cycle
+  , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level of _rightsCycleInfo_cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
