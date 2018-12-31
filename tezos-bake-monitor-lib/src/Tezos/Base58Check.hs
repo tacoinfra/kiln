@@ -25,6 +25,9 @@ import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
 import GHC.Generics (Generic)
+import qualified Text.ParserCombinators.ReadPrec as Read
+import qualified Text.Read as Read
+
 
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -203,6 +206,17 @@ instance IsBase58Hash t => IsString (HashedValue t) where
 
 instance IsBase58Hash t => Show (HashedValue t) where
   show x = "(fromString " <> show (toBase58 x) <> ")"
+
+instance IsBase58Hash t => Read (HashedValue t) where
+  readsPrec _ = Read.readParen True $ Read.readPrec_to_S p 5
+    where
+      p :: Read.ReadPrec (HashedValue t)
+      p = do
+        Read.Ident "fromString" <- Read.lexP
+        Read.String valText <- Read.lexP
+        Right val <- return $ fromBase58 $ T.encodeUtf8 $ T.pack valText
+        return val
+
 
 instance IsBase58Hash 'HashType_BlockHash where
   prefix _ = "\001\052"

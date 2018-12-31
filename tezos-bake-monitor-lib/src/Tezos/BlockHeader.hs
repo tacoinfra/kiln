@@ -41,7 +41,7 @@ data BlockHeader = BlockHeader
 instance NFData BlockHeader
 
 newtype Priority = Priority { unPriority :: Word16 }
-  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable)
+  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable, Enum, Num, Integral, Real)
 
 
 concat <$> traverse deriveTezosJson [ ''BlockHeader ]

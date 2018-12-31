@@ -25,7 +25,7 @@ import Data.Map (Map)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (TimeZone, UTCTime, diffUTCTime)
+import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
@@ -42,8 +42,9 @@ import Tezos.ShortByteString (fromShort)
 import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common (humanizeDiffTime)
-import Common.App (Bake)
+import Common (humanizeTimestamp)
+import Common.App (Bake, BakerSummary(..), NodeSummary,
+                   bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
@@ -99,14 +100,13 @@ localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
   let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
-
   tooltipped TooltipPos_BottomLeft
     (do
       whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
       dynText ltDyn
     ) $
     dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
-      humanizeDiffTime (diffUTCTime c t)
+      humanizeTimestamp tz c t
 
 data TooltipPos
   = TooltipPos_TopLeft
@@ -459,6 +459,22 @@ aliasedInputForm validator feedback reset label info fieldlabel placeholder alia
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
+nbsp :: Text
+nbsp = "\x00A0"
+
+errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
+errorLabel primary secondary = el "div" $ do
+  el "label" $ text primary
+  for_ secondary $ \x -> do
+    elClass "label" "secondary-label" $ do
+      text nbsp
+      text x
+
+nodeLabel :: DomBuilder t m => NodeSummary -> m ()
+nodeLabel = uncurry errorLabel . nodeSummaryIdentification
+
+bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
+bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
 
 makeLenses ''FrontendContext
 
