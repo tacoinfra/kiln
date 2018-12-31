@@ -459,10 +459,15 @@ aliasedInputForm validator feedback reset label info fieldlabel placeholder alia
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
+nbsp = "\x00A0"
+
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
 errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
-  for_ secondary $ elClass "label" "secondary-label" . text
+  for_ secondary $ \x -> do
+    elClass "label" "secondary-label" $ do
+      text nbsp
+      text x
 
 nodeLabel :: DomBuilder t m => Node -> m ()
 nodeLabel = uncurry errorLabel . nodeIdentification

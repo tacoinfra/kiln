@@ -59,7 +59,7 @@ import Tezos.Types
 
 import Common (humanBytes, unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter(..), BakerErrorDescriptions(..), badNodeHeadMessage
-                     , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+                     , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -1059,7 +1059,9 @@ bakersTab =
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
       -- TODO
       BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-      BakerErrorLogView_BakerMissed log -> text $ tshow log -- TODO
+      BakerErrorLogView_BakerMissed log -> renderBakerError
+        (bakerMissedDescriptions log)
+        (unId $ _errorLogBakerMissed_baker log)
       BakerErrorLogView_BakerDeactivated log -> renderBakerError
         (bakerDeactivatedDescriptions log)
         (_errorLogBakerDeactivated_publicKeyHash log)
@@ -1141,9 +1143,6 @@ bakersTab =
               etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
               text nbsp
               dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
-
-      where
-        nbsp = "\x00A0"
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"

@@ -8,11 +8,11 @@ import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (Baker(..), ErrorLog(..), ErrorLogBadNodeHead (..),
-                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), bakerIdentification)
+import Common.Schema (Baker(..), ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
+                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -107,7 +107,7 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
          )
   }
   where
-    preserved = _errorLogBakerDeactivationRisk_preservedCycles elog
+    preserved = unCycle $ _errorLogBakerDeactivationRisk_preservedCycles elog
 
 bakerDeactivatedDescriptions :: ErrorLogBakerDeactivated -> BakerErrorDescriptions
 bakerDeactivatedDescriptions elog = BakerErrorDescriptions
@@ -124,4 +124,20 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
          )
   }
   where
-    preserved = _errorLogBakerDeactivated_preservedCycles elog
+    preserved = unCycle $ _errorLogBakerDeactivated_preservedCycles elog
+
+bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
+bakerMissedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker missed " <> aRight
+  , _bakerErrorDescriptions_tile = "Missed " <> aRight
+  , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  }
+  where
+    lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
+    (aRight, toRight) = case _errorLogBakerMissed_right elog of
+      RightKind_Baking -> ("a bake", "bake")
+      RightKind_Endorsing -> ("an endorsement", "endorse")

@@ -88,7 +88,7 @@ instance FromJSON NodeSummary
 instance ToJSON NodeSummary
 
 bakerSummaryIdentification :: (PublicKeyHash, BakerSummary) -> (Text, Maybe Text)
-bakerSummaryIdentification = aliasedIdentification (_bakerSummary_alias . snd) $ tshow . fst
+bakerSummaryIdentification = aliasedIdentification (_bakerSummary_alias . snd) $ toPublicKeyHashText . fst
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
 nodeSummaryIdentification = aliasedIdentification _nodeSummary_alias $ tshow . _nodeSummary_address

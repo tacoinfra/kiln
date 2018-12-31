@@ -712,4 +712,4 @@ nodeIdentification :: Node -> (Text, Maybe Text)
 nodeIdentification = aliasedIdentification _node_alias $ Uri.render . _node_address
 
 bakerIdentification :: Baker -> (Text, Maybe Text)
-bakerIdentification = aliasedIdentification _baker_alias $ tshow . _baker_publicKeyHash
+bakerIdentification = aliasedIdentification _baker_alias $ toPublicKeyHashText . _baker_publicKeyHash
