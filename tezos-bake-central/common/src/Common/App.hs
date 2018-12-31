@@ -19,9 +19,6 @@
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
--- 'deriveJSONGADT' produces seemingly redundant pattern matches.
-{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
-
 module Common.App
   ( module Common.App
 
@@ -31,13 +28,9 @@ module Common.App
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Align (Align (alignWith, nil))
-import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
@@ -156,16 +149,6 @@ data MailServerView = MailServerView
   } deriving (Eq, Ord, Generic, Typeable, Read, Show)
 instance FromJSON MailServerView
 instance ToJSON MailServerView
-
-data LogTag a where
-  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
-  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
-  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
-  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
-  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
-  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
 
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
@@ -509,11 +492,5 @@ fmap concat $ sequence $ concat
     , 'BakeViewSelector
     , 'MailServerView
     , 'NodeSummary
-    ]
-  , [ deriveArgDict ''LogTag
-    , deriveGCompare ''LogTag
-    , deriveGEq ''LogTag
-    , deriveGShow ''LogTag
-    , deriveJSONGADT ''LogTag
     ]
   ]

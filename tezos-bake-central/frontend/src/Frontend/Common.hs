@@ -459,6 +459,7 @@ aliasedInputForm validator feedback reset label info fieldlabel placeholder alia
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
+nbsp :: Text
 nbsp = "\x00A0"
 
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()

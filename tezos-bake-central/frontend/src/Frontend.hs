@@ -58,7 +58,7 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (humanBytes, unixEpoch, uriHostPortPath)
-import Common.Alerts (AlertsFilter(..), BakerErrorDescriptions(..), badNodeHeadMessage
+import Common.Alerts (AlertsFilter(..), badNodeHeadMessage
                      , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Api
 import Common.App
@@ -978,8 +978,6 @@ nodesTab =
             divClass "column" $ do
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
-      where
-        nbsp = "\x00A0"
 
 bakersTab
   :: forall r m t.
@@ -1010,7 +1008,7 @@ bakersTab =
          dyn_ $ ffor ebb $ traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
 
          bakersDetails <- divClass "ui stackable cards" $ do
-          listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
+          listWithKey (coerceDynamic tilesDyn) $ \pkh vDyn -> do
             unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> ebb
 
             let
@@ -1019,7 +1017,11 @@ bakersTab =
               errorMessages = ffor unresolvedAlerts $ fmap $ \case
                 -- TODO
                 BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                BakerErrorLogView_BakerMissed elbm -> text $ "Baker missed." <> toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
+                BakerErrorLogView_BakerMissed elbm -> text $ "Missed a " <> aRight
+                  where
+                    aRight = case _errorLogBakerMissed_right elbm of
+                      RightKind_Baking -> "bake"
+                      RightKind_Endorsing -> "endorse"
                 BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
                 BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
@@ -1083,6 +1085,9 @@ bakersTab =
               el "div" $ do
                 el "strong" $ text "Fix: "
                 text $ _bakerErrorDescriptions_fix dsc
+              for_ (_bakerErrorDescriptions_userResolvable dsc) $ \resolveReq -> do
+                resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+                requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
 
     tile
       :: m () -- ^ Title

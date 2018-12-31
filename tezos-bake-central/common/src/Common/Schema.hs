@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DoAndIfThenElse #-}
@@ -7,16 +9,23 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- TODO do everywhere
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
+
+-- 'deriveJSONGADT' produces seemingly redundant pattern matches.
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
 module Common.Schema
   ( module Common.Schema
@@ -31,6 +40,11 @@ import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
+import Data.Constraint.Extras.TH (deriveArgDict)
+import Data.Aeson.GADT (deriveJSONGADT)
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import Data.Dependent.Sum (DSum)
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -602,6 +616,29 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+data LogTag a where
+  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
+  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
+  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
+  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
+  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
+  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
+
+
+data BakerErrorDescriptions = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title :: !Text
+  , _bakerErrorDescriptions_tile :: !Text
+  , _bakerErrorDescriptions_notification :: !Text
+  , _bakerErrorDescriptions_problem :: !Text
+  , _bakerErrorDescriptions_warning :: !(Maybe Text)
+  , _bakerErrorDescriptions_fix :: !Text
+  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
+  }
+
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
@@ -679,6 +716,16 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   ] ++ map makePrisms
   [ ''UpgradeCheckError
   ])
+
+return []
+
+deriveArgDict ''LogTag
+deriveGCompare ''LogTag
+deriveGEq ''LogTag
+deriveGShow ''LogTag
+deriveJSONGADT ''LogTag
+
+
 
 
 instance BlockLike (Event BakedEvent) where

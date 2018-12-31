@@ -38,8 +38,7 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (BakerErrorDescriptions(..), badNodeHeadMessage
-                     , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Schema
 import ExtraPrelude
 import Prelude hiding (log)

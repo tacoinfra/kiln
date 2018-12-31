@@ -5,13 +5,15 @@
 module Common.Alerts where
 
 import Data.Aeson
+import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (Baker(..), ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
+import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
+                      BakerErrorDescriptions(..), LogTag(..),
                       ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
 import ExtraPrelude
 
@@ -82,16 +84,6 @@ badNodeHeadMessage text blockHashLink l =
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
 
-data BakerErrorDescriptions = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title :: !Text
-  , _bakerErrorDescriptions_tile :: !Text
-  , _bakerErrorDescriptions_notification :: !Text
-  , _bakerErrorDescriptions_problem :: !Text
-  , _bakerErrorDescriptions_warning :: !(Maybe Text)
-  , _bakerErrorDescriptions_fix :: !Text
-  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
-  }
-
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
@@ -105,6 +97,7 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
       in ("Resolved: Baker no longer at risk of being marked as inactive."
          , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " is no longer at risk of being marked as inactive."
          )
+  , _bakerErrorDescriptions_userResolvable = Nothing
   }
   where
     preserved = unCycle $ _errorLogBakerDeactivationRisk_preservedCycles elog
@@ -122,6 +115,7 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
       in ("Resolved: Baker no longer inactive"
          , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " has been re-registered. The earliest signing operation may be assigned to this baker is " <> tshow (preserved + 2) <> " cycles."
          )
+  , _bakerErrorDescriptions_userResolvable = Nothing
   }
   where
     preserved = unCycle $ _errorLogBakerDeactivated_preservedCycles elog
@@ -135,6 +129,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_BakerMissed :=> pure elog
   }
   where
     lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
