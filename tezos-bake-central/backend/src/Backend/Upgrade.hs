@@ -52,7 +52,7 @@ upgradeCheckWorker mchain upgradeBranch delay logger httpMgr db = do
     void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
 
 notifyChainUpgrade
-  :: (MonadIO m, PersistBackend db, PostgresRaw db)
+  :: (MonadIO m, PersistBackend db, PostgresRaw db, SqlDb (PhantomDb db))
   => NamedChain
   -> Text
   -> Http.Manager
@@ -66,7 +66,7 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr inDb =
       when (preview (_Just . _3) mLastCommit /= Just commitId) $ do
         now <- getTime
         forM_ mLastCommit $ \case
-          (logId, Nothing, _) -> update [ErrorLog_stoppedField =. Just now] (AutoKeyField ==. fromId logId)
+          (logId, Nothing, _) -> update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` [fromId (logId :: Id ErrorLog)])
           _ -> return ()
         let errorLog = ErrorLog
               { _errorLog_started = now
