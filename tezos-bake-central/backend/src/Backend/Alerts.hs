@@ -187,7 +187,7 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
-      JOIN "ErrorLogInvalidPeerCount" t ON t.log = el.id
+      JOIN "ErrorLogNodeInvalidPeerCount" t ON t.log = el.id
       JOIN "Node" n ON n.id = t.node
      WHERE t."minPeerCount" = ?minPeerCount
        AND t."actualPeerCount" = ?actualPeerCount
@@ -206,6 +206,24 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
         queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
           "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+
+clearNodeInvalidPeerCountError
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
+      MonadReader a m, HasAppConfig a) => Id Node -> m ()
+clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
+  lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeInvalidPeerCount" t
+    WHERE t.log = el.id
+      AND t.node = ?nodeId
+      AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notify . Notify_ErrorLogNodeWrongChain
+  for_ lids $ notify . mkDefaultNotify
+  node' <- get $ fromId nodeId
+  when (not $ null lids) $ for_ node' $ \node -> do
+    queueAlert Nothing $ Alert Resolved "Resolved: Node has a valid number of connected peers" $
+       "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " has a valid number of connected peers"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
