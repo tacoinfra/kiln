@@ -425,13 +425,15 @@ nodesTabOrWelcome = do
   whenJust mchain $ \chain -> do
     let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
     dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
-    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \lid -> \case
+    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
       (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
         guard $ _errorLogNetworkUpdate_namedChain ua == chain
-        return (lid, ua)
+        return ua
       _ -> Nothing
     dyn_ $ ffor mUpgradeLog $ \case
-      Just (_, elua) -> divClass "app-header notification-banner" $ networkUpgradeNotificationBanner elua
+      Just elua -> divClass "dashboard-section dashboard-section-global-alerts" $ do
+        SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $
+          networkUpdateAlert elua
       Nothing -> return ()
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
@@ -441,25 +443,21 @@ nodesTabOrWelcome = do
       when haveBakers bakersTab
       when haveNodes nodesTab
 
-networkUpgradeNotificationBanner :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
-networkUpgradeNotificationBanner elua = do
-  divClass "ui segment" $ do
-    divClass "content" $ do
-      let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
-      elClass "h1" "header" $ do
-        divClass "img-wrapper" $ elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()
-        text $ "New Tezos '" <> namedChain <> "' software version."
-      el "p" $ text $ mconcat
-        [ "There is a new version of the ", namedChain
-        , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
-        ]
-      el "p" $ do
-        text "Get the new software here  🡒  "
-        let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain
-        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
-      resolve <- divClass "button-wrapper" $ uiButton "floated right primary" "Resolve"
-      requesting_ $ public (PublicRequest_ResolveAlert (LogTag_NetworkUpdate :=> pure elua)) <$ resolve
-      return ()
+networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
+networkUpdateAlert elua = do
+  let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
+  renderSplashAlert
+    (elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()) -- TODO switch to font icon when added
+    ("New Tezos '" <> namedChain <> "' software version.")
+    (do el "p" $ text $ mconcat
+          [ "There is a new version of the ", namedChain
+          , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
+          ]
+        el "p" $ do
+          text "Get the new software here  🡒  "
+          let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain -- FIXME the url should be based on the project id
+          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+    (Just $ LogTag_NetworkUpdate :=> pure elua)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -1124,20 +1122,16 @@ bakersTab =
       where
         renderBakerError dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
-          el "div" $ icon $ "icon-warning big " <> bool "red" "orange" (isJust warning)
-          el "div" $ do
-            divClass "ui header" $ do
-              text $ _bakerErrorDescriptions_title dsc
-            divClass "description" $ do
-              dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
-              el "div" $ text $ _bakerErrorDescriptions_problem dsc
-              for_ warning $ el "div" . text
-              el "div" $ do
-                el "strong" $ text "Fix: "
-                text $ _bakerErrorDescriptions_fix dsc
-              for_ (_bakerErrorDescriptions_userResolvable dsc) $ \resolveReq -> do
-                resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
-                requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+          renderSplashAlert
+            (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
+            (_bakerErrorDescriptions_title dsc)
+            (do dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+                el "div" $ text $ _bakerErrorDescriptions_problem dsc
+                for_ warning $ el "div" . text
+                el "div" $ do
+                  el "strong" $ text "Fix: "
+                  text $ _bakerErrorDescriptions_fix dsc)
+            (_bakerErrorDescriptions_userResolvable dsc)
 
     tile
       :: m () -- ^ Title
@@ -1198,6 +1192,23 @@ bakersTab =
               etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
               text nbsp
               dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
+
+renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+  => m () -- ^ Alert icon
+  -> Text -- ^ Title
+  -> m () -- ^ Description body
+  -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
+  -> m ()
+renderSplashAlert splashIcon title desc mReq = do
+  el "div" $ splashIcon
+  el "div" $ do
+    divClass "ui header" $ do
+      text title
+    divClass "description" $ do
+      desc
+      for_ mReq $ \resolveReq -> do
+        resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+        requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"
