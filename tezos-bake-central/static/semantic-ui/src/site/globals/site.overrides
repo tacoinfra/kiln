@@ -470,7 +470,7 @@ body {
           margin-right: 1em;
         }
 
-        .node-secondary-label {
+        .secondary-label {
           font-weight: normal;
           font-style: italic;
           color: @grey;

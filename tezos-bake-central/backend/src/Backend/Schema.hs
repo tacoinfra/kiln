@@ -17,6 +17,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
@@ -60,7 +62,7 @@ import qualified Formatting as Fmt
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId)
+import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
 import Text.Read (readMaybe)
@@ -77,7 +79,6 @@ import Common.AppendIntervalMap (WithInfinity(..))
 import Common.Schema
 import ExtraPrelude
 
-
 stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
 stripOnly = coerce
 
@@ -85,11 +86,15 @@ data Notify
   = Notify_Client !(Id Client)
   | Notify_Baker !Baker
   | Notify_BakerDetails !BakerDetails
+  | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
   | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
+  | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
+  | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
+  | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_Node !(Id Node) !Node
@@ -110,8 +115,6 @@ instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
 instance HasDefaultNotify Baker where
   mkDefaultNotify = Notify_Baker
-instance HasDefaultNotify BakerDetails where
-  mkDefaultNotify = Notify_BakerDetails
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -122,8 +125,16 @@ instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
   mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivated
+instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
+  mkDefaultNotify = Notify_ErrorLogBakerDeactivationRisk
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
+instance HasDefaultNotify (Id ErrorLogBakerMissed) where
+  mkDefaultNotify = Notify_ErrorLogBakerMissed
+instance HasDefaultNotify BakerDetails where
+  mkDefaultNotify = Notify_BakerDetails
 
 class HasDefaultNotifyUnique f where
   mkDefaultNotifyUnique :: Id f -> f -> Notify
@@ -280,6 +291,8 @@ instance FromField Micro where
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
+instance NeverNull (Json CacheDelegateInfo)
+instance NeverNull Cycle
 instance NeverNull Fitness
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
@@ -379,12 +392,16 @@ instance PersistField PublicKeyHash where
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
   where
-    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex (10 :: Int)
+    n' = LT.toStrict $ Fmt.format (Fmt.left 4 '0') $ Fmt.format Fmt.hex n
 
 unArray :: Groundhog.Array a -> [a]
 unArray (Groundhog.Array a) = a
 
 -- prefix fitness arrays with length so that they naturally order correctly
+--
+-- FOOTGUN ALERT: groundhog makes this look like VARCHAR[], but to
+-- postgresql-simple it looks like TEXT[].  you probably need a cast anyplace
+-- the two types may interact
 toDBFitness :: ToJSON a => FitnessF a -> [Text]
 toDBFitness (FitnessF x) = ((leftPad $ length x) :) .  toList . fmap (T.decodeUtf8 . LBS.toStrict . Aeson.encode) $ x
 fromDBFitness :: FromJSON a => [Text] -> FitnessF a
@@ -434,6 +451,12 @@ instance ToField ClientWorker where
   toField = toField . show
 instance FromField ClientWorker where
   fromField f b = maybe (fail "Invalid value for ClientWorker") pure . readMaybe =<< fromField f b
+
+instance ToField RightKind where
+  toField = toField . show
+instance FromField RightKind where
+  fromField f b = maybe (fail "Invalid value for RightKind") pure . readMaybe =<< fromField f b
+
 
 instance ToField URI where
   toField = toField . Uri.render
@@ -512,19 +535,41 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_pendingReward_baker, _pendingReward_hash]
   - entity: Baker
+    autoKey: null
+    keys:
+      - name: BakerKey
+        default: true
     constructors:
       - name: Baker
         uniques:
-          - name: _baker_uniqueness
-            type: constraint
+          - name: BakerKey
+            type: primary
             fields: [_baker_publicKeyHash]
   - entity: BakerDetails
+    autoKey: null
+    keys:
+     - name: BakerDetailsKey
+       default: true
     constructors:
-      - name: BakerDetails
+     - name: BakerDetails
+       uniques:
+        - name: BakerDetailsKey
+          type: primary
+          fields: [_bakerDetails_publicKeyHash]
+  - entity: BakerRightsCycleProgress
+    constructors:
+      - name: BakerRightsCycleProgress
         uniques:
-          - name: _bakerDetails_uniqueness
+          - name: _bakerRightsCycleProgress_branch
             type: constraint
-            fields: [_bakerDetails_publicKeyHash]
+            fields: [_bakerRightsCycleProgress_chainId, _bakerRightsCycleProgress_publicKeyHash, _bakerRightsCycleProgress_branch]
+  - entity: BakerRight
+    constructors:
+      - name: BakerRight
+        uniques:
+          - name: _bakerRights_right
+            type: constraint
+            fields: [_bakerRight_branch, _bakerRight_level, _bakerRight_right]
   - embedded: VeryBlockLike
   - entity: Notificatee
     constructors:
@@ -550,6 +595,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _mailServerConfig_enabled
             type: Bool
             default: "True"
+  - primitive: RightKind
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
@@ -558,7 +604,10 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBakerNoHeartbeat
   - entity: ErrorLogInaccessibleNode
   - entity: ErrorLogMultipleBakersForSameBaker
+  - entity: ErrorLogBakerDeactivated
+  - entity: ErrorLogBakerDeactivationRisk
   - entity: ErrorLogNodeWrongChain
+  - entity: ErrorLogBakerMissed
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -592,13 +641,16 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
   , (''Client, 'ClientKey)
   , (''ClientInfo, 'ClientInfoKey)
-  , (''Baker, 'BakerKey)
-  , (''BakerDetails, 'BakerDetailsKey)
+  , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
+  , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
+  , (''ErrorLogBakerMissed, 'ErrorLogBakerMissedKey)
   , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
   , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
   , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
   , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
+  , (''ErrorLogBakerDeactivated, 'ErrorLogBakerDeactivatedKey)
+  , (''ErrorLogBakerDeactivationRisk, 'ErrorLogBakerDeactivationRiskKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
@@ -613,3 +665,12 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
+
+instance DefaultKeyId Baker where
+  toIdData _ (BakerKeyKey pkh) = pkh
+  fromIdData _ = BakerKeyKey
+
+instance DefaultKeyId BakerDetails where
+  toIdData _ (BakerDetailsKeyKey pkh) = pkh
+  fromIdData _ = BakerDetailsKeyKey
+

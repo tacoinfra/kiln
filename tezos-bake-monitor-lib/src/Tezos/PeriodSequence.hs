@@ -13,7 +13,7 @@ import GHC.Generics (Generic)
 
 import Tezos.Json
 
-newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
+newtype PeriodSequenceF a = PeriodSequence { unPeriodSequence :: NonEmpty a }
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor, NFData, Hashable)
 
 instance Foldable PeriodSequenceF where

@@ -11,14 +11,18 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
-import Control.Monad.Logger (MonadLogger, logDebugSH)
+import Control.Monad.Logger
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
+import Data.Align (alignWith)
+import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
-import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map as Map
+import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
+import Data.Semigroup (Max(..))
 import Data.Time (UTCTime)
+import Data.These (these)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
@@ -26,6 +30,7 @@ import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, query, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
+import Safe (maximumMay)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Types
@@ -35,6 +40,7 @@ import Tezos.Types
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
+import Backend.STM (atomicallyWith)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -126,7 +132,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   let bakerAddrVS = _bakeViewSelector_bakerAddresses vs
   bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddrVS) $ do
     -- TODO: bakerAddrVS is a RangeView.  select individual bakers upon request.
-    toRangeView bakerAddrVS <$> getBakerAddresses Nothing
+    toRangeView bakerAddrVS <$> getBakerAddresses nds Nothing
 
   let bakerDetailsVS = _bakeViewSelector_bakerDetails vs
   bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a <- whenM (not $ null bakerDetailsVS) $
@@ -238,6 +244,8 @@ getErrorLogsImpl flt intervalMap = do
       queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
+    queryBakerAlert' sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "baker#publicKeyHash"))
 
     queryAlert
       :: (Monad f, PostgresRaw f, Pg.FromRow row)
@@ -314,6 +322,20 @@ getErrorLogsImpl flt intervalMap = do
           (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
+
+        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
+                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
+          window
+
+        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
+                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
+          window
+        , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
+          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerMissed $
+                   ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness)
+          window
         ]
 
     leftBiasedUnions = MMap.unionsWith const
@@ -329,16 +351,78 @@ getAlertCount =
     WHERE el.stopped IS NULL|]
 
 getBakerAddresses
-  :: forall m. (Monad m, PostgresRaw m)
-  => Maybe (PublicKeyHash)
+  :: forall m. (PostgresRaw m, MonadIO m)
+  => NodeDataSource
+  -> Maybe (PublicKeyHash)
   -> m [(WithInfinity PublicKeyHash, First (Maybe BakerSummary))]
-getBakerAddresses bid = do
-  rs :: [(PublicKeyHash, PublicKeyHash, Maybe Text, Int)] <- [queryQ|
-      SELECT b."publicKeyHash", b."publicKeyHash", b.alias, 0
+getBakerAddresses nds bid = do
+  rs :: Map.Map PublicKeyHash (Maybe Text, Int) <- [queryQ|
+      SELECT b."publicKeyHash", b.alias,
+        ( SELECT COUNT(e.id)
+          FROM "ErrorLog" e
+          JOIN "ErrorLogBakerMissed" elbm
+            ON elbm.log = e.id
+          WHERE e.stopped IS NULL
+            AND elbm."baker#publicKeyHash" = b."publicKeyHash"
+        )
       FROM "Baker" b
       WHERE NOT b.deleted
-        AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END|]
-  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (BakerSummary y z w)))) rs
+        AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
+    |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
+  -- TODO: this is rather inelegant: we need something like this; to give you
+  -- your next rights we need to know what level we're at now.  there's not an
+  -- elegant way to do that today, from the postgres level.  a "current level"
+  --
+  -- we need to do this *here* instead of, say, on bakerdetails, because we
+  -- need to show a grey dot when we "cant" show this, in the baker list.
+  -- grab the hashes of the cycle starts, if they exist
+  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- flip runReaderT nds $ atomicallyWith $
+    withCache nds (Nothing, Nothing, []) $ \protoInfo -> do
+      nds' <- ask
+      headM <- dataSourceHead nds'
+      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes . view hash) headM
+
+      return (view level <$> headM, Just (firstLevelInCycle protoInfo (_protoInfo_preservedCycles protoInfo + 1) - 1), rightsInfo)
+
+  let
+    (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
+    rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
+    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys rs
+    chainId = _nodeDataSource_chain nds
+    maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
+
+  nextBakeRightsL <- case headLevelM of
+    Nothing -> pure []
+    Just headLevel -> [queryQ|
+      SELECT brcp."publicKeyHash",
+        ( SELECT MAX(progress) -- this is a subselect so that we get the highest result even if "BakerRight" rows are found
+          FROM "BakerRightsCycleProgress" b1
+          WHERE b1."publicKeyHash" = brcp."publicKeyHash"
+            AND b1."chainId" = ?chainId
+            AND b1."branch" in ?rightsHashes
+        ), br."right", MIN(br.level)
+      FROM "BakerRightsCycleProgress" brcp
+      LEFT OUTER JOIN "BakerRight" br
+        ON br.branch = brcp.id
+        AND br.level > ?headLevel
+      WHERE brcp."chainId" = ?chainId
+        AND brcp.branch in ?rightsHashes
+        AND brcp."publicKeyHash" in ?bakerHashes
+      GROUP BY brcp."publicKeyHash", br."right"
+      |]
+
+  let
+    nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
+    nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
+    result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
+      (these
+        (\(alias, alertCount) -> Just $ BakerSummary alias alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (const Nothing)
+        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary alias alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
+      ) rs (getMonoidalMap nextBakeRights)
+
+  -- $(logDebug) ("ViewSelectorHandler::getBakerAddresses " <> T.decodeUtf8 (LBS.toStrict $ Aeson.encode result))
+  return result
 
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m)
