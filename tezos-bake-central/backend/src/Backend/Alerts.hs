@@ -103,7 +103,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n.data#deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -146,7 +146,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n.data#deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -192,7 +192,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
