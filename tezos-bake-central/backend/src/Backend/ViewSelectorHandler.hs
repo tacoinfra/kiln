@@ -250,7 +250,7 @@ getErrorLogsImpl flt intervalMap = do
                         " JOIN \"" <> relatedTbl
                         <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
           <> " WHERE "
-          <> bool "" "   NOT n.deleted" (isJust related)
+          <> bool " TRUE " "   NOT n.\"data#deleted\"" (isJust related)
           <> qFlt
         qFlt = case flt of
           AlertsFilter_All -> ""
@@ -322,7 +322,7 @@ getNodeAddresses
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
-      SELECT n.id, n.address, n.alias,
+      SELECT n.id, n."data#address", n."data#alias",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
@@ -342,6 +342,6 @@ getNodeAddresses nid = do
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
       FROM "NodeExternal" n
-      WHERE NOT n.deleted
+      WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
   return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary y z w)) rs

@@ -336,7 +336,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestamp (pure Nothing) $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipPos' "tooltip-medium" "bottom center" disconnectedTooltip $
+      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"
         (def
           & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
@@ -347,19 +347,21 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       headerBell
 
   where
-    disconnectedTooltip = T.concat $ intersperse " "
-      [ "Kiln cannot gather data if no nodes are synced with the blockchain."
-      , "Data shown is stale."
-      , "Add a node from the left panel or make sure any nodes you’ve already added are healthy."
-      ]
-
+    disconnectedTooltip = divClass "disconnected-tooltip" $ do
+      el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
+      divClass "tooltip-description" $ do
+        el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
+        el "p" $ do
+          text "Add a node from the left panel or make sure any nodes you’ve already added are"
+          icon "circle small green"
+          text "healthy."
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
   alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ ((<>) "ui circular label link ") . bool "basic" "red" . (>0))
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow

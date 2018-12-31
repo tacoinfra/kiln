@@ -56,8 +56,8 @@ getPublicNodeUri PublicNode_Obsidian NamedChain_Mainnet    = pure [Uri.uri|https
 getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet  = pure [Uri.uri|https://rpczero.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Alphanet = pure [Uri.uri|https://rpcalpha.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Mainnet  = pure [Uri.uri|https://rpc.tzbeta.net|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet      = pure [Uri.uri|https://zeronet-api.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Alphanet     = pure [Uri.uri|https://alphanet-api.tzscan.io|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet      = pure [Uri.uri|https://api.zeronet.tzscan.io|]
+getPublicNodeUri PublicNode_TzScan NamedChain_Alphanet     = pure [Uri.uri|https://api.alphanet.tzscan.io|]
 getPublicNodeUri PublicNode_TzScan NamedChain_Mainnet      = fromJust . mkURI . ("https://api" <>) . (<> ".tzscan.io") . T.pack . show <$> ((1 :: Int) :| [2..6])
 
 tzScanUri :: NamedChain -> URI
