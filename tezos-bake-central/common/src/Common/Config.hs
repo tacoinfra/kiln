@@ -52,6 +52,9 @@ upgradeBranch = "upgrade-branch"
 upgradeBranchDefault :: Text
 upgradeBranchDefault = "master"
 
+networkGitLabProjectIdDefault :: Text
+networkGitLabProjectIdDefault = "3836952"
+
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 

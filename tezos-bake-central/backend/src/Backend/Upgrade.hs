@@ -38,17 +38,18 @@ import Tezos.Chain
 
 upgradeCheckWorker
   :: MonadIO m
-  => Maybe (NamedChain, Text)
+  => Maybe NamedChain
+  -> Text
   -> Text
   -> NominalDiffTime
   -> LoggingEnv
   -> Http.Manager
   -> Pool Postgresql
   -> m (IO ())
-upgradeCheckWorker mchain upgradeBranch delay logger httpMgr db = do
+upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db = do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    forM_ mchain $ \(chain, projectId) -> notifyChainUpgrade chain projectId httpMgr (runLoggingEnv logger . runDb (Identity db))
+    forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr (runLoggingEnv logger . runDb (Identity db))
     void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
 
 notifyChainUpgrade

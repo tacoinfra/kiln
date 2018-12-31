@@ -131,7 +131,7 @@ backendImpl cfg serve = do
     (pure $ _opts_pgConnectionString cfg)
     (getConfigFromFile Just $ configPath Config.db)
 
-  !(networkGitLabProjectId :: Maybe Text) <- liftA2 (<|>)
+  !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
@@ -245,9 +245,8 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
 
-      let namedChainAndProjectId = (,) <$> maybeNamedChain <*> networkGitLabProjectId
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker namedChainAndProjectId upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
