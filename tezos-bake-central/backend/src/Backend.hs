@@ -77,7 +77,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
-import Backend.Workers.Baker (bakerWorker)
+import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -242,7 +242,8 @@ backendImpl cfg serve = do
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< bakerWorker dataSrc
+      addFinalizer =<< bakerRightsWorker dataSrc
+      addFinalizer =<< bakerWorker appConfig dataSrc
 
       let namedChainAndProjectId = (,) <$> maybeNamedChain <*> networkGitLabProjectId
       when checkForUpgrade $

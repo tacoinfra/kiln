@@ -17,8 +17,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
--- 'deriveJSONGADT' produces seemingly redundant pattern matches.
-{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Common.App
   ( module Common.App
@@ -29,13 +28,10 @@ module Common.App
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Align (Align (alignWith, nil))
-import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
@@ -43,7 +39,7 @@ import Data.Word (Word16)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
-import Rhyolite.Schema (Email, Id)
+import Rhyolite.Schema (Email, Id(..))
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -68,9 +64,10 @@ getErrorInterval ei@(el, _) = First (ei, ClosedInterval
 type Deletable a = First (Maybe a)
 
 data BakerSummary = BakerSummary
-  { _bakerSummary_address :: PublicKeyHash
-  , _bakerSummary_alias :: Maybe Text
+  { _bakerSummary_alias :: Maybe Text
   , _bakerSummary_alertCount :: Int
+  , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
+  , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary
@@ -82,6 +79,12 @@ data NodeSummary = NodeSummary
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
 instance ToJSON NodeSummary
+
+bakerSummaryIdentification :: (PublicKeyHash, BakerSummary) -> (Text, Maybe Text)
+bakerSummaryIdentification = aliasedIdentification (_bakerSummary_alias . snd) $ toPublicKeyHashText . fst
+
+nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
+nodeSummaryIdentification = aliasedIdentification _nodeSummary_alias $ tshow . _nodeSummary_address
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
@@ -147,14 +150,6 @@ data MailServerView = MailServerView
 instance FromJSON MailServerView
 instance ToJSON MailServerView
 
-data LogTag a where
-  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
-  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
-  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
-  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
-
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
   | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
@@ -163,8 +158,17 @@ data NodeErrorLogView
 instance FromJSON NodeErrorLogView
 instance ToJSON NodeErrorLogView
 
+-- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
+-- chain entity: Delegates, and the background process tezos-baker both
+-- referred to by the name "Baker".  that's confusing; especially when some
+-- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
+-- of a background process and a delegate. we should really rename one or both
+-- to minimize confusion between these two ideas.
 data BakerErrorLogView
   = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
+  | BakerErrorLogView_BakerMissed !ErrorLogBakerMissed
+  | BakerErrorLogView_BakerDeactivated !ErrorLogBakerDeactivated
+  | BakerErrorLogView_BakerDeactivationRisk !ErrorLogBakerDeactivationRisk
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON BakerErrorLogView
 instance ToJSON BakerErrorLogView
@@ -172,10 +176,10 @@ instance ToJSON BakerErrorLogView
 -- TODO: Switch to 'DSum LogTag Identity', also spit node and baker tags out of LogTag.
 data ErrorLogView
   = ErrorLogView_NodeError NodeErrorLogView
-  | ErrorLogView_BakerError BakerErrorLogView
+  | ErrorLogView_BakerError !BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
   -- ^ Misc baker *daemon* error.
-  | ErrorLogView_NetworkUpdate !(Id ErrorLogNetworkUpdate) !ErrorLogNetworkUpdate
+  | ErrorLogView_NetworkUpdate !ErrorLogNetworkUpdate
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
@@ -199,6 +203,9 @@ bakerErrorViewOnly = \case
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
 bakerIdForBakerErrorLogView = \case
   BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
+  BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBakerMissed_baker elbm
+  BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_publicKeyHash ebd
+  BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_publicKeyHash ebd
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView = \case
@@ -208,19 +215,11 @@ errorLogIdForErrorLogView = \case
     NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
+    BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm
+    BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_log ebd
+    BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_log ebd
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
-  ErrorLogView_NetworkUpdate _ ua -> _errorLogNetworkUpdate_log ua
-
-manuallyResolvable :: ErrorLogView -> Bool
-manuallyResolvable = \case
-  ErrorLogView_NodeError ne -> case ne of
-    NodeErrorLogView_InaccessibleNode _ -> False
-    NodeErrorLogView_NodeWrongChain _ -> False
-    NodeErrorLogView_BadNodeHead _ -> False
-  ErrorLogView_BakerError be -> case be of
-    BakerErrorLogView_MultipleBakersForSameBaker _ -> False
-  ErrorLogView_BakerNoHeartbeat _ -> False
-  ErrorLogView_NetworkUpdate {} -> False
+  ErrorLogView_NetworkUpdate ua -> _errorLogNetworkUpdate_log ua
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView
@@ -482,11 +481,5 @@ fmap concat $ sequence $ concat
     , 'BakeViewSelector
     , 'MailServerView
     , 'NodeSummary
-    ]
-  , [ deriveArgDict ''LogTag
-    , deriveGCompare ''LogTag
-    , deriveGEq ''LogTag
-    , deriveGShow ''LogTag
-    , deriveJSONGADT ''LogTag
     ]
   ]

@@ -47,6 +47,7 @@ library
     , http-conduit
     , http-types
     , IntervalMap
+    , lattices
     , lens
     , lens-aeson
     , mime-mail

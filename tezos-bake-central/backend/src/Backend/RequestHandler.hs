@@ -108,8 +108,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
         for_ cids $ notify . mkDefaultNotify
 
+      -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ do
-        existingIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
         let newVal = Baker
               { _baker_publicKeyHash = pkh
               , _baker_alias = alias
@@ -118,16 +119,16 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         case nonEmpty existingIds of
           Nothing -> void $ insert newVal
           Just bIds -> for_ bIds $ \bId ->
-            updateId (bId :: Id Baker) [Baker_deletedField =. False, Baker_aliasField =. alias]
+            update [Baker_deletedField =. False, Baker_aliasField =. alias] (BakerKey ==. fromId bId)
         notify $ mkDefaultNotify newVal
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
-        bIds :: [Id Baker] <- fmap toId <$> project AutoKeyField (Baker_publicKeyHashField ==. pkh)
+        bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
         let inIds = In bIds
         _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
         _ <- [executeQ| DELETE FROM "BakerDetails" ds WHERE ds."publicKeyHash" = ?pkh |]
         for_ bIds $ \bId -> do
-          updateId bId [Baker_deletedField =. True]
+          update [Baker_deletedField =. True] (BakerKey ==. fromId bId)
           notify $ mkDefaultNotify $ Baker
             { _baker_publicKeyHash = pkh
             , _baker_alias = Nothing
@@ -315,7 +316,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert (tag :=> lid) -> inDb $ do
+      PublicRequest_ResolveAlert (tag :=> (Identity specificLog)) -> inDb $ do
+        -- TODO: this is not the only place we encode knowledge of which alert types can be manually resolved
         elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
           LogTag_InaccessibleNode -> pure Nothing
           LogTag_NodeWrongChain -> pure Nothing
@@ -323,8 +325,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BadNodeHead -> pure Nothing
           LogTag_MultipleBakersForSameBaker -> pure Nothing
           LogTag_NetworkUpdate -> do
-            elua :: Maybe ErrorLogNetworkUpdate <- get $ fromId lid
-            return $ flip fmap elua $ \elua' -> (_errorLogNetworkUpdate_log elua', Notify_ErrorLogNetworkUpdate lid)
+            let eid = _errorLogNetworkUpdate_log specificLog
+            n <- fmap (Notify_ErrorLogNetworkUpdate . toId) . listToMaybe <$> project AutoKeyField (ErrorLogNetworkUpdate_logField `in_` [eid])
+            return $ (,) <$> pure eid <*> n
+          LogTag_BakerDeactivated -> pure Nothing
+          LogTag_BakerDeactivationRisk -> pure Nothing
+          LogTag_BakerMissed -> do
+            let eid = _errorLogBakerMissed_log specificLog
+            n <- fmap (Notify_ErrorLogBakerMissed . toId) . listToMaybe <$> project AutoKeyField (ErrorLogBakerMissed_logField `in_` [eid])
+            return $ (,) <$> pure eid <*> n
 
         for_ elid_notifier' $ \(elid, notifier) -> do
           now <- getTime

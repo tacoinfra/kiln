@@ -11,17 +11,21 @@ import Control.Lens ((^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson
 import qualified Data.Aeson.TH as Aeson
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Typeable (Typeable)
 import Data.Text (Text)
+import qualified Data.Time as Time
 import Data.Word (Word8, Word16)
 import GHC.Generics (Generic)
 
 import Tezos.Tez
+import Tezos.Block
 import Tezos.Json
 import Tezos.PeriodSequence
 import Tezos.Level
+
 
 data ProtoInfo = ProtoInfo
   { _protoInfo_proofOfWorkNonceSize :: !Word8 -- "proof_of_work_nonce_size": { "type": "integer", "minimum": 0, "maximum": 255 },
@@ -105,3 +109,12 @@ rightsContextLevel :: ProtoInfo -> RawLevel -> RawLevel
 rightsContextLevel params lvl = firstLevelInCycle params ctxCycle
   where
     ctxCycle = max 0 (levelToCycle params lvl - params ^. protoInfo_preservedCycles)
+
+predictFutureTimestamp :: BlockLike blk => ProtoInfo -> RawLevel -> blk -> Time.UTCTime
+predictFutureTimestamp protoInfo lvl blk = Time.addUTCTime (fromInteger $ toInteger lvlDiff * toInteger oneBlockTime) (blk ^. timestamp)
+  where
+    lvlDiff :: RawLevel
+    lvlDiff = lvl - (blk ^. level)
+
+    oneBlockTime :: TezosWord64
+    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo

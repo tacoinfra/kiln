@@ -138,7 +138,7 @@ settingsTab = do
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
-                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H5
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
                 -- If nothing is set, return nothing
@@ -172,7 +172,7 @@ settingsTab = do
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
                   divClass "notification-settings-description" $ text descr
-                  True <$$ uiButton "primary" ("Connect " <> name)
+                  True <$$ uiButton "fluid" ("Connect " <> name)
                 SettingsRoute_View dcfg -> do
                   divClass "notification-settings-description" $ text descr
                   True <$$ viewCfg dcfg
