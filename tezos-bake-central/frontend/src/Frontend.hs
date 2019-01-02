@@ -610,11 +610,6 @@ liveErrorsWidget = void $ do
       el "label" $ text lbl
       localTimestamp $ pure ts
 
-    nodeIdentification :: NodeSummary -> (Text, Maybe Text)
-    nodeIdentification ns =
-      let addr = Uri.render $ _nodeSummary_address ns
-      in maybe (addr, Nothing) (, Just addr) $ _nodeSummary_alias ns
-
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
         || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
