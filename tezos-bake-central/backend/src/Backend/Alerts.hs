@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
---{-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
+{-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
 
 module Backend.Alerts where
 
