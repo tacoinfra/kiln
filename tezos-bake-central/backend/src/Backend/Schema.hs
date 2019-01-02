@@ -527,13 +527,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_parameters_chain]
   - embedded: ProtoInfo
-  - entity: PendingReward
-    constructors:
-      - name: PendingReward
-        uniques:
-          - name: _pendingReward_uniqueness
-            type: constraint
-            fields: [_pendingReward_baker, _pendingReward_hash]
   - entity: Baker
     autoKey: null
     keys:
@@ -657,7 +650,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
-  , (''PendingReward, 'PendingRewardKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''TelegramConfig, 'TelegramConfigKey)

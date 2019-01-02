@@ -63,7 +63,6 @@ import Rhyolite.Schema (Email, HasId, IdData, Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
 import Tezos.Operation
@@ -156,14 +155,6 @@ data Client = Client
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Client
-
-data PendingReward = PendingReward
-  { _pendingReward_baker :: !(Id Baker)
-  , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
-  , _pendingReward_level :: !TezosWord64
-  , _pendingReward_amount :: !Tez
-  } deriving (Eq, Show, Generic, Typeable)
-instance HasId PendingReward
 
 data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
