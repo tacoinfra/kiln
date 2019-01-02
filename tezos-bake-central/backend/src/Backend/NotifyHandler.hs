@@ -11,7 +11,6 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Control.Monad (guard)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
@@ -133,18 +132,16 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
     nodeDetailsVS = _bakeViewSelector_nodeDetails aggVS
-    handleNodeExternal :: (Monad m') => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
-    handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $
-      pure $ mempty
-        { _bakeView_nodeAddresses = toRangeView1 nodeAddressesVS (Bounded nid) $ do
-          nodeExternalData <- mNodeExternalData
-          return $ First $ do
-              guard $ _nodeExternalData_deleted $ nodeExternalData
-              pure $ NodeSummary <$> _nodeExternalData_address
-                                 <*> _nodeExternalData_alias
-                                 <*> const 0
-                   $ nodeExternalData
-        }
+
+    {-# INLINE handleNodeExternal #-}
+    handleNodeExternal
+      :: (Monad m', PostgresRaw m')
+      => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
+    handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeExternalV <- case mNodeExternalData of
+        Nothing -> pure [(Bounded nid, First Nothing)]
+        Just _ -> getNodeAddresses (Just $ nid)
+      pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
 
     handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
     handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence
