@@ -505,9 +505,16 @@ toRangeView1 vs e xs = RangeView (IMap.fromList $ toList $ (k,) <$> vs') (MMap.f
     vs' = lookup e vs
     e' = e <$ vs'
 
+toRangeView
+  :: Ord e
+  => RangeSelector e v a
+  -> [(e, v)]
+  -> View (RangeSelector e v) a
+toRangeView sel@(RangeSelector vs) rows = toRangeViewUnsafe sel $
+  filter (not . null . IMap.containing vs . fst) rows
 
-toRangeView :: Ord e => RangeSelector e v a -> [(e, v)] -> View (RangeSelector e v) a
-toRangeView (RangeSelector vs) v = RangeView vs $ MMap.fromList v
+toRangeViewUnsafe :: Ord e => RangeSelector e v a -> [(e, v)] -> View (RangeSelector e v) a
+toRangeViewUnsafe (RangeSelector vs) v = RangeView vs $ MMap.fromList v
 
 toMaybeView :: MaybeSelector v a -> Maybe v -> View (MaybeSelector v) a
 toMaybeView (MaybeSelector vs) (Just v) = MaybeView $ fmap (First v,) vs

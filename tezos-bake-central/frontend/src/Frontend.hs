@@ -204,12 +204,10 @@ appMain = do
         (\f -> SemUi.menu
           (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
           $ do
-            nodesDyn <- watchNodes $ pure $ viewRangeAll ()
-            bakersDyn <- watchBakerAddresses
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-            liveErrorsWidget nodesDyn bakersDyn
+            liveErrorsWidget
             pure e)
         -- Accompanying content
         $ do
@@ -509,7 +507,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe Node)
+data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
@@ -521,10 +519,9 @@ liveErrorsWidget
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t (MonoidalMap (Id Node) Node)
-  -> Dynamic t (MonoidalMap PublicKeyHash BakerSummary)
-  -> m ()
-liveErrorsWidget nodesDyn bakersDyn = void $ do
+  => m ()
+liveErrorsWidget = void $ do
+  nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
@@ -646,7 +643,8 @@ liveErrorsWidget nodesDyn bakersDyn = void $ do
             NodeErrorLogView_BadNodeHead l ->
               for_ node' $ \n -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-              header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
+              let (addr, mAlias) = nodeSummaryIdentification n
+              header $ heading <> ": " <> fromMaybe addr mAlias
               nodeLabel n
               el "div" message
 
@@ -676,6 +674,7 @@ liveErrorsWidget nodesDyn bakersDyn = void $ do
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
     renderBakerError dsc pkh = do
+      bakersDyn <- watchBakerAddresses
       header $ _bakerErrorDescriptions_title dsc
       dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
@@ -733,7 +732,7 @@ bakersList ::
 bakersList = do
   bakers :: Dynamic t (MonoidalMap PublicKeyHash (Text, Maybe Text, MonitoredStatus)) <- imap (\pkh b ->
     ( toPublicKeyHashText pkh
-    , _bakerSummary_alias b
+    , _bakerData_alias $ _bakerSummary_baker b
     , bakerStatus b)
     ) <$$> watchBakerAddresses
   sidebarList "Baker" bakers addBakerModal
@@ -760,7 +759,10 @@ nodesList = do
   let nodeStatus = \case
         0 -> MonitoredStatus_Healthy
         _ -> MonitoredStatus_Unhealthy
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> (nodeStatus . _nodeSummary_alertCount)) <$$$> watchNodeAddresses
+  nodes <- ((,,) <$> (uriHostPortPath . _nodeExternalData_address . _nodeSummary_node)
+                 <*> (_nodeExternalData_alias . _nodeSummary_node)
+                 <*> (nodeStatus . _nodeSummary_alertCount))
+    <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -843,10 +845,10 @@ nodesTab
 nodesTab =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
-    nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+    nodesDyn <- watchNodeAddresses
     nodeTilesWidget nodesDyn
   where
-    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) NodeSummary) -> m ()
     nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -873,20 +875,23 @@ nodesTab =
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath . _node_address <$> vDyn) (_node_alias <$> vDyn)
+              nodeCfgDyn = _nodeSummary_node <$> vDyn
+              (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle
+                (uriHostPortPath <$> _nodeExternalData_address <$> nodeCfgDyn)
+                (_nodeExternalData_alias <$> nodeCfgDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
+            nodeDetails <- watchNodeDetails nodeId
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _node_address <$> current vDyn <@ ev)
-              getNodeHeadBlock
+              (\ev -> PublicRequest_RemoveNode . _nodeExternalData_address . _nodeSummary_node <$> current vDyn <@ ev)
+              ((=<<) getNodeHeadBlock)
               (Just errorMessages)
-              (Just _node_peerCount)
-              (Just _node_networkStat)
-              vDyn
+              (Just $ (=<<) _nodeDetailsData_peerCount)
+              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              nodeDetails
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -1025,7 +1030,7 @@ bakersTab =
                 BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
                 BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
-            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerData_alias . _bakerSummary_baker <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
             details <- watchBakerDetails pkh
