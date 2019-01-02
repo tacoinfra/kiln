@@ -266,7 +266,7 @@ getWantedAction
   :: forall mPrepare e rP mCommit rC blk.
   ( BlockLike blk
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
-  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit
+  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
   => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> mPrepare (mCommit ())
 getWantedAction protoInfo headBlock baker details = do
