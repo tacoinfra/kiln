@@ -20,18 +20,23 @@ nominalDiffTimeToSeconds n = numerator ratio `div` denominator ratio
     ratio = toRational n
 
 humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestamp _ c t = humanizeDiffTime (Time.diffUTCTime c t)
-  -- TODO: show "TODAY/TOMORROW/WEDNESDAY"
+humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
+  where
+    diff = Time.diffUTCTime ts now
+    dayOfWeek = case (Time.diffDays `on` Time.utctDay) ts now of
+      0 -> "Today"
+      1 -> "Tomorrow"
+      _ -> "%A"
+    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (dayOfWeek <> ", %-l:%M%P %Z") $ Time.utcToZonedTime tz ts
 
 humanizeDiffTime :: Time.NominalDiffTime -> Text
-humanizeDiffTime t = T.unwords elems <> agoFromNow
+humanizeDiffTime t = T.unwords elems <> " ago"
   where
     hms :: [Integer] -> Integer -> [Integer]
     hms (x:xs) n = (n `mod` x):hms xs (n `div` x)
     hms [] n = [n]
 
     totalseconds = nominalDiffTimeToSeconds t
-    agoFromNow = bool " ago" " from now" $ totalseconds < 0
 
     -- keep 2 elements if the first is a 1, otherwise take 1 element
     take2 (xy@(x, _y):xys)
