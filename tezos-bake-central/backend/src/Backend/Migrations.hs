@@ -90,8 +90,8 @@ dropColumnIfExists table columnFrom ta = do
 
 dropColumn :: (Migrate m) => QualifiedName -> String -> m ()
 dropColumn (schema, tableName) columnNameFrom = do
-  let sql = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" DROP COLUMN \"" <> columnNameFrom <> "\""
-  $(logInfoS) "SQL" (tshow sql) *> void (execute_ $ fromString sql)
+  let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" DROP COLUMN \"" <> columnNameFrom <> "\""
+  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
 
 renameTableIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
 renameTableIfExists tableFrom tableTo ta = do
