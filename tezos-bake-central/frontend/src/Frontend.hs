@@ -425,11 +425,11 @@ nodesTabOrWelcome = do
   whenJust mchain $ \chain -> do
     let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
     dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
-    let mUpgradeLog = ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \lid -> \case
-          (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
-            guard $ _errorLogNetworkUpdate_namedChain ua == chain
-            return (lid, ua)
-          _ -> Nothing
+    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \lid -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
+        guard $ _errorLogNetworkUpdate_namedChain ua == chain
+        return (lid, ua)
+      _ -> Nothing
     dyn_ $ ffor mUpgradeLog $ \case
       Just (_, elua) -> divClass "app-header notification-banner" $ networkUpgradeNotificationBanner elua
       Nothing -> return ()
