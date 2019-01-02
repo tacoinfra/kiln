@@ -1002,7 +1002,7 @@ bakersTab =
         False -> mdo
          showGatheringData <- holdUniqDyn $
             (||)
-            <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)-- $ any isNothing <$> joinDynThroughMap bakersDetails
+            <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)
             <*> (any isNothing <$> joinDynThroughMap bakersDetails)
          dyn_ $ ffor showGatheringData $ bool blank gatheringData
          dyn_ $ ffor ebb $ traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
