@@ -655,7 +655,7 @@ liveErrorsWidget nodesDyn = void $ do
               el "div" message
 
             NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
-              el "div" $ text $ "Connected peers has dropped bellow the minimum peer count (" <> tshow minPeerCount <> ")."
+              el "div" $ text $ "Connected peers has dropped below the minimum peer count (" <> tshow minPeerCount <> ")."
 
           ErrorLogView_BakerError ne -> case ne of
             BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do

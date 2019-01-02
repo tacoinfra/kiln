@@ -209,14 +209,13 @@ clearNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
-  lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
+  lids :: [Id ErrorLogNodeInvalidPeerCount] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeInvalidPeerCount" t
     WHERE t.log = el.id
       AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
   node' <- get $ fromId nodeId
   when (not $ null lids) $ for_ node' $ \node -> do
