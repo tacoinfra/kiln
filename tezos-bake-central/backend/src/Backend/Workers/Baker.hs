@@ -102,7 +102,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
     -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- runDb (Identity db) $ do
-      bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_deletedField ==. False)
+      bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
         inCycleHashes = In $ _rightsCycleInfo_branch <$> cycleHashes
@@ -239,7 +239,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
     let
     currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
-      bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_deletedField ==. False)
+      bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
         (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
@@ -266,7 +266,7 @@ getWantedAction
   :: forall mPrepare e rP mCommit rC blk.
   ( BlockLike blk
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
-  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit
+  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
   => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> mPrepare (mCommit ())
 getWantedAction protoInfo headBlock baker details = do

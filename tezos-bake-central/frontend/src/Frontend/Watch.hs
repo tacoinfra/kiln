@@ -57,20 +57,6 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
-watchNodes :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (MonoidalMap (Id Node) Node))
-watchNodes nidsDyn = do
-  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = 1 <$ nids
-    }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodes v)
-
-watchNodesValid :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (RangeSelector' (Id Node) (Deletable Node) ()) -> m (Dynamic t (Maybe (MonoidalMap (Id Node) Node)))
-watchNodesValid nidsDyn = do
-  theView <- watchViewSelector $ ffor nidsDyn $ \nids -> mempty
-    { _bakeViewSelector_nodes = 1 <$ nids
-    }
-  return $ ffor theView $ \v -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodes v)
-
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
@@ -84,6 +70,13 @@ watchNodeAddressesValid = do
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
+
+watchNodeDetails :: (MonadRhyoliteFrontendWidget Bake t m) => Id Node -> m (Dynamic t (Maybe NodeDetailsData))
+watchNodeDetails nid = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeDetails = viewRangeExactly (Bounded nid) 1
+    }
+  return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeDetails v')
 
 watchBakerAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
@@ -214,7 +207,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
-  dNodes <- watchNodes $ pure $ viewRangeAll ()
+  dNodes <- watchNodeAddresses -- $ pure $ viewRangeAll ()
   let dmNids = NEL.nonEmpty . MMap.keys <$> dNodes
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case

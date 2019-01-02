@@ -16,11 +16,13 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
+import Control.Lens (imap)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -29,7 +31,9 @@ import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
+import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
@@ -99,42 +103,72 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
     now <- getTime
-    updateId nodeId
-      [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
-      , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
-      , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
-      , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
-      , Node_updatedField =. Just now
-      , Node_headBlockPredField =. Just (headBlockInfo ^. monitorBlock_predecessor)
+    let p = (NodeDetails_dataField ~>)
+    update
+      [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+      , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
+      , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
+      , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
+      , p NodeDetailsData_updatedSelector =. Just now
+      , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
       ]
-    getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
+      (NodeDetails_idField ==. nodeId)
+    newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
+    traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
 
-updateNetworkStats :: (MonadIO m, MonadLogger m, MonadBaseControl IO m) => Http.Manager -> Pool Postgresql -> Id Node -> Node -> m (Either RpcError ())
-updateNetworkStats httpMgr db nid before = do
-  after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+updateNetworkStats
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  => Http.Manager
+  -> Pool Postgresql
+  -> URI
+  -> Id Node
+  -> NodeDetailsData
+  -> m (Either RpcError ())
+updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
-
     pure $ before
-      { _node_peerCount = Just connections
-      , _node_networkStat = networkStat
+      { _nodeDetailsData_peerCount = Just connections
+      , _nodeDetailsData_networkStat = networkStat
       }
 
-  case after' of
-    Left err -> pure $ Left err
-    Right after -> do
-      -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
-      when (before /= after) $ inDb $ do
-        updateId nid
-          [ Node_peerCountField =. _node_peerCount after
-          , Node_networkStatField =. _node_networkStat after
-          ]
-        getId nid >>= traverse_ (notify . Notify_Node nid)
-      pure $ Right ()
-
-  where
-    nodeAddr = _node_address before
+  let
     inDb = runDb (Identity db)
+
+  -- We will rely on the block monitor to clear any inaccessible endpoint errors
+  -- for this node.m
+  when (before /= after) $ inDb $ do
+    let p = (NodeDetails_dataField ~>)
+    update
+      [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
+      , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
+      ]
+      (NodeDetails_idField ==. nid)
+    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
+  pure ()
+
+-- | Select from all the tables that have to do with join.
+--
+-- TODO do join in database, not Haskell. Also don't get all the data
+getNodes
+  :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
+     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails c)
+     )
+  => Pool Postgresql
+  -> cond
+  -> m (Map (Id Node) (Node, NodeExternalData, NodeDetailsData))
+getNodes db constraints = do
+  (nodeIds, nodeEs, nodeDs) :: (Map (Id Node) Node, [NodeExternal], [NodeDetails])
+    <- runDb (Identity db) $ liftA3 (,,)
+      (selectMap NodeConstructor CondEmpty)
+      (select (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      (select constraints)
+
+  pure $ fmapMaybe id $ flip imap nodeIds $ \nid node -> (,,)
+    <$> pure node
+    <*> (_deletableRow_data . _nodeExternal_data <$> find ((== nid) . _nodeExternal_id) nodeEs)
+    <*> (_nodeDetails_data <$> find ((== nid) . _nodeDetails_id) nodeDs)
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -149,16 +183,15 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     $(logDebug) "Update node cycle."
 
     -- read the persistent list of nodes
-    theseNodeRecords :: Map (Id Node) Node <- runDb (Identity db) $
-      selectMap NodeConstructor (Node_deletedField ==. False)
-    -- give them all a chance to
+    theseNodeRecords <- getNodes db CondEmpty
 
-    ifor_ theseNodeRecords $ \nodeId node ->
-      updateNetworkStats httpMgr db nodeId node >>= \case
+    -- give them all a chance to
+    ifor_ theseNodeRecords $ \nodeId (Node, nodeExt, nodeDetails) ->
+      updateNetworkStats httpMgr db (_nodeExternalData_address nodeExt) nodeId nodeDetails >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
+    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (_nodeExternalData_address nE, (i, _nodeExternalData_alias nE))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
@@ -285,8 +318,7 @@ nodeAlertWorker
   -> Pool Postgresql
   -> IO (IO ())
 nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
-  nodeHeadHashes <- fmap (Map.mapMaybe _node_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
-    selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
+  nodeHeadHashes <- fmap (Map.mapMaybe $ view $ _3 . nodeDetailsData_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
