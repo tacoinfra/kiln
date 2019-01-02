@@ -259,7 +259,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
-       AND NOT n.data#deleted
+       AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
