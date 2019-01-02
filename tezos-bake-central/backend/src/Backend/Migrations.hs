@@ -37,8 +37,9 @@ preMigrate =
       migrateParameters
   >=> migratePublicNodeHead
   >=> dropTableIfExists (Nothing, "ErrorLogUpgradeNotice")
+  >=> dropTableIfExists (Nothing, "PendingReward")
+  >=> dropColumnIfExists (Nothing, "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
   >=> renameTableIfExists (Nothing, "Delegate") "Baker"
-  >=> renameColumnIfExists (Nothing, "PendingReward") "delegate" "baker"
   >=> createNodeDetailsTable
   >=> createNodeExternalTable
   >=> migrateNodesToSplitTable
@@ -79,6 +80,21 @@ renameColumn :: (Migrate m) => QualifiedName -> String -> String -> m ()
 renameColumn (schema, tableName) columnNameFrom columnNameTo = do
   let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" RENAME COLUMN \"" <> columnNameFrom <> "\" TO \"" <> columnNameTo <> "\""
   $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+
+dropColumnIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
+dropColumnIfExists table columnFrom ta = do
+  maybeTableInfo <- analyzeTable ta table
+  let columnExists = do
+        tableInfo <- maybeTableInfo
+        return $ columnFrom `elem` fmap colName (tableColumns tableInfo)
+  case columnExists of
+    Just True -> dropColumn table columnFrom *> getTableAnalysis
+    _ -> pure ta
+
+dropColumn :: (Migrate m) => QualifiedName -> String -> m ()
+dropColumn (schema, tableName) columnNameFrom = do
+  let sql = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" DROP COLUMN \"" <> columnNameFrom <> "\""
+  $(logInfoS) "SQL" (tshow sql) *> void (execute_ $ fromString sql)
 
 renameTableIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
 renameTableIfExists tableFrom tableTo ta = do
