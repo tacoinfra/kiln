@@ -16,13 +16,15 @@ module Frontend.Watch where
 import Data.Fixed (Micro)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
-import Data.Semigroup (Max (..), Min (..))
-import Data.Semigroup.Foldable (foldMap1)
+import Data.Ord (Down(..))
+import Data.Semigroup (Min (..))
+import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
+import Safe (minimumMay)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -35,6 +37,7 @@ import Common.Schema hiding (Event)
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
+
 
 watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
 watchFrontendConfig =
@@ -216,13 +219,17 @@ watchCollectiveNodesStatus alertWindow = do
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case
     Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
-    Just nids -> \nodeErrors -> case
-        NEL.nonEmpty $ fforMaybe (NEL.toList nids) $ \nid ->
-          fmap getMin $ foldMap (Just . Min) $ (_errorLog_started . fst)
+    Just nids -> \nodeErrors ->
+      let
+        getDown (Down x) = x
+        es = ffor nids $ \nid ->
+          Min $
+          fmap Down $
+          -- if there are errors, we went "ill" when the first one started
+          minimumMay $ (CollectiveNodesFailure_AllNodesDownSince . _errorLog_started . fst)
             <$> maybe [] toList (MMap.lookup nid nodeErrors)
-      of
-        Nothing -> Right ()
-        Just errors -> Left $ CollectiveNodesFailure_AllNodesDownSince $ getMax $ foldMap1 Max errors
+
+      in maybe (Right ()) Left $ fmap getDown $ getMin $ fold1 es
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
