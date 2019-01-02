@@ -83,6 +83,7 @@ library
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
+    , these
     , time
     , transformers
     , unix

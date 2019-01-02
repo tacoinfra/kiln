@@ -27,6 +27,9 @@
 -- 'deriveJSONGADT' produces seemingly redundant pattern matches.
 {-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
+-- GHC is confused about type families.
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 module Common.Schema
   ( module Common.Schema
 
@@ -59,11 +62,10 @@ import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
-import Rhyolite.Schema (Email, HasId, IdData, Id, Json)
+import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
 import Tezos.Operation
@@ -149,6 +151,7 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_delegate em)
       (_endorsementMetadata_slots em)
 
+-- TODO use `DeletableRow` when we add back this feature.
 data Client = Client
   { _client_address :: !URI
   , _client_alias :: !(Maybe Text)
@@ -156,14 +159,6 @@ data Client = Client
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Client
-
-data PendingReward = PendingReward
-  { _pendingReward_baker :: !(Id Baker)
-  , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
-  , _pendingReward_level :: !TezosWord64
-  , _pendingReward_amount :: !Tez
-  } deriving (Eq, Show, Generic, Typeable)
-instance HasId PendingReward
 
 data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
@@ -173,45 +168,79 @@ data ClientInfo = ClientInfo
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ClientInfo
 
+-- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
 data Node = Node
-  { _node_address :: !URI
-  , _node_alias :: !(Maybe Text)
-  , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
-  , _node_headLevel :: !(Maybe RawLevel)
-  , _node_headBlockHash :: !(Maybe BlockHash)
-  , _node_headBlockPred :: !(Maybe BlockHash)
-  , _node_headBlockBakedAt :: !(Maybe UTCTime)
-  , _node_peerCount :: !(Maybe Word64)
-  , _node_networkStat :: !NetworkStat
-  , _node_fitness :: !(Maybe Fitness)
-  , _node_deleted :: !Bool
-  , _node_updated :: !(Maybe UTCTime)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockPred = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
+data DeletableRow a = DeletableRow
+  { _deletableRow_data :: !a
+  , _deletableRow_deleted :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId a => HasId (DeletableRow a) where
+  type IdData (DeletableRow a) = IdData a
+
+-- data NodeExternal = NodeExternal (WithId (Id Node) (Deletable NodeExternal'))
+
+data NodeExternal = NodeExternal
+  { _nodeExternal_id :: !(Id Node)
+  , _nodeExternal_data :: !(DeletableRow NodeExternalData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId NodeExternal where
+  -- Should be the same as `IdData NodeExternalData` always.
+  type IdData NodeExternal = Id Node
+
+data NodeExternalData = NodeExternalData
+  { _nodeExternalData_address :: !URI
+  , _nodeExternalData_alias :: !(Maybe Text)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId NodeExternalData where
+  type IdData NodeExternalData = Id Node
+
+-- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
+
+data NodeDetails = NodeDetails
+  { _nodeDetails_id :: !(Id Node)
+  , _nodeDetails_data :: NodeDetailsData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- TODO don't need Maybes here probably.
+data NodeDetailsData = NodeDetailsData
+  { _nodeDetailsData_identity :: !(Maybe CryptoboxPublicKeyHash)
+  , _nodeDetailsData_headLevel :: !(Maybe RawLevel)
+  , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
+  , _nodeDetailsData_peerCount :: !(Maybe Word64)
+  , _nodeDetailsData_networkStat :: !NetworkStat
+  , _nodeDetailsData_fitness :: !(Maybe Fitness)
+  , _nodeDetailsData_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance HasId NodeDetailsData where
+  type IdData NodeDetailsData = Id Node
+
+mkNodeDetails :: NodeDetailsData
+mkNodeDetails = NodeDetailsData
+  { _nodeDetailsData_identity = Nothing -- TODO
+  , _nodeDetailsData_headLevel = Nothing
+  , _nodeDetailsData_headBlockHash = Nothing
+  , _nodeDetailsData_headBlockPred = Nothing
+  , _nodeDetailsData_headBlockBakedAt = Nothing
+  , _nodeDetailsData_peerCount = Nothing
+  , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
+  , _nodeDetailsData_fitness = Nothing
+  , _nodeDetailsData_updated = Nothing
   }
 
-getNodeHeadBlock :: Node -> Maybe VeryBlockLike
+getNodeHeadBlock :: NodeDetailsData -> Maybe VeryBlockLike
 getNodeHeadBlock n = VeryBlockLike
-  <$> _node_headBlockHash n
-  <*> _node_headBlockPred n
-  <*> _node_fitness n
-  <*> _node_headLevel n
-  <*> _node_headBlockBakedAt n
+  <$> _nodeDetailsData_headBlockHash n
+  <*> _nodeDetailsData_headBlockPred n
+  <*> _nodeDetailsData_fitness n
+  <*> _nodeDetailsData_headLevel n
+  <*> _nodeDetailsData_headBlockBakedAt n
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -339,14 +368,22 @@ data ClientConfig = ClientConfig
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+-- newtype Baker_ = Baker (WithId PublicKeyHash (Deletable Baker'))
+
 data Baker = Baker
   { _baker_publicKeyHash :: !PublicKeyHash
-  , _baker_alias :: !(Maybe Text)
-  , _baker_deleted :: !Bool
+  , _baker_data :: !(DeletableRow BakerData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId Baker where
+  -- Should be the same as `IdData BakerData` always.
+  type IdData Baker = PublicKeyHash
+
+data BakerData = BakerData
+  { _bakerData_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance HasId Baker where
-  type IdData Baker = PublicKeyHash
+instance HasId BakerData where
+  type IdData BakerData = PublicKeyHash
 
 -- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
 -- we'd probably want to cache it seperately  (it changes way slower anyhow)
@@ -360,6 +397,8 @@ data CacheDelegateInfo = CacheDelegateInfo
   , _cacheDelegateInfo_deactivated :: !Bool
   , _cacheDelegateInfo_gracePeriod :: !Cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- newtype BakerDetails = BakerDetails (WithId PublicKeyHash BakerDetails')
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
@@ -480,6 +519,7 @@ instance HasId ErrorLogNetworkUpdate
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogInaccessibleNode_address :: !URI
   , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -488,6 +528,7 @@ instance HasId ErrorLogInaccessibleNode
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogNodeWrongChain_address :: !URI
   , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
@@ -653,6 +694,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
+  , ''BakerData
   , ''BakerDetails
   , ''BakerRight
   , ''BakerRightsCycleProgress
@@ -662,6 +704,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
+  , ''DeletableRow
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
@@ -677,6 +720,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''Event
   , ''MailServerConfig
   , ''Node
+  , ''NodeExternal
+  , ''NodeExternalData
+  , ''NodeDetails
+  , ''NodeDetailsData
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
@@ -695,11 +742,13 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
+  , 'BakerData
   , 'BakerDetails
   , 'BakerRight
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'CachedProtocolConstants
+  , 'DeletableRow
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
@@ -715,6 +764,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNetworkUpdate
   , 'Event
   , 'MailServerConfig
+  , 'Node
+  , 'NodeExternal
+  , 'NodeExternalData
+  , 'NodeDetails
+  , 'NodeDetailsData
   , 'Parameters
   , 'PublicNodeConfig
   , 'PublicNodeHead
@@ -766,8 +820,12 @@ aliasedIdentification getMain getFallback x =
   let fallback = getFallback x
   in maybe (fallback, Nothing) (, Just fallback) $ getMain x
 
-nodeIdentification :: Node -> (Text, Maybe Text)
-nodeIdentification = aliasedIdentification _node_alias $ Uri.render . _node_address
+nodeIdentification :: NodeExternalData -> (Text, Maybe Text)
+nodeIdentification = aliasedIdentification
+  _nodeExternalData_alias
+  (Uri.render . _nodeExternalData_address)
 
 bakerIdentification :: Baker -> (Text, Maybe Text)
-bakerIdentification = aliasedIdentification _baker_alias $ toPublicKeyHashText . _baker_publicKeyHash
+bakerIdentification = aliasedIdentification
+  (view $ baker_data . deletableRow_data . bakerData_alias)
+  (toPublicKeyHashText . _baker_publicKeyHash)

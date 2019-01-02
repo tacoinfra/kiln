@@ -200,13 +200,25 @@ backendImpl cfg serve = do
 
       -- Set nodes overrides based on configuration
       for_ nodes $ \ns -> do
-        update [Node_deletedField =. True] CondEmpty
-        update [Node_deletedField =. False] (Node_addressField `in_` toList ns)
-        enabled <- project Node_addressField (Node_deletedField ==. False)
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] CondEmpty
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. False]
+          ((NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector) `in_` toList ns)
+        enabled <- project (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
+          ((NodeExternal_dataField ~> DeletableRow_deletedSelector) ==. False)
 
         let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress ->
-          insert $ mkNode newAddress Nothing
+        for_ needToAdd $ \newAddress -> do
+          nid <- insert' Node
+          insert $ NodeExternal
+            { _nodeExternal_id = nid
+            , _nodeExternal_data = DeletableRow
+              { _deletableRow_data =NodeExternalData
+                { _nodeExternalData_address = newAddress
+                , _nodeExternalData_alias = Nothing
+                }
+              , _deletableRow_deleted = False
+              }
+            }
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)

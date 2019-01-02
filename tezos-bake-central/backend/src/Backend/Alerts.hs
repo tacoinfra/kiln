@@ -25,7 +25,7 @@ import Data.Time (NominalDiffTime, addUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
-import Database.Groundhog.Postgresql (PersistBackend)
+import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
 import Rhyolite.Backend.DB (getTime, selectSingle)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
@@ -108,11 +108,11 @@ unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) 
 resolvedBakerAlert :: BakerErrorDescriptions -> Baker -> Alert
 resolvedBakerAlert dsc = uncurry (Alert Resolved) . _bakerErrorDescriptions_resolved dsc
 
-getBaker :: PersistBackend m => PublicKeyHash -> m (Maybe Baker)
-getBaker pkh = selectSingle $ Baker_publicKeyHashField ==. pkh
+getBaker :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m (Maybe Baker)
+getBaker pkh = selectSingle $ Baker_publicKeyHashField `in_` [pkh]
 
 reportBakerDeactivated
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> ProtoInfo -> Fitness -> m ()
@@ -138,7 +138,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
 
 clearBakerDeactivated
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> Fitness -> m ()
@@ -159,7 +159,7 @@ clearBakerDeactivated pkh newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivatedDescriptions log) baker
 
 reportBakerDeactivationRisk
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
@@ -185,7 +185,7 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivationRiskDescriptions log
 
 clearBakerDeactivationRisk
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> Fitness -> m ()
@@ -206,33 +206,36 @@ clearBakerDeactivationRisk pkh newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
 reportInaccessibleNodeError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
-      MonadLogger m)
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
+     , HasAppConfig a, MonadReader a m, SqlDb (PhantomDb m)
+     , MonadLogger m)
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> do
-      node' <- get (fromId nodeId)
+      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_node_address node) (_node_alias node)
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node)
         queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
-          "Unable to connect to node, " <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+          "Unable to connect to node, " <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearInaccessibleNodeError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
-      MonadReader a m, HasAppConfig a) => Id Node -> m ()
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m
+     , SqlDb (PhantomDb m)
+     , MonadReader a m, HasAppConfig a)
+  => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -240,42 +243,44 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- get (fromId nodeId)
+  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
-        "Able to again connect to node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node)
+        "Able to again connect to node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
 
 reportNodeWrongChainError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
-      MonadLogger m)
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+     , SqlDb (PhantomDb m)
+     , MonadLogger m)
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t."expectedChainId" = ?expectedChainId
        AND t."actualChainId" = ?actualChainId
        AND t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> do
-      node' <- get $ fromId nodeId
+      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_node_address node) (_node_alias node) expectedChainId actualChainId
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node) expectedChainId actualChainId
         queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
-          "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
-  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
-      MonadReader a m, HasAppConfig a) => Id Node -> m ()
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m
+     , SqlDb (PhantomDb m)
+     , MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -286,16 +291,17 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
-  node' <- get $ fromId nodeId
+  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
-       "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " is on correct network"
+       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
 
 reportBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+     , SqlDb (PhantomDb m)
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
@@ -303,9 +309,9 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-      JOIN "Node" n ON n.id = t.node
+      JOIN "NodeExternal" n ON n.id = t.node
      WHERE t.node = ?nodeId
-       AND NOT n.deleted
+       AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -327,14 +333,17 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        node <- getId nodeId
+        node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
         for_ node $ \n -> do
           let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
           queueAlert (Just logId) $ Alert Unresolved heading $
-            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> "\n\n" <> message
+            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> "\n\n" <> message
 
-clearBadNodeHeadError :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m,
-                          MonadIO m, MonadReader a m, HasAppConfig a) => Id Node -> m ()
+clearBadNodeHeadError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m
+     , SqlDb (PhantomDb m)
+     , MonadIO m, MonadReader a m, HasAppConfig a)
+  => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
@@ -342,12 +351,12 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node <- get $ fromId nodeId
+  node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   specErrs <- catMaybes <$> for lids getId
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
-        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_node_alias n) <> Uri.render (_node_address n) <> " is now in sync."
+        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> " is now in sync."
 
 
 missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
@@ -366,10 +375,16 @@ missedBakeLog right pkh lvl =
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
 
-bakerNotDeleted :: PersistBackend m => PublicKeyHash -> m Bool
-bakerNotDeleted pkh = all not <$> project Baker_deletedField ((Baker_publicKeyHashField ==. pkh) `limitTo` 1)
+bakerNotDeleted :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m Bool
+bakerNotDeleted pkh = all not <$> project
+  (Baker_dataField ~> DeletableRow_deletedSelector)
+  ((Baker_publicKeyHashField `in_` [pkh]) `limitTo` 1)
 
-reportMissedBake :: (MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m, MonadLogger m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake
+  :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
+     , SqlDb (PhantomDb m)
+     , MonadLogger m)
+  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
@@ -417,8 +432,10 @@ clearMissedBake f right pkh lvl = do
         RightKind_Baking -> "bake"
         RightKind_Endorsing -> "endorsement"
 
-nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
-nodeNotDeleted nodeId = all not <$> project Node_deletedField ((AutoKeyField ==. fromId nodeId) `limitTo` 1)
+nodeNotDeleted :: (PersistBackend m, SqlDb (PhantomDb m)) => Id Node -> m Bool
+nodeNotDeleted nodeId = fmap (all not)
+  $ project (NodeExternal_dataField ~> DeletableRow_deletedSelector)
+  $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
 insertErrorLog mkErrorLog = do

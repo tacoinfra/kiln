@@ -60,18 +60,38 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
       PublicRequest_AddNode addr alias -> inDb $ do
-        existingIds :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+        existingIds :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
-          Nothing -> let node = mkNode addr alias in notify . flip Notify_Node node =<< insert' node
+          Nothing -> do
+            nid <- insert' Node
+            let nodeData = NodeExternalData
+                    { _nodeExternalData_address = addr
+                    , _nodeExternalData_alias = alias
+                    }
+                node = NodeExternal
+                  { _nodeExternal_id = nid
+                  , _nodeExternal_data = DeletableRow
+                    { _deletableRow_data = nodeData
+                    , _deletableRow_deleted = False
+                    }
+                  }
+            insert node
+            notify $ Notify_NodeExternal nid $ Just nodeData
           Just nids -> for_ nids $ \nid -> do
-            updateId nid [Node_deletedField =. False, Node_aliasField =. alias]
-            getId nid >>= traverse_ (notify . Notify_Node nid)
+            update
+              [ NodeExternal_dataField ~> DeletableRow_deletedSelector =. False
+              , NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_aliasSelector =. alias
+              ]
+              (NodeExternal_idField ==. nid)
+            project (NodeExternal_dataField ~> DeletableRow_dataSelector)
+                    (NodeExternal_idField ==. nid)
+              >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
       PublicRequest_RemoveNode addr -> inDb $ do
-        nids :: [Id Node] <- fmap toId <$> project AutoKeyField (Node_addressField ==. addr)
+        nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
         for_ nids $ \nid -> do
-          updateId nid [Node_deletedField =. True]
-          getId nid >>= traverse_ (notify . Notify_Node nid)
+          update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
+          notify $ Notify_NodeExternal nid Nothing
 
           elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
           elnwc <- selectMap' ErrorLogNodeWrongChainConstructor (ErrorLogNodeWrongChain_nodeField ==. nid)
@@ -111,16 +131,23 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ do
         existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-        let newVal = Baker
-              { _baker_publicKeyHash = pkh
-              , _baker_alias = alias
-              , _baker_deleted = False
+        let newVal = BakerData
+              { _bakerData_alias = alias
               }
         case nonEmpty existingIds of
-          Nothing -> void $ insert newVal
+          Nothing -> void $ insert $ Baker
+            { _baker_publicKeyHash = pkh
+            , _baker_data = DeletableRow
+              { _deletableRow_data = newVal
+              , _deletableRow_deleted = False
+              }
+            }
           Just bIds -> for_ bIds $ \bId ->
-            update [Baker_deletedField =. False, Baker_aliasField =. alias] (BakerKey ==. fromId bId)
-        notify $ mkDefaultNotify newVal
+            update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
+                   , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
+                   ]
+                   (BakerKey ==. fromId bId)
+        notify $ Notify_Baker (Id pkh) (Just newVal)
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
         bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
@@ -128,12 +155,10 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
         _ <- [executeQ| DELETE FROM "BakerDetails" ds WHERE ds."publicKeyHash" = ?pkh |]
         for_ bIds $ \bId -> do
-          update [Baker_deletedField =. True] (BakerKey ==. fromId bId)
-          notify $ mkDefaultNotify $ Baker
-            { _baker_publicKeyHash = pkh
-            , _baker_alias = Nothing
-            , _baker_deleted = True
-            }
+          update
+            [Baker_dataField ~> DeletableRow_deletedSelector =. True]
+            (BakerKey ==. fromId bId)
+          notify $ Notify_Baker (Id pkh) Nothing
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'

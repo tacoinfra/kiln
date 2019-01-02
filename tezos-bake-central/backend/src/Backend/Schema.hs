@@ -84,7 +84,7 @@ stripOnly = coerce
 
 data Notify
   = Notify_Client !(Id Client)
-  | Notify_Baker !Baker
+  | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
@@ -98,7 +98,8 @@ data Notify
   | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
-  | Notify_Node !(Id Node) !Node
+  | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
+  | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
   | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
@@ -114,8 +115,6 @@ class HasDefaultNotify f where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
-instance HasDefaultNotify Baker where
-  mkDefaultNotify = Notify_Baker
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -505,13 +504,34 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             reference:
               table: Client
               onDelete: cascade
+  - embedded: DeletableRow
   - entity: Node
     constructors:
       - name: Node
+  - entity: NodeExternal
+    autoKey: null
+    keys:
+      - name: NodeExternalId
+        default: true
+    constructors:
+      - name: NodeExternal
         uniques:
-          - name: _node_uniqueness
-            type: constraint
-            fields: [_node_address]
+          - name: NodeExternalId
+            type: primary
+            fields: [_nodeExternal_id]
+  - embedded: NodeExternalData
+  - entity: NodeDetails
+    autoKey: null
+    keys:
+      - name: NodeDetailsId
+        default: true
+    constructors:
+      - name: NodeDetails
+        uniques:
+          - name: NodeDetailsId
+            type: primary
+            fields: [_nodeDetails_id]
+  - embedded: NodeDetailsData
   - entity: PublicNodeConfig
     constructors:
     - name: PublicNodeConfig
@@ -536,13 +556,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_parameters_chain]
   - embedded: ProtoInfo
-  - entity: PendingReward
-    constructors:
-      - name: PendingReward
-        uniques:
-          - name: _pendingReward_uniqueness
-            type: constraint
-            fields: [_pendingReward_baker, _pendingReward_hash]
   - entity: Baker
     autoKey: null
     keys:
@@ -554,6 +567,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: BakerKey
             type: primary
             fields: [_baker_publicKeyHash]
+  - embedded: BakerData
   - entity: BakerDetails
     autoKey: null
     keys:
@@ -669,7 +683,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
-  , (''PendingReward, 'PendingRewardKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''TelegramConfig, 'TelegramConfigKey)

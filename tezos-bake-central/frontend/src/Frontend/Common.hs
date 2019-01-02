@@ -43,10 +43,10 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common (humanizeTimestamp)
-import Common.App (Bake, BakerSummary(..), bakerSummaryIdentification)
+import Common.App (Bake, BakerSummary(..), NodeSummary,
+                   bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
-import Common.Schema (Node(..), nodeIdentification)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -470,8 +470,8 @@ errorLabel primary secondary = el "div" $ do
       text nbsp
       text x
 
-nodeLabel :: DomBuilder t m => Node -> m ()
-nodeLabel = uncurry errorLabel . nodeIdentification
+nodeLabel :: DomBuilder t m => NodeSummary -> m ()
+nodeLabel = uncurry errorLabel . nodeSummaryIdentification
 
 bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
 bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
