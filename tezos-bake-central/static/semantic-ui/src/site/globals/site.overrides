@@ -673,6 +673,11 @@ img.credits-obsidian {
 
   .description {
     color: @grey;
+
+    .buttons {
+      display: flex;
+      justify-content: flex-end;
+    }
   }
 }
 
