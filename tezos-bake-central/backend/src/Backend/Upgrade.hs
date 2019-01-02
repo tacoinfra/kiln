@@ -29,6 +29,7 @@ import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Rhyolite.Backend.Schema
 
+import Backend.Alerts
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
@@ -47,6 +48,7 @@ upgradeCheckWorker
   -> Pool Postgresql
   -> m (IO ())
 upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db = do
+  liftIO $ forM_ mchain $ runLoggingEnv logger . runDb (Identity db) . clearUnrelatedNetworkUpdateError
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
     forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr (runLoggingEnv logger . runDb (Identity db))

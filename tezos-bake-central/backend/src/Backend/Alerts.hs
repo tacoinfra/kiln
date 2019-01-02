@@ -99,6 +99,18 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
     Alert Resolved "Resolved: Baker has now seen a block" $
     "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
 
+clearUnrelatedNetworkUpdateError :: (PersistBackend m, PostgresRaw m) => NamedChain -> m ()
+clearUnrelatedNetworkUpdateError namedChain = do
+  lids :: [Id ErrorLogNetworkUpdate] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+    FROM "ErrorLogNetworkUpdate" elnu
+    WHERE elnu.log = el.id
+    AND elnu."namedChain" <> ?namedChain
+    AND el.stopped IS NULL
+    RETURNING elnu.id
+    |]
+  for_ lids $ notify . mkDefaultNotify
+
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
   [ Just $ _bakerErrorDescriptions_problem dsc
