@@ -27,6 +27,9 @@
 -- 'deriveJSONGADT' produces seemingly redundant pattern matches.
 {-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
+-- GHC is confused about type families.
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 module Common.Schema
   ( module Common.Schema
 
@@ -148,6 +151,7 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_delegate em)
       (_endorsementMetadata_slots em)
 
+-- TODO use `DeletableRow` when we add back this feature.
 data Client = Client
   { _client_address :: !URI
   , _client_alias :: !(Maybe Text)
@@ -169,21 +173,29 @@ data Node = Node
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
+data DeletableRow a = DeletableRow
+  { _deletableRow_data :: !a
+  , _deletableRow_deleted :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId a => HasId (DeletableRow a) where
+  type IdData (DeletableRow a) = IdData a
+
 -- data NodeExternal = NodeExternal (WithId (Id Node) (Deletable NodeExternal'))
 
 data NodeExternal = NodeExternal
   { _nodeExternal_id :: !(Id Node)
-  , _nodeExternal_data :: !NodeExternalData
+  , _nodeExternal_data :: !(DeletableRow NodeExternalData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
--- TODO remove instance, should just be on `NodeExternalData`
 instance HasId NodeExternal where
+  -- Should be the same as `IdData NodeExternalData` always.
   type IdData NodeExternal = Id Node
 
 data NodeExternalData = NodeExternalData
   { _nodeExternalData_address :: !URI
   , _nodeExternalData_alias :: !(Maybe Text)
-  , _nodeExternalData_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
+
 instance HasId NodeExternalData where
   type IdData NodeExternalData = Id Node
 
@@ -193,9 +205,6 @@ data NodeDetails = NodeDetails
   { _nodeDetails_id :: !(Id Node)
   , _nodeDetails_data :: NodeDetailsData
   } deriving (Eq, Ord, Show, Generic, Typeable)
--- TODO remove instance, should just be on `NodeDetailsData`
-instance HasId NodeDetails where
-  type IdData NodeDetails = Id Node
 
 -- TODO don't need Maybes here probably.
 data NodeDetailsData = NodeDetailsData
@@ -363,12 +372,18 @@ data ClientConfig = ClientConfig
 
 data Baker = Baker
   { _baker_publicKeyHash :: !PublicKeyHash
-  , _baker_alias :: !(Maybe Text)
-  , _baker_deleted :: !Bool
+  , _baker_data :: !(DeletableRow BakerData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId Baker where
+  -- Should be the same as `IdData BakerData` always.
+  type IdData Baker = PublicKeyHash
+
+data BakerData = BakerData
+  { _bakerData_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance HasId Baker where
-  type IdData Baker = PublicKeyHash
+instance HasId BakerData where
+  type IdData BakerData = PublicKeyHash
 
 -- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
 -- we'd probably want to cache it seperately  (it changes way slower anyhow)
@@ -496,6 +511,7 @@ instance HasId MailServerConfig
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogInaccessibleNode_address :: !URI
   , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -504,6 +520,7 @@ instance HasId ErrorLogInaccessibleNode
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogNodeWrongChain_address :: !URI
   , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
@@ -668,6 +685,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
+  , ''BakerData
   , ''BakerDetails
   , ''BakerRight
   , ''BakerRightsCycleProgress
@@ -677,6 +695,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
+  , ''DeletableRow
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
@@ -713,11 +732,13 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
+  , 'BakerData
   , 'BakerDetails
   , 'BakerRight
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'CachedProtocolConstants
+  , 'DeletableRow
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
@@ -788,10 +809,12 @@ aliasedIdentification getMain getFallback x =
   let fallback = getFallback x
   in maybe (fallback, Nothing) (, Just fallback) $ getMain x
 
-nodeIdentification :: NodeExternal -> (Text, Maybe Text)
+nodeIdentification :: NodeExternalData -> (Text, Maybe Text)
 nodeIdentification = aliasedIdentification
-  (view $ nodeExternal_data . nodeExternalData_alias)
-  (Uri.render . view (nodeExternal_data . nodeExternalData_address))
+  _nodeExternalData_alias
+  (Uri.render . _nodeExternalData_address)
 
 bakerIdentification :: Baker -> (Text, Maybe Text)
-bakerIdentification = aliasedIdentification _baker_alias $ toPublicKeyHashText . _baker_publicKeyHash
+bakerIdentification = aliasedIdentification
+  (view $ baker_data . deletableRow_data . bakerData_alias)
+  (toPublicKeyHashText . _baker_publicKeyHash)

@@ -84,7 +84,7 @@ stripOnly = coerce
 
 data Notify
   = Notify_Client !(Id Client)
-  | Notify_Baker !Baker
+  | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
   | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
@@ -114,8 +114,6 @@ class HasDefaultNotify f where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
-instance HasDefaultNotify Baker where
-  mkDefaultNotify = Notify_Baker
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -497,6 +495,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             reference:
               table: Client
               onDelete: cascade
+  - embedded: DeletableRow
   - entity: Node
     constructors:
       - name: Node
@@ -559,6 +558,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: BakerKey
             type: primary
             fields: [_baker_publicKeyHash]
+  - embedded: BakerData
   - entity: BakerDetails
     autoKey: null
     keys:

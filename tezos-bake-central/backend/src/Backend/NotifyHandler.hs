@@ -23,7 +23,7 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id, unId)
+import Rhyolite.Schema (Id (..), unId)
 
 import Tezos.Types
 
@@ -56,7 +56,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
-      Notify_Baker baker -> handleBakerAddress (_baker_publicKeyHash baker)
+      Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
       Notify_ErrorLogBakerMissed eid -> handleErrorLog'
@@ -159,6 +159,14 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
+
+    handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
+      case mBaker of
+        -- fast path
+        Nothing -> pure mempty {
+          _bakeView_bakerAddresses = toRangeView bakerAddressesVS [(Bounded pkh, First Nothing)]
+          }
+        Just _ -> handleBakerAddress pkh
 
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
       bakerV <- getBakerAddresses nds (Just $ pkh)

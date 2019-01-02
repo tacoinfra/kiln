@@ -643,7 +643,8 @@ liveErrorsWidget = void $ do
             NodeErrorLogView_BadNodeHead l ->
               for_ node' $ \n -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-              header $ heading <> ": " <> fromMaybe (Uri.render $ _nodeSummary_address n) (_nodeSummary_alias n)
+              let (addr, mAlias) = nodeSummaryIdentification n
+              header $ heading <> ": " <> fromMaybe addr mAlias
               nodeLabel n
               el "div" message
 
@@ -731,7 +732,7 @@ bakersList ::
 bakersList = do
   bakers :: Dynamic t (MonoidalMap PublicKeyHash (Text, Maybe Text, MonitoredStatus)) <- imap (\pkh b ->
     ( toPublicKeyHashText pkh
-    , _bakerSummary_alias b
+    , _bakerData_alias $ _bakerSummary_baker b
     , bakerStatus b)
     ) <$$> watchBakerAddresses
   sidebarList "Baker" bakers addBakerModal
@@ -758,7 +759,10 @@ nodesList = do
   let nodeStatus = \case
         0 -> MonitoredStatus_Healthy
         _ -> MonitoredStatus_Unhealthy
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> (nodeStatus . _nodeSummary_alertCount)) <$$$> watchNodeAddresses
+  nodes <- ((,,) <$> (uriHostPortPath . _nodeExternalData_address . _nodeSummary_node)
+                 <*> (_nodeExternalData_alias . _nodeSummary_node)
+                 <*> (nodeStatus . _nodeSummary_alertCount))
+    <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -871,8 +875,10 @@ nodesTab =
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath <$> _nodeSummary_address <$> vDyn) (_nodeSummary_alias <$> vDyn)
+              nodeCfgDyn = _nodeSummary_node <$> vDyn
+              (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle
+                (uriHostPortPath <$> _nodeExternalData_address <$> nodeCfgDyn)
+                (_nodeExternalData_alias <$> nodeCfgDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
@@ -880,7 +886,7 @@ nodesTab =
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _nodeSummary_address <$> current vDyn <@ ev)
+              (\ev -> PublicRequest_RemoveNode . _nodeExternalData_address . _nodeSummary_node <$> current vDyn <@ ev)
               ((=<<) getNodeHeadBlock)
               (Just errorMessages)
               (Just $ (=<<) _nodeDetailsData_peerCount)
@@ -1024,7 +1030,7 @@ bakersTab =
                 BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
                 BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
-            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerData_alias . _bakerSummary_baker <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
             details <- watchBakerDetails pkh

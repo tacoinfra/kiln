@@ -223,7 +223,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     |]
   case existingLog of
     Nothing -> do
-      node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
       for_ node' $ \node -> do
         (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node)
         queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
@@ -240,7 +240,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
@@ -266,7 +266,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
     |]
   case existingLog of
     Nothing -> do
-      node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
       for_ node' $ \node -> do
         (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node) expectedChainId actualChainId
         queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
@@ -286,7 +286,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
-  node' <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
@@ -327,7 +327,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        node <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+        node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
         for_ node $ \n -> do
           let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
           queueAlert (Just logId) $ Alert Unresolved heading $
@@ -342,7 +342,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  node <- project NodeExternal_dataField $ (NodeExternal_idField ==. nodeId) `limitTo` 1
+  node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField ==. nodeId) `limitTo` 1
   specErrs <- catMaybes <$> for lids getId
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
@@ -367,7 +367,7 @@ missedBakeLog right pkh lvl =
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
 
 bakerNotDeleted :: PersistBackend m => PublicKeyHash -> m Bool
-bakerNotDeleted pkh = all not <$> project Baker_deletedField ((Baker_publicKeyHashField ==. pkh) `limitTo` 1)
+bakerNotDeleted pkh = all not <$> project (Baker_dataField ~> DeletableRow_deletedSelector) ((Baker_publicKeyHashField ==. pkh) `limitTo` 1)
 
 reportMissedBake :: (MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m, MonadLogger m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
@@ -419,7 +419,7 @@ clearMissedBake f right pkh lvl = do
 
 nodeNotDeleted :: (PersistBackend m) => Id Node -> m Bool
 nodeNotDeleted nodeId = fmap (all not)
-  $ project (NodeExternal_dataField ~> NodeExternalData_deletedSelector)
+  $ project (NodeExternal_dataField ~> DeletableRow_deletedSelector)
   $ (NodeExternal_idField ==. nodeId) `limitTo` 1
 
 insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)

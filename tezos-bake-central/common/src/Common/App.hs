@@ -39,7 +39,7 @@ import Data.Word (Word16)
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
-import Rhyolite.Schema (Email, Id(..))
+import Rhyolite.Schema (Email, Id(..), IdData)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -66,7 +66,7 @@ type Deletable a = First (Maybe a)
 -- data BakerSummary = Baker Baker' AlertCount
 
 data BakerSummary = BakerSummary
-  { _bakerSummary_alias :: Maybe Text
+  { _bakerSummary_baker :: BakerData
   , _bakerSummary_alertCount :: Int
   , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
   , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
@@ -77,18 +77,21 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_address :: URI
-  , _nodeSummary_alias :: Maybe Text
+  { _nodeSummary_node :: NodeExternalData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
 instance ToJSON NodeSummary
 
-bakerSummaryIdentification :: (PublicKeyHash, BakerSummary) -> (Text, Maybe Text)
-bakerSummaryIdentification = aliasedIdentification (_bakerSummary_alias . snd) $ toPublicKeyHashText . fst
+bakerSummaryIdentification :: (IdData BakerData, BakerSummary) -> (Text, Maybe Text)
+bakerSummaryIdentification = aliasedIdentification
+  (_bakerData_alias . _bakerSummary_baker . snd)
+  (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
-nodeSummaryIdentification = aliasedIdentification _nodeSummary_alias $ tshow . _nodeSummary_address
+nodeSummaryIdentification = aliasedIdentification
+  (_nodeExternalData_alias . _nodeSummary_node)
+  (tshow . _nodeExternalData_address . _nodeSummary_node)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)

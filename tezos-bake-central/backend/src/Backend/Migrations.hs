@@ -39,6 +39,8 @@ preMigrate =
   >=> dropTableIfExists (Nothing, "ErrorLogUpgradeNotice")
   >=> dropTableIfExists (Nothing, "PendingReward")
   >=> dropColumnIfExists (Nothing, "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
+  >=> renameColumnIfExists (Nothing, "Delegate") "deleted" "data#deleted"
+  >=> renameColumnIfExists (Nothing, "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (Nothing, "Delegate") "Baker"
   >=> createNodeDetailsTable
   >=> createNodeExternalTable
@@ -193,8 +195,8 @@ createNodeExternalTable ta = do
       let sqlCode = [sql|
             CREATE TABLE "NodeExternal"
               ( "id" INT8 NOT NULL
-              , "data#address" VARCHAR NOT NULL
-              , "data#alias" VARCHAR NULL
+              , "data#data#address" VARCHAR NOT NULL
+              , "data#data#alias" VARCHAR NULL
               , "data#deleted" BOOLEAN NOT NULL
               );
             ALTER TABLE "NodeExternal" ADD CONSTRAINT "NodeExternalId" PRIMARY KEY("id");
@@ -215,8 +217,8 @@ migrateNodesToSplitTable ta = do
             sqlCode = [sql|
               INSERT INTO "NodeExternal"
                   ( "id"
-                  , "data#address"
-                  , "data#alias"
+                  , "data#data#address"
+                  , "data#data#alias"
                   , "data#deleted"
                   )
                   SELECT "id"

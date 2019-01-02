@@ -162,12 +162,12 @@ getNodes db constraints = do
   (nodeIds, nodeEs, nodeDs) :: (Map (Id Node) Node, [NodeExternal], [NodeDetails])
     <- runDb (Identity db) $ liftA3 (,,)
       (selectMap NodeConstructor CondEmpty)
-      (select (NodeExternal_dataField ~> NodeExternalData_deletedSelector ==. False))
+      (select (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
       (select constraints)
 
   pure $ fmapMaybe id $ flip imap nodeIds $ \nid node -> (,,)
     <$> pure node
-    <*> (_nodeExternal_data <$> find ((== nid) . _nodeExternal_id) nodeEs)
+    <*> (_deletableRow_data . _nodeExternal_data <$> find ((== nid) . _nodeExternal_id) nodeEs)
     <*> (_nodeDetails_data <$> find ((== nid) . _nodeDetails_id) nodeDs)
 
 nodeWorker

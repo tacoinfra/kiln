@@ -69,13 +69,13 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
-  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
+  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.data#deleted|]
   --   return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
   -- clients <- do
   --   let selClients = In (Map.keys (_bakeViewSelector_clients vs))
   --   rs <- [queryQ| SELECT c.id, i.report, i.config
   --                  FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
-  --                  WHERE c.id IN ?selClients AND NOT c.deleted|]
+  --                  WHERE c.id IN ?selClients AND NOT c.data#deleted|]
   --   let clientInfo = Map.fromList $ do
   --         (cid, report, config) <- rs
   --         return (cid, First (ClientInfo cid <$> report <*> config))
@@ -207,7 +207,7 @@ getErrorLogsImpl flt intervalMap = do
 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
   where
-    queryNodeAlert, queryBakerAlert, queryClientDaemonAlert
+    queryNodeAlert, queryBakerAlert --, queryClientDaemonAlert
       :: Pg.FromRow row
       => Pg.Query
       -> [Pg.Query]
@@ -216,8 +216,8 @@ getErrorLogsImpl flt intervalMap = do
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
     queryNodeAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
-    queryClientDaemonAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
+    --queryClientDaemonAlert sqlTable sqlFields =
+    --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
     queryBakerAlert' sqlTable sqlFields =
@@ -281,9 +281,10 @@ getErrorLogsImpl flt intervalMap = do
             (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
                 ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
             window
-        , queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
-          (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
-            window
+
+        --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
+        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+        --    window
 
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
           (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead
@@ -330,10 +331,10 @@ getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m)
   => NodeDataSource
   -> Maybe (PublicKeyHash)
-  -> m [(WithInfinity PublicKeyHash, First (Maybe BakerSummary))]
+  -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
   rs :: Map.Map PublicKeyHash (Maybe Text, Int) <- [queryQ|
-      SELECT b."publicKeyHash", b.alias,
+      SELECT b."publicKeyHash", b."data#data#alias",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
           JOIN "ErrorLogBakerMissed" elbm
@@ -342,7 +343,7 @@ getBakerAddresses nds bid = do
             AND elbm."baker#publicKeyHash" = b."publicKeyHash"
         )
       FROM "Baker" b
-      WHERE NOT b.deleted
+      WHERE NOT b."data#deleted"
         AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
     |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
   -- TODO: this is rather inelegant: we need something like this; to give you
@@ -392,9 +393,9 @@ getBakerAddresses nds bid = do
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(alias, alertCount) -> Just $ BakerSummary alias alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (\(alias, alertCount) -> Just $ BakerSummary (BakerData alias) alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
         (const Nothing)
-        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary alias alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
+        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary (BakerData alias) alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
       ) rs (getMonoidalMap nextBakeRights)
 
   -- $(logDebug) ("ViewSelectorHandler::getBakerAddresses " <> T.decodeUtf8 (LBS.toStrict $ Aeson.encode result))
@@ -406,7 +407,7 @@ getNodeAddresses
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
-      SELECT n.id, n."data#address", n."data#alias",
+      SELECT n.id, n."data#data#address", n."data#data#alias",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
@@ -428,4 +429,4 @@ getNodeAddresses nid = do
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary y z w)) rs
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z) w)) rs
