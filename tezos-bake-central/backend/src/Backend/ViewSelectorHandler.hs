@@ -301,6 +301,10 @@ getErrorLogsImpl flt intervalMap = do
         , queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
           (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
             window
+        , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
+            (\elId (tNode, tMinPeerCount, tActualPeerCount) ->
+                ErrorLogView_NodeError $ NodeErrorLogView_NodeInvalidPeerCount $ ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount)
+            window
 
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
           (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead

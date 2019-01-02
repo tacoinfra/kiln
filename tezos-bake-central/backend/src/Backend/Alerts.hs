@@ -189,9 +189,7 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeInvalidPeerCount" t ON t.log = el.id
       JOIN "Node" n ON n.id = t.node
-     WHERE t."minPeerCount" = ?minPeerCount
-       AND t."actualPeerCount" = ?actualPeerCount
-       AND t.node = ?nodeId
+     WHERE t.node = ?nodeId
        AND NOT n.deleted
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
@@ -203,7 +201,7 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
       for_ node' $ \node -> do
         (logId, _) <- insertErrorLog $ \logId ->
           ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
-        queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
+        queueAlert (Just logId) $ Alert Unresolved "Node invalid peer count" $
           "Node" <> maybe "" (" " <>) (_node_alias node) <> " at " <> Uri.render (_node_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 

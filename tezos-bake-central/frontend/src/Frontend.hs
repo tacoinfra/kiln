@@ -654,6 +654,9 @@ liveErrorsWidget nodesDyn = void $ do
               nodeLabel n
               el "div" message
 
+            NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
+              el "div" $ text $ "Connected peers has dropped bellow the minimum peer count (" <> tshow minPeerCount <> ")."
+
           ErrorLogView_BakerError ne -> case ne of
             BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
@@ -852,6 +855,7 @@ nodesTab =
               errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
                 NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
+                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Low number of connected peers."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
 
