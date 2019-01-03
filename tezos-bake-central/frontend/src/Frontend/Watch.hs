@@ -38,7 +38,6 @@ import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
 
-
 watchFrontendConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe FrontendConfig))
 watchFrontendConfig =
   (fmap . fmap) (getMaybeView . _bakeView_config) $ watchViewSelector $ pure $ mempty
@@ -212,17 +211,18 @@ watchCollectiveNodesStatus alertWindow = do
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case
     Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
-    Just nids -> \nodeErrors ->
-      let
-        getDown (Down x) = x
-        es = ffor nids $ \nid ->
+    Just nids -> \nodeErrors -> case
+        -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
+        -- the greatest element rather than least element.
+        getMin $ fold1 $ ffor nids $ \nid ->
           Min $
           fmap Down $
           -- if there are errors, we went "ill" when the first one started
-          minimumMay $ (CollectiveNodesFailure_AllNodesDownSince . _errorLog_started . fst)
+          minimumMay $ (_errorLog_started . fst)
             <$> maybe [] toList (MMap.lookup nid nodeErrors)
-
-      in maybe (Right ()) Left $ fmap getDown $ getMin $ fold1 es
+      of
+        Nothing -> Right ()
+        Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
