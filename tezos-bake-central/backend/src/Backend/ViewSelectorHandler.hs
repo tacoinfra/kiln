@@ -304,6 +304,9 @@ getErrorLogsImpl flt intervalMap = do
           (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
+        , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
+          (\elId (tNamedChain, tCommit, tProjectId) -> ErrorLogView_NetworkUpdate $ ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId)
+            window
 
         , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
           (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
@@ -386,7 +389,7 @@ getBakerAddresses nds bid = do
       FROM "BakerRightsCycleProgress" brcp
       LEFT OUTER JOIN "BakerRight" br
         ON br.branch = brcp.id
-        AND br.level > ?headLevel
+        AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
       WHERE brcp."chainId" = ?chainId
         AND brcp.branch in ?rightsHashes
         AND brcp."publicKeyHash" in ?bakerHashes

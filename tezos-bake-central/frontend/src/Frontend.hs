@@ -18,6 +18,7 @@ import Control.Lens ((<>~), imap)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Dependent.Sum (DSum(..))
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
 import Data.List (intersperse, sortBy)
@@ -418,12 +419,44 @@ nodesTabOrWelcome = do
         (fmap . fmap) (not . null) nodesMaybe
       haveBakersHaveNodesMaybe =
         (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+
+  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
+  whenJust mchain $ \chain -> do
+    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
+        guard $ _errorLogNetworkUpdate_namedChain ua == chain
+        return ua
+      _ -> Nothing
+    dyn_ $ ffor mUpgradeLog $ \case
+      Just elua -> divClass "dashboard-section dashboard-section-global-alerts" $ do
+        SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $
+          networkUpdateAlert elua
+      Nothing -> return ()
+
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just (False,False) -> divClass "app-content app-welcome" welcomeScreen
     Just (haveBakers, haveNodes) -> divClass "app-content" $ do
       when haveBakers bakersTab
       when haveNodes nodesTab
+
+networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
+networkUpdateAlert elua = do
+  let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
+  renderSplashAlert
+    (elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()) -- TODO switch to font icon when added
+    ("New Tezos '" <> namedChain <> "' software version.")
+    (do el "p" $ text $ mconcat
+          [ "There is a new version of the ", namedChain
+          , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
+          ]
+        el "p" $ do
+          text "Get the new software here  🡒  "
+          let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain -- FIXME the url should be based on the project id
+          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+    (Just $ LogTag_NetworkUpdate :=> pure elua)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -522,6 +555,7 @@ liveErrorsWidget
     )
   => m ()
 liveErrorsWidget = void $ do
+  let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
   nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
@@ -529,8 +563,17 @@ liveErrorsWidget = void $ do
     , (AlertsFilter_UnresolvedOnly, text "Unresolved")
     , (AlertsFilter_ResolvedOnly, text "Resolved")
     ]
-
-  errorsDyn <- MMap.getMonoidalMap <$$> watchErrors filterDyn alertWindow
+  let includesFilter f = \case
+        AlertsFilter_All -> True
+        f' -> f == f'
+      soleFilter f filterSel = do
+        guard $ includesFilter f filterSel
+        return f
+      unresolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
+      resolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
+  unresolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors unresolvedFilter everythingWindow
+  resolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors resolvedFilter alertWindow
+  let errorsDyn = zipDynWith (<>) unresolvedErrorsDyn resolvedErrorsDyn
   filteredErrors <- holdUniqDyn $ liftA2
     (\errors filterFn -> Map.filter (filterFn . fst) errors)
     errorsDyn
@@ -677,6 +720,11 @@ liveErrorsWidget = void $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
+          ErrorLogView_NetworkUpdate (ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain }) -> do
+            let chainText = "'" <> showNamedChain namedChain <> "'"
+            header $ T.unwords ["New", chainText, "version."]
+            el "div" $ do
+              text $ "There is a new version of the " <> chainText <> " software available on GitLab."
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
       header $ _bakerErrorDescriptions_title dsc
@@ -1093,20 +1141,16 @@ bakersTab =
       where
         renderBakerError dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
-          el "div" $ icon $ "icon-warning big " <> bool "red" "orange" (isJust warning)
-          el "div" $ do
-            divClass "ui header" $ do
-              text $ _bakerErrorDescriptions_title dsc
-            divClass "description" $ do
-              dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
-              el "div" $ text $ _bakerErrorDescriptions_problem dsc
-              for_ warning $ el "div" . text
-              el "div" $ do
-                el "strong" $ text "Fix: "
-                text $ _bakerErrorDescriptions_fix dsc
-              for_ (_bakerErrorDescriptions_userResolvable dsc) $ \resolveReq -> do
-                resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
-                requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+          renderSplashAlert
+            (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
+            (_bakerErrorDescriptions_title dsc)
+            (do dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+                el "div" $ text $ _bakerErrorDescriptions_problem dsc
+                for_ warning $ el "div" . text
+                el "div" $ do
+                  el "strong" $ text "Fix: "
+                  text $ _bakerErrorDescriptions_fix dsc)
+            (_bakerErrorDescriptions_userResolvable dsc)
 
     tile
       :: m () -- ^ Title
@@ -1167,6 +1211,23 @@ bakersTab =
               etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
               text nbsp
               dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
+
+renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+  => m () -- ^ Alert icon
+  -> Text -- ^ Title
+  -> m () -- ^ Description body
+  -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
+  -> m ()
+renderSplashAlert splashIcon title desc mReq = do
+  el "div" $ splashIcon
+  el "div" $ do
+    divClass "ui header" $ do
+      text title
+    divClass "description" $ do
+      desc
+      for_ mReq $ \resolveReq -> do
+        resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+        requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"

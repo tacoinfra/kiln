@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -93,6 +94,7 @@ data Notify
   | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
   | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
   | Notify_ErrorLogNodeInvalidPeerCount !(Id ErrorLogNodeInvalidPeerCount)
+  | Notify_ErrorLogNetworkUpdate !(Id ErrorLogNetworkUpdate)
   | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
   | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
   | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
@@ -127,6 +129,8 @@ instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
   mkDefaultNotify = Notify_ErrorLogNodeWrongChain
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
   mkDefaultNotify = Notify_ErrorLogNodeInvalidPeerCount
+instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
+  mkDefaultNotify = Notify_ErrorLogNetworkUpdate
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
   mkDefaultNotify = Notify_ErrorLogBakerDeactivated
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
@@ -269,6 +273,12 @@ instance ToField UpgradeCheckError where
   toField v = toField (show v)
 
 instance FromField UpgradeCheckError where
+  fromField f b = read <$> fromField f b
+
+instance ToField NamedChain where
+  toField v = toField (show v)
+
+instance FromField NamedChain where
   fromField f b = read <$> fromField f b
 
 instance PersistField Tez where
@@ -616,6 +626,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
+  - primitive: NamedChain
   - entity: ErrorLog
   - entity: ErrorLogBadNodeHead
   - entity: ErrorLogBakerNoHeartbeat
@@ -625,6 +636,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: ErrorLogBakerDeactivationRisk
   - entity: ErrorLogNodeWrongChain
   - entity: ErrorLogNodeInvalidPeerCount
+  - entity: ErrorLogNetworkUpdate
   - entity: ErrorLogBakerMissed
   - entity: CachedProtocolConstants
     constructors:
@@ -671,6 +683,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ErrorLogBakerDeactivationRisk, 'ErrorLogBakerDeactivationRiskKey)
   , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
   , (''ErrorLogNodeInvalidPeerCount, 'ErrorLogNodeInvalidPeerCountKey)
+  , (''ErrorLogNetworkUpdate, 'ErrorLogNetworkUpdateKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)

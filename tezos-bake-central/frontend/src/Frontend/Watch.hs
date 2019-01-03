@@ -16,13 +16,15 @@ module Frontend.Watch where
 import Data.Fixed (Micro)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
-import Data.Semigroup (Max (..), Min (..))
-import Data.Semigroup.Foldable (foldMap1)
+import Data.Ord (Down(..))
+import Data.Semigroup (Min (..))
+import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
+import Safe (minimumMay)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -157,22 +159,25 @@ watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
 -- TODO: filter by alert type (that is, ErrorLogView constructor, or logical groups of such)
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
-  => Dynamic t AlertsFilter
+  => Dynamic t (Maybe AlertsFilter)
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
-watchErrors alerts intervals = do
-  v <- watchViewSelector $ ffor2 alerts intervals $ \alert ivals -> mempty
-    { _bakeViewSelector_errors = MMap.singleton alert $ viewIntervalSet ivals 1
+watchErrors mAlert intervals = do
+  v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
+    { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  return $ fmap  (fmapMaybe (getFirst . fst . getFirst) . _intervalView_elements . fold) $ MMap.lookup <$> alerts <*> (_bakeView_errors <$> v)
+  return $ ffor2 mAlert v $ \mAlert' v' ->
+    fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ fold $ do
+      alert <- mAlert'
+      MMap.lookup alert $ _bakeView_errors v'
 
 watchErrorsByNode
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView))))
 watchErrorsByNode alertWindow = do
-  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
   pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
     [ (k, pure (l, t'))
     | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
@@ -185,7 +190,7 @@ watchErrorsByBaker
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))))
 watchErrorsByBaker alertWindow = do
-  dXs <- watchErrors (pure AlertsFilter_UnresolvedOnly) alertWindow
+  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
   pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
     [ (k, pure (l, t'))
     | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
@@ -204,18 +209,23 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
-  dNodes <- watchNodeAddresses -- $ pure $ viewRangeAll ()
+  dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty . MMap.keys <$> dNodes
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case
     Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
     Just nids -> \nodeErrors -> case
-        NEL.nonEmpty $ fforMaybe (NEL.toList nids) $ \nid ->
-          fmap getMin $ foldMap (Just . Min) $ (_errorLog_started . fst)
+        -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
+        -- the greatest element rather than least element.
+        getMin $ fold1 $ ffor nids $ \nid ->
+          Min $
+          fmap Down $
+          -- if there are errors, we went "ill" when the first one started
+          minimumMay $ (_errorLog_started . fst)
             <$> maybe [] toList (MMap.lookup nid nodeErrors)
       of
         Nothing -> Right ()
-        Just errors -> Left $ CollectiveNodesFailure_AllNodesDownSince $ getMax $ foldMap1 Max errors
+        Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =

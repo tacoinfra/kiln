@@ -509,6 +509,14 @@ data MailServerConfig = MailServerConfig
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
+data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
+  { _errorLogNetworkUpdate_log :: !(Id ErrorLog)
+  , _errorLogNetworkUpdate_namedChain :: !NamedChain
+  , _errorLogNetworkUpdate_commit :: !Text
+  , _errorLogNetworkUpdate_gitLabProjectId :: !Text
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNetworkUpdate
+
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
@@ -675,6 +683,7 @@ data LogTag a where
   LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
   LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
   LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
+  LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
 
 
 data BakerErrorDescriptions = BakerErrorDescriptions
@@ -717,6 +726,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNetworkUpdate
   , ''Event
   , ''MailServerConfig
   , ''Node
@@ -762,6 +772,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
   , 'ErrorLogNodeInvalidPeerCount
+  , 'ErrorLogNetworkUpdate
   , 'Event
   , 'MailServerConfig
   , 'Node

@@ -86,6 +86,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivationRisk)
         eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
+      Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log ErrorLogView_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
       Notify_NodeDetails eid ent -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
