@@ -23,11 +23,11 @@ humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
 humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
   where
     diff = Time.diffUTCTime ts now
-    dayOfWeek = case (Time.diffDays `on` Time.utctDay) ts now of
+    day = case (Time.diffDays `on` Time.utctDay) ts now of
       0 -> "Today"
       1 -> "Tomorrow"
-      _ -> "%A"
-    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (dayOfWeek <> ", %-l:%M%P %Z") $ Time.utcToZonedTime tz ts
+      d -> bool "Next %A" "%b %e" $ d >= 7
+    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> " @ %-l:%M%P %Z") $ Time.utcToZonedTime tz ts
 
 humanizeDiffTime :: Time.NominalDiffTime -> Text
 humanizeDiffTime t = T.unwords elems <> " ago"
