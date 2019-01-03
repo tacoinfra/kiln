@@ -451,7 +451,9 @@ minConnectionsField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ Ghcjs
 minConnectionsField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Nothing) Nothing) $ def
   & Txt.setPlaceholder ("e.g. " <> "5")
   & Txt.setFluid
-  & Txt.addLabel (el "label" $ text "Minimum Peer Connections")
+  & Txt.addLabel (el "label" $ do
+                     text "Minimum Peer Connections"
+                     divClass "sub-label" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
 
 zipFields :: (Applicative m, Reflex t)
           => m (Dynamic t (Either Text a))
