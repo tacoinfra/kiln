@@ -94,6 +94,7 @@ let
             "--check-for-upgrade=no"
             "--nodes='http://127.0.0.1:${toString rpcPort}'"
             "--email-from='${monitorName}@obsidian.systems'"
+            "--network-gitlab-project-id='${pkgs.lib.fileContents ./tezos-bake-central/config/network-gitlab-project-id}'"
             "--"
             "--port=${toString monitorPort}"
           ];

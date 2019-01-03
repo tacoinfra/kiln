@@ -349,6 +349,10 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_BadNodeHead -> pure Nothing
           LogTag_MultipleBakersForSameBaker -> pure Nothing
+          LogTag_NetworkUpdate -> do
+            let eid = _errorLogNetworkUpdate_log specificLog
+            n <- fmap (Notify_ErrorLogNetworkUpdate . toId) . listToMaybe <$> project AutoKeyField (ErrorLogNetworkUpdate_logField `in_` [eid])
+            return $ (,) <$> pure eid <*> n
           LogTag_BakerDeactivated -> pure Nothing
           LogTag_BakerDeactivationRisk -> pure Nothing
           LogTag_BakerMissed -> do

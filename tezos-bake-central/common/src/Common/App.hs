@@ -187,6 +187,7 @@ data ErrorLogView
   | ErrorLogView_BakerError !BakerErrorLogView
   | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
   -- ^ Misc baker *daemon* error.
+  | ErrorLogView_NetworkUpdate !ErrorLogNetworkUpdate
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
@@ -226,19 +227,7 @@ errorLogIdForErrorLogView = \case
     BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_log ebd
     BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_log ebd
   ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
-
-manuallyResolvable :: ErrorLogView -> Bool
-manuallyResolvable = \case
-  ErrorLogView_NodeError ne -> case ne of
-    NodeErrorLogView_InaccessibleNode _ -> False
-    NodeErrorLogView_NodeWrongChain _ -> False
-    NodeErrorLogView_BadNodeHead _ -> False
-  ErrorLogView_BakerError be -> case be of
-    BakerErrorLogView_MultipleBakersForSameBaker _ -> False
-    BakerErrorLogView_BakerMissed _ -> True
-    BakerErrorLogView_BakerDeactivated _ -> False
-    BakerErrorLogView_BakerDeactivationRisk _ -> False
-  ErrorLogView_BakerNoHeartbeat _ -> False
+  ErrorLogView_NetworkUpdate ua -> _errorLogNetworkUpdate_log ua
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView

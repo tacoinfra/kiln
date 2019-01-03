@@ -49,6 +49,7 @@ library
     , IntervalMap
     , lattices
     , lens
+    , lens-aeson
     , mime-mail
     , modern-uri
     , monad-control

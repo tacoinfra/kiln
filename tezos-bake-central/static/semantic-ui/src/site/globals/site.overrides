@@ -673,6 +673,11 @@ img.credits-obsidian {
 
   .description {
     color: @grey;
+
+    .buttons {
+      display: flex;
+      justify-content: flex-end;
+    }
   }
 }
 
@@ -874,6 +879,12 @@ h4.dashboard-section-title {
     display: inline-block;
     width: 100%;
   }
+}
+
+.dashboard-section.dashboard-section-global-alerts {
+  margin-left: @30px;
+  margin-right: @30px;
+  margin-top: @30px;
 }
 
 /* vim: set syntax=less : */

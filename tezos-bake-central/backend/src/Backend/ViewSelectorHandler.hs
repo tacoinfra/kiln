@@ -299,6 +299,9 @@ getErrorLogsImpl flt intervalMap = do
           (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
                   ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
           window
+        , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
+          (\elId (tNamedChain, tCommit, tProjectId) -> ErrorLogView_NetworkUpdate $ ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId)
+            window
 
         , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
           (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
