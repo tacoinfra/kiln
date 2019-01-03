@@ -204,7 +204,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
-  dNodes <- watchNodeAddresses -- $ pure $ viewRangeAll ()
+  dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty . MMap.keys <$> dNodes
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case
