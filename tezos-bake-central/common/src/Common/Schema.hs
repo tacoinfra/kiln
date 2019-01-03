@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DoAndIfThenElse #-}
@@ -7,16 +9,26 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- TODO do everywhere
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
+
+-- 'deriveJSONGADT' produces seemingly redundant pattern matches.
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
+
+-- GHC is confused about type families.
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Common.Schema
   ( module Common.Schema
@@ -31,6 +43,11 @@ import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
+import Data.Constraint.Extras.TH (deriveArgDict)
+import Data.Aeson.GADT (deriveJSONGADT)
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import Data.Dependent.Sum (DSum)
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -45,11 +62,10 @@ import Data.Universe.Helpers (universeDef)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
-import Rhyolite.Schema (Email, HasId, Id, Json)
+import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Json
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
 import Tezos.Operation
@@ -135,6 +151,7 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_delegate em)
       (_endorsementMetadata_slots em)
 
+-- TODO use `DeletableRow` when we add back this feature.
 data Client = Client
   { _client_address :: !URI
   , _client_alias :: !(Maybe Text)
@@ -142,14 +159,6 @@ data Client = Client
   , _client_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Client
-
-data PendingReward = PendingReward
-  { _pendingReward_baker :: !(Id Baker)
-  , _pendingReward_hash :: !Text -- needed because we need to be able to tell that we're not adding the same reward twice
-  , _pendingReward_level :: !TezosWord64
-  , _pendingReward_amount :: !Tez
-  } deriving (Eq, Show, Generic, Typeable)
-instance HasId PendingReward
 
 data ClientInfo = ClientInfo
   { _clientInfo_client :: !(Id Client)
@@ -159,47 +168,80 @@ data ClientInfo = ClientInfo
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ClientInfo
 
+-- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
 data Node = Node
-  { _node_address :: !URI
-  , _node_alias :: !(Maybe Text)
-  , _node_identity :: !(Maybe CryptoboxPublicKeyHash)
-  , _node_headLevel :: !(Maybe RawLevel)
-  , _node_headBlockHash :: !(Maybe BlockHash)
-  , _node_headBlockPred :: !(Maybe BlockHash)
-  , _node_headBlockBakedAt :: !(Maybe UTCTime)
-  , _node_peerCount :: !(Maybe Word64)
-  , _node_networkStat :: !NetworkStat
-  , _node_fitness :: !(Maybe Fitness)
-  , _node_deleted :: !Bool
-  , _node_updated :: !(Maybe UTCTime)
-  , _node_minPeerConnections :: !(Maybe Int)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
 
-mkNode :: URI -> Maybe Text -> Node
-mkNode addr alias = Node
-  { _node_address = addr
-  , _node_alias = alias
-  , _node_identity = Nothing -- TODO
-  , _node_headLevel = Nothing
-  , _node_headBlockHash = Nothing
-  , _node_headBlockPred = Nothing
-  , _node_headBlockBakedAt = Nothing
-  , _node_peerCount = Nothing
-  , _node_networkStat = NetworkStat 0 0 0 0
-  , _node_fitness = Nothing
-  , _node_deleted = False
-  , _node_updated = Nothing
-  , _node_minPeerConnections = Nothing
+data DeletableRow a = DeletableRow
+  { _deletableRow_data :: !a
+  , _deletableRow_deleted :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId a => HasId (DeletableRow a) where
+  type IdData (DeletableRow a) = IdData a
+
+-- data NodeExternal = NodeExternal (WithId (Id Node) (Deletable NodeExternal'))
+
+data NodeExternal = NodeExternal
+  { _nodeExternal_id :: !(Id Node)
+  , _nodeExternal_data :: !(DeletableRow NodeExternalData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId NodeExternal where
+  -- Should be the same as `IdData NodeExternalData` always.
+  type IdData NodeExternal = Id Node
+
+data NodeExternalData = NodeExternalData
+  { _nodeExternalData_address :: !URI
+  , _nodeExternalData_alias :: !(Maybe Text)
+  , _nodeExternalData_minPeerConnections :: !(Maybe Int)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId NodeExternalData where
+  type IdData NodeExternalData = Id Node
+
+-- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
+
+data NodeDetails = NodeDetails
+  { _nodeDetails_id :: !(Id Node)
+  , _nodeDetails_data :: NodeDetailsData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- TODO don't need Maybes here probably.
+data NodeDetailsData = NodeDetailsData
+  { _nodeDetailsData_identity :: !(Maybe CryptoboxPublicKeyHash)
+  , _nodeDetailsData_headLevel :: !(Maybe RawLevel)
+  , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
+  , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
+  , _nodeDetailsData_peerCount :: !(Maybe Word64)
+  , _nodeDetailsData_networkStat :: !NetworkStat
+  , _nodeDetailsData_fitness :: !(Maybe Fitness)
+  , _nodeDetailsData_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance HasId NodeDetailsData where
+  type IdData NodeDetailsData = Id Node
+
+mkNodeDetails :: NodeDetailsData
+mkNodeDetails = NodeDetailsData
+  { _nodeDetailsData_identity = Nothing -- TODO
+  , _nodeDetailsData_headLevel = Nothing
+  , _nodeDetailsData_headBlockHash = Nothing
+  , _nodeDetailsData_headBlockPred = Nothing
+  , _nodeDetailsData_headBlockBakedAt = Nothing
+  , _nodeDetailsData_peerCount = Nothing
+  , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
+  , _nodeDetailsData_fitness = Nothing
+  , _nodeDetailsData_updated = Nothing
   }
 
-getNodeHeadBlock :: Node -> Maybe VeryBlockLike
+getNodeHeadBlock :: NodeDetailsData -> Maybe VeryBlockLike
 getNodeHeadBlock n = VeryBlockLike
-  <$> _node_headBlockHash n
-  <*> _node_headBlockPred n
-  <*> _node_fitness n
-  <*> _node_headLevel n
-  <*> _node_headBlockBakedAt n
+  <$> _nodeDetailsData_headBlockHash n
+  <*> _nodeDetailsData_headBlockPred n
+  <*> _nodeDetailsData_fitness n
+  <*> _nodeDetailsData_headLevel n
+  <*> _nodeDetailsData_headBlockBakedAt n
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -327,25 +369,90 @@ data ClientConfig = ClientConfig
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+-- newtype Baker_ = Baker (WithId PublicKeyHash (Deletable Baker'))
+
 data Baker = Baker
   { _baker_publicKeyHash :: !PublicKeyHash
-  , _baker_alias :: !(Maybe Text)
-  , _baker_deleted :: !Bool
+  , _baker_data :: !(DeletableRow BakerData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Baker
+instance HasId Baker where
+  -- Should be the same as `IdData BakerData` always.
+  type IdData Baker = PublicKeyHash
+
+data BakerData = BakerData
+  { _bakerData_alias :: !(Maybe Text)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId BakerData where
+  type IdData BakerData = PublicKeyHash
+
+-- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
+-- we'd probably want to cache it seperately  (it changes way slower anyhow)
+data CacheDelegateInfo = CacheDelegateInfo
+  { _cacheDelegateInfo_balance :: !Tez
+  , _cacheDelegateInfo_frozenBalance :: !Tez
+  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
+  , _cacheDelegateInfo_stakingBalance :: !Tez
+  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
+  , _cacheDelegateInfo_delegatedBalance :: !Tez
+  , _cacheDelegateInfo_deactivated :: !Bool
+  , _cacheDelegateInfo_gracePeriod :: !Cycle
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- newtype BakerDetails = BakerDetails (WithId PublicKeyHash BakerDetails')
 
 data BakerDetails = BakerDetails
   { _bakerDetails_publicKeyHash :: !PublicKeyHash
-  , _bakerDetails_nextBakeRights :: !(Maybe RawLevel)
-  , _bakerDetails_nextEndorseRights :: !(Maybe RawLevel)
-  , _bakerDetails_branch :: !BlockHash
+  , _bakerDetails_branch :: !VeryBlockLike
+  , _bakerDetails_delegateInfo :: !(Maybe (Json CacheDelegateInfo))
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDetails
+instance HasId BakerDetails where
+  type IdData BakerDetails = PublicKeyHash
+
+data BakerRightsCycleProgress = BakerRightsCycleProgress
+  { _bakerRightsCycleProgress_chainId :: !ChainId
+  , _bakerRightsCycleProgress_branch :: !BlockHash -- The hash of the first block in the cycle that confers rights.
+  -- | we reuse this table to also give us clues about which cycles we've ever
+  -- tried to cache, so we can start caching before any delegates have been
+  -- configured.
+  , _bakerRightsCycleProgress_publicKeyHash :: !PublicKeyHash
+  , _bakerRightsCycleProgress_cycle :: !Cycle -- the cycle in which rights are determined: if this is 6, the associated rights are in cycle 12
+  , _bakerRightsCycleProgress_progress :: !RawLevel
+    -- ranging over the first level in this cycle to the last
+    -- this indicates that the amount already computed is from
+    -- the first level in the cycle to 'progress', inclusive
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerRightsCycleProgress
+
+data RightKind = RightKind_Baking | RightKind_Endorsing
+  deriving (Eq, Ord, Show, Read, Enum, Bounded)
+instance Aeson.FromJSONKey RightKind
+instance Aeson.ToJSONKey RightKind
+
+-- It's an explicit choice not to include either the priority; this reduces the
+-- amount of reduntant data since we only really care about expected returns
+-- rather than all possible.  For the same reason we *do* include endorsement
+-- slots, since that affects expected returns.
+data BakerRight = BakerRight
+  { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
+  , _bakerRight_level :: !RawLevel
+  , _bakerRight_right :: !RightKind
+  , _bakerRight_slots :: !(Maybe Int)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerRight
+
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
   , _bakeEfficiency_bakingRights :: !Word64
   -- TODO:
+  -- { _bakeEfficiency_bakerSucecss :: Sum Int
+  -- , _bakeEfficiency_bakerTotal :: Sum Int
+  -- , _bakeEfficiency_endorseOperationSuccess
+  -- , _bakeEfficiency_endorseOperationTotal
+  -- , _bakeEfficiency_endorseSlotsSuccess
+  -- , _bakeEfficiency_endorseSlotsTotal
+  -- , _bakeEfficiency_bakingRights :: !Word64
   -- , _bakeEfficiency_endorsedBlocks :: !Word64
   -- , _bakeEfficiency_endorsingRights :: !Word64
   -- , _bakeEfficiency_endorsedSlots :: !Word64
@@ -405,6 +512,7 @@ instance HasId MailServerConfig
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogInaccessibleNode_address :: !URI
   , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -413,6 +521,7 @@ instance HasId ErrorLogInaccessibleNode
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
+  -- TODO why is this so denormalized?
   , _errorLogNodeWrongChain_address :: !URI
   , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
@@ -448,6 +557,24 @@ data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameBaker
 
+data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
+  { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
+  , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivated_preservedCycles :: !Cycle
+  , _errorLogBakerDeactivated_fitness :: !Fitness
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerDeactivated
+
+data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
+  { _errorLogBakerDeactivationRisk_log :: !(Id ErrorLog)
+  , _errorLogBakerDeactivationRisk_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivationRisk_gracePeriod :: !Cycle
+  , _errorLogBakerDeactivationRisk_latestCycle :: !Cycle
+  , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
+  , _errorLogBakerDeactivationRisk_fitness :: !Fitness
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerDeactivationRisk
+
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
@@ -456,6 +583,23 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   , _errorLogBadNodeHead_latestHead :: !(Json VeryBlockLike)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead
+
+-- we wilfully ignore the branch issue; we mostly don't care on which branch you
+-- did or didn't take your rights.
+--
+-- in particular, there's two ways to "resolve" this type of alert, either a
+-- new uncle occurs in which the baker *did* exercise their rights, or the user
+-- manually acknowledges the error.  If the network is branch hopping; its
+-- possible for a user to acknowledge a miss, then for the same level missed to
+-- be re-reported;  we explicitly ignore that possibility.
+data ErrorLogBakerMissed = ErrorLogBakerMissed
+  { _errorLogBakerMissed_log :: !(Id ErrorLog)
+  , _errorLogBakerMissed_baker :: !(Id Baker)
+  , _errorLogBakerMissed_right :: !RightKind
+  , _errorLogBakerMissed_level :: !RawLevel
+  , _errorLogBakerMissed_fitness :: !Fitness
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerMissed
 
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
@@ -522,21 +666,52 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+data LogTag a where
+  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
+  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
+  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
+  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
+  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
+  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
+
+
+data BakerErrorDescriptions = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title :: !Text
+  , _bakerErrorDescriptions_tile :: !Text
+  , _bakerErrorDescriptions_notification :: !Text
+  , _bakerErrorDescriptions_problem :: !Text
+  , _bakerErrorDescriptions_warning :: !(Maybe Text)
+  , _bakerErrorDescriptions_fix :: !Text
+  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
+  }
+
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
+  , ''Baker
+  , ''BakerData
+  , ''BakerDetails
+  , ''BakerRight
+  , ''BakerRightsCycleProgress
   , ''BlockBaker
+  , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
   , ''ClientInfo
   , ''ClientWorker
-  , ''Baker
-  , ''BakerDetails
+  , ''DeletableRow
   , ''EndorseEvent
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
@@ -545,10 +720,15 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''Event
   , ''MailServerConfig
   , ''Node
+  , ''NodeExternal
+  , ''NodeExternalData
+  , ''NodeDetails
+  , ''NodeDetailsData
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
+  , ''RightKind
   , ''SeenEvent
   , ''AlertNotificationMethod
   , ''SmtpProtocol
@@ -558,18 +738,25 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpgradeCheckError
   , ''UpstreamVersion
   ] ++ map makeLenses
-  [ 'BakedEvent
+  [ 'BakeEfficiency
+  , 'BakedEvent
   , 'BakedEventOperation
-  , 'BakeEfficiency
+  , 'Baker
+  , 'BakerData
+  , 'BakerDetails
+  , 'BakerRight
+  , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'CachedProtocolConstants
-  , 'Baker
-  , 'BakerDetails
+  , 'DeletableRow
   , 'EndorseEvent
   , 'Error
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBakerMissed
+  , 'ErrorLogBakerDeactivated
+  , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
@@ -577,6 +764,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNodeInvalidPeerCount
   , 'Event
   , 'MailServerConfig
+  , 'Node
+  , 'NodeExternal
+  , 'NodeExternalData
+  , 'NodeDetails
+  , 'NodeDetailsData
   , 'Parameters
   , 'PublicNodeConfig
   , 'PublicNodeHead
@@ -589,6 +781,16 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   ] ++ map makePrisms
   [ ''UpgradeCheckError
   ])
+
+return []
+
+deriveArgDict ''LogTag
+deriveGCompare ''LogTag
+deriveGEq ''LogTag
+deriveGShow ''LogTag
+deriveJSONGADT ''LogTag
+
+
 
 
 instance BlockLike (Event BakedEvent) where
@@ -611,3 +813,19 @@ instance BlockLike PublicNodeHead where
   fitness = publicNodeHead_headBlock . fitness
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
+
+
+aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
+aliasedIdentification getMain getFallback x =
+  let fallback = getFallback x
+  in maybe (fallback, Nothing) (, Just fallback) $ getMain x
+
+nodeIdentification :: NodeExternalData -> (Text, Maybe Text)
+nodeIdentification = aliasedIdentification
+  _nodeExternalData_alias
+  (Uri.render . _nodeExternalData_address)
+
+bakerIdentification :: Baker -> (Text, Maybe Text)
+bakerIdentification = aliasedIdentification
+  (view $ baker_data . deletableRow_data . bakerData_alias)
+  (toPublicKeyHashText . _baker_publicKeyHash)

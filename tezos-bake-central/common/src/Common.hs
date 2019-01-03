@@ -19,6 +19,10 @@ nominalDiffTimeToSeconds n = numerator ratio `div` denominator ratio
   where
     ratio = toRational n
 
+humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
+humanizeTimestamp _ c t = humanizeDiffTime (Time.diffUTCTime c t)
+  -- TODO: show "TODAY/TOMORROW/WEDNESDAY"
+
 humanizeDiffTime :: Time.NominalDiffTime -> Text
 humanizeDiffTime t = T.unwords elems <> agoFromNow
   where
@@ -39,7 +43,7 @@ humanizeDiffTime t = T.unwords elems <> agoFromNow
       $ take2
       $ dropWhile ((== 0) . fst)
       $ reverse
-      $ zip (hms [60,60,24] totalseconds) "smhd"
+      $ zip (hms [60,60,24] (abs totalseconds)) "smhd"
 
     showElem (n, u)
       | n == 0 = Nothing

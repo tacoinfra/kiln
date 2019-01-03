@@ -14,11 +14,12 @@
 
 module Frontend where
 
-import Control.Lens ((<>~))
+import Control.Lens ((<>~), imap)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
-import Data.Functor.Infix
+import Data.Functor.Infix hiding ((<&>))
+import Data.Functor.Compose (Compose(..))
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.List.NonEmpty as NEL
@@ -46,8 +47,9 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
-import Rhyolite.Schema (Json (..))
+import Rhyolite.Schema (Json (..), Id(..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
+import Safe (minimumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -56,7 +58,8 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (humanBytes, unixEpoch, uriHostPortPath)
-import Common.Alerts (AlertsFilter (..), badNodeHeadMessage)
+import Common.Alerts (AlertsFilter(..), badNodeHeadMessage
+                     , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -201,11 +204,10 @@ appMain = do
         (\f -> SemUi.menu
           (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
           $ do
-            nodesDyn <- watchNodes $ pure $ viewRangeAll ()
             e <- divClass "sidebar-title" $ do
               divClass "ui left floated header" $ text "Notifications"
               divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-            liveErrorsWidget nodesDyn
+            liveErrorsWidget
             pure e)
         -- Accompanying content
         $ do
@@ -362,7 +364,7 @@ headerBell = do
   alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ bool "ui segment basic big" "ui circular big red link label" . (>0))
+      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ ((<>) "ui circular label link ") . bool "basic" "red" . (>0))
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
@@ -505,7 +507,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe Node)
+data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
@@ -517,9 +519,9 @@ liveErrorsWidget
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t (MonoidalMap (Id Node) Node)
-  -> m ()
-liveErrorsWidget nodesDyn = void $ do
+  => m ()
+liveErrorsWidget = void $ do
+  nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
     [ (AlertsFilter_All, text "All")
@@ -608,11 +610,6 @@ liveErrorsWidget nodesDyn = void $ do
       el "label" $ text lbl
       localTimestamp $ pure ts
 
-    nodeIdentification :: Node -> (Text, Maybe Text)
-    nodeIdentification ns =
-      let addr = Uri.render $ _node_address ns
-      in maybe (addr, Nothing) (, Just addr) $ _node_alias ns
-
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
         || filterSelection == AlertsFilter_UnresolvedOnly && not isResolved
@@ -620,9 +617,6 @@ liveErrorsWidget nodesDyn = void $ do
       where isResolved = isJust $ _errorLog_stopped log
 
     header = divClass "header" . text
-    errorLabel primary secondary = el "div" $ do
-      el "label" $ text primary
-      for_ secondary $ elClass "label" "node-secondary-label" . text
 
     synthEntry :: SynthError -> m ()
     synthEntry (SynthError_BakersInformationDown pkhs) = do
@@ -633,8 +627,7 @@ liveErrorsWidget nodesDyn = void $ do
 
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' specificLog node') =
-      let nodeLabel = uncurry errorLabel . nodeIdentification
-      in case specificLog of
+        case specificLog of
           ErrorLogView_NodeError ne -> case ne of
             NodeErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
               header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
@@ -650,7 +643,8 @@ liveErrorsWidget nodesDyn = void $ do
             NodeErrorLogView_BadNodeHead l ->
               for_ node' $ \n -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-              header $ heading <> ": " <> fromMaybe (Uri.render $ _node_address n) (_node_alias n)
+              let (addr, mAlias) = nodeSummaryIdentification n
+              header $ heading <> ": " <> fromMaybe addr mAlias
               nodeLabel n
               el "div" message
 
@@ -658,14 +652,35 @@ liveErrorsWidget nodesDyn = void $ do
               el "div" $ text $ "Connected peers has dropped below the minimum peer count (" <> tshow minPeerCount <> ")."
 
           ErrorLogView_BakerError ne -> case ne of
+            BakerErrorLogView_BakerDeactivated log -> renderBakerError
+              (bakerDeactivatedDescriptions log)
+              (_errorLogBakerDeactivated_publicKeyHash log)
+            BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+              (bakerDeactivationRiskDescriptions log)
+              (_errorLogBakerDeactivationRisk_publicKeyHash log)
+
             BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
+            BakerErrorLogView_BakerMissed elbm -> do
+              let
+                rightTxt = case _errorLogBakerMissed_right elbm of
+                  RightKind_Baking -> "a bake"
+                  RightKind_Endorsing -> "an endorsement"
+              header $ "Missed " <> rightTxt <> " opportunity"
+              el "div" $ do
+                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
 
           ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
             header "Baker lagging behind" -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
+
+    renderBakerError dsc pkh = do
+      bakersDyn <- watchBakerAddresses
+      header $ _bakerErrorDescriptions_title dsc
+      dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+      el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
@@ -682,18 +697,18 @@ statusColor = \case
   MonitoredStatus_Unhealthy -> "red"
   MonitoredStatus_Unknown -> "grey"
 
-sidebarList ::
+sidebarList :: forall t m k.
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
-  , Coercible a (Map.Map k (Text, Maybe Text, MonitoredStatus))
   , Ord k
   )
-  => Text -> Dynamic t a -> (Event t () -> ModalM m (Event t ())) -> m ()
-sidebarList name nodes modal = do
+  => Text -> Dynamic t (MonoidalMap k (Text, Maybe Text, MonitoredStatus)) -> (Event t () -> ModalM m (Event t ())) -> m ()
+sidebarList name nodes' modal = do
+  let nodes :: Dynamic t (Map.Map k (Text, Maybe Text, MonitoredStatus)) = coerceDynamic nodes'
   divClass "ui sub header" $ text (pluralOf name)
   divClass "ui list" $ do
-    _ <- listWithKey (coerceDynamic nodes) $ \_ node -> divClass "item bullet-before" $ do
+    _ <- listWithKey nodes $ \_ node -> divClass "item bullet-before" $ do
       let color = (\(_,_,s) -> statusColor s) <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> SemUi.Dyn color) blank
       divClass "content" $ do
@@ -705,6 +720,12 @@ sidebarList name nodes modal = do
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses ["add-" <> T.toLower name] modal
 
+bakerStatus :: BakerSummary -> MonitoredStatus
+bakerStatus bakerSummary
+  | _bakerSummary_alertCount bakerSummary > 0 = MonitoredStatus_Unhealthy
+  | _bakerSummary_nextRightFetchRemaining bakerSummary > 0 = MonitoredStatus_Unknown
+  | otherwise = MonitoredStatus_Healthy
+
 bakersList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
@@ -712,15 +733,12 @@ bakersList ::
   )
   => m ()
 bakersList = do
-  let bakerStatus = \case
-        0 -> bool  MonitoredStatus_Unknown MonitoredStatus_Healthy . isJust
-        _ -> const MonitoredStatus_Unhealthy
-
-  bakers <- ((,,) <$> (toPublicKeyHashText . _bakerSummary_address) <*> _bakerSummary_alias <*> _bakerSummary_alertCount) <$$$> watchBakerAddresses
-  bakers' <- fmap joinDynThroughMap $ listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh val -> do
-    details <- watchBakerDetails pkh
-    pure $ ffor2 val details $ \(addr, alias, alerts) d -> (addr, alias, bakerStatus alerts d)
-  sidebarList "Baker" bakers' addBakerModal
+  bakers :: Dynamic t (MonoidalMap PublicKeyHash (Text, Maybe Text, MonitoredStatus)) <- imap (\pkh b ->
+    ( toPublicKeyHashText pkh
+    , _bakerData_alias $ _bakerSummary_baker b
+    , bakerStatus b)
+    ) <$$> watchBakerAddresses
+  sidebarList "Baker" bakers addBakerModal
 
 addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addBakerModal close = mdo
@@ -731,7 +749,7 @@ addBakerModal close = mdo
   added <- requestingIdentity $ fmap (\(addr,alias,_) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
-nodeTitleSubtitle :: Text -> Maybe Text -> (Text, Maybe Text)
+nodeTitleSubtitle :: a -> Maybe a -> (a, Maybe a)
 nodeTitleSubtitle addr alias = (fromMaybe addr alias, addr <$ alias)
 
 nodesList ::
@@ -744,7 +762,10 @@ nodesList = do
   let nodeStatus = \case
         0 -> MonitoredStatus_Healthy
         _ -> MonitoredStatus_Unhealthy
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeSummary_address) <*> _nodeSummary_alias <*> (nodeStatus . _nodeSummary_alertCount)) <$$$> watchNodeAddresses
+  nodes <- ((,,) <$> (uriHostPortPath . _nodeExternalData_address . _nodeSummary_node)
+                 <*> (_nodeExternalData_alias . _nodeSummary_node)
+                 <*> (nodeStatus . _nodeSummary_alertCount))
+    <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -827,10 +848,10 @@ nodesTab
 nodesTab =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
-    nodesDyn <- watchNodes $ pure $ viewRangeAll ()
+    nodesDyn <- watchNodeAddresses
     nodeTilesWidget nodesDyn
   where
-    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) Node) -> m ()
+    nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) NodeSummary) -> m ()
     nodeTilesWidget nodesDyn = do
       publicNodeConfigDyn <- watchPublicNodeConfig
       rawPublicNodesDyn <- watchPublicNodeHeads
@@ -858,20 +879,23 @@ nodesTab =
                 NodeErrorLogView_NodeInvalidPeerCount{} -> text "Low number of connected peers."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-
-            let (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle (uriHostPortPath . _node_address <$> vDyn) (_node_alias <$> vDyn)
+              nodeCfgDyn = _nodeSummary_node <$> vDyn
+              (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle
+                (uriHostPortPath <$> _nodeExternalData_address <$> nodeCfgDyn)
+                (_nodeExternalData_alias <$> nodeCfgDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
+            nodeDetails <- watchNodeDetails nodeId
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _node_address <$> current vDyn <@ ev)
-              getNodeHeadBlock
+              (\ev -> PublicRequest_RemoveNode . _nodeExternalData_address . _nodeSummary_node <$> current vDyn <@ ev)
+              ((=<<) getNodeHeadBlock)
               (Just errorMessages)
-              (Just _node_peerCount)
-              (Just _node_networkStat)
-              vDyn
+              (Just $ (=<<) _nodeDetailsData_peerCount)
+              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              nodeDetails
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -963,45 +987,54 @@ nodesTab =
             divClass "column" $ do
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
-      where
-        nbsp = "\x00A0"
 
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasTimer t r
+    , MonadReader r m, HasTimer t r, HasTimeZone r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
 bakersTab =
   divClass "dashboard-section dashboard-section-bakers" $ do
     elClass "h4" "dashboard-section-title" $ text "Bakers"
-    tilesDyn <- watchBakerAddresses
-    tilesWidget tilesDyn
+    tilesWidget =<< watchBakerAddresses
   where
     tilesWidget :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> m ()
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
+      ebb <- snd <$$$$> watchErrorsByBaker alertWindow
 
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
-         showOverview <- holdUniqDyn $ any isNothing <$> joinDynThroughMap bakersDetails
-         dyn_ $ ffor showOverview $ bool blank overview
-         ebb <- snd <$$$$> watchErrorsByBaker alertWindow
-         -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+         showGatheringData <- holdUniqDyn $
+            (||)
+            <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)
+            <*> (any isNothing <$> joinDynThroughMap bakersDetails)
+         dyn_ $ ffor showGatheringData $ bool blank gatheringData
+         dyn_ $ ffor ebb $ traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
+
          bakersDetails <- divClass "ui stackable cards" $ do
-          listWithKey (MMap.getMonoidalMap <$> tilesDyn) $ \pkh vDyn -> do
-            unresolvedAlerts <- holdUniqDyn $
-              foldMap toList . MMap.lookup pkh <$> ebb
+          listWithKey (coerceDynamic tilesDyn) $ \pkh vDyn -> do
+            unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> ebb
 
             let
+              renderBakerError = text . _bakerErrorDescriptions_tile
+
               errorMessages = ffor unresolvedAlerts $ fmap $ \case
                 -- TODO
                 BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
+                BakerErrorLogView_BakerMissed elbm -> text $ "Missed a " <> aRight
+                  where
+                    aRight = case _errorLogBakerMissed_right elbm of
+                      RightKind_Baking -> "bake"
+                      RightKind_Endorsing -> "endorse"
+                BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
+                BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
-            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerSummary_alias <$> vDyn)
+            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerData_alias . _bakerSummary_baker <$> vDyn)
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
             details <- watchBakerDetails pkh
@@ -1012,7 +1045,11 @@ bakersTab =
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
               (const Nothing)
               (const Nothing)
-              (const $ Just ("Dog explodes", 1000000))
+              -- if you have both a bake and endorse for the same level, you
+              -- must *first* bake the block at that level, then you may
+              -- immediately endorse that block.  the times are the same,
+              -- baking happens first.
+              (minimumByMay (on compare snd <> on compare fst) . Map.toList . _bakerSummary_nextRight)
               (Just errorMessages)
               vDyn
               details
@@ -1020,8 +1057,8 @@ bakersTab =
             pure details
          blank
 
-    overview :: m ()
-    overview = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+    gatheringData :: m ()
+    gatheringData = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
       el "div" $ icon "icon-download big grey"
       el "div" $ do
         divClass "ui header" $ do
@@ -1029,18 +1066,50 @@ bakersTab =
           text "Gathering baker data..."
         divClass "description" $ text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker."
 
+    splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+      -- TODO
+      BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
+      BakerErrorLogView_BakerMissed log -> renderBakerError
+        (bakerMissedDescriptions log)
+        (unId $ _errorLogBakerMissed_baker log)
+      BakerErrorLogView_BakerDeactivated log -> renderBakerError
+        (bakerDeactivatedDescriptions log)
+        (_errorLogBakerDeactivated_publicKeyHash log)
+      BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+        (bakerDeactivationRiskDescriptions log)
+        (_errorLogBakerDeactivationRisk_publicKeyHash log)
+
+      where
+        renderBakerError dsc pkh = do
+          let warning = _bakerErrorDescriptions_warning dsc
+          el "div" $ icon $ "icon-warning big " <> bool "red" "orange" (isJust warning)
+          el "div" $ do
+            divClass "ui header" $ do
+              text $ _bakerErrorDescriptions_title dsc
+            divClass "description" $ do
+              dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+              el "div" $ text $ _bakerErrorDescriptions_problem dsc
+              for_ warning $ el "div" . text
+              el "div" $ do
+                el "strong" $ text "Fix: "
+                text $ _bakerErrorDescriptions_fix dsc
+              for_ (_bakerErrorDescriptions_userResolvable dsc) $ \resolveReq -> do
+                resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+                requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+
     tile
       :: m () -- ^ Title
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
       -> (b -> Maybe Double) -- ^ (Optional) Function to get the bake success of the baker
       -> (b -> Maybe Double) -- ^ (Optional) Function to get the endorsement success of the baker
-      -> (b -> Maybe (Text, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
+      -> (BakerSummary -> Maybe (RightKind, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
-      -> Dynamic t a -- ^ Baker
+      -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe b) -- ^ Details
       -> m ()
-    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' baker details' = do
+    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' bakerDyn details' = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
@@ -1048,17 +1117,21 @@ bakersTab =
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
-            errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ ffor2 details' errorsEmpty $ \d e -> "tiny circle " <> maybe "grey" (\_ -> bool "red" "green" e) d
+            _errorsEmpty <- holdUniqDyn $ null <$> errors
+            iconDyn $ ("tiny circle " <>) . statusColor . bakerStatus <$> bakerDyn
           title
           divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors ->
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
+        dyn_ $ ffor ((/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn) $ \case
+          True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
+          False -> blank
+
         (details'' :: Dynamic t (Maybe (Dynamic t b))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
-          Nothing -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
+          Nothing -> blank
           Just details -> el "dl" $ do
             el "dt" (text "Bake Success:")
             el "dd" $
@@ -1071,9 +1144,19 @@ bakersTab =
               withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
             el "br" blank
-
-      where
-        nbsp = "\x00A0"
+        nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
+        latestHead <- watchLatestHead
+        dparameters <- watchProtoInfo
+        dyn_ $ ffor nextEventDyn $ \case
+          Nothing -> blank
+          Just eventDyn -> el "dl" $ do
+            el "dt" (text "Next:")
+            el "dd" $ do
+              (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
+              (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+              text nbsp
+              dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"

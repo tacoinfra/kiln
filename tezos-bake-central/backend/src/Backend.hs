@@ -77,7 +77,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
-import Backend.Workers.Baker (bakerWorker)
+import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -196,13 +196,26 @@ backendImpl cfg serve = do
 
       -- Set nodes overrides based on configuration
       for_ nodes $ \ns -> do
-        update [Node_deletedField =. True] CondEmpty
-        update [Node_deletedField =. False] (Node_addressField `in_` toList ns)
-        enabled <- project Node_addressField (Node_deletedField ==. False)
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] CondEmpty
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. False]
+          ((NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector) `in_` toList ns)
+        enabled <- project (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
+          ((NodeExternal_dataField ~> DeletableRow_deletedSelector) ==. False)
 
         let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress ->
-          insert $ mkNode newAddress Nothing
+        for_ needToAdd $ \newAddress -> do
+          nid <- insert' Node
+          insert $ NodeExternal
+            { _nodeExternal_id = nid
+            , _nodeExternal_data = DeletableRow
+              { _deletableRow_data = NodeExternalData
+                { _nodeExternalData_address = newAddress
+                , _nodeExternalData_alias = Nothing
+                , _nodeExternalData_minPeerConnections = Nothing
+                }
+              , _deletableRow_deleted = False
+              }
+            }
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
@@ -238,7 +251,8 @@ backendImpl cfg serve = do
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< bakerWorker dataSrc
+      addFinalizer =<< bakerRightsWorker dataSrc
+      addFinalizer =<< bakerWorker appConfig dataSrc
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db

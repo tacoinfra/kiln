@@ -138,7 +138,7 @@ settingsTab = do
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
-                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H5
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
                 -- If nothing is set, return nothing
@@ -172,7 +172,7 @@ settingsTab = do
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
                   divClass "notification-settings-description" $ text descr
-                  True <$$ uiButton "primary" ("Connect " <> name)
+                  True <$$ uiButton "fluid" ("Connect " <> name)
                 SettingsRoute_View dcfg -> do
                   divClass "notification-settings-description" $ text descr
                   True <$$ viewCfg dcfg
@@ -225,7 +225,7 @@ settingsTab = do
         bakers <- watchBakerAddresses
         _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
-          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerSummary_alias
+          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove

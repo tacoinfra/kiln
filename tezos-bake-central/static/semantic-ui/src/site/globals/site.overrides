@@ -271,9 +271,19 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
-    padding-top: @10px;
-    padding-bottom: @10px;
+    padding-top: @6px;
+    padding-bottom: @6px;
     padding-right: @20px;
+    border-bottom-width: @2px;
+
+    .column {
+      .ui.circular.label.link {
+        cursor: pointer;
+        height: @40px;
+        font-size: 16px;
+        margin-top: 2px;
+      }
+    }
 
     .topbar.column {
       padding-left: @30px;
@@ -282,6 +292,7 @@ body {
 
       > .ui.horizontal.list .item .content {
         font-weight: bold;
+        font-size: @13px;
         padding-left: @30px;
         margin-right: @40px;
 
@@ -289,6 +300,7 @@ body {
           font-weight: normal;
         }
         > .header {
+          font-size: @12px;
           font-weight: normal;
           color: rgba(0, 0, 0, .6);
           padding-bottom: @4px;
@@ -423,6 +435,7 @@ body {
       margin-bottom: @20px;
       margin-left: -@sidebar-horizontal-padding;
       margin-right: -@sidebar-horizontal-padding;
+      border-top-width: @2px;
     }
 
     .no-notifications {
@@ -457,7 +470,7 @@ body {
           margin-right: 1em;
         }
 
-        .node-secondary-label {
+        .secondary-label {
           font-weight: normal;
           font-style: italic;
           color: @grey;
@@ -514,6 +527,10 @@ img.credits-obsidian {
     font-size: @12px;
     margin-top: @30px;
     margin-bottom: @20px;
+  }
+
+  .ui.button.fluid {
+    width: 200px;
   }
 
   .ui.form .fields {

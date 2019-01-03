@@ -47,6 +47,7 @@ library
     , http-conduit
     , http-types
     , IntervalMap
+    , lattices
     , lens
     , mime-mail
     , modern-uri
@@ -81,6 +82,7 @@ library
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
+    , these
     , time
     , transformers
     , unix
