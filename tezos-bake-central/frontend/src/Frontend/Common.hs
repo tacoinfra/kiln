@@ -105,8 +105,7 @@ localHumanizedTimestamp titleDyn tDyn = do
       whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
       dynText ltDyn
     ) $
-    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
-      humanizeTimestamp tz c t
+    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ humanizeTimestamp tz
 
 data TooltipPos
   = TooltipPos_TopLeft
