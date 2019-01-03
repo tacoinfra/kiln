@@ -30,7 +30,7 @@ import Data.Pool (Pool)
 import Data.These
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
@@ -104,15 +104,27 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     -- out "new" blocks that are already on the branch of `oldHead`?
     now <- getTime
     let p = (NodeDetails_dataField ~>)
-    update
-      [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
-      , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
-      , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
-      , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
-      , p NodeDetailsData_updatedSelector =. Just now
-      , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-      ]
-      (NodeDetails_idField ==. nodeId)
+    project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
+      [] -> insert $ NodeDetails
+        { _nodeDetails_id = nodeId
+        , _nodeDetails_data = mkNodeDetails
+          { _nodeDetailsData_headLevel = Just (headBlockInfo ^. monitorBlock_level)
+          , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. monitorBlock_hash)
+          , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. monitorBlock_timestamp)
+          , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
+          , _nodeDetailsData_updated = Just now
+          , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
+          }
+        }
+      (_:_) -> update
+        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
+        , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
+        , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
+        , p NodeDetailsData_updatedSelector =. Just now
+        , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
+        ]
+        (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
 
