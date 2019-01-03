@@ -152,7 +152,6 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_RemoveBaker pkh -> inDb $ do
         bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
         let inIds = In bIds
-        _ <- [executeQ| DELETE FROM "PendingReward" pr WHERE pr.baker IN ?inIds |]
         _ <- [executeQ| DELETE FROM "BakerDetails" ds WHERE ds."publicKeyHash" = ?pkh |]
         for_ bIds $ \bId -> do
           update
