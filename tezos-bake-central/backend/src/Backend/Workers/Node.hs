@@ -16,24 +16,24 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Lens (imap)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Align
+import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
-import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
+import Data.These
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
@@ -104,15 +104,27 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     -- out "new" blocks that are already on the branch of `oldHead`?
     now <- getTime
     let p = (NodeDetails_dataField ~>)
-    update
-      [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
-      , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
-      , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
-      , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
-      , p NodeDetailsData_updatedSelector =. Just now
-      , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-      ]
-      (NodeDetails_idField ==. nodeId)
+    project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
+      [] -> insert $ NodeDetails
+        { _nodeDetails_id = nodeId
+        , _nodeDetails_data = mkNodeDetails
+          { _nodeDetailsData_headLevel = Just (headBlockInfo ^. monitorBlock_level)
+          , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. monitorBlock_hash)
+          , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. monitorBlock_timestamp)
+          , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
+          , _nodeDetailsData_updated = Just now
+          , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
+          }
+        }
+      (_:_) -> update
+        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
+        , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
+        , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
+        , p NodeDetailsData_updatedSelector =. Just now
+        , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
+        ]
+        (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
 
@@ -153,22 +165,29 @@ updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
 -- TODO do join in database, not Haskell. Also don't get all the data
 getNodes
   :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
-     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails c)
+     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
      )
   => Pool Postgresql
   -> cond
   -> m (Map (Id Node) (Node, NodeExternalData, NodeDetailsData))
 getNodes db constraints = do
-  (nodeIds, nodeEs, nodeDs) :: (Map (Id Node) Node, [NodeExternal], [NodeDetails])
+  (nodeIds, nodeEs, nodeDs) :: ( Map (Id Node) Node
+                               , Map (Id Node) NodeExternalData
+                               , Map (Id Node) NodeDetailsData
+                               )
     <- runDb (Identity db) $ liftA3 (,,)
       (selectMap NodeConstructor CondEmpty)
-      (select (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
-      (select constraints)
+      (Map.fromList <$> project
+        ( NodeExternal_idField
+        , NodeExternal_dataField ~> DeletableRow_dataSelector)
+        (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      (Map.fromList <$> project
+        (NodeDetails_idField, NodeDetails_dataField)
+        constraints)
 
-  pure $ fmapMaybe id $ flip imap nodeIds $ \nid node -> (,,)
-    <$> pure node
-    <*> (_deletableRow_data . _nodeExternal_data <$> find ((== nid) . _nodeExternal_id) nodeEs)
-    <*> (_nodeDetails_data <$> find ((== nid) . _nodeDetails_id) nodeDs)
+  pure $ fmapMaybe id $ alignWith
+    (these (Just . ($ mkNodeDetails)) (const Nothing) (\f a -> Just $ f a))
+    ((,,) <$> nodeIds <.> nodeEs) nodeDs
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
