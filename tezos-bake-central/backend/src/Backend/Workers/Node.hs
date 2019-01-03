@@ -16,24 +16,24 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Lens (imap)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Align
+import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
-import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
+import Data.These
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
@@ -153,22 +153,29 @@ updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
 -- TODO do join in database, not Haskell. Also don't get all the data
 getNodes
   :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
-     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails c)
+     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
      )
   => Pool Postgresql
   -> cond
   -> m (Map (Id Node) (Node, NodeExternalData, NodeDetailsData))
 getNodes db constraints = do
-  (nodeIds, nodeEs, nodeDs) :: (Map (Id Node) Node, [NodeExternal], [NodeDetails])
+  (nodeIds, nodeEs, nodeDs) :: ( Map (Id Node) Node
+                               , Map (Id Node) NodeExternalData
+                               , Map (Id Node) NodeDetailsData
+                               )
     <- runDb (Identity db) $ liftA3 (,,)
       (selectMap NodeConstructor CondEmpty)
-      (select (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
-      (select constraints)
+      (Map.fromList <$> project
+        ( NodeExternal_idField
+        , NodeExternal_dataField ~> DeletableRow_dataSelector)
+        (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      (Map.fromList <$> project
+        (NodeDetails_idField, NodeDetails_dataField)
+        constraints)
 
-  pure $ fmapMaybe id $ flip imap nodeIds $ \nid node -> (,,)
-    <$> pure node
-    <*> (_deletableRow_data . _nodeExternal_data <$> find ((== nid) . _nodeExternal_id) nodeEs)
-    <*> (_nodeDetails_data <$> find ((== nid) . _nodeDetails_id) nodeDs)
+  pure $ fmapMaybe id $ alignWith
+    (these (Just . ($ mkNodeDetails)) (const Nothing) (\f a -> Just $ f a))
+    ((,,) <$> nodeIds <.> nodeEs) nodeDs
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
