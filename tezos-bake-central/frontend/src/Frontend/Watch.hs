@@ -16,13 +16,15 @@ module Frontend.Watch where
 import Data.Fixed (Micro)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
-import Data.Semigroup (Max (..), Min (..))
-import Data.Semigroup.Foldable (foldMap1)
+import Data.Ord (Down(..))
+import Data.Semigroup (Min (..))
+import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
+import Safe (minimumMay)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
@@ -210,12 +212,17 @@ watchCollectiveNodesStatus alertWindow = do
   holdUniqDyn $ ffor2 dmNids ebn $ \case
     Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
     Just nids -> \nodeErrors -> case
-        NEL.nonEmpty $ fforMaybe (NEL.toList nids) $ \nid ->
-          fmap getMin $ foldMap (Just . Min) $ (_errorLog_started . fst)
+        -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
+        -- the greatest element rather than least element.
+        getMin $ fold1 $ ffor nids $ \nid ->
+          Min $
+          fmap Down $
+          -- if there are errors, we went "ill" when the first one started
+          minimumMay $ (_errorLog_started . fst)
             <$> maybe [] toList (MMap.lookup nid nodeErrors)
       of
         Nothing -> Right ()
-        Just errors -> Left $ CollectiveNodesFailure_AllNodesDownSince $ getMax $ foldMap1 Max errors
+        Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
