@@ -134,7 +134,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
-       AND NOT b.deleted
+       AND NOT b."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -181,7 +181,7 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
       JOIN "Baker" b ON b.publicKeyHash = t."publicKeyHash"
-     WHERE NOT b.deleted
+     WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -383,7 +383,7 @@ missedBakeLog right pkh lvl =
     LEFT OUTER JOIN "ErrorLog" el
       ON el.id = elbm.log
       AND el.stopped IS NULL
-    WHERE NOT b.deleted
+    WHERE NOT b."data#deleted"
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
 
@@ -427,7 +427,7 @@ clearMissedBake f right pkh lvl = do
         JOIN "Baker" b
           ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       WHERE elbm.log = el.id
-        AND NOT b.deleted
+        AND NOT b."data#deleted"
         AND el.stopped IS NULL
         AND elbm.fitness < ?f :: VARCHAR[] -- because groundhog
         AND elbm.right = ?right
