@@ -42,6 +42,7 @@ preMigrate =
   >=> renameColumnIfExists (Nothing, "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (Nothing, "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (Nothing, "Delegate") "Baker"
+  >=> ensureMinimalNodeTable
   >=> createNodeDetailsTable
   >=> createNodeExternalTable
   >=> migrateNodesToSplitTable
@@ -155,6 +156,17 @@ dropTable :: (Migrate m) => QualifiedName -> m ()
 dropTable table = do
   let sqlCode = "DROP TABLE " <> tableSql table
   $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+
+ensureMinimalNodeTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+ensureMinimalNodeTable ta = do
+  let table = (Nothing, "Node")
+  analyzeTable ta table >>= \case
+    Just _analyzedTable -> pure ta
+    Nothing -> do
+      let sqlCode = [sql| CREATE TABLE "Node" ( "id" SERIAL PRIMARY KEY); |]
+      $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
+      getTableAnalysis
+
 
 -- | The auto migrate does this find, but we need this to happen first, so I cut
 -- and pasted.
