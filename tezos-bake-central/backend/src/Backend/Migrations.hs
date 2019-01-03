@@ -42,9 +42,6 @@ preMigrate =
   >=> renameColumnIfExists (Nothing, "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (Nothing, "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (Nothing, "Delegate") "Baker"
-  >=> ensureMinimalNodeTable
-  >=> createNodeDetailsTable
-  >=> createNodeExternalTable
   >=> migrateNodesToSplitTable
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
@@ -157,65 +154,7 @@ dropTable table = do
   let sqlCode = "DROP TABLE " <> tableSql table
   $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
 
-ensureMinimalNodeTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
-ensureMinimalNodeTable ta = do
-  let table = (Nothing, "Node")
-  analyzeTable ta table >>= \case
-    Just _analyzedTable -> pure ta
-    Nothing -> do
-      let sqlCode = [sql| CREATE TABLE "Node" ( "id" SERIAL PRIMARY KEY); |]
-      $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
-      getTableAnalysis
 
-
--- | The auto migrate does this find, but we need this to happen first, so I cut
--- and pasted.
-createNodeDetailsTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
-createNodeDetailsTable ta = do
-  let table = (Nothing, "NodeDetails")
-  analyzeTable ta table >>= \case
-    Just _analyzedTable -> pure ta
-    Nothing -> do
-      let sqlCode = [sql|
-            CREATE TABLE "NodeDetails"
-              ( "id" INT8 NOT NULL
-              , "data#identity" BYTEA NULL
-              , "data#headLevel" INT8 NULL
-              , "data#headBlockHash" BYTEA NULL
-              , "data#headBlockPred" BYTEA NULL
-              , "data#headBlockBakedAt" TIMESTAMP NULL
-              , "data#peerCount" INT8 NULL
-              , "data#networkStat#totalSent" INT8 NOT NULL
-              , "data#networkStat#totalRecv" INT8 NOT NULL
-              , "data#networkStat#currentInflow" INT4 NOT NULL
-              , "data#networkStat#currentOutflow" INT4 NOT NULL
-              , "data#fitness" VARCHAR[] NULL
-              , "data#updated" TIMESTAMP NULL
-              );
-            ALTER TABLE "NodeDetails" ADD CONSTRAINT "NodeDetailsId" PRIMARY KEY("id");
-            ALTER TABLE "NodeDetails" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
-          |]
-      $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
-      getTableAnalysis
-
-createNodeExternalTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
-createNodeExternalTable ta = do
-  let table = (Nothing, "NodeExternal")
-  analyzeTable ta table >>= \case
-    Just _analyzedTable -> pure ta
-    Nothing -> do
-      let sqlCode = [sql|
-            CREATE TABLE "NodeExternal"
-              ( "id" INT8 NOT NULL
-              , "data#data#address" VARCHAR NOT NULL
-              , "data#data#alias" VARCHAR NULL
-              , "data#deleted" BOOLEAN NOT NULL
-              );
-            ALTER TABLE "NodeExternal" ADD CONSTRAINT "NodeExternalId" PRIMARY KEY("id");
-            ALTER TABLE "NodeExternal" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
-            |]
-      $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
-      getTableAnalysis
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
 migrateNodesToSplitTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
@@ -227,6 +166,31 @@ migrateNodesToSplitTable ta = do
       -> do
           let
             sqlCode = [sql|
+              CREATE TABLE "NodeExternal"
+                ( "id" INT8 NOT NULL
+                , "data#data#address" VARCHAR NOT NULL
+                , "data#data#alias" VARCHAR NULL
+                , "data#deleted" BOOLEAN NOT NULL
+                );
+              ALTER TABLE "NodeExternal" ADD CONSTRAINT "NodeExternalId" PRIMARY KEY("id");
+              ALTER TABLE "NodeExternal" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
+              CREATE TABLE "NodeDetails"
+                ( "id" INT8 NOT NULL
+                , "data#identity" BYTEA NULL
+                , "data#headLevel" INT8 NULL
+                , "data#headBlockHash" BYTEA NULL
+                , "data#headBlockPred" BYTEA NULL
+                , "data#headBlockBakedAt" TIMESTAMP NULL
+                , "data#peerCount" INT8 NULL
+                , "data#networkStat#totalSent" INT8 NOT NULL
+                , "data#networkStat#totalRecv" INT8 NOT NULL
+                , "data#networkStat#currentInflow" INT4 NOT NULL
+                , "data#networkStat#currentOutflow" INT4 NOT NULL
+                , "data#fitness" VARCHAR[] NULL
+                , "data#updated" TIMESTAMP NULL
+                );
+              ALTER TABLE "NodeDetails" ADD CONSTRAINT "NodeDetailsId" PRIMARY KEY("id");
+              ALTER TABLE "NodeDetails" ADD FOREIGN KEY("id") REFERENCES "Node"("id");
               INSERT INTO "NodeExternal"
                   ( "id"
                   , "data#data#address"
