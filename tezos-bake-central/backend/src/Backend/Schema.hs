@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -686,4 +687,3 @@ instance DefaultKeyId Baker where
 instance DefaultKeyId BakerDetails where
   toIdData _ (BakerDetailsKeyKey pkh) = pkh
   fromIdData _ = BakerDetailsKeyKey
-
