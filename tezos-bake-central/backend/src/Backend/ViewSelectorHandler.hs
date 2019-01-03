@@ -384,7 +384,7 @@ getBakerAddresses nds bid = do
       FROM "BakerRightsCycleProgress" brcp
       LEFT OUTER JOIN "BakerRight" br
         ON br.branch = brcp.id
-        AND br.level > ?headLevel
+        AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
       WHERE brcp."chainId" = ?chainId
         AND brcp.branch in ?rightsHashes
         AND brcp."publicKeyHash" in ?bakerHashes
