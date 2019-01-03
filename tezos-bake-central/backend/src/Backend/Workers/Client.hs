@@ -121,12 +121,6 @@ clientWorker appCfg nds =
                 | b <- _report_baked report
                 , bakerPkh <- _clientConfig_bakers clientConfig
                 ]
-          unless (null $ _report_baked report) $ void [executeQ|
-            INSERT INTO "PendingReward" (baker, hash, level, amount)
-            SELECT d.id, x.hash, x.level, x.amount
-            FROM ?insertValues x (baker_pkh, hash, level, amount)
-            JOIN "Baker" d ON d."publicKeyHash" = x.baker_pkh
-            ON CONFLICT DO NOTHING |]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
                           VALUES (?cid, ?reportJson, ?clientConfigJson)
