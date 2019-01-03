@@ -141,7 +141,8 @@ updateNetworkStats appConfig httpMgr db nid nodeExt before = runExceptT $ do
   -- We will rely on the block monitor to clear any inaccessible endpoint errors
   -- for this node.m
   when (before /= after) $ inDb $ do
-    for_ ((,) <$> _nodeDetailsData_peerCount after <*> _nodeExternalData_minPeerConnections nodeExt) $ \(peerCount, minPeerCount) -> do
+    let minPeerCount = _nodeExternalData_minPeerConnections nodeExt
+    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
       flip runReaderT appConfig $
         if (peerCount < fromIntegral minPeerCount)
           then reportNodeInvalidPeerCountError nid minPeerCount peerCount
