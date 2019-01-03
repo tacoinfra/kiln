@@ -23,13 +23,11 @@ import Data.Version (showVersion)
 import GHCJS.DOM.Types (MonadJSM)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import qualified Reflex.Dom.Form.Validators as Validator
+import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
-
-import Tezos.Types
 
 import Common.Api
 import Common.App
@@ -215,8 +213,11 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri blank never "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." "Bake Daemon Address" "http://127.0.0.1:9732/" "My Bake Daemon"
-        void $ requestingIdentity $ ffor addE $ \(addr,alias,_) -> public (PublicRequest_AddClient addr alias)
+        addE <- formWithReset "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." blank never $ do
+          zipFields
+            (formItem' "required" $ uriField "Bake Daemon Address" "http://127.0.0.1:9732/")
+            (formItem $ aliasField "My Bake Daemon")
+        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     _bakersOptions :: m ()
     _bakersOptions = do
@@ -230,8 +231,11 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "Baker Wallet Address" "tz..." "My Baker"
-        void $ requestingIdentity $ ffor addE $ \(pkh,alias,_) -> public (PublicRequest_AddBaker pkh alias)
+        addE <- formWithReset "Add Baker" "Begin monitoring wallet address entered." blank never $ do
+          zipFields
+            (formItem' "required" $ pkhField "Baker Wallet Address" "tz...")
+            (formItem $ aliasField "My Baker")
+        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
