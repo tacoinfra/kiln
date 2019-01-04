@@ -75,6 +75,7 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
+    , semigroupoids
     , snap-core
     , snap-loader-static
     , snap-server
