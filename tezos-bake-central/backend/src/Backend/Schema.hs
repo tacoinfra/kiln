@@ -524,6 +524,18 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
+  - entity: NodeInternal
+    autoKey: null
+    keys:
+      - name: NodeInternalId
+        default: true
+    constructors:
+      - name: NodeInternal
+        uniques:
+          - name: NodeInternalId
+            type: primary
+            fields: [_nodeInternal_id]
+  - embedded: NodeInternalData
   - entity: NodeDetails
     autoKey: null
     keys:

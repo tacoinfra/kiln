@@ -78,7 +78,7 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_node :: NodeExternalData
+  { _nodeSummary_node :: Either NodeExternalData NodeInternalData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
@@ -90,9 +90,12 @@ bakerSummaryIdentification = aliasedIdentification
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
-nodeSummaryIdentification = aliasedIdentification
-  (_nodeExternalData_alias . _nodeSummary_node)
-  (Uri.render . _nodeExternalData_address . _nodeSummary_node)
+nodeSummaryIdentification ns = case _nodeSummary_node ns of
+  Left e -> aliasedIdentification
+    (_nodeExternalData_alias)
+    (Uri.render . _nodeExternalData_address)
+    e
+  Right _ -> ("Kiln-managed Node", Nothing)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)

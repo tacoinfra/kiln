@@ -23,6 +23,7 @@ import Data.Pool (Pool)
 import Data.Semigroup (Max(..))
 import Data.Time (UTCTime)
 import Data.These (these)
+import Data.Word
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
@@ -216,6 +217,8 @@ getErrorLogsImpl flt intervalMap = do
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
     queryNodeAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
+      `MMap.union`
+      queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node"))
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
@@ -433,7 +436,9 @@ getNodeAddresses nid = do
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-      FROM "NodeExternal" n
-      WHERE NOT n."data#deleted"
+      FROM "Node" n
+      OUTER JOIN FROM "NodeExternal" ne
+      OUTER JOIN FROM "NodeInternal" ni
+      WHERE NOT (COALESCE (ne."data#deleted", ni."data#deleted"))
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
   return $ fmap (first Bounded . \(x,y,z,mpc,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z mpc) w)) rs
