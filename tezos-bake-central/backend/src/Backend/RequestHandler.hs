@@ -59,7 +59,8 @@ requestHandler
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
-      PublicRequest_AddNode addr alias minPeerConn -> inDb $ do
+      PublicRequest_AddNode addr alias minPeerConn' -> inDb $ do
+        let minPeerConn = fromMaybe 0 minPeerConn'
         existingIds :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
           Nothing -> do
@@ -67,7 +68,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             let nodeData = NodeExternalData
                     { _nodeExternalData_address = addr
                     , _nodeExternalData_alias = alias
-                    , _nodeExternalData_minPeerConnections = fromMaybe 0 minPeerConn
+                    , _nodeExternalData_minPeerConnections = minPeerConn
                     }
                 node = NodeExternal
                   { _nodeExternal_id = nid
@@ -82,6 +83,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             update
               [ NodeExternal_dataField ~> DeletableRow_deletedSelector =. False
               , NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_aliasSelector =. alias
+              , NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_minPeerConnectionsSelector =. minPeerConn
               ]
               (NodeExternal_idField ==. nid)
             project (NodeExternal_dataField ~> DeletableRow_dataSelector)
