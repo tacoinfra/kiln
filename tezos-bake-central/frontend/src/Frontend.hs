@@ -1173,17 +1173,18 @@ bakersTab =
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
           Just details -> el "dl" $ do
-            el "dt" (text "Bake Success:")
-            el "dd" $
-              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+            --el "dt" (text "Bake Success:")
+            --el "dd" $
+            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
 
-            el "br" blank
+            --el "br" blank
 
-            el "dt" (text "Endorsement Success:")
-            el "dd" $ do
-              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+            --el "dt" (text "Endorsement Success:")
+            --el "dd" $ do
+            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
-            el "br" blank
+            --el "br" blank
+            pure ()
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
         latestHead <- watchLatestHead
         dparameters <- watchProtoInfo
