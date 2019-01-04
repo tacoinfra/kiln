@@ -660,24 +660,29 @@ img.credits-obsidian {
 
 .dashboard-section > .dashboard-section-overview {
   display: flex;
-  .icon {
-    margin-right: @24px;
-  }
 
-  .ui.header {
-    margin-bottom: @13px;
-
-    .ui.loader {
-      margin-right: @10px;
+  .dashboard-section-overview-icon {
+    .icon {
+      margin-right: @24px;
     }
   }
 
-  .description {
-    color: @grey;
+  .dashboard-section-overview-body {
+    .ui.header {
+      margin-bottom: @13px;
 
-    .buttons {
-      display: flex;
-      justify-content: flex-end;
+      .ui.loader {
+        margin-right: @10px;
+      }
+    }
+
+    .description {
+      color: @grey;
+
+      .buttons {
+        display: flex;
+        justify-content: flex-end;
+      }
     }
   }
 }
