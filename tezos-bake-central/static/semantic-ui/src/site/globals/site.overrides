@@ -341,6 +341,7 @@ body {
   flex-grow: 1;
   &:not(.app-welcome) {
     padding-left: @30px;
+    padding-right: @30px;
   }
   overflow: auto;
 
@@ -659,24 +660,31 @@ img.credits-obsidian {
 
 .dashboard-section > .dashboard-section-overview {
   display: flex;
-  .icon {
-    margin-right: @24px;
-  }
 
-  .ui.header {
-    margin-bottom: @13px;
-
-    .ui.loader {
-      margin-right: @10px;
+  .dashboard-section-overview-icon {
+    .icon {
+      margin-right: @24px;
     }
   }
 
-  .description {
-    color: @grey;
+  .dashboard-section-overview-body {
+    flex: 1;
 
-    .buttons {
-      display: flex;
-      justify-content: flex-end;
+    .ui.header {
+      margin-bottom: @13px;
+
+      .ui.loader {
+        margin-right: @10px;
+      }
+    }
+
+    .description {
+      color: @grey;
+
+      .buttons {
+        display: flex;
+        justify-content: flex-end;
+      }
     }
   }
 }

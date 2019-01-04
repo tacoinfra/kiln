@@ -444,7 +444,7 @@ nodesTabOrWelcome = do
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
   let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
-  renderSplashAlert
+  renderResolvableSplashAlert
     (elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()) -- TODO switch to font icon when added
     ("New Tezos '" <> namedChain <> "' software version.")
     (do el "p" $ text $ mconcat
@@ -1103,12 +1103,12 @@ bakersTab =
 
     gatheringData :: m ()
     gatheringData = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
-      el "div" $ icon "icon-download big grey"
-      el "div" $ do
-        divClass "ui header" $ do
+      renderSplashAlert
+        (icon "icon-download big grey")
+        (do
           divClass "ui active inline loader small blue" blank
-          text "Gathering baker data..."
-        divClass "description" $ text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker."
+          text "Gathering baker data...")
+        (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
@@ -1127,7 +1127,7 @@ bakersTab =
       where
         renderBakerError dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
-          renderSplashAlert
+          renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
             (_bakerErrorDescriptions_title dsc)
             (do dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
@@ -1173,17 +1173,18 @@ bakersTab =
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
           Just details -> el "dl" $ do
-            el "dt" (text "Bake Success:")
-            el "dd" $
-              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+            --el "dt" (text "Bake Success:")
+            --el "dd" $
+            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
 
-            el "br" blank
+            --el "br" blank
 
-            el "dt" (text "Endorsement Success:")
-            el "dd" $ do
-              withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+            --el "dt" (text "Endorsement Success:")
+            --el "dd" $ do
+            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
-            el "br" blank
+            --el "br" blank
+            pure ()
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
         latestHead <- watchLatestHead
         dparameters <- watchProtoInfo
@@ -1198,22 +1199,29 @@ bakersTab =
               text nbsp
               dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
 
-renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
   -> Text -- ^ Title
   -> m () -- ^ Description body
   -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
   -> m ()
-renderSplashAlert splashIcon title desc mReq = do
-  el "div" $ splashIcon
-  el "div" $ do
-    divClass "ui header" $ do
-      text title
-    divClass "description" $ do
-      desc
-      for_ mReq $ \resolveReq -> do
-        resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
-        requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+renderResolvableSplashAlert splashIcon title desc mReq = do
+  renderSplashAlert splashIcon (text title) $ do
+    desc
+    for_ mReq $ \resolveReq -> do
+      resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+      requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+
+renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+  => m () -- ^ Alert icon
+  -> m () -- ^ Title
+  -> m () -- ^ Description body
+  -> m ()
+renderSplashAlert splashIcon title desc = do
+  elClass "div" "dashboard-section-overview-icon" $ splashIcon
+  elClass "div" "dashboard-section-overview-body" $ do
+    divClass "ui header" $ title
+    divClass "description" $ desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"
