@@ -341,6 +341,7 @@ body {
   flex-grow: 1;
   &:not(.app-welcome) {
     padding-left: @30px;
+    padding-right: @30px;
   }
   overflow: auto;
 
