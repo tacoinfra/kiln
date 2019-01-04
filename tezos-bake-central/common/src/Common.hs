@@ -23,7 +23,9 @@ humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
 humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
   where
     diff = Time.diffUTCTime ts now
-    day = case (Time.diffDays `on` Time.utctDay) ts now of
+    localNow = Time.utcToLocalTime tz now
+    localTS = Time.utcToLocalTime tz ts
+    day = case (Time.diffDays `on` Time.localDay) localTS localNow of
       0 -> "Today"
       1 -> "Tomorrow"
       d -> bool "Next %A" "%b %e" $ d >= 7
@@ -44,7 +46,11 @@ humanizeDiffTime t = T.unwords elems <> " ago"
       | otherwise = xy:take 1 xys
     take2 xys = take 2 $ xys
 
-    elems = mapMaybe showElem
+    putBack x [] = [x]
+    putBack _ xs = xs
+
+    elems = putBack "0s"
+      $ mapMaybe showElem
       $ take2
       $ dropWhile ((== 0) . fst)
       $ reverse
