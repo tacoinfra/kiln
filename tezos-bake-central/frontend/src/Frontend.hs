@@ -414,8 +414,8 @@ nodesTabOrWelcome = do
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-      haveBakersHaveNodesMaybe =
-        (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+  haveBakersHaveNodesMaybe <- holdUniqDyn $
+    (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
 
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   whenJust mchain $ \chain -> do
@@ -1163,7 +1163,8 @@ bakersTab =
         for_ errors' $ \errors ->
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-        dyn_ $ ffor ((/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn) $ \case
+        isGathering <- holdUniqDyn $ (/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn
+        dyn_ $ ffor isGathering $ \case
           True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
           False -> blank
 
