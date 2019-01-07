@@ -157,64 +157,73 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
         return (x, cycle')
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
-    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> for_ [minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished .. rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo] $ \lvl -> do
-      -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on, 
-      reqBakers <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
-      reqEndorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash lvl
-      let
-        pri1baker :: Maybe BakingRights
-        pri1baker = fmap NonEmpty.head . nonEmpty . (filter $ (flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
-        endorsers :: Seq EndorsingRights
-        endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
-        branch :: BlockHash
-        branch = _rightsCycleInfo_branch aCycleInfo
-
-        bakerRightCycleInfo :: PublicKeyHash -> BakerRightsCycleProgress
-        bakerRightCycleInfo pkh = BakerRightsCycleProgress
-          { _bakerRightsCycleProgress_chainId = chainId
-          , _bakerRightsCycleProgress_branch = branch
-          , _bakerRightsCycleProgress_publicKeyHash = pkh
-          , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
-          , _bakerRightsCycleProgress_progress = lvl
-          }
-        bakerRights :: Maybe (Id BakerRightsCycleProgress) -> PublicKeyHash -> [BakerRight]
-        bakerRights pid pkh =
-          [ BakerRight pid' lvl RightKind_Baking Nothing
-            | pid' <- toList pid
-            , pri1' <- toList pri1baker
-            , _bakingRights_delegate pri1' == pkh
-            ] ++
-          [ BakerRight pid' lvl RightKind_Endorsing (Just $ length $ _endorsingRights_slots end)
-            | pid' <- toList pid
-            , end <- toList endorsers
-            , _endorsingRights_delegate end == pkh
-            ]
-
-      when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
-      runDb (Identity db) $ for_ pkhs $ \pkh -> do
+    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> do
+      let bakerMinBound = minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished
+          bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
+      for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
+        -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
+        reqBakers <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
+        reqEndorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash lvl
         let
-          newProgress = bakerRightCycleInfo pkh
-        progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
-          ( BakerRightsCycleProgress_publicKeyHashField `in_` [pkh]
-          &&. BakerRightsCycleProgress_chainIdField `in_` [chainId]
-          &&. BakerRightsCycleProgress_branchField `in_` [branch]
-          )
-        progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
-          Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
-          Just ((pId, p):|_)
-            -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
-            | _bakerRightsCycleProgress_progress p < lvl -> do
-              _ <- [executeQ|
-                UPDATE "BakerRightsCycleProgress"
-                SET progress = ?lvl
-                WHERE "id" = ?pId
-                |]
+          pri1baker :: Maybe BakingRights
+          pri1baker = fmap NonEmpty.head . nonEmpty . (filter $ (flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
+          endorsers :: Seq EndorsingRights
+          endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
+          branch :: BlockHash
+          branch = _rightsCycleInfo_branch aCycleInfo
 
-              return $ Just pId
-            | otherwise -> return Nothing -- already have this progress, do nothing.
-        rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
-        traverse_ notify $ Notify_BakerRightsProgress <$> progressId <*> pure newProgress <*> pure rights
-        return ()
+          bakerRightCycleInfo :: PublicKeyHash -> BakerRightsCycleProgress
+          bakerRightCycleInfo pkh = BakerRightsCycleProgress
+            { _bakerRightsCycleProgress_chainId = chainId
+            , _bakerRightsCycleProgress_branch = branch
+            , _bakerRightsCycleProgress_publicKeyHash = pkh
+            , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
+            , _bakerRightsCycleProgress_progress = lvl
+            }
+          bakerRights :: Maybe (Id BakerRightsCycleProgress) -> PublicKeyHash -> [BakerRight]
+          bakerRights pid pkh =
+            [ BakerRight pid' lvl RightKind_Baking Nothing
+              | pid' <- toList pid
+              , pri1' <- toList pri1baker
+              , _bakingRights_delegate pri1' == pkh
+              ] ++
+            [ BakerRight pid' lvl RightKind_Endorsing (Just $ length $ _endorsingRights_slots end)
+              | pid' <- toList pid
+              , end <- toList endorsers
+              , _endorsingRights_delegate end == pkh
+              ]
+
+        when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
+        runDb (Identity db) $ for_ pkhs $ \pkh -> do
+          let
+            newProgress = bakerRightCycleInfo pkh
+          progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
+            ( BakerRightsCycleProgress_publicKeyHashField `in_` [pkh]
+            &&. BakerRightsCycleProgress_chainIdField `in_` [chainId]
+            &&. BakerRightsCycleProgress_branchField `in_` [branch]
+            )
+          progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
+            Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
+            Just ((pId, p):|_)
+              -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
+              | _bakerRightsCycleProgress_progress p < lvl -> do
+                _ <- [executeQ|
+                  UPDATE "BakerRightsCycleProgress"
+                  SET progress = ?lvl
+                  WHERE "id" = ?pId
+                  |]
+
+                return $ Just pId
+              | otherwise -> return Nothing -- already have this progress, do nothing.
+          rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
+          let
+            maybeNotify :: forall m' . PersistBackend m' => Id BakerRightsCycleProgress -> BakerRightsCycleProgress -> [BakerRight] -> m' ()
+            maybeNotify x y z = when (_bakerRightsCycleProgress_progress y `mod` 128 == 0
+                                      || _bakerRightsCycleProgress_progress y == bakerMaxBound) $
+              notify (Notify_BakerRightsProgress x y z)
+            {-# INLINE maybeNotify #-}
+          sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
+          return ()
 
   case res of
     Right _ -> pure ()
