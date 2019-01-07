@@ -36,6 +36,7 @@ import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
+import qualified Text.URI as Uri
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
@@ -91,7 +92,7 @@ bakerSummaryIdentification = aliasedIdentification
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
 nodeSummaryIdentification = aliasedIdentification
   (_nodeExternalData_alias . _nodeSummary_node)
-  (tshow . _nodeExternalData_address . _nodeSummary_node)
+  (Uri.render . _nodeExternalData_address . _nodeSummary_node)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
