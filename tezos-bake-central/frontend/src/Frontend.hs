@@ -1065,23 +1065,7 @@ bakersTab =
            holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
              Left _ -> \_ -> Just BakersBanner_CannotGather
              Right () -> \cond -> BakersBanner_Gathering <$ guard cond
-         dyn_ $ ffor bakersBanner $ \case
-           Just BakersBanner_Gathering -> SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ renderSplashAlert
-             (icon "icon-download big grey")
-             (do
-                divClass "ui active inline loader small blue" blank
-                text "Gathering baker data...")
-             (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
-           Just BakersBanner_CannotGather -> SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ renderSplashAlert
-             (icon "icon-disconnected big red")
-             (text "Cannot gather baker data - no nodes online.")
-             (do
-                el "p" $ text "Kiln cannot gather baker data if no nodes are synced with the blockchain."
-                el "p" $ do
-                  el "strong" $ text "Fix:"
-                  text " "
-                  text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
-           Nothing -> blank
+         dyn_ $ ffor bakersBanner $ mkBakersBanner
 
          dyn_ $ ffor dEbb $
            traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
@@ -1135,6 +1119,26 @@ bakersTab =
 
             pure details
          blank
+
+    mkBakersBanner :: Maybe BakersBanner -> m ()
+    mkBakersBanner = \case
+      Nothing -> blank
+      Just sort -> SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ case sort of
+        BakersBanner_Gathering -> renderSplashAlert
+          (icon "icon-download big grey")
+          (do
+             divClass "ui active inline loader small blue" blank
+             text "Gathering baker data...")
+          (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
+        BakersBanner_CannotGather -> renderSplashAlert
+          (icon "icon-disconnected big red")
+          (text "Cannot gather baker data - no nodes online.")
+          (do
+             el "p" $ text "Kiln cannot gather baker data if no nodes are synced with the blockchain."
+             el "p" $ do
+               el "strong" $ text "Fix:"
+               text " "
+               text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
