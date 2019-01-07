@@ -316,9 +316,7 @@ appHeader
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
-  let disconnected = ffor collectedNodesStatus $ \case
-        Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
-        _ -> False -- TODO think about UI for the no configured nodes case
+  let disconnected = isLeft <$> collectedNodesStatus
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
