@@ -1030,6 +1030,11 @@ nodesTab =
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
 
+data BakersBanner
+  = BakersBanner_Gathering
+  | BakersBanner_CannotGather
+  deriving (Eq, Ord, Show)
+
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -1046,35 +1051,50 @@ bakersTab =
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-      ebb <- snd <$$$$> watchErrorsByBaker alertWindow
-
+      dEbb <- snd <$$$$> watchErrorsByBaker alertWindow
+      dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
+      dNodeDownPerBaker <- do
+        watchBakerAddresses
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
-         showGatheringData <- holdUniqDyn $
-            (||)
-            <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)
-            <*> (any isNothing <$> joinDynThroughMap bakersDetails)
-         dyn_ $ ffor showGatheringData $ bool blank gatheringData
-         dyn_ $ ffor ebb $ traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
+         let wantBakerData = (||)
+               <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)
+               <*> (any isNothing <$> joinDynThroughMap bakersDetails)
+         (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
+           holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
+             Left _ -> \_ -> Just BakersBanner_CannotGather
+             Right () -> \cond -> BakersBanner_Gathering <$ guard cond
+         dyn_ $ ffor bakersBanner $ mkBakersBanner
 
-         bakersDetails <- divClass "ui stackable cards" $ do
+         dyn_ $ ffor dEbb $
+           traverse (splashAlert tilesDyn) . foldMap toList . MMap.elems
+
+         (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
+                                              (Dynamic t (Maybe BakerDetails)))) <- divClass "ui stackable cards" $ do
           listWithKey (coerceDynamic tilesDyn) $ \pkh vDyn -> do
-            unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> ebb
+            unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> dEbb
 
             let
               renderBakerError = text . _bakerErrorDescriptions_tile
 
-              errorMessages = ffor unresolvedAlerts $ fmap $ \case
-                -- TODO
-                BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                BakerErrorLogView_BakerMissed elbm -> text $ "Missed a " <> aRight
-                  where
-                    aRight = case _errorLogBakerMissed_right elbm of
-                      RightKind_Baking -> "bake"
-                      RightKind_Endorsing -> "endorse"
-                BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
-                BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
+              connectivityAndUnresolvedAlerts = (++)
+                <$> (ffor dCollectiveNodesStatus $ \case
+                        Left e -> [Left e]
+                        Right _ -> [])
+                <*> (Right <$$> unresolvedAlerts)
+
+              errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
+                Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
+                Right e -> case e of
+                  BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
+                  BakerErrorLogView_BakerMissed elbm -> text $ "Missed a " <> aRight
+                    where
+                      aRight = case _errorLogBakerMissed_right elbm of
+                        RightKind_Baking -> "bake"
+                        RightKind_Endorsing -> "endorse"
+                  BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
+                  BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
             let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerData_alias . _bakerSummary_baker <$> vDyn)
             titleUniq <- holdUniqDyn title
@@ -1095,18 +1115,30 @@ bakersTab =
               (Just errorMessages)
               vDyn
               details
+              (not . isLeft <$> dCollectiveNodesStatus)
 
             pure details
          blank
 
-    gatheringData :: m ()
-    gatheringData = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
-      renderSplashAlert
-        (icon "icon-download big grey")
-        (do
-          divClass "ui active inline loader small blue" blank
-          text "Gathering baker data...")
-        (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
+    mkBakersBanner :: Maybe BakersBanner -> m ()
+    mkBakersBanner = \case
+      Nothing -> blank
+      Just sort -> SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ case sort of
+        BakersBanner_Gathering -> renderSplashAlert
+          (icon "icon-download big grey")
+          (do
+             divClass "ui active inline loader small blue" blank
+             text "Gathering baker data...")
+          (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
+        BakersBanner_CannotGather -> renderSplashAlert
+          (icon "icon-disconnected big red")
+          (text "Cannot gather baker data - no nodes online.")
+          (do
+             el "p" $ text "Kiln cannot gather baker data if no nodes are synced with the blockchain."
+             el "p" $ do
+               el "strong" $ text "Fix:"
+               text " "
+               text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
@@ -1132,7 +1164,8 @@ bakersTab =
                 el "div" $ text $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
-                  el "strong" $ text "Fix: "
+                  el "strong" $ text "Fix:"
+                  text " "
                   text $ _bakerErrorDescriptions_fix dsc)
             (_bakerErrorDescriptions_userResolvable dsc)
 
@@ -1146,8 +1179,9 @@ bakersTab =
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe b) -- ^ Details
+      -> Dynamic t Bool -- ^ have network connectivity
       -> m ()
-    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' bakerDyn details' = do
+    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' bakerDyn details' connected = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
@@ -1160,10 +1194,11 @@ bakersTab =
           title
           divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
-        for_ errors' $ \errors ->
+        for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-        isGathering <- holdUniqDyn $ (/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn
+        let dWantToGatherData = (/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn
+        isGathering <- holdUniqDyn $ (&&) <$> dWantToGatherData <*> connected
         dyn_ $ ffor isGathering $ \case
           True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
           False -> blank
