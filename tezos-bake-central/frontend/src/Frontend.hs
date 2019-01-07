@@ -1132,7 +1132,8 @@ bakersTab =
                 el "div" $ text $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
-                  el "strong" $ text "Fix: "
+                  el "strong" $ text "Fix:"
+                  text " "
                   text $ _bakerErrorDescriptions_fix dsc)
             (_bakerErrorDescriptions_userResolvable dsc)
 
