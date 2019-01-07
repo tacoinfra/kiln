@@ -1088,11 +1088,11 @@ bakersTab =
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
                 Right e -> case e of
                   BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                  BakerErrorLogView_BakerMissed elbm -> text $ "Missed a " <> aRight
+                  BakerErrorLogView_BakerMissed elbm -> text $ "Missed " <> aRight
                     where
                       aRight = case _errorLogBakerMissed_right elbm of
-                        RightKind_Baking -> "bake"
-                        RightKind_Endorsing -> "endorse"
+                        RightKind_Baking -> "a bake"
+                        RightKind_Endorsing -> "an endorse"
                   BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 

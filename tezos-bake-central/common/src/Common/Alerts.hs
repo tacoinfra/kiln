@@ -134,5 +134,5 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   where
     lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
-      RightKind_Baking -> ("a bake", "bake")
-      RightKind_Endorsing -> ("an endorsement", "endorse")
+      RightKind_Baking -> ("a bake", "to bake")
+      RightKind_Endorsing -> ("an endorsement", "to endorse")
