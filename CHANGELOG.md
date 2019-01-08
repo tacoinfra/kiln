@@ -8,6 +8,9 @@
     * Missed baking or endorsing opportunities trigger alerts
     * Bakers becoming deactivated or soon to be deactivated trigger an alert.
   * Kiln informs when new versions of tezos-core are released, as well as new versions of Kiln itself.
+  * Minor UI improvements
+  * Performance improvements
+  * Bug fixes
 
 ## 0.2.3
 *November 26, 2018*

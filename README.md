@@ -9,11 +9,16 @@ The Software alerts users within the GUI if a Monitored Node:
 * Falls behind the current head block level
 * Cannot be reached by the Monitoring Software (e.g. is offline)
 
+Or if a Monitored Baker:
+
+* Has been deactivated due to inactivity or will be within one cycle
+* Misses a baking or endorsing opportunity
+
 In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choice.
 
-This version (v0.2.3) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
+This version (v0.3.0) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
 * Improving the UI and user-flow
-* Expanding to monitoring bakers
+* Expanding baker monitoring
 * Introducing new alert pathways
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
