@@ -12,6 +12,12 @@
   * Performance improvements
   * Bug fixes
 
+### Known Issues
+
+  * Unregistered baker addresses cause Kiln to crash.   Workaround: make sure your baker address is self delegated before adding it to Kiln.
+  * Certain alerts are no longer visible once they are resolved by the user.
+  * When Kiln cannot gather data about a baker because there aren't sufficient nodes, the status icon of the baker should be red but is green
+
 ## 0.2.3
 *November 26, 2018*
 
