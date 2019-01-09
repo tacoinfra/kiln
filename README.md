@@ -1,8 +1,8 @@
 # Overview
 
-[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and OCamlPro (tzscan.io).
+[Obsidian Systems’](https://obsidian.systems/) Monitoring Software, Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring. The dashboard displays a tile with relevant information for all nodes and bakers it is monitoring and it alerts the user of any issues that may be encountered.
 
-The Software alerts users within the GUI if a Monitored Node:
+Kiln alerts users within the GUI if a Monitored Node:
 
 * Is on the wrong network
 * Is not on the fittest branch
@@ -11,15 +11,19 @@ The Software alerts users within the GUI if a Monitored Node:
 
 Or if a Monitored Baker:
 
-* Has been deactivated due to inactivity or will be within one cycle
 * Misses a baking or endorsing opportunity
+* Has been deactivated due to inactivity or will be within one cycle
 
-In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choice.
+Or if the monitored network:
 
-This version (v0.3.0) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
-* Improving the UI and user-flow
+* Has an update pushed. For instance, if a user is monitoring mainnet with Kiln, they will be notified is mainnet is updated.
+
+In addition to these in-app alerts, users can configure Kiln to send Telegram alerts or use their SMTP Mail Server to send alerts to the email addresses of their choice.
+
+This version (v0.3.0) is an early version of Kiln. Near-term improvements include, but are not limited to:
 * Expanding baker monitoring
-* Introducing new alert pathways
+* Running a node from Kiln's GUI
+* Baking from Kiln's GUI
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
@@ -194,10 +198,14 @@ Once you’ve added at least one node or Public Node, the Dashboard will show yo
 
 Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Configuring email notifications
+### Adding a baker
 
-Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
+Click *Add Baker* from the left panel and input the public key hash (PKH) of the baker you would like to monitor. Kiln will then use Monitored Nodes to gather information about that baker from the blockchain. This initial query can take up to a few hours, and requires the user to monitor at least one node.
 
 ### Configuring Telegram notifications
 
 Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.
+
+### Configuring email notifications
+
+Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
