@@ -1,5 +1,6 @@
 module ExtraPrelude
   ( Coercible
+  , Compose (..)
   , Const (..)
   , First (..)
   , Generic
@@ -37,6 +38,7 @@ module ExtraPrelude
   , for
   , for_
   , fromMaybe
+  , guard
   , ifor
   , ifor_
   , isJust
@@ -84,7 +86,7 @@ import Control.Arrow ((***))
 import Control.Category ((<<<), (>>>))
 import Control.Lens (Iso, Lens, Lens', Prism, Prism', ifor, ifor_, itraverse, itraverse_, preview, view,
                      views, (%~), (<&>), (^.), (^?), _1, _2, _3, _Just, _Left, _Nothing, _Right)
-import Control.Monad (join, when, (<=<), (>=>))
+import Control.Monad (guard, join, when, (<=<), (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (MonadReader (ask), asks, runReaderT)
 import Data.Bifunctor (first, second)
@@ -95,6 +97,7 @@ import Data.Either (isLeft, isRight)
 import Data.Foldable (fold, for_, toList, traverse_)
 import Data.Function (on)
 import Data.Functor (void, ($>))
+import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Monoidal (MonoidalMap)

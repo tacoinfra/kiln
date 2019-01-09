@@ -17,7 +17,6 @@ import Control.Monad (guard)
 import Data.Function (on)
 import Data.Functor.Infix
 import Data.List (intersperse)
-import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
@@ -139,7 +138,7 @@ settingsTab = do
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
-                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H5
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
                 -- If nothing is set, return nothing
@@ -173,7 +172,7 @@ settingsTab = do
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
                   divClass "notification-settings-description" $ text descr
-                  True <$$ uiButton "primary" ("Connect " <> name)
+                  True <$$ uiButton "fluid" ("Connect " <> name)
                 SettingsRoute_View dcfg -> do
                   divClass "notification-settings-description" $ text descr
                   True <$$ viewCfg dcfg
@@ -216,21 +215,23 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri blank never "Add Baker" "Begin monitoring the baker at the address entered." "http://[host][:port]"
+        addE <- aliasedInputForm validateUri blank never "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." "Bake Daemon Address" "http://127.0.0.1:9732/" "My Bake Daemon"
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
-    _delegatesOptions = do
-      divClass "ui medium header" $ text "Delegates"
+    _bakersOptions :: m ()
+    _bakersOptions = do
+      divClass "ui medium header" $ text "Bakers"
       elClass "table" "ui celled striped compact table" $ do
-        delegates <- watchDelegatePublicKeyHashes
-        _ <- listWithKey (Map.fromSet (const ()) <$> delegates) $ \pkh _ -> el "tr" $ do
+        bakers <- watchBakerAddresses
+        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
+          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
           el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this delegate."
-            requestingIdentity $ public . PublicRequest_RemoveDelegate <$> tag (pure pkh) eRemove
+            eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
+            requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Delegate" "Begin monitoring wallet address entered." "tz..."
-        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddDelegate pkh alias)
+        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "Baker Wallet Address" "tz..." "My Baker"
+        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
@@ -252,5 +253,5 @@ settingsTab = do
               then changelogLink "" v $
                 text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
               else
-                text "Up to date as of " *> localHumanizedTimestamp (pure updatedTime)
+                text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
             _ -> blank

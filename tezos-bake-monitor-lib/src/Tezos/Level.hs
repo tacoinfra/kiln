@@ -6,6 +6,7 @@ module Tezos.Level where
 
 import Control.DeepSeq (NFData)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
+import Data.Hashable (Hashable)
 import Data.Typeable
 import GHC.Generics (Generic)
 
@@ -13,11 +14,11 @@ import Tezos.Json
 
 -- Units of blocks, not neccesarily absolute level above genesis block
 newtype RawLevel = RawLevel {unRawLevel :: Int}
-  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData)
+  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData, Hashable)
 
 -- Units of blocksPerCycle, not neccesarily absolute level above genesis block
 newtype Cycle = Cycle {unCycle :: Int}
-  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData)
+  deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData, Hashable)
 
 -- | "level": {
 data Level = Level
@@ -29,6 +30,7 @@ data Level = Level
   , _level_votingPeriod :: RawLevel --  "voting_period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   , _level_votingPeriodPosition :: RawLevel --  "voting_period_position": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   } deriving (Show, Eq, Ord, Typeable, Generic)
+instance Hashable Level
 instance NFData Level
 
 deriveTezosJson ''Level

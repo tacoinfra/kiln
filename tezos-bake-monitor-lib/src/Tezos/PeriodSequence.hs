@@ -3,16 +3,18 @@
 
 module Tezos.PeriodSequence where
 
-import Data.List.NonEmpty (NonEmpty (..))
-import GHC.Generics
-import Data.Typeable
-import Data.Aeson
+import Control.DeepSeq (NFData)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Function (fix)
+import Data.Hashable (Hashable)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 
 import Tezos.Json
 
-newtype PeriodSequenceF a = PeriodSequence (NonEmpty a)
-  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor)
+newtype PeriodSequenceF a = PeriodSequence { unPeriodSequence :: NonEmpty a }
+  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor, NFData, Hashable)
 
 instance Foldable PeriodSequenceF where
   foldMap f (PeriodSequence xs) = go xs where

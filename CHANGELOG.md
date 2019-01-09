@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+*January 9. 2019*
+
+  * Kiln can now monitor key stastics about baker accounts
+    * Each baker's next baking or endorsing opportunity is displayed
+    * Missed baking or endorsing opportunities trigger alerts
+    * Bakers becoming deactivated or soon to be deactivated trigger an alert.
+  * Kiln informs when new versions of tezos-core are released, as well as new versions of Kiln itself.
+  * Minor UI improvements
+  * Performance improvements
+  * Bug fixes
+
 ## 0.2.3
 *November 26, 2018*
 

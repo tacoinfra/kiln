@@ -19,11 +19,15 @@ import Data.Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
+import Data.Hashable (Hashable)
 import Data.String
 import Data.Text as T
 import Data.Text.Encoding as T
 import Data.Typeable
 import GHC.Generics (Generic)
+import qualified Text.ParserCombinators.ReadPrec as Read
+import qualified Text.Read as Read
+
 
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -102,7 +106,7 @@ data HashType
   deriving (Eq, Ord, Show, Typeable, Enum)
 
 newtype HashedValue (tag :: HashType) = HashedValue { unHashedValue :: ShortByteString }
-  deriving (Eq, Ord, Generic, Typeable, NFData)
+  deriving (Eq, Ord, Generic, Typeable, NFData, Hashable)
 
 instance IsBase58Hash tag => ToJSON (HashedValue tag) where
   toJSON = toJSON . T.decodeUtf8 . toBase58
@@ -202,6 +206,17 @@ instance IsBase58Hash t => IsString (HashedValue t) where
 
 instance IsBase58Hash t => Show (HashedValue t) where
   show x = "(fromString " <> show (toBase58 x) <> ")"
+
+instance IsBase58Hash t => Read (HashedValue t) where
+  readsPrec _ = Read.readParen True $ Read.readPrec_to_S p 5
+    where
+      p :: Read.ReadPrec (HashedValue t)
+      p = do
+        Read.Ident "fromString" <- Read.lexP
+        Read.String valText <- Read.lexP
+        Right val <- return $ fromBase58 $ T.encodeUtf8 $ T.pack valText
+        return val
+
 
 instance IsBase58Hash 'HashType_BlockHash where
   prefix _ = "\001\052"

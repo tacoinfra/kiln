@@ -52,6 +52,9 @@ upgradeBranch = "upgrade-branch"
 upgradeBranchDefault :: Text
 upgradeBranchDefault = "master"
 
+networkGitLabProjectIdDefault :: Text
+networkGitLabProjectIdDefault = "3836952"
+
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 
@@ -84,6 +87,9 @@ nodes = "nodes"
 
 parseNodes :: Text -> Set URI
 parseNodes = Set.fromList . map parseURIUnsafe . filter (not . T.null) . map T.strip . T.splitOn ","
+
+networkGitLabProjectId :: FilePath
+networkGitLabProjectId = "network-gitlab-project-id"
 
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)

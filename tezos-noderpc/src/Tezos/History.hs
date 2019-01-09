@@ -12,15 +12,17 @@
 
 module Tezos.History where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, readMVar)
+import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTVar)
 import Control.DeepSeq (NFData)
 import Control.Lens (Lens, ifor_, view, (%=), (^.))
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except
+import Control.Monad.Except (MonadError)
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Logger (MonadLogger)
-import Control.Monad.Reader
-import Control.Monad.State.Strict
-import Data.Foldable
+import Control.Monad.Reader (MonadReader, asks)
+import Control.Monad.State.Strict (MonadState, get, modify, runState)
+import Data.Foldable (for_)
+import Data.Functor (void)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -30,7 +32,6 @@ import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Time as Time
-import Data.Tuple (swap)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
@@ -55,27 +56,20 @@ makeLenses 'CachedHistory
 emptyCache :: CachedHistory a
 emptyCache = CachedHistory Map.empty Map.empty 1
 
-class HasCachedHistory s t a b | s -> a, t -> b where
-  cachedHistory :: Lens s t (MVar (CachedHistory a)) (MVar (CachedHistory b))
-
-instance HasCachedHistory (MVar (CachedHistory a)) (MVar (CachedHistory b)) a b where
-  cachedHistory = id
-
-
-type ProgressFn f = BlockHash -> BlockHash -> Int -> Int -> f ()
-
+class HasCachedHistory f s t a b | s -> a, t -> b where
+  cachedHistory :: Lens s t (f (CachedHistory a)) (f (CachedHistory b))
 
 -- | Data type with the right instances for 'MonadReader' constraints required by 'accumHistory'.
-data AccumHistoryContext a = AccumHistoryContext
-  { _accumHistoryContext_cachedHistory :: !(MVar (CachedHistory a))
+data AccumHistoryContext f a = AccumHistoryContext
+  { _accumHistoryContext_cachedHistory :: !(f (CachedHistory a))
   , _accumHistoryContext_publicNodeContext :: !PublicNodeContext
   } deriving (Typeable, Generic)
 makeLenses 'AccumHistoryContext
-instance HasCachedHistory (AccumHistoryContext a) (AccumHistoryContext b) a b where
+instance HasCachedHistory f (AccumHistoryContext f a) (AccumHistoryContext f b) a b where
   cachedHistory = accumHistoryContext_cachedHistory
-instance HasPublicNodeContext (AccumHistoryContext a) where
+instance HasPublicNodeContext (AccumHistoryContext f a) where
   publicNodeContext = accumHistoryContext_publicNodeContext
-instance HasNodeRPC (AccumHistoryContext a) where
+instance HasNodeRPC (AccumHistoryContext f a) where
   nodeRPCContext = accumHistoryContext_publicNodeContext . nodeRPCContext
 
 getHistoryIncremental :: forall blk e r m a.
@@ -84,8 +78,8 @@ getHistoryIncremental :: forall blk e r m a.
   , MonadReader r m, HasPublicNodeContext r
   , BlockLike blk
   )
-  => Map BlockHash a -> RawLevel -> ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
-getHistoryIncremental history maxBatch chainId blk numLevels branches
+  => IO (Map BlockHash a) -> RawLevel -> ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
+getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
   | numLevels <= maxBatch = getHistory chainId blk numLevels branches
   | otherwise = do
       prefix <- getHistory chainId blk maxBatch mempty
@@ -94,6 +88,7 @@ getHistoryIncremental history maxBatch chainId blk numLevels branches
         lastHash = Seq.index prefix (prefixLen - 1) -- 4
       -- TODO: turn some of these comments into logging messages.
       -- liftIO $ print ("getHistory", prefixLen, blk ^. level, (blk ^. level) - numLevels)
+      history <- liftIO askHistory
       if Map.member lastHash history
         then return prefix
         else do
@@ -114,7 +109,7 @@ getHistoryIncremental history maxBatch chainId blk numLevels branches
           --     liftIO $ print ("checkBlock", mkVeryBlockLike preflight)
           --     error "bad"
           --   else return ()
-          remaining <- getHistoryIncremental history maxBatch chainId stepBlock remainingLevels mempty
+          remaining <- getHistoryIncremental askHistory maxBatch chainId stepBlock remainingLevels mempty
           return (prefix <> Seq.drop 1 remaining)
 
 -- add a block to cached history.  If there are multipe blocks between the
@@ -124,13 +119,13 @@ accumHistory
   :: forall a b e r m.
     ( BlockLike b
     , MonadIO m, MonadLogger m
-    , MonadReader r m, Monoid a, HasCachedHistory r r a a, HasPublicNodeContext r
+    , MonadReader r m, Monoid a, HasCachedHistory TVar r r a a, HasPublicNodeContext r
     , MonadError e m, AsPublicNodeError e
     )
-  => ProgressFn IO -> ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
-accumHistory progress chainId f blk = do
-  cacheHistoryVar <- asks (view cachedHistory)
-  history <- liftIO $ readMVar cacheHistoryVar
+  => ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
+accumHistory chainId f blk = do
+  historyVar <- asks (view cachedHistory)
+  history <- liftIO $ readTVarIO historyVar
   let minLevel = _cachedHistory_minLevel history
   let blkHash = view hash blk
   let predHash = view predecessor blk
@@ -146,14 +141,15 @@ accumHistory progress chainId f blk = do
       else return mempty
 
   -- check to see if we already have history for the predecessor block
-  if view level blk > minLevel && Map.notMember predHash (_cachedHistory_blocks history)
-    then do
+  updateHist <- case view level blk > minLevel && Map.notMember predHash (_cachedHistory_blocks history) of
+    False -> pure (pure ())
+    True -> do
       -- we will now proceed to restore the missing history.  We ask a node for
       -- enough block-hashes to reach from the new block to "the root" at
       -- minLevel
       let !levels = view level blk - minLevel
       let !branches = _cachedHistory_branches history
-      !descendents <- getHistoryIncremental (_cachedHistory_blocks history) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
+      !descendents <- getHistoryIncremental (fmap _cachedHistory_blocks $ readTVarIO historyVar) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
 
       -- make sure we have a root node
       let !rootHash = Seq.index (blkHash <| descendents) (length descendents) -- gets 1 from [blkHash,4,3,2,1]
@@ -163,17 +159,18 @@ accumHistory progress chainId f blk = do
       let !preds = Seq.reverse descendents -- [1,2,3,4]
       let !blks = Seq.drop 1 preds -- [2,3,4]
 
-      liftIO $ modifyMVar cacheHistoryVar $ \hist -> do
-        fmap swap $ flip runStateT hist $ do
-          modify $ accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
-          let newBranchLength = length blks
-          ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
-            liftIO $ progress blkHash blkHash' i newBranchLength
-            modify $ accumHistoryImpl blkHash' predhash' mempty
-          updateBranches
-    else
-      liftIO $ modifyMVar cacheHistoryVar $ \hist ->
-        fmap swap $ runStateT updateBranches hist
+      pure $ do
+        modify $ accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
+        let newBranchLength = length blks
+        ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
+          modify $ accumHistoryImpl blkHash' predhash' mempty
+
+  liftIO $ atomically $ do
+    hist <- readTVar historyVar
+    let (a, newHist) = flip runState hist $ updateHist *> updateBranches
+    writeTVar historyVar newHist
+    pure a
+
 
 
 exposeBranch :: BlockLike b => b -> CachedHistory a -> CachedHistory a

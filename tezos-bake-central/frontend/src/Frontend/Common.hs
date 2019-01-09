@@ -9,6 +9,7 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -18,12 +19,14 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import Data.List (intercalate)
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
+import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
-import qualified Data.Time.Format.Human as HumanTime
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -33,11 +36,15 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
+import Tezos.Base58Check (HashBase58Error(..))
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
+import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common.App (Bake)
+import Common (humanizeTimestamp)
+import Common.App (Bake, BakerSummary(..), NodeSummary,
+                   bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
                       frontendConfig_upgradeBranch)
 import Common.URI (appendPaths, mkRootUri)
@@ -83,16 +90,78 @@ localTimestamp t = do
 
 localHumanizedTimestamp
   ::
-    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+    ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, PerformEvent t m, MonadIO (Performable m), TriggerEvent t m
     , MonadReader r m, HasTimeZone r, HasTimer t r
     )
-  => Dynamic t Time.UTCTime
+  => Dynamic t (Maybe Text)
+  -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestamp tDyn = do
+localHumanizedTimestamp titleDyn tDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ \c t ->
-    T.pack $ HumanTime.humanReadableTimeI18N' HumanTime.defaultHumanTimeLocale { HumanTime.timeZone = tz } c t
+  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
+  tooltipped TooltipPos_BottomLeft
+    (do
+      whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
+      dynText ltDyn
+    ) $
+    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ humanizeTimestamp tz
+
+data TooltipPos
+  = TooltipPos_TopLeft
+  | TooltipPos_TopCenter
+  | TooltipPos_TopRight
+  | TooltipPos_CenterRight
+  | TooltipPos_CenterLeft
+  | TooltipPos_BottomLeft
+  | TooltipPos_BottomCenter
+  | TooltipPos_BottomRight
+
+tooltipped
+  :: forall a m t.
+    ( DomBuilder t m
+    , PostBuild t m
+    , MonadHold t m
+    , MonadFix m
+    , PerformEvent t m
+    , MonadIO (Performable m)
+    , TriggerEvent t m
+    )
+  => TooltipPos -> m () -> m a -> m a
+tooltipped pos tip w = mdo
+  let (cls, x, y, transform) = case pos of
+        TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
+        TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
+        TooltipPos_TopRight -> ("top right", "right: 0", "top: 0", "(0, -110%)")
+        TooltipPos_CenterLeft -> ("center left", "left: -10px", "top: 50%", "(-100%, -50%)")
+        TooltipPos_CenterRight -> ("center right", "left: 100%", "top: 50%", "(0, -50%)")
+        TooltipPos_BottomLeft -> ("bottom left", "left: 0", "top:100%", "(0,0)")
+        TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
+        TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
+
+  (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
+    a' <- w
+    let
+      hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
+    close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
+    let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+    _ <- SemUi.ui "span" (def
+      & SemUi.classes .~ ("ui popup" <> cls)
+      & SemUi.style .~ fromString (intercalate "; "
+                           [ "width: max-content"
+                           , "max-width: unset"
+                           , x
+                           , y
+                           , "transform: translate" <> transform
+                           ])
+      & SemUi.action .~ Just def
+        { SemUi._action_initialDirection = SemUi.Out
+        , SemUi._action_transition = ffor changeEvent $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0 }) -- oddly, the above "transform: translate" is visibly re-applied during a non-instant transition in the 'disconnected' tooltip
+        , SemUi._action_transitionStateClasses = SemUi.forceVisible
+        }) tip
+    pure a'
+  pure a
 
 whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
 whenJustDyn d f = dyn_ . ffor d $ \case
@@ -144,8 +213,10 @@ tooltip :: (DomBuilder t m) => Text -> m a -> m a
 tooltip t = elAttr "div" ("data-tooltip" =: t)
 
 tooltipPos :: (DomBuilder t m) => Text -> Text -> m a -> m a
-tooltipPos p t = elAttr "div" ("data-tooltip" =: t <> "data-position" =: p)
+tooltipPos = tooltipPos' ""
 
+tooltipPos' :: (DomBuilder t m) => Text -> Text -> Text -> m a -> m a
+tooltipPos' cls p t = elAttr "div" ("class" =: cls <> "data-tooltip" =: t <> "data-position" =: p)
 
 -- | Builds a form element and captures the submit event.
 formWithSubmit :: (DomBuilder t m, PostBuild t m) => m a -> m (a, Event t ())
@@ -183,9 +254,38 @@ elDynAttrWithModifyEvent' f ev = elDynAttrWithModifyConfig'
     addEventSpecFlags (Proxy :: Proxy (DomBuilderSpace m)) ev (const f))
 
 validateUri :: Validator.Validator t m Uri.URI
-validateUri = Validator.Validator mkRootUri setUrlType
+validateUri =  Validator.Validator mkRootUri setUrlType
   where
     setUrlType cfg = cfg { Txt._textField_type = Txt.TextInputType "url" }
+
+validateBakerAddr :: Validator.Validator t m PublicKeyHash
+validateBakerAddr = Validator.Validator
+  -- TODO human readable error message
+  checkBakerAddr
+  id
+
+checkBakerAddr :: Text -> Either Text PublicKeyHash
+checkBakerAddr v = do
+  when (not $ T.take 3 v `elem` okPrefixes) $ do
+    Left $ (if T.take 3 v == "KT1" then "\"KT1\" addresses cannot bake. Address" else "Baker address") <> " must begin with " <> conjList ", " " or " (NE.map tshow okPrefixes) <> "."
+  for_ (T.find (isNothing . flip T.find "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" . (==)) v) $ \ch ->
+    Left $ "The character " <> tshow ch <> " is not allowed in a baker address."
+  when (T.length v /= 36) $ Left $ "Baker address is too " <> (if T.length v < 36 then "short" else "long") <> " (must be 36 characters)."
+  flip first (tryReadPublicKeyHashText v) $ \case
+    HashBase58Error_InvalidPrefix _ _ -> "This address is outside the valid range for " <> T.take 3 v <> " addresses."
+    HashBase58Error_BadChecksum _ _ _ -> "This address failed the integrity check. Please check that it has been copied correctly."
+    e -> "An unknown error happened, please report this as a bug: " <> tshow e
+  where
+    okPrefixes :: NE.NonEmpty Text
+    okPrefixes = "tz1" :| ["tz2", "tz3"]
+
+conjList :: Text -> Text -> NE.NonEmpty Text -> Text
+conjList comma conj = go
+  where
+    go xs = case NE.uncons xs of
+      (x, Nothing) -> x
+      (x, Just (y :| [])) -> x <> conj <> y
+      (x, Just xs') -> x <> comma <> go xs'
 
 blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
 blockExplorerLink dPath f = do
@@ -275,7 +375,10 @@ basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
 
 cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModal f close = elAttr "div" ("class"=:"modal-box") $ do
+cancelableModal = cancelableModalWithClasses []
+
+cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
@@ -323,28 +426,54 @@ manageMenu click menuEl = mdo
 
 
 aliasedInputForm
-  :: (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a -> m () -> Event t () -> Text -> Text -> Text -> m (Event t (a,Maybe Text))
-aliasedInputForm validator feedback reset label info placeholder = divClass "ui form fields" $ do
+  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m, Eq a)
+  => Validator.Validator t m a
+  -> m () -- ^ Feedback after submit
+  -> Event t () -- ^ Reset the form
+  -> Text -- ^ Label
+  -> Text -- ^ Submit tooltip
+  -> Text -- ^ Field label
+  -> Text -- ^ Placeholder
+  -> Text -- ^ Alias field placeholder
+  -> m (Event t (a, Maybe Text))
+aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
   (namedAddress, submitEvt) <- formWithSubmit $ do
-    address <- formItem' "required"
-      $ validatedInput validator
-      $ def & Txt.setPlaceholder placeholder
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Address")
-            & Txt.setChangeEvent ("" <$ reset)
-    alias <- formItem
-      $ validatedInput (Validator.optional Validator.validateText)
-      $ def & Txt.setPlaceholder "alias"
-            & Txt.setFluid
-            & Txt.addLabel (el "label" $ text "Alias")
-            & Txt.setChangeEvent ("" <$ reset)
+    let
+      fields = (liftA2.liftA2.liftA2) (,)
+        (formItem' "required"
+          $ validatedInput validator
+          $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text fieldlabel))
+        (formItem
+          $ validatedInput (Validator.optional Validator.validateText)
+          $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
+                & Txt.setFluid
+                & Txt.addLabel (el "label" $ text "Alias"))
+
+    namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
+
     feedback
     _ <- submitButtonWithInfoCls "fluid primary" label info
-    let namedAddress = liftA2 (liftA2 (,)) address alias
     return namedAddress
   return $ filterRight $ tag (current namedAddress) submitEvt
 
+nbsp :: Text
+nbsp = "\x00A0"
+
+errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
+errorLabel primary secondary = el "div" $ do
+  el "label" $ text primary
+  for_ secondary $ \x -> do
+    elClass "label" "secondary-label" $ do
+      text nbsp
+      text x
+
+nodeLabel :: DomBuilder t m => NodeSummary -> m ()
+nodeLabel = uncurry errorLabel . nodeSummaryIdentification
+
+bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
+bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
 
 makeLenses ''FrontendContext
 

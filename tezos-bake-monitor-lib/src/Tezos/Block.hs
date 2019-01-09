@@ -12,9 +12,9 @@ import Control.Lens (Lens', iso, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
-import Tezos.ShortByteString (toShort, fromShort)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
+import Data.Hashable (Hashable)
 import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
@@ -36,6 +36,7 @@ import Tezos.Json
 import Tezos.Level
 import Tezos.Operation
 import Tezos.PublicKeyHash
+import Tezos.ShortByteString (toShort, fromShort)
 import Tezos.Signature (Signature)
 import Tezos.TestChainStatus
 import Tezos.Tez (Tez)
@@ -54,6 +55,8 @@ data MaxOperationListLength = MaxOperationListLength --  "max_operation_list_len
   { _maxOperationListLength_maxSize :: !Int --  "max_size": { "type": "integer", "minimum": -1073741824, "maximum": 1073741823 },
   , _maxOperationListLength_maxOp :: !(Maybe Int)--  "max_op": { "type": "integer", "minimum": -1073741824, "maximum": 1073741823 }
   } deriving (Eq, Ord, Show, Generic, Typeable)
+instance Hashable MaxOperationListLength
+instance NFData MaxOperationListLength
 
 
 
@@ -64,6 +67,8 @@ data VotingPeriodKind
   | VotingPeriodKind_Testing --  { "type": "string", "enum": [ "testing" ] },
   | VotingPeriodKind_PromotionVote --  { "type": "string", "enum": [ "promotion_vote" ] }
   deriving (Eq, Ord, Show, Generic, Typeable)
+instance Hashable VotingPeriodKind
+instance NFData VotingPeriodKind
 
 -- | "block_header_metadata": {
 data BlockMetadata = BlockMetadata
@@ -81,7 +86,7 @@ data BlockMetadata = BlockMetadata
   , _blockMetadata_consumedGas :: !TezosWord64 --  "consumed_gas": { "$ref": "#/definitions/positive_bignum" },
   , _blockMetadata_deactivated :: !(Seq PublicKeyHash)--  "deactivated": { "type": "array", "items": { "$ref": "#/definitions/Signature.Public_key_hash" } },
   , _blockMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
-  } deriving (Show, Eq, Ord, Typeable)
+  } deriving (Show, Eq, Ord, Generic, Typeable)
 
 data MonitorBlock = MonitorBlock
   { _monitorBlock_hash :: !BlockHash
@@ -94,7 +99,8 @@ data MonitorBlock = MonitorBlock
   , _monitorBlock_fitness :: !Fitness
   , _monitorBlock_context :: !ContextHash
   -- , _monitorBlock_protocolData :: Base16ByteString ??? -- Certainly NOT a blockheader...
-  } deriving (Eq, Ord, Show, Typeable)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance NFData MonitorBlock
 
 data TzScanBlock = TzScanBlock
   { _tzScanBlock_hash :: !BlockHash
@@ -121,11 +127,14 @@ data TzScanBlock = TzScanBlock
   , _tzScanBlock_fees :: !Tez
   -- , _tzScanBlock_distanceLevel :: !Integer -- TODO: unknown type
   } deriving (Eq, Ord, Show, Generic, Typeable)
+instance NFData TzScanBlock
 
 newtype TzScanFitness = TzScanFitness Fitness
   deriving (Eq, Ord, Show, Generic, Typeable)
+instance Hashable TzScanFitness
+instance NFData TzScanFitness
 instance FromJSON TzScanFitness where
-  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList $
+  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList
     (Base16ByteString . toShort . fst . BS16.decode . T.encodeUtf8 <$> T.splitOn " " txt)
 instance ToJSON TzScanFitness where
   toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs
@@ -135,13 +144,19 @@ newtype TzScanProtocol = TzScanProtocol
   { -- _tzScanProtocol_name :: !Text -- TODO: What even is this?
   _tzScanProtocol_hash :: ProtocolHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
+instance Hashable TzScanProtocol
+instance NFData TzScanProtocol
 
 newtype TzScanBaker = TzScanBaker
   { _tzScanBaker_tz :: PublicKeyHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
+instance Hashable TzScanBaker
+instance NFData TzScanBaker
 
 newtype TzScanNonceHash = TzScanNonceHash (Maybe NonceHash)
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON)
+instance Hashable TzScanNonceHash
+instance NFData TzScanNonceHash
 instance FromJSON TzScanNonceHash where
   parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
 

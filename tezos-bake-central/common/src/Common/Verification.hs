@@ -12,27 +12,26 @@ import qualified Data.Text as T
 import Data.Time (UTCTime)
 import qualified Text.URI as Uri
 
+import Common.App
 import Common.Schema
-import Tezos.NodeRPC.Types
 import Tezos.Types
 
 data ForkInfo = ForkInfo
   { _forkInfo_forkStatus :: Either ForkStatus ()
   , _forkInfo_time :: UTCTime
   , _forkInfo_hash :: BlockHash
-  } deriving (Eq, Ord, Show)
+  } deriving (Show)
 
 data ForkStatus
   = ForkStatus_TooNew
   | ForkStatus_TooOld
   | ForkStatus_Forked
-  | ForkStatus_BadNode RpcError
-  deriving (Eq, Ord, Show)
-
+  | ForkStatus_BadNode CacheError
+  deriving (Show)
 makePrisms ''ForkStatus
 
-instance AsRpcError ForkStatus where
-  asRpcError = _ForkStatus_BadNode
+instance AsCacheError ForkStatus where
+  asCacheError = _ForkStatus_BadNode
 
 class AsForkStatus e where
   asForkStatus :: Prism' e ForkStatus
@@ -53,16 +52,6 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   Left ForkStatus_TooOld -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_TooOld}
   Left ForkStatus_Forked -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_Forked}
   _ -> Success ()
-
-showBadFork :: Node -> ForkInfo -> Error
-showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.concat
-          [ "node: ", maybe "" toBase58Text $ _node_identity node
-          , "@", Uri.render $ _node_address node
-          , " BAKER STATE:" , either showForkStatus (const "good") status
-          , " for block:", toBase58Text bakedHash
-          , " @ ",  T.pack $ show bakedTime
-          , "\n"
-          ]
 
 validateForkyBlocks :: ([ForkInfo] -> f ()) -> [ForkInfo] -> f ()
 validateForkyBlocks f xs = case traverse (onBadForkState pure) xs of

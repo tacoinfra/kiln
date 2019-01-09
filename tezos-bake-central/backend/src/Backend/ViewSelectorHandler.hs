@@ -10,34 +10,40 @@
 
 module Backend.ViewSelectorHandler where
 
-import Control.Monad.Logger (MonadLogger, logDebugSH)
+import Control.Concurrent.STM (atomically)
+import Control.Monad.Logger
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Bifunctor (first)
+import Data.Align (alignWith)
+import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
-import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map as Map
+import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
+import Data.Semigroup (Max(..))
 import Data.Time (UTCTime)
+import Data.These (these)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
-import Text.URI (URI)
-
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (In (..), PostgresRaw, queryQ, query)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, query, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
+import Safe (maximumMay)
+import Text.URI (URI)
 
-import Tezos.NodeRPC.Types
 import Tezos.PublicKeyHash
 import Tezos.Types
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
+import Backend.STM (atomicallyWith)
+import Common.Alerts(AlertsFilter(..))
 import Common.App
-import qualified Common.AppendIntervalMap as AppendIMap
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
@@ -63,13 +69,13 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let clientAddresses = mempty
   -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
-  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.deleted|]
+  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.data#deleted|]
   --   return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
   -- clients <- do
   --   let selClients = In (Map.keys (_bakeViewSelector_clients vs))
   --   rs <- [queryQ| SELECT c.id, i.report, i.config
   --                  FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
-  --                  WHERE c.id IN ?selClients AND NOT c.deleted|]
+  --                  WHERE c.id IN ?selClients AND NOT c.data#deleted|]
   --   let clientInfo = Map.fromList $ do
   --         (cid, report, config) <- rs
   --         return (cid, First (ClientInfo cid <$> report <*> config))
@@ -93,49 +99,30 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       (PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left namedChain)
       )
 
-  let nodesVS = _bakeViewSelector_nodes vs
-  nodes <- whenM (not $ null nodesVS) $ do
-    let
-      selNodesUniversal = isCompleteSelector nodesVS
-      selNodes = In $ iMapSelectorKeys nodesVS
-    rs <- [queryQ|
-      SELECT n.id
-        , n.address, n.alias, n.identity, n."headLevel", n."headBlockHash", n."headBlockPred", n."headBlockBakedAt" AT TIME ZONE 'UTC'
-        , n."peerCount", n."networkStat#totalSent" , n."networkStat#totalRecv" , n."networkStat#currentInflow", n."networkStat#currentOutflow"
-        , n."fitness", n."updated" AT TIME ZONE 'UTC'
-      FROM "Node" n
-      WHERE (?selNodesUniversal OR n.id IN ?selNodes) AND NOT n.deleted|]
-    return $ toRangeView nodesVS $ rs <&>
-      \((nid, addr, alias, ident) Pg.:. (headLevel, headBlockHash, headBlockPred, headBlockBakedAt) Pg.:. (peerCount, totalSent, totalRecv, currentInflow, currentOutflow, blockFitness, updated)) ->
-        (Bounded nid, First $ Just Node
-          { _node_address = addr
-          , _node_alias = alias
-          , _node_identity = ident
-          , _node_headLevel = headLevel
-          , _node_headBlockHash = headBlockHash
-          , _node_headBlockPred = headBlockPred
-          , _node_headBlockBakedAt = headBlockBakedAt
-          , _node_peerCount = peerCount
-          , _node_networkStat = NetworkStat totalSent totalRecv currentInflow currentOutflow
-          , _node_fitness = blockFitness
-          , _node_deleted = False
-          , _node_updated = updated
-          })
+  -- TODO Dan Bornside says this could be more efficient.
+  let nodeDetailsVS = _bakeViewSelector_nodeDetails vs
+  nodeDetails :: RangeView' (Id Node) NodeDetailsData a <- whenM (not $ null nodeDetailsVS) $
+    toRangeView nodeDetailsVS . fmap (\x -> (Bounded $ _nodeDetails_id x, _nodeDetails_data x)) <$> select CondEmpty
 
-  let delegatesVS = _bakeViewSelector_delegates vs
-  delegates :: RangeView' PublicKeyHash (Deletable ()) a <- whenM (not $ null delegatesVS) $ do
-    xs <- project Delegate_publicKeyHashField (Delegate_deletedField ==. False)
-    return $ toRangeView delegatesVS $ (, First $ Just ()) . Bounded <$> xs
+  let bakerAddrVS = _bakeViewSelector_bakerAddresses vs
+  bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddrVS) $ do
+    -- TODO: bakerAddrVS is a RangeView.  select individual bakers upon request.
+    toRangeView bakerAddrVS <$> getBakerAddresses nds Nothing
+
+  -- TODO Dan Bornside says this could be more efficient.
+  let bakerDetailsVS = _bakeViewSelector_bakerDetails vs
+  bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a <- whenM (not $ null bakerDetailsVS) $
+    toRangeView bakerDetailsVS . fmap (\x -> (Bounded $ _bakerDetails_publicKeyHash x, First $ Just x)) <$> select CondEmpty
 
   -- maybeCurrentHead <- runReaderT dataSourceHead nds
 
-  -- delegateStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
-  let delegateStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
+  -- bakerStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
+  let bakerStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
        = mempty
   --   <- whenJust maybeCurrentHead $ \currentHead -> do
   --   forRWT nds $ withCache mempty $ \_protoInfo -> do
-  --     flip itraverse (_bakeViewSelector_delegateStats vs) $ \(i, j) -> _
-  --     -- calculateDelegateStats (_bakeViewSelector_delegateStats vs)
+  --     flip itraverse (_bakeViewSelector_bakerStats vs) $ \(i, j) -> _
+  --     -- calculateBakerStats (_bakeViewSelector_bakerStats vs)
 
 
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
@@ -145,7 +132,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
-  errors <- getErrorLogs errorsVS
+  errors <- itraverse getErrorLogs errorsVS
 
   upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $ selectSingle CondEmpty
 
@@ -168,7 +155,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
-  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ runReaderT dataSourceHead nds
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
   return BakeView
     { _bakeView_config = config
@@ -177,15 +164,16 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
-    , _bakeView_nodes = nodes
     , _bakeView_nodeAddresses = nodeAddresses
-    , _bakeView_delegateStats = delegateStats
+    , _bakeView_nodeDetails = nodeDetails
+    , _bakeView_bakerAddresses = bakerAddresses
+    , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
     -- , _bakeView_summaryGraph = summaryGraph
     , _bakeView_summary = summaryView
     -- , _bakeView_graphs = mempty
-    , _bakeView_delegates = delegates
-    , _bakeView_errors =  errors
+    , _bakeView_bakerDetails = bakerDetails
+    , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
@@ -194,14 +182,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     }
 
 getErrorLogs
-  :: forall m a.
+  :: forall m a e.
   ( MonadLogger m
   , PostgresRaw m
   , Semigroup a
   )
-  =>          IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo a
-  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) ErrorInfo) a)
-getErrorLogs (IntervalSelector vs0) = fmap (IntervalView vs0) $ getErrorLogsImpl vs0
+  => AlertsFilter
+  ->          IntervalSelector' UTCTime (Id ErrorLog) e a
+  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+getErrorLogs flt (IntervalSelector vs0) = fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ getErrorLogsImpl flt vs0
 
 getErrorLogsImpl
   :: forall m a.
@@ -209,15 +198,16 @@ getErrorLogsImpl
   , PostgresRaw m
   , Semigroup a
   )
-  => AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
+  => AlertsFilter
+  -> AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
   -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
-getErrorLogsImpl intervalMap = do
+getErrorLogsImpl flt intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   $(logDebugSH) ("getErrorLogs", void flattenedIntervalMap)
 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
   where
-    queryNodeAlert, queryDelegateAlert, queryClientDaemonAlert
+    queryNodeAlert, queryBakerAlert --, queryClientDaemonAlert
       :: Pg.FromRow row
       => Pg.Query
       -> [Pg.Query]
@@ -225,11 +215,13 @@ getErrorLogsImpl intervalMap = do
       -> ClosedInterval (WithInfinity UTCTime)
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
     queryNodeAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Node", "id", "node"))
-    queryClientDaemonAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
-    queryDelegateAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Delegate", "publicKeyHash", "publicKeyHash"))
+      queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
+    --queryClientDaemonAlert sqlTable sqlFields =
+    --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
+    queryBakerAlert sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
+    queryBakerAlert' sqlTable sqlFields =
+      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "baker#publicKeyHash"))
 
     queryAlert
       :: (Monad f, PostgresRaw f, Pg.FromRow row)
@@ -266,7 +258,12 @@ getErrorLogsImpl intervalMap = do
                         " JOIN \"" <> relatedTbl
                         <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
           <> " WHERE "
-          <> bool "" "   NOT n.deleted" (isJust related)
+          <> bool " TRUE " "   NOT n.\"data#deleted\"" (isJust related)
+          <> qFlt
+        qFlt = case flt of
+          AlertsFilter_All -> ""
+          AlertsFilter_ResolvedOnly -> " AND el.stopped IS NOT NULL"
+          AlertsFilter_UnresolvedOnly -> " AND el.stopped IS NULL"
       build <$> query (
         qBase <>
           " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \
@@ -277,19 +274,20 @@ getErrorLogsImpl intervalMap = do
     runQueries window = do
       leftBiasedUnions <$> sequenceA
         [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
+            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_NodeError $ NodeErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
             window
 
         , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
             (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                ErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
-            window
-        , queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
-          (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+                ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
             window
 
+        --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
+        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+        --    window
+
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
-          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_BadNodeHead
+          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead
                   ErrorLogBadNodeHead
                     { _errorLogBadNodeHead_log = elId
                     , _errorLogBadNodeHead_node = tNode
@@ -297,9 +295,26 @@ getErrorLogsImpl intervalMap = do
                     , _errorLogBadNodeHead_nodeHead =tNodeHead
                     , _errorLogBadNodeHead_latestHead = tLatestHead
                     }) window
-        , queryDelegateAlert "ErrorLogMultipleBakersForSameDelegate" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_MultipleBakersForSameDelegate $
-                  ErrorLogMultipleBakersForSameDelegate elId tPublicKeyHash tClient tWorker)
+        , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
+          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
+                  ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
+          window
+        , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
+          (\elId (tNamedChain, tCommit, tProjectId) -> ErrorLogView_NetworkUpdate $ ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId)
+            window
+
+        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
+                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
+          window
+
+        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
+                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
+          window
+        , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
+          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerMissed $
+                   ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness)
           window
         ]
 
@@ -315,13 +330,87 @@ getAlertCount =
     FROM "ErrorLog" el
     WHERE el.stopped IS NULL|]
 
+getBakerAddresses
+  :: forall m. (PostgresRaw m, MonadIO m)
+  => NodeDataSource
+  -> Maybe (PublicKeyHash)
+  -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
+getBakerAddresses nds bid = do
+  rs :: Map.Map PublicKeyHash (Maybe Text, Int) <- [queryQ|
+      SELECT b."publicKeyHash", b."data#data#alias",
+        ( SELECT COUNT(e.id)
+          FROM "ErrorLog" e
+          JOIN "ErrorLogBakerMissed" elbm
+            ON elbm.log = e.id
+          WHERE e.stopped IS NULL
+            AND elbm."baker#publicKeyHash" = b."publicKeyHash"
+        )
+      FROM "Baker" b
+      WHERE NOT b."data#deleted"
+        AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
+    |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
+  -- TODO: this is rather inelegant: we need something like this; to give you
+  -- your next rights we need to know what level we're at now.  there's not an
+  -- elegant way to do that today, from the postgres level.  a "current level"
+  --
+  -- we need to do this *here* instead of, say, on bakerdetails, because we
+  -- need to show a grey dot when we "cant" show this, in the baker list.
+  -- grab the hashes of the cycle starts, if they exist
+  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- flip runReaderT nds $ atomicallyWith $
+    withCache nds (Nothing, Nothing, []) $ \protoInfo -> do
+      nds' <- ask
+      headM <- dataSourceHead nds'
+      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes . view hash) headM
+
+      return (view level <$> headM, Just (firstLevelInCycle protoInfo (_protoInfo_preservedCycles protoInfo + 1) - 1), rightsInfo)
+
+  let
+    (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
+    rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
+    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys rs
+    chainId = _nodeDataSource_chain nds
+    maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
+
+  nextBakeRightsL <- case headLevelM of
+    Nothing -> pure []
+    Just headLevel -> [queryQ|
+      SELECT brcp."publicKeyHash",
+        ( SELECT MAX(progress) -- this is a subselect so that we get the highest result even if "BakerRight" rows are found
+          FROM "BakerRightsCycleProgress" b1
+          WHERE b1."publicKeyHash" = brcp."publicKeyHash"
+            AND b1."chainId" = ?chainId
+            AND b1."branch" in ?rightsHashes
+        ), br."right", MIN(br.level)
+      FROM "BakerRightsCycleProgress" brcp
+      LEFT OUTER JOIN "BakerRight" br
+        ON br.branch = brcp.id
+        AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
+      WHERE brcp."chainId" = ?chainId
+        AND brcp.branch in ?rightsHashes
+        AND brcp."publicKeyHash" in ?bakerHashes
+      GROUP BY brcp."publicKeyHash", br."right"
+      |]
+
+  let
+    nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
+    nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
+    result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
+      (these
+        (\(alias, alertCount) -> Just $ BakerSummary (BakerData alias) alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (const Nothing)
+        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary (BakerData alias) alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
+      ) rs (getMonoidalMap nextBakeRights)
+
+  -- $(logDebug) ("ViewSelectorHandler::getBakerAddresses " <> T.decodeUtf8 (LBS.toStrict $ Aeson.encode result))
+  return result
+
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m)
   => Maybe (Id Node)
-  -> m [(WithInfinity (Id Node), First (Maybe NodeSummary))]
+  -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
-      SELECT n.id, n.address, n.alias,
+      SELECT n.id, n."data#data#address", n."data#data#alias",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
@@ -340,7 +429,7 @@ getNodeAddresses nid = do
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-      FROM "Node" n
-      WHERE NOT n.deleted
+      FROM "NodeExternal" n
+      WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,w) -> (x,First (Just (NodeSummary y z w)))) rs
+  return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z) w)) rs

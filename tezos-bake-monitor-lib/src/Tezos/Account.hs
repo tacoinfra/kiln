@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Tezos.Account where
 
+import Control.Lens.TH (makeLenses)
 import Data.Time
 import Data.Typeable
 import Data.Word
@@ -41,10 +42,38 @@ data EndorsingRights = EndorsingRights
   , _endorsingRights_estimatedTime :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show)
 
+data FrozenBalanceByCycle = FrozenBalanceByCycle
+  { _frozenBalanceByCycle_cycle :: !Cycle
+  , _frozenBalanceByCycle_deposit :: !Tez
+  , _frozenBalanceByCycle_fees :: !Tez
+  , _frozenBalanceByCycle_rewards :: !Tez
+  } deriving (Eq, Ord, Show)
+
+data DelegateInfo = DelegateInfo
+  { _delegateInfo_balance :: !Tez
+  , _delegateInfo_frozenBalance :: !Tez
+  , _delegateInfo_frozenBalanceByCycle :: !(Seq.Seq FrozenBalanceByCycle)
+  , _delegateInfo_stakingBalance :: !Tez
+  , _delegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
+  , _delegateInfo_delegatedBalance :: !Tez
+  , _delegateInfo_deactivated :: !Bool
+  , _delegateInfo_gracePeriod :: !Cycle
+  }
 
 concat <$> traverse deriveTezosJson
   [ ''Account
   , ''AccountDelegate
   , ''BakingRights
+  , ''DelegateInfo
   , ''EndorsingRights
+  , ''FrozenBalanceByCycle
+  ]
+
+concat <$> traverse makeLenses
+  [ 'Account
+  , 'AccountDelegate
+  , 'BakingRights
+  , 'DelegateInfo
+  , 'EndorsingRights
+  , 'FrozenBalanceByCycle
   ]

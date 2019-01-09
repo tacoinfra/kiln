@@ -1,14 +1,35 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Common.Alerts where
 
+import Data.Aeson
+import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..), RawLevel (..))
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
+import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (ErrorLogBadNodeHead (..))
+import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
+                      BakerErrorDescriptions(..), LogTag(..),
+                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
 import ExtraPrelude
+
+data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
+  deriving (Eq, Ord, Show, Enum, Bounded, Typeable, Generic)
+
+instance FromJSON AlertsFilter
+instance FromJSONKey AlertsFilter
+instance ToJSON AlertsFilter
+instance ToJSONKey AlertsFilter
+
+alertsFilter :: FunctorMaybe f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
+alertsFilter f = \case
+  AlertsFilter_All -> id
+  AlertsFilter_UnresolvedOnly -> ffilter (isNothing . _errorLog_stopped . f)
+  AlertsFilter_ResolvedOnly -> ffilter (isJust . _errorLog_stopped . f)
 
 badNodeHeadMessage
   :: Applicative f
@@ -63,3 +84,55 @@ badNodeHeadMessage text blockHashLink l =
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
 
+bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
+bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
+  , _bakerErrorDescriptions_tile = "Will be marked as inactive."
+  , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
+  , _bakerErrorDescriptions_problem = "In the past " <> tshow (preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
+  , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
+  , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
+  , _bakerErrorDescriptions_resolved = \b ->
+      let (primary, secondary) = bakerIdentification b
+      in ("Resolved: Baker no longer at risk of being marked as inactive."
+         , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " is no longer at risk of being marked as inactive."
+         )
+  , _bakerErrorDescriptions_userResolvable = Nothing
+  }
+  where
+    preserved = unCycle $ _errorLogBakerDeactivationRisk_preservedCycles elog
+
+bakerDeactivatedDescriptions :: ErrorLogBakerDeactivated -> BakerErrorDescriptions
+bakerDeactivatedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker has been marked as inactive."
+  , _bakerErrorDescriptions_tile = "Has been marked as inactive."
+  , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for " <> tshow preserved <> " cycles and has been marked as inactive."
+  , _bakerErrorDescriptions_problem = "This baker has not had any activity for " <> tshow preserved <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Re-register this baker."
+  , _bakerErrorDescriptions_resolved = \b ->
+      let (primary, secondary) = bakerIdentification b
+      in ("Resolved: Baker no longer inactive"
+         , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " has been re-registered. The earliest signing operation may be assigned to this baker is " <> tshow (preserved + 2) <> " cycles."
+         )
+  , _bakerErrorDescriptions_userResolvable = Nothing
+  }
+  where
+    preserved = unCycle $ _errorLogBakerDeactivated_preservedCycles elog
+
+bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
+bakerMissedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker missed " <> aRight
+  , _bakerErrorDescriptions_tile = "Missed " <> aRight
+  , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_BakerMissed :=> pure elog
+  }
+  where
+    lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
+    (aRight, toRight) = case _errorLogBakerMissed_right elog of
+      RightKind_Baking -> ("a bake", "to bake")
+      RightKind_Endorsing -> ("an endorsement", "to endorse")

@@ -5,11 +5,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.NotifyHandler where
 
+import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Concurrent.STM (atomically)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Monoidal as MMap
@@ -19,15 +23,21 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id)
+import Rhyolite.Schema (Id (..), unId)
+
+import Tezos.Types
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 -- import Backend.Graphs
 import Backend.Schema
-import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses)
-import Common.App (BakeView (..), BakeViewSelector (..), ErrorLogView (..), mailServerConfigToView,
-                   nodeIdForErrorLogView)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
+import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
+                   NodeSummary (..), BakerSummary (..),
+                   ErrorLogView (..), NodeErrorLogView (..), BakerErrorLogView (..),
+                   nodeIdForNodeErrorLogView, nodeErrorViewOnly,
+                   mailServerConfigToView, Deletable, BakerSummary)
+import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
@@ -39,20 +49,44 @@ notifyHandler
   -> BakeViewSelector a
   -> m (BakeView a)
 notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
+  -- $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
   case fromJSON (_notifyMessage_value notifyMessage) of
     Aeson.Error e -> do
       $(logWarn) $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_Client eid -> handleClient eid
-      Notify_Delegate eid -> handleDelegate eid
-      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log ErrorLogView_BadNodeHead eid
+      Notify_Baker bid mBaker -> handleBaker bid mBaker
+      Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
+      Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
+      Notify_ErrorLogBakerMissed eid -> handleErrorLog'
+        (handleBakerAddress . unId . _errorLogBakerMissed_baker)
+        _errorLogBakerMissed_log
+        (ErrorLogView_BakerError . BakerErrorLogView_BakerMissed)
+        eid
+      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
+        (ErrorLogView_NodeError . NodeErrorLogView_BadNodeHead)
+        eid
+      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log
+        (ErrorLogView_NodeError . NodeErrorLogView_InaccessibleNode)
+        eid
+      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
+        (ErrorLogView_NodeError . NodeErrorLogView_NodeWrongChain)
+        eid
+      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
+        (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
+        eid
+      Notify_ErrorLogBakerDeactivated eid -> handleErrorLog _errorLogBakerDeactivated_log
+        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivated)
+        eid
+      Notify_ErrorLogBakerDeactivationRisk eid -> handleErrorLog _errorLogBakerDeactivationRisk_log
+        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivationRisk)
+        eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
-      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log ErrorLogView_InaccessibleNode eid
-      Notify_ErrorLogMultipleBakersForSameDelegate eid -> handleErrorLog _errorLogMultipleBakersForSameDelegate_log ErrorLogView_MultipleBakersForSameDelegate eid
-      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log ErrorLogView_NodeWrongChain eid
+      Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log ErrorLogView_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
-      Notify_Node eid ent -> handleNode eid ent
+      Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
+      Notify_NodeDetails eid ent -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
       Notify_PublicNodeConfig _eid ent -> handlePublicNodeConfig ent
@@ -88,39 +122,71 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     paramsVS = _bakeViewSelector_parameters aggVS
     handleParameters _eid params =
-      -- delegateStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
-      --   calculateDelegateStats (_bakeViewSelector_delegateStats aggVS)
+      -- bakerStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
+      --   calculateBakerStats (_bakeViewSelector_bakerStats aggVS)
       whenM (viewSelects () paramsVS) $
         pure $ mempty
           { _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
-          -- , _bakeView_delegateStats = delegateStatsView
+          -- , _bakeView_bakerStats = bakerStatsView
           }
 
-    nodesVS = _bakeViewSelector_nodes aggVS
+    nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
-    handleNode nid node' = mconcat <$> sequence
-      [ whenM (viewSelects (Bounded nid) nodesVS) $ do
-          let node = if _node_deleted node' then Nothing else Just node'
-          pure mempty
-            { _bakeView_nodes = toRangeView1 nodesVS (Bounded nid) (Just (First node)) }
-      , whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
-          alerts <- case _node_deleted node' of
-            False -> getNodeAddresses $ Just nid
-            True -> pure [(Bounded nid, First Nothing)]
-          pure mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS alerts }
+    nodeDetailsVS = _bakeViewSelector_nodeDetails aggVS
+
+    {-# INLINE handleNodeExternal #-}
+    handleNodeExternal
+      :: (Monad m', PostgresRaw m')
+      => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
+    handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeExternalV <- case mNodeExternalData of
+        Nothing -> pure [(Bounded nid, First Nothing)]
+        Just _ -> getNodeAddresses (Just $ nid)
+      pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
+
+    handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
+    handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence
+      [ whenM (viewSelects (Bounded nid) nodeDetailsVS) $
+        pure $ mempty
+          { _bakeView_nodeDetails = toRangeView1 nodeDetailsVS (Bounded nid) mNodeDetailsData
+          }
       , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- runReaderT dataSourceHead nds
+          latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
-    delegateVS = _bakeViewSelector_delegates aggVS
-    handleDelegate dId = do
+    bakerAddressesVS = _bakeViewSelector_bakerAddresses aggVS
+    bakerDetailsVS = _bakeViewSelector_bakerDetails aggVS
       -- TODO: shove PKH in the NotifyMessage body so we can sample the
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
-      delegate :: Maybe Delegate <- get $ fromId dId
+
+    handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
+      case mBaker of
+        -- fast path
+        Nothing -> pure mempty {
+          _bakeView_bakerAddresses = toRangeView bakerAddressesVS [(Bounded pkh, First Nothing)]
+          }
+        Just _ -> handleBakerAddress pkh
+
+    handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
+      bakerV <- getBakerAddresses nds (Just $ pkh)
+      pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
+
+    -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
+    alsoEveryBakerSummary = do
+      bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddressesVS) $
+        toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
+      whenM (not $ null bakerAddresses) $
+        (\x -> mempty {_bakeView_bakerAddresses = x}) . toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
+
+
+    handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
       pure $ mempty
-        { _bakeView_delegates = foldMap (\d -> toRangeView1 delegateVS (Bounded $ _delegate_publicKeyHash d) (Just $ First $ bool Nothing (Just ()) $ _delegate_deleted d)) delegate
+        { _bakeView_bakerDetails = toRangeView1
+            bakerDetailsVS
+            (Bounded $ _bakerDetails_publicKeyHash bakerDetails)
+            (Just $ First $ Just bakerDetails)
         }
 
     mailServerVS = _bakeViewSelector_mailServer aggVS
@@ -137,17 +203,21 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
         }
 
-    errorsVS = _bakeViewSelector_errors aggVS
-    alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog
       :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
-    handleErrorLog getLogId toView specificLogId = do
+    handleErrorLog = handleErrorLog' (const $ pure mempty)
+
+    alertCountVS = _bakeViewSelector_alertCount aggVS
+    handleErrorLog'
+      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      => (e -> m2 (BakeView a)) -> (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
+    handleErrorLog' k getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
       specificLog' :: Maybe e <- getId specificLogId
-      logNodeSummary <- for (nodeIdForErrorLogView . toView =<< specificLog') $ \logNodeId -> do
+      logNodeSummary <- for (fmap nodeIdForNodeErrorLogView . nodeErrorViewOnly . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId
           pure mempty
@@ -167,11 +237,16 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
             errorInterval = ClosedInterval
                   (Bounded $ _errorLog_started errorLog)
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
-          whenM (viewSelects errorInterval errorsVS) $ pure mempty
-            { _bakeView_errors = IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                MMap.singleton logId $ First ((errorLog, toView specificLog), errorInterval)
-            }
-      return $ newCount <> newErrors <> fold logNodeSummary
+
+          pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt errorsVS ->
+            if viewSelects errorInterval errorsVS
+            then mempty
+              { _bakeView_errors = MMap.singleton flt $ IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                  MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
+              }
+            else mempty
+      userSupplied <- maybe (pure mempty) k specificLog'
+      return $ newCount <> newErrors <> fold logNodeSummary <> userSupplied
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
     handlePublicNodeConfig pnc =
@@ -183,7 +258,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
           pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
       , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- runReaderT dataSourceHead nds
+          latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 

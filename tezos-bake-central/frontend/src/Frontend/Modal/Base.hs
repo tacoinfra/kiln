@@ -77,6 +77,7 @@ instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t m
   runWithReplace a0 a' = ModalT $ runWithReplace (unModalT a0) (fmapCheap unModalT a')
   traverseDMapWithKeyWithAdjust f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjust (coerce f) dm0 dm'
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjustWithMove (coerce f) dm0 dm'
+  traverseIntMapWithKeyWithAdjust f im0 im' = ModalT $ traverseIntMapWithKeyWithAdjust (coerce f) im0 im'
 
 runModalT
   :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m, MonadJSM m, TriggerEvent t m)

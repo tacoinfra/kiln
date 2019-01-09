@@ -31,9 +31,9 @@ library
     , common
     , containers
     , data-default
+    , dependent-sum
     , exceptions
     , file-embed
-    , friendly-time
     , functor-infix
     , ghcjs-dom
     , IntervalMap
@@ -55,6 +55,7 @@ library
     , rhyolite-frontend
     , safe
     , semantic-reflex
+    , semigroupoids
     , text
     , tezos-bake-monitor-lib
     , these

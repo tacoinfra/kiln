@@ -1,5 +1,5 @@
 name: backend
-version: 0.2.3
+version: 0.3.0
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -27,6 +27,7 @@ library
     , containers
     , data-default
     , dependent-map
+    , dependent-sum
     , dependent-sum-template
     -- , diagrams-core
     -- , diagrams-lib
@@ -40,11 +41,13 @@ library
     , groundhog
     , groundhog-postgresql
     , groundhog-th
+    , hashable
     , http-client
     , http-client-tls
     , http-conduit
     , http-types
     , IntervalMap
+    , lattices
     , lens
     , lens-aeson
     , mime-mail
@@ -72,6 +75,7 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
+    , semigroupoids
     , snap-core
     , snap-loader-static
     , snap-server
@@ -80,7 +84,9 @@ library
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
+    , these
     , time
+    , transformers
     , unix
     , uri-encode
 
@@ -102,16 +108,16 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.STM
     Backend.Supervisor
     Backend.Telegram
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.WebApi
-    Backend.Workers
     Backend.Workers.Cache
     Backend.Workers.Client
-    Backend.Workers.Delegate
+    Backend.Workers.Baker
     Backend.Workers.Node
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

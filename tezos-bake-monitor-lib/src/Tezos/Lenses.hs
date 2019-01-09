@@ -10,15 +10,10 @@ import Tezos.Operation
 import Tezos.Types
 
 concat <$> traverse makeLenses
- [ 'Account
- , 'AccountDelegate
- , 'ActivateMetadata
- , 'BakingRights
+ [ 'ActivateMetadata
  , 'ContractScript
  , 'ContractUpdate
- , 'EndorsingRights
  , 'FreezerUpdate
  , 'Level
- , 'ProtoInfo
  ]
 
