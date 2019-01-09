@@ -282,6 +282,11 @@ getErrorLogsImpl flt intervalMap = do
                 ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
             window
 
+        , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
+            (\elId (tNode, tMinPeerCount, tActualPeerCount) ->
+                ErrorLogView_NodeError $ NodeErrorLogView_NodeInvalidPeerCount $ ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount)
+            window
+
         --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
         --  (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
         --    window
@@ -409,8 +414,8 @@ getNodeAddresses
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
-  rs :: [(Id Node, URI, Maybe Text, Int)] <- [queryQ|
-      SELECT n.id, n."data#data#address", n."data#data#alias",
+  rs :: [(Id Node, URI, Maybe Text, Int, Int)] <- [queryQ|
+      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
@@ -432,4 +437,4 @@ getNodeAddresses nid = do
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z) w)) rs
+  return $ fmap (first Bounded . \(x,y,z,mpc,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z mpc) w)) rs

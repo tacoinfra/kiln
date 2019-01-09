@@ -30,7 +30,7 @@ import qualified Data.Time as Time
 import Data.Version (Version, showVersion)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
@@ -424,39 +424,64 @@ manageMenu click menuEl = mdo
 
   pure $ leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
 
+uriField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+         => Text -> Text -> m (Dynamic t (Either Text Uri.URI))
+uriField lbl ph = validatedInput validateUri $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text lbl)
 
-aliasedInputForm
-  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a
+pkhField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+         => Text -> Text -> m (Dynamic t (Either Text PublicKeyHash))
+pkhField lbl ph = validatedInput validateBakerAddr $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text lbl)
+
+aliasField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+           => Text -> m (Dynamic t (Either Text (Maybe Text)))
+aliasField ph = validatedInput (Validator.optional Validator.validateText) $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text "Alias")
+
+minConnectionsField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace, Num a, Ord a, Read a, Show a)
+                    => m (Dynamic t (Either Text (Maybe a)))
+minConnectionsField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Nothing) Nothing) $ def
+  & Txt.setPlaceholder ("e.g. " <> "5")
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ do
+                     text "Minimum Peer Connections"
+                     divClass "sub-label" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
+
+zipFields :: (Applicative m, Reflex t)
+          => m (Dynamic t (Either Text a))
+          -> m (Dynamic t (Either Text b))
+          -> m (Dynamic t (Either Text (a, b)))
+zipFields = zipFieldsWith (,)
+
+zipFieldsWith :: (Applicative m, Reflex t)
+              => (a -> b -> c)
+              -> m (Dynamic t (Either Text a))
+              -> m (Dynamic t (Either Text b))
+              -> m (Dynamic t (Either Text c))
+zipFieldsWith = (liftA2 . liftA2 . liftA2)
+
+formWithReset
+  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m)
+  => Text -- ^ Form label
+  -> Text -- ^ Submit button tooltip
   -> m () -- ^ Feedback after submit
   -> Event t () -- ^ Reset the form
-  -> Text -- ^ Label
-  -> Text -- ^ Submit tooltip
-  -> Text -- ^ Field label
-  -> Text -- ^ Placeholder
-  -> Text -- ^ Alias field placeholder
-  -> m (Event t (a, Maybe Text))
-aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
-  (namedAddress, submitEvt) <- formWithSubmit $ do
-    let
-      fields = (liftA2.liftA2.liftA2) (,)
-        (formItem' "required"
-          $ validatedInput validator
-          $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
-                & Txt.setFluid
-                & Txt.addLabel (el "label" $ text fieldlabel))
-        (formItem
-          $ validatedInput (Validator.optional Validator.validateText)
-          $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
-                & Txt.setFluid
-                & Txt.addLabel (el "label" $ text "Alias"))
-
-    namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
-
+  -> m (Dynamic t (Either Text a)) -- ^ Fields
+  -> m (Event t a)
+formWithReset lbl ttp feedback reset fields = divClass "ui form fields" $ do
+  (val, submitEvt) <- formWithSubmit $ do
+    val <- fmap join $ widgetHold fields $ fields <$ reset
     feedback
-    _ <- submitButtonWithInfoCls "fluid primary" label info
-    return namedAddress
-  return $ filterRight $ tag (current namedAddress) submitEvt
+    _ <- submitButtonWithInfoCls "fluid primary" lbl ttp
+    pure val
+  return $ filterRight $ current val <@ submitEvt
 
 nbsp :: Text
 nbsp = "\x00A0"

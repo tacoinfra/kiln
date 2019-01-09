@@ -212,9 +212,10 @@ backendImpl cfg serve = do
           insert $ NodeExternal
             { _nodeExternal_id = nid
             , _nodeExternal_data = DeletableRow
-              { _deletableRow_data =NodeExternalData
+              { _deletableRow_data = NodeExternalData
                 { _nodeExternalData_address = newAddress
                 , _nodeExternalData_alias = Nothing
+                , _nodeExternalData_minPeerConnections = 0
                 }
               , _deletableRow_deleted = False
               }

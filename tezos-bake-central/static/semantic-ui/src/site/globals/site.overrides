@@ -857,6 +857,14 @@ h4.dashboard-section-title {
   font-size: @14px;
 }
 
+.modal-box .field .sub-label {
+  color: @grey;
+  margin-top: @5px;
+  margin-bottom: @10px;
+  font-size: @12px;
+  lineHeight: @16px;
+}
+
 .modal-box.add-baker {
   width: unit(500 / @emSize, rem);
   max-width: 95%;

@@ -45,6 +45,7 @@ import Obelisk.Generated.Static (static)
 import Obelisk.Route (R)
 import Prelude hiding (log)
 import Reflex.Dom.Core
+import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
@@ -689,6 +690,9 @@ liveErrorsWidget = void $ do
               nodeLabel n
               el "div" message
 
+            NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
+              el "div" $ text $ "Connected peers has dropped below the minimum peer count (" <> tshow minPeerCount <> ")."
+
           ErrorLogView_BakerError ne -> case ne of
             BakerErrorLogView_BakerDeactivated log -> renderBakerError
               (bakerDeactivatedDescriptions log)
@@ -788,7 +792,10 @@ addBakerModal close = mdo
   el "h3" $ text "Add Baker"
   divClass "basic small segment" $ text
     "Enter a Baker address to begin monitoring."
-  addE <- aliasedInputForm validateBakerAddr blank added "Add Baker" "Begin monitoring the baker at the address entered." "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" "My Baker"
+  addE <- formWithReset "Add Baker" "Begin monitoring the baker at the address entered." blank added $ do
+    zipFields
+      (pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
+      (aliasField "My Baker")
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
@@ -827,8 +834,14 @@ addNodeModal close = do
             icon "check blue"
             text "Node added!"
       elClass "h5" "ui header" $ text "Connect via address"
-      addE <- aliasedInputForm validateUri feedback showMsg "Add Node" "Begin monitoring the node at the address entered." "Node Address" "127.0.0.1:8732" "Public Facing Node 1"
-      showMsg <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddNode addr alias)) addE
+      addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
+        zipFields
+          (zipFields
+            (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
+            (formItem $ aliasField "Public Facing Node 1"))
+          (formItem minConnectionsField)
+
+      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddNode addr alias minPeerConn)) addE
       hideMsg <- delay 3 showMsg
       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
       pure close
@@ -919,6 +932,7 @@ nodesTab =
               errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
                 NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
+                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Low number of connected peers."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
               nodeCfgDyn = _nodeSummary_node <$> vDyn

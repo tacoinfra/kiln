@@ -22,6 +22,7 @@ import qualified Data.Map as Map
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, addUTCTime)
+import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
@@ -307,6 +308,49 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
        "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
+
+reportNodeInvalidPeerCountError
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadLogger m, SqlDb (PhantomDb m))
+  => Id Node -> Int -> Word64 -> m ()
+reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nodeNotDeleted nodeId) $ do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.id
+      FROM "ErrorLog" el
+      JOIN "ErrorLogNodeInvalidPeerCount" t ON t.log = el.id
+      JOIN "NodeExternal" n ON n.id = t.node
+     WHERE t.node = ?nodeId
+       AND NOT n."data#deleted"
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Nothing -> do
+      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
+      for_ node' $ \node -> do
+        (logId, _) <- insertErrorLog $ \logId ->
+          ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
+        queueAlert (Just logId) $ Alert Unresolved "Node invalid peer count" $
+          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+
+clearNodeInvalidPeerCountError
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
+      MonadReader a m, HasAppConfig a, SqlDb (PhantomDb m)) => Id Node -> m ()
+clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
+  lids :: [Id ErrorLogNodeInvalidPeerCount] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeInvalidPeerCount" t
+    WHERE t.log = el.id
+      AND t.node = ?nodeId
+      AND el.stopped IS NULL
+    RETURNING t.id |]
+  for_ lids $ notify . mkDefaultNotify
+  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
+  when (not $ null lids) $ for_ node' $ \node -> do
+    queueAlert Nothing $ Alert Resolved "Resolved: Node has a valid number of connected peers" $
+       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has a valid number of connected peers"
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125

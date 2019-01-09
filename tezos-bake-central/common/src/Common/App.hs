@@ -162,6 +162,7 @@ instance ToJSON MailServerView
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
   | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  | NodeErrorLogView_NodeInvalidPeerCount !ErrorLogNodeInvalidPeerCount
   | NodeErrorLogView_BadNodeHead !ErrorLogBadNodeHead
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON NodeErrorLogView
@@ -202,6 +203,7 @@ nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
 nodeIdForNodeErrorLogView = \case
   NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_node ein
   NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_node enwc
+  NodeErrorLogView_NodeInvalidPeerCount enipc -> _errorLogNodeInvalidPeerCount_node enipc
   NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_node ebnh
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
@@ -222,6 +224,7 @@ errorLogIdForErrorLogView = \case
     NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
     NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
     NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
+    NodeErrorLogView_NodeInvalidPeerCount ebipc -> _errorLogNodeInvalidPeerCount_log ebipc
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
     BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm

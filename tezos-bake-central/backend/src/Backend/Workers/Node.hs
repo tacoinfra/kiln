@@ -48,10 +48,11 @@ import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
-                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError)
+                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
+                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
-import Backend.Config (AppConfig (..))
+import Backend.Config (HasAppConfig, AppConfig (..))
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -130,14 +131,15 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
 
 updateNetworkStats
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => Http.Manager
+  => AppConfig
+  -> Http.Manager
   -> Pool Postgresql
-  -> URI
   -> Id Node
+  -> NodeExternalData
   -> NodeDetailsData
   -> m (Either RpcError ())
-updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+updateNetworkStats appConfig httpMgr db nid nodeExt before = runExceptT $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (_nodeExternalData_address nodeExt)) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
     pure $ before
@@ -151,6 +153,13 @@ updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
   -- We will rely on the block monitor to clear any inaccessible endpoint errors
   -- for this node.m
   when (before /= after) $ inDb $ do
+    let minPeerCount = _nodeExternalData_minPeerConnections nodeExt
+    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+      flip runReaderT appConfig $
+        if (peerCount < fromIntegral minPeerCount)
+          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+          else clearNodeInvalidPeerCountError nid
+
     let p = (NodeDetails_dataField ~>)
     update
       [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
@@ -206,7 +215,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
     -- give them all a chance to
     ifor_ theseNodeRecords $ \nodeId (Node, nodeExt, nodeDetails) ->
-      updateNetworkStats httpMgr db (_nodeExternalData_address nodeExt) nodeId nodeDetails >>= \case
+      updateNetworkStats appConfig httpMgr db nodeId nodeExt nodeDetails >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 

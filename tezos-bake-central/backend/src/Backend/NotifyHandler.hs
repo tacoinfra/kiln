@@ -73,6 +73,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
         (ErrorLogView_NodeError . NodeErrorLogView_NodeWrongChain)
         eid
+      Notify_ErrorLogNodeInvalidPeerCount eid -> handleErrorLog _errorLogNodeInvalidPeerCount_log
+        (ErrorLogView_NodeError . NodeErrorLogView_NodeInvalidPeerCount)
+        eid
       Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
         (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
         eid

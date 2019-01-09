@@ -194,6 +194,7 @@ instance HasId NodeExternal where
 data NodeExternalData = NodeExternalData
   { _nodeExternalData_address :: !URI
   , _nodeExternalData_alias :: !(Maybe Text)
+  , _nodeExternalData_minPeerConnections :: !Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
@@ -536,6 +537,14 @@ data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeWrongChain
 
+data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
+  { _errorLogNodeInvalidPeerCount_log :: !(Id ErrorLog)
+  , _errorLogNodeInvalidPeerCount_node :: !(Id Node)
+  , _errorLogNodeInvalidPeerCount_minPeerCount :: !Int
+  , _errorLogNodeInvalidPeerCount_actualPeerCount :: !Word64
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeInvalidPeerCount
+
 -- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
@@ -716,6 +725,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNetworkUpdate
   , ''Event
   , ''MailServerConfig
@@ -761,6 +771,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNodeWrongChain
+  , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNetworkUpdate
   , 'Event
   , 'MailServerConfig
