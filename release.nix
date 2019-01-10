@@ -2,7 +2,12 @@ let
   perMachine = system: let
    root = import ./. { inherit system; };
   in {
-
+    ghc = {
+      inherit (root.ghc) frontend backend common;
+    };
+    ghcjs = {
+      inherit (root.ghcjs) frontend backend common;
+    };
   } // root.pkgs.lib.optionalAttrs (system == "x86_64-linux") {
     dockerExe = root.pkgs.lib.hydraJob root.dockerExe;
     dockerImage = root.pkgs.lib.hydraJob root.dockerImage;
