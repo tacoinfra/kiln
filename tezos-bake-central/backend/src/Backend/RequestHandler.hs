@@ -31,7 +31,7 @@ import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
-import Rhyolite.Backend.DB (getTime, runDb, selectMap')
+import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -44,10 +44,23 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
+import Common
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
 import ExtraPrelude
+
+startNode :: Monad f => f ()
+startNode = do
+  _WIP_ -- call external process
+  _WIP_ -- notify
+  pure ()
+
+stopNode :: Monad f => f ()
+stopNode = do
+  _WIP_ -- call external process
+  _WIP_ -- notify
+  pure ()
 
 requestHandler
   :: forall m. (MonadBaseControl IO m, MonadIO m)
@@ -59,7 +72,31 @@ requestHandler
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
-      PublicRequest_AddNode addr alias minPeerConn' -> inDb $ do
+
+      PublicRequest_AddInternalNode -> inDb $ do
+        project1 NodeInternal_dataField CondEmpty >>= \case
+          Nothing -> do
+            nid <- insert' Node
+            let nodeData = NodeInternalData True
+            insert $ NodeInternal
+              { _nodeInternal_id = nid
+              , _nodeInternal_data = DeletableRow
+                { _deletableRow_data = nodeData
+                , _deletableRow_deleted = False
+                }
+              }
+            startNode
+
+          Just nodeData -> do
+            when (_deletableRow_deleted nodeData || (not $ nodeData ^. deletableRow_data . nodeInternalData_running)) $ do
+              update
+                [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
+                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. True
+                ]
+                CondEmpty
+              startNode
+
+      PublicRequest_AddExternalNode addr alias minPeerConn' -> inDb $ do
         let minPeerConn = fromMaybe 0 minPeerConn'
         existingIds :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
@@ -90,28 +127,49 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
-      PublicRequest_RemoveNode addr -> inDb $ do
-        nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
-        for_ nids $ \nid -> do
-          update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
-          notify $ Notify_NodeExternal nid Nothing
+      PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
+        update
+          [ NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. shouldRun ]
+          CondEmpty
+        bool stopNode startNode shouldRun
 
-          elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
-          elnwc <- selectMap' ErrorLogNodeWrongChainConstructor (ErrorLogNodeWrongChain_nodeField ==. nid)
-          elbnh <- selectMap' ErrorLogBadNodeHeadConstructor (ErrorLogBadNodeHead_nodeField ==. nid)
+      PublicRequest_RemoveNode node -> inDb $ case node of
+        Left addr -> do
+          nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
+          for_ nids $ \nid -> do
+            update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
+            notify $ Notify_NodeExternal nid Nothing
+            clearErrors nid
+        Right _ -> do
+          project1 NodeInternal_idField CondEmpty >>= \case
+            Nothing -> pure ()
+            Just nid -> do
+              stopNode
+              update
+                [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
+                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. False
+                ]
+                CondEmpty
+              clearErrors nid
 
-          now <- getTime
-          let
-            logIds :: [Id ErrorLog] = mconcat
-              [ _errorLogInaccessibleNode_log <$> toList elin
-              , _errorLogNodeWrongChain_log <$> toList elnwc
-              , _errorLogBadNodeHead_log <$> toList elbnh
-              ]
-          update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId logIds)
+        where
+          clearErrors nid = do
+            elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
+            elnwc <- selectMap' ErrorLogNodeWrongChainConstructor (ErrorLogNodeWrongChain_nodeField ==. nid)
+            elbnh <- selectMap' ErrorLogBadNodeHeadConstructor (ErrorLogBadNodeHead_nodeField ==. nid)
 
-          for_ (MMap.keys elin) $ notify . mkDefaultNotify
-          for_ (MMap.keys elnwc) $ notify . mkDefaultNotify
-          for_ (MMap.keys elbnh) $ notify . mkDefaultNotify
+            now <- getTime
+            let
+              logIds :: [Id ErrorLog] = mconcat
+                [ _errorLogInaccessibleNode_log <$> toList elin
+                , _errorLogNodeWrongChain_log <$> toList elnwc
+                , _errorLogBadNodeHead_log <$> toList elbnh
+                ]
+            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId logIds)
+
+            for_ (MMap.keys elin) $ notify . mkDefaultNotify
+            for_ (MMap.keys elnwc) $ notify . mkDefaultNotify
+            for_ (MMap.keys elbnh) $ notify . mkDefaultNotify
 
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)

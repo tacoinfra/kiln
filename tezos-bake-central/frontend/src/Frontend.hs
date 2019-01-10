@@ -810,10 +810,10 @@ nodesList = do
   let nodeStatus = \case
         0 -> MonitoredStatus_Healthy
         _ -> MonitoredStatus_Unhealthy
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeExternalData_address . _nodeSummary_node)
-                 <*> (_nodeExternalData_alias . _nodeSummary_node)
-                 <*> (nodeStatus . _nodeSummary_alertCount))
-    <$$$> watchNodeAddresses
+  nodes <- (\ns ->
+              let (title, subtitle) = nodeSummaryIdentification ns
+              in (title, subtitle, nodeStatus (_nodeSummary_alertCount ns)))
+           <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -839,7 +839,7 @@ addNodeModal close = do
             (formItem $ aliasField "Public Facing Node 1"))
           (formItem minConnectionsField)
 
-      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddNode addr alias minPeerConn)) addE
+      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
       hideMsg <- delay 3 showMsg
       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
       pure close
@@ -934,9 +934,12 @@ nodesTab =
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
               nodeCfgDyn = _nodeSummary_node <$> vDyn
-              (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle
-                (uriHostPortPath <$> _nodeExternalData_address <$> nodeCfgDyn)
-                (_nodeExternalData_alias <$> nodeCfgDyn)
+              (title, subtitle) = splitDynPure $ nodeDataIdentification <$> nodeCfgDyn
+
+              removeNode = PublicRequest_RemoveNode . \case
+                Left ext -> Left $ _nodeExternalData_address ext
+                Right _  -> Right ()
+
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
@@ -944,7 +947,7 @@ nodesTab =
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _nodeExternalData_address . _nodeSummary_node <$> current vDyn <@ ev)
+              (\ev -> removeNode . _nodeSummary_node <$> current vDyn <@ ev)
               ((=<<) getNodeHeadBlock)
               (Just errorMessages)
               (Just $ (=<<) _nodeDetailsData_peerCount)

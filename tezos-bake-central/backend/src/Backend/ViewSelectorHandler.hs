@@ -23,7 +23,6 @@ import Data.Pool (Pool)
 import Data.Semigroup (Max(..))
 import Data.Time (UTCTime)
 import Data.These (these)
-import Data.Word
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
@@ -215,10 +214,9 @@ getErrorLogsImpl flt intervalMap = do
       -> (Id ErrorLog -> row -> b)
       -> ClosedInterval (WithInfinity UTCTime)
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
-    queryNodeAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
-      `MMap.union`
-      queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node"))
+    queryNodeAlert sqlTable sqlFields = (liftA2 . liftA2 . liftA2) (MMap.unionWith const)
+      (queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node")))
+      (queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node")))
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
@@ -416,7 +414,7 @@ getNodeAddresses
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
-  rs :: [(Id Node, URI, Maybe Text, Int, Int)] <- [queryQ|
+  ext :: [(Id Node, URI, Maybe Text, Int, Int)] <- [queryQ|
       SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
@@ -436,9 +434,21 @@ getNodeAddresses nid = do
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-      FROM "Node" n
-      OUTER JOIN FROM "NodeExternal" ne
-      OUTER JOIN FROM "NodeInternal" ni
-      WHERE NOT (COALESCE (ne."data#deleted", ni."data#deleted"))
+      FROM "NodeExternal" n
+      WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,mpc,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z mpc) w)) rs
+  int :: [(Id Node, Bool, Int)] <- [queryQ|
+      SELECT n.id, n."data#data#running",
+        (SELECT COUNT(ein.id)
+         FROM "ErrorLogBadNodeHead" ein
+         JOIN "ErrorLog" e
+          ON e.id = ein.log
+         WHERE e.stopped IS NULL
+           AND ein.node = n.id)
+      FROM "NodeInternal" n
+      WHERE NOT n."data#deleted"
+        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
+  return $ fmap (first Bounded . second (First . Just)) $ mconcat
+    [ flip fmap ext $ \(nid', uri, alias, mpc, alerts) -> (nid', NodeSummary (Left $ NodeExternalData uri alias mpc) alerts)
+    , flip fmap int $ \(nid', running, alerts) -> (nid', NodeSummary (Right $ NodeInternalData running) alerts)
+    ]

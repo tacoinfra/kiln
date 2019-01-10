@@ -100,3 +100,6 @@ humanBytes n = tshow (round n' :: Int) <> u
       | n >= 2^(20 :: Int) = (n / 2**20, "MB")
       | n >= 2^(10 :: Int) = (n / 2**10, "KB")
       | otherwise = (n, "B")
+
+_WIP_ :: a
+_WIP_ = undefined

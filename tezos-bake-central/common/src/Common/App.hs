@@ -90,10 +90,13 @@ bakerSummaryIdentification = aliasedIdentification
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
-nodeSummaryIdentification ns = case _nodeSummary_node ns of
+nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
+
+nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, Maybe Text)
+nodeDataIdentification = \case
   Left e -> aliasedIdentification
     (_nodeExternalData_alias)
-    (Uri.render . _nodeExternalData_address)
+    (Uri.render . _nodeExternalData_address) -- TODO: consider uriHostPortPath ?
     e
   Right _ -> ("Kiln-managed Node", Nothing)
 
@@ -107,7 +110,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
+  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.

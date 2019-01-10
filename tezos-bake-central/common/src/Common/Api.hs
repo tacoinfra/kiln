@@ -36,7 +36,10 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_AddInternalNode
       :: PublicRequest Bake ()
     PublicRequest_RemoveNode
-      :: URI
+      :: Either URI ()
+      -> PublicRequest Bake ()
+    PublicRequest_UpdateInternalNode
+      :: Bool
       -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: URI -- address of client to subscribe to

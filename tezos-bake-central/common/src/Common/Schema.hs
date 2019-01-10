@@ -211,8 +211,7 @@ instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
 
 data NodeInternalData = NodeInternalData
-  { _nodeInternalData_port :: !(Maybe Word16)
-  , _nodeInternalData_pid :: !(Maybe Word16)
+  { _nodeInternalData_running :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeInternalData where

@@ -355,24 +355,34 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
 
+firstSuccess :: Monad m => [m (Maybe a)] -> m (Maybe a)
+firstSuccess = \case
+  []     -> pure Nothing
+  (x:xs) -> x >>= maybe (firstSuccess xs) (pure . Just)
+
+queryNodeTables :: Monad m => (Text -> m (Maybe a)) -> m (Maybe a)
+queryNodeTables q = firstSuccess $ fmap q ["NodeExternal", "NodeInternal"]
+
 reportBadNodeHeadError
-  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+  :: forall m a latestHead nodeHead lca.
+     ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m)
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
+  let existingLog :: Text -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
+      existingLog nodeTable = listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-      JOIN "NodeExternal" n ON n.id = t.node
+      JOIN ?nodeTable n ON n.id = t.node
      WHERE t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
-  case existingLog of
+  queryNodeTables existingLog >>= \case
     Nothing -> do
       void $ insertErrorLog $ \logId -> ErrorLogBadNodeHead
         { _errorLogBadNodeHead_log = logId
