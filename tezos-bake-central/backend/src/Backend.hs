@@ -215,7 +215,7 @@ backendImpl cfg serve = do
               { _deletableRow_data = NodeExternalData
                 { _nodeExternalData_address = newAddress
                 , _nodeExternalData_alias = Nothing
-                , _nodeExternalData_minPeerConnections = 0
+                , _nodeExternalData_minPeerConnections = Nothing
                 }
               , _deletableRow_deleted = False
               }
