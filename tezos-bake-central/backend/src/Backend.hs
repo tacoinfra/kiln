@@ -63,6 +63,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
+import Backend.Common (threadDelay')
 import Backend.Config (AppConfig (..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
@@ -86,6 +87,7 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import ExtraPrelude
 import Frontend (frontend)
+import Backend.NodeCmd
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -260,6 +262,9 @@ backendImpl cfg serve = do
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
+
+      for_ maybeNamedChain $ \namedChain ->
+        addFinalizer =<< (worker' $ (callNode $ nodePaths namedChain) *> threadDelay' 1000000000)
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

@@ -10,6 +10,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     inherit (obelisk.reflex-platform) hackGet;
     rhyolite-src = hackGet dep/rhyolite;
     rhyoliteLib = args: (import rhyolite-src).lib args;
+    nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
     staticFiles = pkgs.callPackage ./static {};
     packages = {
@@ -25,6 +26,9 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+      backend = overrideCabal super.backend (drv:{
+        librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
+      });
       backend-db = if supportGargoyle
         then
           enableCabalFlag (addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"

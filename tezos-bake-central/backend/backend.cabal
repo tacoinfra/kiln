@@ -82,6 +82,7 @@ library
     , stm
     , svg-builder
     , text
+    , temporary
     , tezos-bake-monitor-lib
     , tezos-noderpc
     , these
@@ -119,6 +120,8 @@ library
     Backend.Workers.Client
     Backend.Workers.Baker
     Backend.Workers.Node
+    Backend.NodeCmd
+    System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
   cpp-options: -DREAL_BUILD
