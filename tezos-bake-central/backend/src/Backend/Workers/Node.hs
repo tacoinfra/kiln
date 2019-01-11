@@ -155,14 +155,12 @@ updateNetworkStats appConfig httpMgr db nid nodeExt before = runExceptT $ do
   -- for this node.m
   when (before /= after) $ inDb $ do
     let
-      minPeers = ffilter (> 0) $ _nodeExternalData_minPeerConnections nodeExt
-    case (,) <$> minPeers <*> _nodeDetailsData_peerCount after of
-      Nothing -> runReaderT (clearNodeInvalidPeerCountError nid) appConfig
-      Just (minPeerCount, peerCount) -> do
-        flip runReaderT appConfig $
-          if (peerCount < fromIntegral minPeerCount)
-            then reportNodeInvalidPeerCountError nid minPeerCount peerCount
-            else clearNodeInvalidPeerCountError nid
+      minPeerCount = fromMaybe 0 $ _nodeExternalData_minPeerConnections nodeExt
+    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+      flip runReaderT appConfig $
+        if (peerCount < fromIntegral minPeerCount)
+          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+          else clearNodeInvalidPeerCountError nid
 
     let p = (NodeDetails_dataField ~>)
     update
