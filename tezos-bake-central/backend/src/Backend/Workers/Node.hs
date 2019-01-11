@@ -58,7 +58,6 @@ import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
 import Common.Schema
 import ExtraPrelude
-import Reflex (ffilter)
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a

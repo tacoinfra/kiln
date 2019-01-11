@@ -200,6 +200,23 @@ data NodeExternalData = NodeExternalData
 instance HasId NodeExternalData where
   type IdData NodeExternalData = Id Node
 
+-- data NodeInternal = NodeInternal (WithId (Id Node) (Deletable NodeInternal'))
+
+data NodeInternal = NodeInternal
+  { _nodeInternal_id :: !(Id Node)
+  , _nodeInternal_data :: !(DeletableRow NodeInternalData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId NodeInternal where
+  -- Should be the same as `IdData NodeInternalData` always.
+  type IdData NodeInternal = Id Node
+
+data NodeInternalData = NodeInternalData
+  { _nodeInternalData_running :: !Bool
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId NodeInternalData where
+  type IdData NodeInternalData = Id Node
+
 -- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
 
 data NodeDetails = NodeDetails
@@ -732,6 +749,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''Node
   , ''NodeExternal
   , ''NodeExternalData
+  , ''NodeInternal
+  , ''NodeInternalData
   , ''NodeDetails
   , ''NodeDetailsData
   , ''Parameters
@@ -778,6 +797,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'Node
   , 'NodeExternal
   , 'NodeExternalData
+  , 'NodeInternal
+  , 'NodeInternalData
   , 'NodeDetails
   , 'NodeDetailsData
   , 'Parameters
@@ -830,11 +851,6 @@ aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe T
 aliasedIdentification getMain getFallback x =
   let fallback = getFallback x
   in maybe (fallback, Nothing) (, Just fallback) $ getMain x
-
-nodeIdentification :: NodeExternalData -> (Text, Maybe Text)
-nodeIdentification = aliasedIdentification
-  _nodeExternalData_alias
-  (Uri.render . _nodeExternalData_address)
 
 bakerIdentification :: Baker -> (Text, Maybe Text)
 bakerIdentification = aliasedIdentification

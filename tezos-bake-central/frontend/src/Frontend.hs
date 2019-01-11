@@ -58,7 +58,7 @@ import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
-import Common (humanBytes, unixEpoch, uriHostPortPath)
+import Common (humanBytes, unixEpoch)
 import Common.Alerts (AlertsFilter(..), badNodeHeadMessage
                      , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.Api
@@ -810,10 +810,10 @@ nodesList = do
   let nodeStatus = \case
         0 -> MonitoredStatus_Healthy
         _ -> MonitoredStatus_Unhealthy
-  nodes <- ((,,) <$> (uriHostPortPath . _nodeExternalData_address . _nodeSummary_node)
-                 <*> (_nodeExternalData_alias . _nodeSummary_node)
-                 <*> (nodeStatus . _nodeSummary_alertCount))
-    <$$$> watchNodeAddresses
+  nodes <- (\ns ->
+              let (title, subtitle) = nodeSummaryIdentification ns
+              in (title, subtitle, nodeStatus (_nodeSummary_alertCount ns)))
+           <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -839,7 +839,7 @@ addNodeModal close = do
             (formItem $ aliasField "Public Facing Node 1"))
           (formItem minConnectionsField)
 
-      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddNode addr alias minPeerConn)) addE
+      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
       hideMsg <- delay 3 showMsg
       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
       pure close
@@ -934,9 +934,12 @@ nodesTab =
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
               nodeCfgDyn = _nodeSummary_node <$> vDyn
-              (title, subtitle) = splitDynPure $ liftA2 nodeTitleSubtitle
-                (uriHostPortPath <$> _nodeExternalData_address <$> nodeCfgDyn)
-                (_nodeExternalData_alias <$> nodeCfgDyn)
+              (title, subtitle) = splitDynPure $ nodeDataIdentification <$> nodeCfgDyn
+
+              removeNode = PublicRequest_RemoveNode . \case
+                Left ext -> Left $ _nodeExternalData_address ext
+                Right _  -> Right ()
+
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
@@ -944,7 +947,7 @@ nodesTab =
             nodeTile
               (dynText titleUniq)
               subtitleUniq
-              (\ev -> PublicRequest_RemoveNode . _nodeExternalData_address . _nodeSummary_node <$> current vDyn <@ ev)
+              (\ev -> removeNode . _nodeSummary_node <$> current vDyn <@ ev)
               ((=<<) getNodeHeadBlock)
               (Just errorMessages)
               (Just $ (=<<) _nodeDetailsData_peerCount)
@@ -1065,8 +1068,6 @@ bakersTab =
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
       dEbb <- snd <$$$$> watchErrorsByBaker alertWindow
       dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
-      dNodeDownPerBaker <- do
-        watchBakerAddresses
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
@@ -1193,7 +1194,7 @@ bakersTab =
       -> Dynamic t (Maybe b) -- ^ Details
       -> Dynamic t Bool -- ^ have network connectivity
       -> m ()
-    tile title subtitle mkRemoveReq getBakeSuccess' getEndorseSuccess' getNextEvent' errors' bakerDyn details' connected = do
+    tile title subtitle mkRemoveReq _getBakeSuccess' _getEndorseSuccess' getNextEvent' errors' bakerDyn details' connected = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
@@ -1218,7 +1219,7 @@ bakersTab =
         (details'' :: Dynamic t (Maybe (Dynamic t b))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
-          Just details -> el "dl" $ do
+          Just _details -> el "dl" $ do
             --el "dt" (text "Bake Success:")
             --el "dd" $
             --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
