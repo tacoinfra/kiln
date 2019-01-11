@@ -55,6 +55,10 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
+-- TODO: configurable data-dir with CLI
+-- TODO: use postgres for "process-id's"
+
+
 callNode :: (MonadIO m, MonadMask m) => FilePath -> m ()
 callNode nodePath = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
   let nodeConfig = defaultConfig
@@ -73,9 +77,25 @@ callNode nodePath = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath
   when (not haveIdentityFile) $
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
 
-  liftIO . putStrLn =<< liftIO (readProcess nodePath ["run", "--config-file", nodeConfigPath] "")
+  liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
+    where
+      go0 _ _ _ ph = go
+        where
+          go ::  IO ()
+          go = do
+            -- TODO poll db for exit request
+            let shouldRun = True
+            getProcessExitCode ph >>= \case
+              Nothing -> do
+                when (not shouldRun) $
+                  terminateProcess ph
+                (threadDelay' 1) *> go
+              Just e ->
+                if shouldRun
+                  -- TODO: logging!
+                  then print ("node exited unexpectedly" :: Text, e)
+                  else print ("node exited sucessfully" :: Text, e)
 
-  threadDelay' 10000000
 
 
 
