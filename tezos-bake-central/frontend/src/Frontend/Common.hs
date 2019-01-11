@@ -452,7 +452,7 @@ minConnectionsField = validatedInput (Validator.optional $ Validator.validateNum
   & Txt.setFluid
   & Txt.addLabel (el "label" $ do
                      text "Minimum Peer Connections"
-                     divClass "sub-label" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
+                     divClass "explanation" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
 
 zipFields :: (Applicative m, Reflex t)
           => m (Dynamic t (Either Text a))

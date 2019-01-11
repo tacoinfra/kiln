@@ -104,13 +104,13 @@ h6.ui.header {
   }
 }
 
-
-.shaded {
-  padding: @15px;
+.secondary-name {
+  font-size: @12px;
+  font-weight: normal;
+  color: @grey;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-.shaded.grey { background-color: @blue; }
-.shaded.blue { background-color: #f8f9fc; }
 
 .faded {
   opacity: 0.50;
@@ -760,14 +760,6 @@ img.credits-obsidian {
           font-size: @8px;
           vertical-align: 15%;
         }
-
-        > .subtitle {
-          font-size: @12px;
-          font-weight: normal;
-          color: @grey;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
       }
 
       > .ui.error.message {
@@ -857,12 +849,34 @@ h4.dashboard-section-title {
   font-size: @14px;
 }
 
-.modal-box .field .sub-label {
-  color: @grey;
-  margin-top: @5px;
-  margin-bottom: @10px;
-  font-size: @12px;
-  lineHeight: @16px;
+
+.modal-box > .content {
+  > .ui.header {
+    margin-bottom: @30px;
+  }
+
+  > .ui.grid {
+
+    > .column:not(:first-child) {
+      padding-left: 30px;
+    }
+    > .column:not(:last-child) {
+      padding-right: 30px;
+    }
+
+    .section > .ui.header {
+      margin-bottom: @10px;
+      font-weight: normal;
+    }
+
+    .explanation {
+      color: @grey;
+      margin-top: @5px;
+      margin-bottom: @10px;
+      font-size: @12px;
+      lineHeight: @16px;
+    }
+  }
 }
 
 .modal-box.add-baker {

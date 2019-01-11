@@ -818,31 +818,38 @@ nodesList = do
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addNodeModal close = do
-  el "h3" $ text "Add Nodes"
-  divClass "basic small segment" $ text $ T.unlines
-    [ "Choose from public nodes on the left, connect to your own nodes on the right."
-    , "We recommend adding at least one public node."
-    ]
-  divClass "ui grid" $ do
-    divClass "ten wide column" $ divClass "blue shaded" $ do
-      elClass "h5" "ui header" $ text "Connect to a Public Node"
-      publicNodeOptions
-    divClass "six wide column" $ divClass "blue shaded" $ mdo
-      let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
-            icon "check blue"
-            text "Node added!"
-      elClass "h5" "ui header" $ text "Connect via address"
-      addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
-        zipFields
-          (zipFields
-            (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
-            (formItem $ aliasField "Public Facing Node 1"))
-          (formItem minConnectionsField)
+  divClass "ui header" $ text "Add Nodes"
+  divClass "ui grid divided" $ do
+    addExternal <* addPublic
 
-      showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
-      hideMsg <- delay 3 showMsg
-      showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
-      pure close
+  where
+    addPublic = do
+      divClass "ten wide column" $ divClass "section" $ do
+        elClass "h5" "ui header" $ text "Connect to a Public Node"
+        divClass "explanation" $ text "We recommend adding all public nodes to enhance monitoring accuracy."
+        publicNodeOptions
+
+    addExternal = do
+     divClass "six wide column" $ divClass "section" $ mdo
+       let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+             icon "check blue"
+             text "Node added!"
+
+       elClass "h5" "ui header" $ text "Connect via address"
+       divClass "explanation" $ text "Via RPC monitor nodes running locally or remotely."
+
+       addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
+         zipFields
+           (zipFields
+             (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
+             (formItem $ aliasField "Public Facing Node 1"))
+           (formItem minConnectionsField)
+
+       showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
+       hideMsg <- delay 3 showMsg
+       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+       pure close
+
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
@@ -995,7 +1002,7 @@ nodesTab =
             errorsEmpty <- holdUniqDyn $ null <$> errors
             iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
           title
-          divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+          divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors ->
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
