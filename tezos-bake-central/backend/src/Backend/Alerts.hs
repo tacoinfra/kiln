@@ -165,7 +165,7 @@ clearBakerDeactivated pkh newFit = do
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ get . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
@@ -212,7 +212,7 @@ clearBakerDeactivationRisk pkh newFit = do
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
-  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ get . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
@@ -257,7 +257,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.id |]
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  -- $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
+  --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
