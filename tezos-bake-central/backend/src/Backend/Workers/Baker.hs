@@ -99,8 +99,8 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
     $(logDebug) $ "BAKER baseline " <> tshow (_rightsCycleInfo_branch <$> cycleHashes)
 
-    -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
-    -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
+    --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
+    --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
