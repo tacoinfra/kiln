@@ -59,8 +59,7 @@ requestHandler
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
-      PublicRequest_AddNode addr alias minPeerConn' -> inDb $ do
-        let minPeerConn = fromMaybe 0 minPeerConn'
+      PublicRequest_AddNode addr alias minPeerConn -> inDb $ do
         existingIds :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
           Nothing -> do

@@ -413,7 +413,7 @@ getNodeAddresses
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
-  rs :: [(Id Node, URI, Maybe Text, Int, Int)] <- [queryQ|
+  rs :: [(Id Node, URI, Maybe Text, Maybe Int, Int)] <- [queryQ|
       SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections",
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
