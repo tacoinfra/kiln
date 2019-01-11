@@ -205,7 +205,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
             Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
             Just ((pId, p):|_)
-              -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
+              --  | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
               | _bakerRightsCycleProgress_progress p < lvl -> do
                 _ <- [executeQ|
                   UPDATE "BakerRightsCycleProgress"
