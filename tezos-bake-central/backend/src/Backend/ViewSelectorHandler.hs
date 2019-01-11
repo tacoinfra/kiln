@@ -406,7 +406,6 @@ getBakerAddresses nds bid = do
         (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary (BakerData alias) alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
       ) rs (getMonoidalMap nextBakeRights)
 
-  -- $(logDebug) ("ViewSelectorHandler::getBakerAddresses " <> T.decodeUtf8 (LBS.toStrict $ Aeson.encode result))
   return result
 
 getNodeAddresses
