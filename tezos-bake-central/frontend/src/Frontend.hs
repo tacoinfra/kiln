@@ -38,7 +38,6 @@ import GHCJS.DOM.Element (setInnerHTML)
 import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
-import Numeric (showFFloat)
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
 import Obelisk.Generated.Static (static)
@@ -70,7 +69,6 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute)
 import Common.Schema hiding (Event)
-import Common.Vassal
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)

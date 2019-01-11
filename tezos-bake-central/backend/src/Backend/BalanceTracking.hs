@@ -3,19 +3,12 @@
 module Backend.BalanceTracking where
 
 import Control.Monad
-import Data.Fixed
 import Data.List
-import Data.Map.Monoidal (MonoidalMap)
-import qualified Data.Map.Monoidal as MMap
 import Data.Ord
-import Data.Semigroup
 import Data.Word
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Schema
-
-import Tezos.Json (TezosWord64 (..))
-import Tezos.PublicKeyHash
 
 import Backend.Schema ()
 import Common.Schema

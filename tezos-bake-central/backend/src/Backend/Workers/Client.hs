@@ -18,7 +18,6 @@ import Common.Schema
 import Common.Verification (validateForkyBlocks)
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
-import Control.Monad (unless, void)
 import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
