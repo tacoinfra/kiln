@@ -36,7 +36,7 @@ import Data.Sequence (Seq())
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
-import Reflex (fforMaybe)
+import Reflex (fforMaybe, fmapMaybe)
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, In(..))
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
@@ -246,7 +246,6 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     db = _nodeDataSource_pool nds
 
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
-    let
     currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
@@ -254,11 +253,18 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
         (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
       return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
-    wantedActions <- for currentState $ \(baker, details) ->
-      getWantedAction protoInfo headBlock baker details
+    wantedActions <- for currentState $ \(baker, details) -> do
+      res <- runExceptT $ getWantedAction protoInfo headBlock baker details
+      case res of
+        Right commit -> do
+          $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
+          pure $ Just commit
+        Left (err :: CacheError) -> do
+          $(logErrorSH) ("bakerWorker failed to process baker: " <> tshow baker, err)
+          pure Nothing
 
     -- beware of the jellyfish
-    runDb (Identity db) $ runReaderT (sequence_ wantedActions) appConfig
+    runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
 
   case res of
     Right () -> $(logDebug) $ "bakerWorker DONE"
