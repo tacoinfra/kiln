@@ -442,7 +442,7 @@ networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkU
 networkUpdateAlert elua = do
   let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
   renderResolvableSplashAlert
-    (elAttr "img" ("class" =: "icon" <> "src" =: static @"images/warning-badge.svg") $ return ()) -- TODO switch to font icon when added
+    (icon "icon-alert-badge big blue")
     ("New Tezos '" <> namedChain <> "' software version.")
     (do el "p" $ text $ mconcat
           [ "There is a new version of the ", namedChain
