@@ -302,7 +302,6 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.id |]
-  for_ lids $ notify . Notify_ErrorLogNodeWrongChain
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
