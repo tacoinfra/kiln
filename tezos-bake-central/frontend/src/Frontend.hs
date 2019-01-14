@@ -1005,15 +1005,15 @@ nodesTab =
         withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
 
         el "dl" $ do
-          el "dt" (text "Fitness")
-          el "dd" $
-            withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
+          el "div" $ do
+            el "dt" (text "Fitness")
+            el "dd" $
+              withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
 
-          el "br" blank
-
-          el "dt" (text "Baked")
-          el "dd" $ do
-            withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
+          el "div" $ do
+            el "dt" (text "Baked")
+            el "dd" $ do
+              withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
         when (isJust getPeerCount' || isJust getNetworkStats') $
           divClass "divider" blank
@@ -1216,43 +1216,39 @@ bakersTab =
           Nothing -> blank
           Just details -> el "dl" $ do
             let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "dt" (text "Available Balance:")
-            el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-              text . tez . _cacheDelegateInfo_balance
+            el "div" $ do
+              el "dt" (text "Available Balance")
+              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
+                text . tez . _cacheDelegateInfo_balance
 
-            el "br" blank
+            el "div" $ do
+              el "dt" (text "Staking Balance")
+              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
+                text . tez . _cacheDelegateInfo_stakingBalance
 
-            el "dt" (text "Staking Balance:")
-            el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-              text . tez . _cacheDelegateInfo_stakingBalance
+            --el "div" $ do
+            --  el "dt" (text "Bake Success")
+            --  el "dd" $
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
 
-            --el "br" blank
-
-            --el "dt" (text "Bake Success:")
-            --el "dd" $
-            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-            --el "br" blank
-
-            --el "dt" (text "Endorsement Success:")
-            --el "dd" $ do
-            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-            --el "br" blank
-            pure ()
+            --el "div" $ do
+            --  el "dt" (text "Endorsement Success")
+            --  el "dd" $ do
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
         latestHead <- watchLatestHead
         dparameters <- watchProtoInfo
         dyn_ $ ffor nextEventDyn $ \case
           Nothing -> blank
           Just eventDyn -> el "dl" $ do
-            el "dt" (text "Next:")
-            el "dd" $ do
-              (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
-              (dynText $ tshow . unRawLevel . snd <$> eventDyn)
-              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
-              text nbsp
-              dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
+            el "div" $ do
+              el "dt" (text "Next")
+              el "dd" $ do
+                (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
+                (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                text nbsp
+                dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
