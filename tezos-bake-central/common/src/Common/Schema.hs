@@ -210,8 +210,19 @@ instance HasId NodeInternal where
   -- Should be the same as `IdData NodeInternalData` always.
   type IdData NodeInternal = Id Node
 
+data NodeInternalState
+   = NodeInternalState_Stopped
+   | NodeInternalState_Initializing
+   | NodeInternalState_Starting
+   | NodeInternalState_Running
+   | NodeInternalState_Failed
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool
+  { _nodeInternalData_running :: !Bool -- the state we *want* the node in;
+  , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
+  , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
+  , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeInternalData where
@@ -751,6 +762,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternalData
   , ''NodeInternal
   , ''NodeInternalData
+  , ''NodeInternalState
   , ''NodeDetails
   , ''NodeDetailsData
   , ''Parameters
