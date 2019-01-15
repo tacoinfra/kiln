@@ -415,7 +415,7 @@ getNodeAddresses
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   ext :: Map.Map (WithInfinity (Id Node)) NodeExternalData <- [queryQ|
-      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections",
+      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections"
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
@@ -459,12 +459,12 @@ getNodeAddresses nid = do
            AND ein.node = n.id)
       FROM (
         SELECT n1.id FROM "NodeExternal" n1
-        WHERE NOT n."data#deleted"
-          AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END
+        WHERE NOT n1."data#deleted"
+          AND CASE WHEN ?nid is NULL THEN true ELSE n1.id = ?nid END
         UNION
         SELECT n2.id FROM "NodeInternal" n2
-        WHERE NOT n."data#deleted"
-          AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END) n
+        WHERE NOT n2."data#deleted"
+          AND CASE WHEN ?nid is NULL THEN true ELSE n2.id = ?nid END) n
     |] <&> Map.fromList . (fmap $ first Bounded)
   let
     intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData NodeInternalData)
