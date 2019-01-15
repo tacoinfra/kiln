@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -28,11 +29,13 @@ import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import Data.Version (Version, showVersion)
+import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
+import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
@@ -43,6 +46,7 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common (humanizeTimestamp)
+import Common.Api (PublicRequest)
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
@@ -329,6 +333,9 @@ icon i = elClass "i" (iconClass i) blank
 iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
 iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
+kilnLogo :: DomBuilder t m => m ()
+kilnLogo = elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
+
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
 updatedWithInit d = do
@@ -381,6 +388,20 @@ cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Even
 cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+
+confirmationModal :: MonadRhyoliteFrontendWidget app t m
+                  => Text
+                  -> Text
+                  -> Text
+                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> Event t ()
+                  -> m (Event t ())
+confirmationModal title msg btn mkReq = cancelableModal $ \close -> do
+  el "h3" $ text title
+  el "p" $ text msg
+  confirm <- divClass "buttons" $ uiButton "primary" btn
+  response <- requestingIdentity $ public <$> mkReq confirm
+  pure $ leftmost [response, close]
 
 data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
   deriving (Eq, Show, Ord)

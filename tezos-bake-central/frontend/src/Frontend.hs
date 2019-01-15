@@ -261,7 +261,7 @@ appSideHeader =
       )
     $ do
         SemUi.header def $ do
-          elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") $ return ()
+          kilnLogo
           text appName
         SemUi.menu
           (def
@@ -846,7 +846,7 @@ addNodeModal close = do
             void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
 
           Just n -> do
-            elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
+            kilnLogo
             text "A Kiln node is running."
 
     addExternal = do
@@ -920,6 +920,19 @@ thirtySixHoursToInfinity = do
 
   return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
 
+tileMenuEntry :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
+                 , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
+              => Text -> m (Event t ())
+tileMenuEntry = fmap (domEvent Click . fst) . SemUi.listItem' def . text
+
+tileMenuEntryModal :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
+                      , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m
+                      , HasModal t m)
+                   => Text -> (Event t () -> ModalM m (Event t ())) -> m ()
+tileMenuEntryModal txt modal = do
+  open <- tileMenuEntry txt
+  tellModal $ open $> modal
+
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -949,38 +962,74 @@ nodesTab =
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode alertWindow
-          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          void $ listWithKey (MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
-            unresolvedAlertsForThisNode <- holdUniqDyn $
-              foldMap toList . MMap.lookup nodeId <$> ebn
 
-            let
-              errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
+          let
+            errorMessages nodeId = do
+              unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \case
                 NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
                 NodeErrorLogView_NodeInvalidPeerCount{} -> text "Low number of connected peers."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
-              nodeCfgDyn = _nodeSummary_node <$> vDyn
-              (title, subtitle) = splitDynPure $ nodeDataIdentification <$> nodeCfgDyn
 
-              removeNode = PublicRequest_RemoveNode . \case
-                Left ext -> Left $ _nodeExternalData_address ext
-                Right _  -> Right ()
+          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
+          let dropInternal = fmapMaybe $ preview _Left . _nodeSummary_node
+          void $ listWithKey (dropInternal . MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
+            let
+              (title, subtitle) = splitDynPure $ nodeDataIdentification . Left <$> vDyn
+
+              mkRemoveReq ev = PublicRequest_RemoveNode . Left . _nodeExternalData_address <$> current vDyn <@ ev
+
+              externalNodeMenu :: m ()
+              externalNodeMenu = tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
 
+            errors <- errorMessages nodeId
             nodeDetails <- watchNodeDetails nodeId
             nodeTile
               (dynText titleUniq)
-              subtitleUniq
-              (\ev -> removeNode . _nodeSummary_node <$> current vDyn <@ ev)
-              ((=<<) getNodeHeadBlock)
-              (Just errorMessages)
+              (dynText $ fromMaybe nbsp <$> subtitleUniq)
+              externalNodeMenu
+              (>>= getNodeHeadBlock)
+              (Just errors)
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
               nodeDetails
+
+          let dropExternal = fmapMaybe $ preview _Right . _nodeSummary_node
+          dyn_ $ ffor (listToMaybe . Map.assocs . dropExternal . MMap.getMonoidalMap <$> nodesDyn) $ \case
+            Nothing -> blank
+            Just (nodeId, nodeData) -> do
+              let internalNodeMenu :: m ()
+                  internalNodeMenu = do
+                    let
+                      stopModal = confirmationModal
+                        ("Stop this node?")
+                        ("You can always restart this node from the tile menu.")
+                        ("Stop node")
+
+                    if _nodeInternalData_running nodeData
+                      then tileMenuEntryModal "Stop Node" $ stopModal $ (PublicRequest_UpdateInternalNode False <$)
+                      else do
+                        start <- tileMenuEntry "Start Node"
+                        void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
+
+                    tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
+
+              errors <- errorMessages nodeId
+              nodeDetails <- watchNodeDetails nodeId
+              nodeTile
+                (text "Kiln Node")
+                kilnLogo
+                internalNodeMenu
+                (>>= getNodeHeadBlock)
+                (Just errors)
+                (Just $ (=<<) _nodeDetailsData_peerCount)
+                (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+                nodeDetails
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -991,39 +1040,42 @@ nodesTab =
                 PublicNode_Blockscale -> text "Foundation Nodes"
                 PublicNode_Obsidian -> text "Obsidian Systems"
 
+              publicNodeMenu :: m ()
+              publicNodeMenu = do
+                let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
+                tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
+
             nodeTile
               title
-              (pure Nothing)
-              (\ev -> flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev)
+              blank
+              publicNodeMenu
               (Just . mkVeryBlockLike)
               Nothing
               Nothing
               Nothing
               vDyn
 
+
     nodeTile
       :: m () -- ^ Title
-      -> Dynamic t (Maybe Text) -- ^ Subtitle
-      -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this node.
+      -> m () -- ^ Subtitle
+      -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile title subtitle mkRemoveReq getBlock errors' getPeerCount' getNetworkStats' node = do
+    nodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node = do
       b <- maybeDyn $ getBlock <$> node
       divClass "ui card dashboard-tile node-tile" $ divClass "content" $ do
-        tileMenu $ do
-          remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Node"
-          tellModal $ remove $> removeItemModal "node" mkRemoveReq
-
+        tileMenu menuContents
         divClass "title" $ do
           for_ errors' $ \errors -> do
             errorsEmpty <- holdUniqDyn $ null <$> errors
             iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
           title
-          divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+          divClass "secondary-name" subtitle
 
         for_ errors' $ \errors ->
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
@@ -1309,13 +1361,15 @@ withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
 withMaybeDyn :: (Eq b, MonadFix m, MonadHold t m, Reflex t) => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
 withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
-removeItemModal :: MonadRhyoliteFrontendWidget app t m => Text -> (Event t () -> Event t (PublicRequest app ())) -> Event t () -> m (Event t ())
-removeItemModal name mkRemoveReq = cancelableModal $ \close -> do
-  el "h3" $ text $ "Remove this " <> name <> "?"
-  el "p" $ text $ "You can always add this " <> name <> " again from the \"Add " <> T.toTitle name <> "\" button."
-  sure <- divClass "buttons" $ uiButton "primary" $ "Remove " <> T.toTitle name
-  response <- requestingIdentity $ public <$> mkRemoveReq sure
-  pure $ leftmost [response, close]
+removeItemModal :: MonadRhyoliteFrontendWidget app t m
+                => Text
+                -> (Event t () -> Event t (PublicRequest app ()))
+                -> Event t ()
+                -> m (Event t ())
+removeItemModal name = confirmationModal
+  ("Remove this " <> name <> "?")
+  ("You can always add this " <> name <> " again from the \"Add " <> T.toTitle name <> "\" button.")
+  ("Remove " <> T.toTitle name)
 
 tileMenu :: (DomBuilder t m, TriggerEvent t m, MonadIO (Performable m), PerformEvent t m, PostBuild t m, MonadHold t m, MonadFix m) => m b -> m ()
 tileMenu content =
