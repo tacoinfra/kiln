@@ -748,18 +748,20 @@ sidebarList :: forall t m k.
   , HasModal t m
   , Ord k
   )
-  => Text -> Dynamic t (MonoidalMap k (Text, Maybe Text, MonitoredStatus)) -> (Event t () -> ModalM m (Event t ())) -> m ()
+  => Text -> Dynamic t (MonoidalMap k (Text, Maybe Text, MonitoredStatus, m ())) -> (Event t () -> ModalM m (Event t ())) -> m ()
 sidebarList name nodes' modal = do
-  let nodes :: Dynamic t (Map.Map k (Text, Maybe Text, MonitoredStatus)) = coerceDynamic nodes'
+  let nodes :: Dynamic t (Map.Map k (Text, Maybe Text, MonitoredStatus, m ())) = coerceDynamic nodes'
   divClass "ui sub header" $ text (pluralOf name)
   divClass "ui list" $ do
     _ <- listWithKey nodes $ \_ node -> divClass "item bullet-before" $ do
-      let color = (\(_,_,s) -> statusColor s) <$> node
+      let color = (\(_,_,s,_) -> statusColor s) <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> SemUi.Dyn color) blank
       divClass "content" $ do
-        let (title, subtitle) = splitDynPure $ ffor node $ \(address, alias, _) ->
+        let (title, subtitle) = splitDynPure $ ffor node $ \(address, alias, _, _) ->
               nodeTitleSubtitle address alias
-        divClass "header" $ dynText title
+        divClass "header" $ do
+          dynText title
+          divClass "ui image right floated" $ dyn_ $ ffor node $ \(_, _, _, symbol) -> symbol
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
@@ -778,10 +780,11 @@ bakersList ::
   )
   => m ()
 bakersList = do
-  bakers :: Dynamic t (MonoidalMap PublicKeyHash (Text, Maybe Text, MonitoredStatus)) <- imap (\pkh b ->
+  bakers <- imap (\pkh b ->
     ( toPublicKeyHashText pkh
     , _bakerData_alias $ _bakerSummary_baker b
-    , bakerStatus b)
+    , bakerStatus b
+    , blank)
     ) <$$> watchBakerAddresses
   sidebarList "Baker" bakers addBakerModal
 
@@ -812,7 +815,10 @@ nodesList = do
         _ -> MonitoredStatus_Unhealthy
   nodes <- (\ns ->
               let (title, subtitle) = nodeSummaryIdentification ns
-              in (title, subtitle, nodeStatus (_nodeSummary_alertCount ns)))
+              in (title
+                 , subtitle
+                 , nodeStatus (_nodeSummary_alertCount ns)
+                 , bool blank kilnLogo $ isRight $ _nodeSummary_node ns))
            <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
