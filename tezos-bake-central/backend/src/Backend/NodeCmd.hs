@@ -87,8 +87,7 @@ callNode nodePath = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath
             let shouldRun = True
             getProcessExitCode ph >>= \case
               Nothing -> do
-                when (not shouldRun) $
-                  terminateProcess ph
+                when (not shouldRun) $ terminateProcess ph
                 (threadDelay' 1) *> go
               Just e ->
                 if shouldRun

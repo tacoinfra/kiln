@@ -63,11 +63,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         project1 NodeInternal_dataField CondEmpty >>= \case
           Nothing -> do
             nid <- insert' Node
-            let nodeData = NodeInternalData True
             insert $ NodeInternal
               { _nodeInternal_id = nid
               , _nodeInternal_data = DeletableRow
-                { _deletableRow_data = nodeData
+                { _deletableRow_data = NodeInternalData
+                  { _nodeInternalData_running = True
+                  , _nodeInternalData_state = NodeInternalState_Stopped
+                  , _nodeInternalData_stateUpdated = Nothing
+                  , _nodeInternalData_backend = Nothing
+                  }
                 , _deletableRow_deleted = False
                 }
               }

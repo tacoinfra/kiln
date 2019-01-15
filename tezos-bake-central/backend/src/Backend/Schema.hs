@@ -281,6 +281,9 @@ instance ToField NamedChain where
 instance FromField NamedChain where
   fromField f b = read <$> fromField f b
 
+instance FromField NodeInternalState where
+  fromField f b = read <$> fromField f b
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
@@ -524,6 +527,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
+  - primitive: NodeInternalState
   - entity: NodeInternal
     autoKey: null
     keys:
