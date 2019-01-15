@@ -820,23 +820,44 @@ addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t
 addNodeModal close = do
   divClass "ui header" $ text "Add Nodes"
   divClass "ui grid divided" $ do
-    addExternal <* addPublic
+    addInternal *> addExternal <* addPublic
 
   where
+    section header explanation = do
+      elClass "h5" "ui header" $ text header
+      divClass "explanation" $ text explanation
+
     addPublic = do
-      divClass "ten wide column" $ divClass "section" $ do
-        elClass "h5" "ui header" $ text "Connect to a Public Node"
-        divClass "explanation" $ text "We recommend adding all public nodes to enhance monitoring accuracy."
+      divClass "seven wide column" $ divClass "section" $ do
+        section
+          "Connect to a Public Node"
+          "We recommend adding all public nodes to enhance monitoring accuracy."
         publicNodeOptions
 
+    addInternal = do
+      divClass "five wide column" $ divClass "section" $ do
+        section
+          "Launch a Kiln node"
+          "Launch a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
+        node <- watchInternalNode
+        dyn_ $ ffor node $ \case
+          Nothing -> do
+            launch <- uiButton "primary" "Launch Node"
+            void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+
+          Just n -> do
+            elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
+            text "A Kiln node is running."
+
     addExternal = do
-     divClass "six wide column" $ divClass "section" $ mdo
+     divClass "four wide column" $ divClass "section" $ mdo
        let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
              icon "check blue"
              text "Node added!"
 
-       elClass "h5" "ui header" $ text "Connect via address"
-       divClass "explanation" $ text "Via RPC monitor nodes running locally or remotely."
+       section
+         "Connect via address"
+         "Via RPC monitor nodes running locally or remotely."
 
        addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
          zipFields

@@ -872,7 +872,7 @@ h4.dashboard-section-title {
     .explanation {
       color: @grey;
       margin-top: @5px;
-      margin-bottom: @10px;
+      margin-bottom: @20px;
       font-size: @12px;
       lineHeight: @16px;
     }
