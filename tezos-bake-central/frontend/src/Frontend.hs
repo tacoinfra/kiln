@@ -1376,6 +1376,21 @@ bakersTab =
           True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
           False -> blank
 
+        nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
+        dyn_ $ ffor nextEventDyn $ \case
+          Nothing -> blank
+          Just eventDyn -> el "dl" $ do
+            latestHead <- watchLatestHead
+            dparameters <- watchProtoInfo
+            el "div" $ do
+              el "dt" (text "Next")
+              el "dd" $ do
+                (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
+                (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                text nbsp
+                dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
+
         (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
@@ -1390,15 +1405,16 @@ bakersTab =
               el "dt" (text "Staking Balance")
               el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
                 text . tez . _cacheDelegateInfo_stakingBalance
+
             --el "div" $ do
             --  el "dt" (text "Bake Success:")
             --  el "dd" $
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
 
             --el "div" $ do
             --  el "dt" (text "Endorsement Success:")
             --  el "dd" $ do
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
 
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
         latestHead <- watchLatestHead
