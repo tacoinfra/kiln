@@ -59,8 +59,10 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (humanBytes, unixEpoch, uriHostPortPath)
-import Common.Alerts (AlertsFilter(..), badNodeHeadMessage
-                     , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.Alerts
+  ( AlertsFilter(..), badNodeHeadMessage
+  , bakerMissedDescriptions, bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions
+  , networkUpdateDescription)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -440,17 +442,15 @@ nodesTabOrWelcome = do
 
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
-  let namedChain = showNamedChain $ _errorLogNetworkUpdate_namedChain elua
+  let namedChain = _errorLogNetworkUpdate_namedChain elua
+  let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
     (icon "icon-alert-badge big blue")
-    ("New Tezos '" <> namedChain <> "' software version.")
-    (do el "p" $ text $ mconcat
-          [ "There is a new version of the ", namedChain
-          , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
-          ]
+    header
+    (do el "p" $ text $ bodyFirstPara
         el "p" $ do
           text "Get the new software here  🡒  "
-          let url = "https://gitlab.com/tezos/tezos/tree/" <> namedChain -- FIXME the url should be based on the project id
+          let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
     (Just $ LogTag_NetworkUpdate :=> pure elua)
 

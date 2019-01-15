@@ -9,12 +9,14 @@ import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
 import Rhyolite.Schema (Json (..))
 
+import Tezos.Chain (NamedChain, showNamedChain)
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
 import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
                       BakerErrorDescriptions(..), LogTag(..),
-                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
+                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..),
+                      ErrorLogNetworkUpdate (..), RightKind(..), bakerIdentification)
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -136,3 +138,14 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
+
+-- Skip the final sentence as there is no easy way to abstract over doing or not
+-- doing the link.
+networkUpdateDescription :: NamedChain -> (Text, Text)
+networkUpdateDescription namedChain = (,)
+  ("New Tezos '" <> name <> "' software version.")
+  (mconcat
+    [ "There is a new version of the ", name
+    , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
+    ])
+  where name = showNamedChain namedChain

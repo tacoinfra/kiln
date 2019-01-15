@@ -259,7 +259,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerWorker appConfig dataSrc
 
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
