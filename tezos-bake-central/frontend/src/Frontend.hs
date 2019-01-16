@@ -1061,52 +1061,50 @@ nodesTab =
               Nothing
               vDyn
 
-
-    nodeTile
+    tileHeader
       :: m () -- ^ Title
       -> m () -- ^ Subtitle
       -> m () -- ^ Tile menu contents
-      -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
+      -> m () -- ^ Status badge
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
-      -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
-      -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
-      -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node = do
+    tileHeader title subtitle menuContents badge errors' = do
+      tileMenu menuContents
+      divClass "title" $ do
+        badge
+        title
+        divClass "secondary-name" subtitle
+      tileErrors errors'
+
+    tileErrors = traverse_ $ \errors ->
+      dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+
+    tileBadgeImpliedByErrors = traverse_ $ \errors -> do
+      errorsEmpty <- holdUniqDyn $ null <$> errors
+      iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
+
+    tileBlockStats getBlock node = do
       b <- maybeDyn $ getBlock <$> node
-      divClass "ui card dashboard-tile node-tile" $ divClass "content" $ do
-        tileMenu menuContents
-        divClass "title" $ do
-          for_ errors' $ \errors -> do
-            errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
-          title
-          divClass "secondary-name" subtitle
+      divClass "soft-heading" $
+        withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
+      text "#"
+      withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
 
-        for_ errors' $ \errors ->
-          dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+      el "dl" $ do
+        el "dt" (text "Fitness")
+        el "dd" $
+          withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
 
-        divClass "divider" blank
+        el "br" blank
 
-        divClass "soft-heading" $
-          withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
-        text "#"
-        withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
+        el "dt" (text "Baked")
+        el "dd" $ do
+          withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
-        el "dl" $ do
-          el "dt" (text "Fitness")
-          el "dd" $
-            withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
-
-          el "br" blank
-
-          el "dt" (text "Baked")
-          el "dd" $ do
-            withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
-
-        when (isJust getPeerCount' || isJust getNetworkStats') $
-          divClass "divider" blank
-
+    tileConnectionStats getPeerCount' getNetworkStats' node =
+      if isNothing getPeerCount' && isNothing getNetworkStats'
+      then Nothing
+      else Just $ do
         for_ getPeerCount' $ \getPeerCount -> do
           peerCount <- maybeDyn <=< holdUniqDyn $ getPeerCount <$> node
           elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
@@ -1130,6 +1128,28 @@ nodesTab =
             divClass "column" $ do
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
+
+    nodeTile
+      :: m () -- ^ Title
+      -> m () -- ^ Subtitle
+      -> m () -- ^ Tile menu contents
+      -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
+      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
+      -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
+      -> Dynamic t a -- ^ Node
+      -> m ()
+    nodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node =
+      nodeTileWithSections $
+        [ tileHeader title subtitle menuContents (tileBadgeImpliedByErrors errors') errors'
+        , tileBlockStats getBlock node
+        ]
+        <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
+
+    nodeTileWithSections :: [m ()] -> m ()
+    nodeTileWithSections = divClass "ui card dashboard-tile node-tile" . divClass "content" .
+      sequence_ . intersperse (divClass "divider" blank)
+
 
 data BakersBanner
   = BakersBanner_Gathering
