@@ -798,9 +798,6 @@ addBakerModal close = mdo
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
-nodeTitleSubtitle :: a -> Maybe a -> (a, Maybe a)
-nodeTitleSubtitle addr alias = (fromMaybe addr alias, addr <$ alias)
-
 nodesList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
@@ -1251,7 +1248,7 @@ bakersTab =
                   BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
-            let (title, subtitle) = splitDynPure $ nodeTitleSubtitle (toPublicKeyHashText pkh) <$> (_bakerData_alias . _bakerSummary_baker <$> vDyn)
+            let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
             subtitleUniq <- holdUniqDyn subtitle
             details <- watchBakerDetails pkh
