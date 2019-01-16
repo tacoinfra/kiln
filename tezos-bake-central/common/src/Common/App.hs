@@ -36,7 +36,6 @@ import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
-import qualified Text.URI as Uri
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
@@ -46,6 +45,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common (uriHostPortPath)
 import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
@@ -96,7 +96,7 @@ nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, May
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
     (_nodeExternalData_alias)
-    (Uri.render . _nodeExternalData_address) -- TODO: consider uriHostPortPath ?
+    (uriHostPortPath . _nodeExternalData_address)
     e
   Right _ -> ("Kiln-managed Node", Nothing)
 
