@@ -27,6 +27,7 @@ import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
+import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
@@ -359,7 +360,7 @@ firstSuccess = \case
   []     -> pure Nothing
   (x:xs) -> x >>= maybe (firstSuccess xs) (pure . Just)
 
-queryNodeTables :: Monad m => (Text -> m (Maybe a)) -> m (Maybe a)
+queryNodeTables :: Monad m => (Identifier -> m (Maybe a)) -> m (Maybe a)
 queryNodeTables q = firstSuccess $ fmap q ["NodeExternal", "NodeInternal"]
 
 reportBadNodeHeadError
@@ -369,7 +370,7 @@ reportBadNodeHeadError
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
-  let existingLog :: Text -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
+  let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
       existingLog nodeTable = listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
