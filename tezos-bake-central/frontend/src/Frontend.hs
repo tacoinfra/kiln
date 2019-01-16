@@ -852,7 +852,7 @@ addNodeModal close = do
             launch <- uiButton "primary" "Launch Node"
             void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
 
-          Just n -> do
+          Just _ -> do
             kilnLogo
             text "A Kiln node is running."
 
