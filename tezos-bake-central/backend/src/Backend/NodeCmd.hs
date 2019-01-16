@@ -1,32 +1,45 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend.NodeCmd where
 
+-- import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Control.Monad (when)
-import Control.Monad.Catch (MonadMask)
-import Control.Monad.IO.Class
+import Control.Monad.Catch (MonadMask, finally)
+import Control.Monad.IO.Class ()
+import Control.Monad.Logger (MonadLogger, logInfoSH, logDebugSH, logWarn)
+import Control.Monad.Trans.Control
+import Data.Functor.Identity (Identity(..))
 import Data.Maybe (fromMaybe)
+import Data.Pool (Pool)
 import Data.Text (Text)
 import Data.Word
-import System.Directory
+import Database.Groundhog.Postgresql
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
+import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.IO
-import System.IO.Temp
-import System.Process
+import System.IO (hFlush)
+import System.IO.Temp (withTempFile)
+import System.Process (readProcess, withCreateProcess, proc, getProcessExitCode, terminateProcess)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.ByteString.Lazy as LBS
 
-import Backend.Common (threadDelay')
-import Tezos.Json
-import Tezos.Chain (NamedChain(..))
+import ExtraPrelude
 import System.Which
-
-data NodeCmd
-  = NodeCmd_Run
-  | NodeCmd_IdentityGenerate
+import Tezos.Chain (NamedChain(..))
+import Tezos.Json
+import Backend.Common (threadDelay')
+import Backend.Common (worker')
+import Backend.Schema
+import Common.Schema
 
 defaultConfig :: NodeConfigFile
 defaultConfig = NodeConfigFile
@@ -58,9 +71,75 @@ nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 -- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
 
+withNodeLock :: (MonadMask m, MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> (Int -> m ()) -> m ()
+withNodeLock logger db f = do
+  pid <- runLoggingEnv logger $ do
+    pid :: Int <- runDb (Identity db) $ [queryQ|SELECT nextval('"NodeInternal_pid"') |] <&> fromOnly . head
+    $(logInfoSH) ("internal node pid:" :: Text, pid)
+    let
+      {-# INLINE claim #-}
+      claim :: forall m1. (MonadBaseControl IO m1, MonadIO m1, MonadLogger m1) => m1 ()
+      claim = do
+        let state = NodeInternalState_Stopped
+        result <- runDb (Identity db) $ do
+          _ <- [executeQ|
+            UPDATE "NodeInternal"
+            SET "data#data#stateUpdated" = NOW()
+              , "data#data#backend" = ?pid
+              , "data#data#state" = ?state
+            WHERE "data#data#backend" IS NULL
+               OR "data#data#stateUpdated" < NOW() - interval '5 minutes'|]
+          [queryQ|
+            SELECT "data#data#backend"
+              FROM "NodeInternal"
+          |]
+        $(logDebugSH) ("internal node pid:" :: Text, pid, result)
+        case result of
+          [] -> threadDelay' 1 *> claim
+          (pid':_) ->
+            if pid == fromOnly pid'
+            then return ()
+            else do
+              $(logWarn) "internalnode LOCK HELD"
+              threadDelay' 1
+              *> claim
+    claim
+    return pid
+  finally (f pid) $ runLoggingEnv logger $ runDb (Identity db) [executeQ|
+    UPDATE "NodeInternal"
+    SET "data#data#stateUpdated" = NOW()
+      , "data#data#backend" = NULL
+    WHERE "data#data#backend" = ?pid |]
+    >>= liftIO . print
 
-callNode :: (MonadIO m, MonadMask m) => FilePath -> m ()
-callNode nodePath = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+internalNodeWorker :: MonadIO m => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
+internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pid -> runLoggingEnv logger $ do
+  let
+    waitUntilShouldRun = do
+      shouldRun <- any fromOnly <$> runDb (Identity db) [queryQ|
+        SELECT COALESCE(BOOL_OR("data#data#running"), false)
+        FROM "NodeInternal"
+        |]
+      if shouldRun
+      then return ()
+      else waitUntilShouldRun
+  waitUntilShouldRun
+  callNode logger db (nodePaths namedChain) pid
+  threadDelay' 10
+
+putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> NodeInternalState -> m ()
+putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
+  $(logDebugSH) ("putState" :: Text, pid, state)
+  [executeQ|
+    UPDATE "NodeInternal"
+    SET "data#data#state" = ?state
+      , "data#data#stateUpdated" = NOW()
+      , "data#data#backend" = ?pid
+    WHERE COALESCE ("data#data#backend", ?pid) = ?pid
+    |]
+
+callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
+callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
   let nodeConfig = defaultConfig
   let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
   let versionFile = dataDir `combine` "version.json"
@@ -77,23 +156,35 @@ callNode nodePath = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath
   when (not haveIdentityFile) $
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
 
+  putState logger db pid NodeInternalState_Starting
+
   liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
     where
-      go0 _ _ _ ph = go
-        where
-          go ::  IO ()
+      go0 _ _ _ ph = runLoggingEnv logger $ do
+        let
+          {-# INLINE go #-}
+          go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
           go = do
             -- TODO poll db for exit request
-            let shouldRun = True
-            getProcessExitCode ph >>= \case
+            shouldRun <- fmap or $ runDb (Identity db) $ project
+              (NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector)
+              (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+            (liftIO $ getProcessExitCode ph) >>= \case
               Nothing -> do
-                when (not shouldRun) $ terminateProcess ph
+                putState logger db pid NodeInternalState_Running
+                when (not shouldRun) $ liftIO $ terminateProcess ph
                 (threadDelay' 1) *> go
-              Just e ->
+              Just e -> liftIO $
                 if shouldRun
                   -- TODO: logging!
-                  then print ("node exited unexpectedly" :: Text, e)
-                  else print ("node exited sucessfully" :: Text, e)
+                  then do
+                    putState logger db pid NodeInternalState_Failed
+                    print ("node exited unexpectedly" :: Text, e)
+                  else do
+                    putState logger db pid NodeInternalState_Stopped
+                    print ("node exited sucessfully" :: Text, e)
+
+        go
 
 
 

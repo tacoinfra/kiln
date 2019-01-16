@@ -63,7 +63,6 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Common (threadDelay')
 import Backend.Config (AppConfig (..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
@@ -264,7 +263,7 @@ backendImpl cfg serve = do
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
 
       for_ maybeNamedChain $ \namedChain ->
-        addFinalizer =<< (worker' $ (callNode $ nodePaths namedChain) *> threadDelay' 1000000000)
+        addFinalizer =<< internalNodeWorker logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

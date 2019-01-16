@@ -43,6 +43,7 @@ preMigrate =
   >=> renameColumnIfExists (Nothing, "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (Nothing, "Delegate") "Baker"
   >=> migrateNodesToSplitTable
+  >=> createSequence (Nothing, "NodeInternal_pid")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -95,6 +96,12 @@ dropColumn :: (Migrate m) => QualifiedName -> String -> m ()
 dropColumn (schema, tableName) columnNameFrom = do
   let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" DROP COLUMN \"" <> columnNameFrom <> "\""
   $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+
+createSequence :: (Migrate m) => QualifiedName -> TableAnalysis m -> m (TableAnalysis m)
+createSequence (schema, sequenceName) ta = do
+  let sqlCode = "CREATE SEQUENCE IF NOT EXISTS " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> sequenceName <> "\""
+  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+  return ta
 
 renameTableIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
 renameTableIfExists tableFrom tableTo ta = do

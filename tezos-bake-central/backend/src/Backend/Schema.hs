@@ -284,6 +284,9 @@ instance FromField NamedChain where
 instance FromField NodeInternalState where
   fromField f b = read <$> fromField f b
 
+instance ToField NodeInternalState where
+  toField v = toField (show v)
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
