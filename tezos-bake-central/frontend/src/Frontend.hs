@@ -995,7 +995,7 @@ nodesTab =
 
             errors <- errorMessages nodeId
             nodeDetails <- watchNodeDetails nodeId
-            nodeTile
+            standardNodeTile
               (dynText titleUniq)
               (dynText $ fromMaybe nbsp <$> subtitleUniq)
               externalNodeMenu
@@ -1009,7 +1009,10 @@ nodesTab =
           dyn_ $ ffor (listToMaybe . Map.assocs . dropExternal . MMap.getMonoidalMap <$> nodesDyn) $ \case
             Nothing -> blank
             Just (nodeId, nodeData) -> do
-              let internalNodeMenu :: m ()
+              errors <- errorMessages nodeId
+              let state = _nodeInternalData_state nodeData
+
+                  internalNodeMenu :: m ()
                   internalNodeMenu = do
                     let
                       stopModal = confirmationModal
@@ -1025,17 +1028,54 @@ nodesTab =
 
                     tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
-              errors <- errorMessages nodeId
-              nodeDetails <- watchNodeDetails nodeId
-              nodeTile
-                (text "Kiln Node")
-                kilnLogo
-                internalNodeMenu
-                (>>= getNodeHeadBlock)
-                (Just errors)
-                (Just $ (=<<) _nodeDetailsData_peerCount)
-                (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
-                nodeDetails
+                  badge :: m ()
+                  badge = do
+                    let b = icon . ("tiny circle " <>)
+                    case _nodeInternalData_state nodeData of
+                      NodeInternalState_Stopped -> b "orange"
+                      NodeInternalState_Initializing -> b "grey"
+                      NodeInternalState_Starting -> b "grey"
+                      NodeInternalState_Running -> tileBadgeImpliedByErrors $ Just errors
+                      NodeInternalState_Failed -> b "red"
+
+                  title :: m ()
+                  title = text "Kiln Node"
+
+                  subtitle :: m ()
+                  subtitle = do
+                    kilnLogo
+                    divClass "ui sub header" $ text $ case state of
+                      NodeInternalState_Stopped -> "Stopped"
+                      NodeInternalState_Initializing -> "Initializing"
+                      NodeInternalState_Starting -> "Starting"
+                      NodeInternalState_Running -> "Running"
+                      NodeInternalState_Failed -> "Failed"
+
+                  workingTile :: m ()
+                  workingTile = do
+                    nodeDetails <- watchNodeDetails nodeId
+                    standardNodeTile
+                      title
+                      subtitle
+                      internalNodeMenu
+                      (>>= getNodeHeadBlock)
+                      (Just errors)
+                      (Just $ (=<<) _nodeDetailsData_peerCount)
+                      (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+                      nodeDetails
+
+                  generatingTile :: m ()
+                  generatingTile = nodeTileWithSections $
+                    [ tileHeader title subtitle internalNodeMenu badge Nothing
+                    , do
+                        divClass "ui row" $ do
+                          icon "id-badge"
+                          divClass "ui active tiny inline loader" blank
+                        divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
+                        divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the netowrk. This may take several minutes."
+                    ]
+
+              bool workingTile generatingTile $ state == NodeInternalState_Initializing
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -1051,7 +1091,7 @@ nodesTab =
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
                 tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
-            nodeTile
+            standardNodeTile
               title
               blank
               publicNodeMenu
@@ -1129,7 +1169,7 @@ nodesTab =
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
 
-    nodeTile
+    standardNodeTile
       :: m () -- ^ Title
       -> m () -- ^ Subtitle
       -> m () -- ^ Tile menu contents
@@ -1139,7 +1179,7 @@ nodesTab =
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    nodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node =
+    standardNodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node =
       nodeTileWithSections $
         [ tileHeader title subtitle menuContents (tileBadgeImpliedByErrors errors') errors'
         , tileBlockStats getBlock node
