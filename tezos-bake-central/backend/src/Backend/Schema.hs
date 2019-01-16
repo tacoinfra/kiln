@@ -101,6 +101,7 @@ data Notify
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
+  | Notify_NodeInternal !(Id Node) !(Maybe NodeInternalData)
   | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters

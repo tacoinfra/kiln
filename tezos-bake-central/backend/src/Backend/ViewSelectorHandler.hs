@@ -426,7 +426,7 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) NodeInternalData <- [queryQ|
-      SELECT n.id, n."data#data#running", n."data#data#state", n."data#data#stateUpdated", n."data#data#running"
+      SELECT n.id, n."data#data#running", n."data#data#state", n."data#data#stateUpdated" AT TIME ZONE 'UTC' , n."data#data#backend"
       FROM "NodeInternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]

@@ -89,6 +89,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log ErrorLogView_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
+      Notify_NodeInternal eid ent -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
       Notify_NodeDetails eid ent -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
@@ -146,6 +147,16 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         Nothing -> pure [(Bounded nid, First Nothing)]
         Just _ -> getNodeAddresses (Just $ nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
+
+    {-# INLINE handleNodeInternal #-}
+    handleNodeInternal
+      :: (Monad m', PostgresRaw m')
+      => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
+    handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeInternalV <- case mNodeInternalData of
+        Nothing -> pure [(Bounded nid, First Nothing)]
+        Just _ -> getNodeAddresses (Just $ nid)
+      pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }
 
     handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
     handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence

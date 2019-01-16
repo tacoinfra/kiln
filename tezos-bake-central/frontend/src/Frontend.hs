@@ -14,7 +14,7 @@
 
 module Frontend where
 
-import Control.Lens ((<>~), imap)
+import Control.Lens ((<>~), imap, _4)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
@@ -748,12 +748,17 @@ sidebarList :: forall t m k.
   , HasModal t m
   , Ord k
   )
-  => Text -> Dynamic t (MonoidalMap k (Text, Maybe Text, MonitoredStatus, m ())) -> (Event t () -> ModalM m (Event t ())) -> m ()
+  => Text -> Dynamic t (MonoidalMap k (Text, Maybe Text, MonitoredStatus, Bool)) -> (Event t () -> ModalM m (Event t ())) -> m ()
 sidebarList name nodes' modal = do
-  let nodes :: Dynamic t (Map.Map k (Text, Maybe Text, MonitoredStatus, m ())) = coerceDynamic nodes'
+  let nodes :: Dynamic t (Map.Map k (Text, Maybe Text, MonitoredStatus, Bool)) = coerceDynamic nodes'
   divClass "ui sub header" $ text (pluralOf name)
   divClass "ui list" $ do
     _ <- listWithKey nodes $ \_ node -> divClass "item bullet-before" $ do
+      -- let
+      --   addressDyn = view _1 <$> node
+      --   aliasDyn = view _2 <$> node
+      --   monitoredStatus = view _3 <$> node
+
       let color = (\(_,_,s,_) -> statusColor s) <$> node
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> SemUi.Dyn color) blank
       divClass "content" $ do
@@ -761,7 +766,9 @@ sidebarList name nodes' modal = do
               nodeTitleSubtitle address alias
         divClass "header" $ do
           dynText title
-          divClass "ui image right floated" $ dyn_ $ ffor node $ \(_, _, _, symbol) -> symbol
+          useSymbol <- holdUniqDyn $ view _4 <$> node
+          divClass "ui image right floated" $ dyn_ $ bool blank kilnLogo <$> useSymbol
+
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
@@ -784,7 +791,7 @@ bakersList = do
     ( toPublicKeyHashText pkh
     , _bakerData_alias $ _bakerSummary_baker b
     , bakerStatus b
-    , blank)
+    , False)
     ) <$$> watchBakerAddresses
   sidebarList "Baker" bakers addBakerModal
 
@@ -818,7 +825,7 @@ nodesList = do
               in (title
                  , subtitle
                  , nodeStatus (_nodeSummary_alertCount ns)
-                 , bool blank kilnLogo $ isRight $ _nodeSummary_node ns))
+                 , isRight $ _nodeSummary_node ns))
            <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
@@ -845,13 +852,13 @@ addNodeModal close = do
         section
           "Launch a Kiln node"
           "Launch a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
-        node <- watchInternalNode
+        node <- maybeDyn =<< watchInternalNode
         dyn_ $ ffor node $ \case
           Nothing -> do
             launch <- uiButton "primary" "Launch Node"
             void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
 
-          Just n -> do
+          Just _ -> do
             kilnLogo
             text "A Kiln node is running."
 
@@ -981,7 +988,7 @@ nodesTab =
 
           -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
           let dropInternal = fmapMaybe $ preview _Left . _nodeSummary_node
-          void $ listWithKey (dropInternal . MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
+          void $ listWithKey (coerceDynamic $ dropInternal <$> nodesDyn) $ \nodeId vDyn -> do
             let
               (title, subtitle) = splitDynPure $ nodeDataIdentification . Left <$> vDyn
 
@@ -1006,12 +1013,11 @@ nodesTab =
               nodeDetails
 
           let dropExternal = fmapMaybe $ preview _Right . _nodeSummary_node
-          dyn_ $ ffor (listToMaybe . Map.assocs . dropExternal . MMap.getMonoidalMap <$> nodesDyn) $ \case
-            Nothing -> blank
-            Just (nodeId, nodeData) -> do
+          _ <- listWithKey (coerceDynamic $ fmap dropExternal nodesDyn) $ \nodeId nodeDataDyn -> do
               errors <- errorMessages nodeId
-              let state = _nodeInternalData_state nodeData
-
+              running :: Dynamic t Bool <- holdUniqDyn $ _nodeInternalData_running <$> nodeDataDyn
+              state <- holdUniqDyn $ _nodeInternalData_state <$> nodeDataDyn
+              let
                   internalNodeMenu :: m ()
                   internalNodeMenu = do
                     let
@@ -1020,23 +1026,17 @@ nodesTab =
                         ("You can always restart this node from the tile menu.")
                         ("Stop node")
 
-                    if _nodeInternalData_running nodeData
-                      then tileMenuEntryModal "Stop Node" $ stopModal $ (PublicRequest_UpdateInternalNode False <$)
-                      else do
+                    dyn_ $ ffor running $ \case
+                      True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalNode False <$)
+                      False -> do
                         start <- tileMenuEntry "Start Node"
                         void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
 
                     tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
+
                   badge :: m ()
-                  badge = do
-                    let b = icon . ("tiny circle " <>)
-                    case _nodeInternalData_state nodeData of
-                      NodeInternalState_Stopped -> b "orange"
-                      NodeInternalState_Initializing -> b "grey"
-                      NodeInternalState_Starting -> b "grey"
-                      NodeInternalState_Running -> tileBadgeImpliedByErrors $ Just errors
-                      NodeInternalState_Failed -> b "red"
+                  badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
                   title :: m ()
                   title = text "Kiln Node"
@@ -1044,12 +1044,15 @@ nodesTab =
                   subtitle :: m ()
                   subtitle = do
                     kilnLogo
-                    divClass "ui sub header" $ text $ case state of
-                      NodeInternalState_Stopped -> "Stopped"
-                      NodeInternalState_Initializing -> "Initializing"
-                      NodeInternalState_Starting -> "Starting"
-                      NodeInternalState_Running -> "Running"
-                      NodeInternalState_Failed -> "Failed"
+                    divClass "ui sub header" $ dynText $ toStateText <$> state
+
+                  toStateText :: NodeInternalState -> Text
+                  toStateText = \case
+                    NodeInternalState_Stopped -> "Stopped"
+                    NodeInternalState_Initializing -> "Initializing"
+                    NodeInternalState_Starting -> "Starting"
+                    NodeInternalState_Running -> "Running"
+                    NodeInternalState_Failed -> "Failed"
 
                   workingTile :: m ()
                   workingTile = do
@@ -1075,7 +1078,8 @@ nodesTab =
                         divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the netowrk. This may take several minutes."
                     ]
 
-              bool workingTile generatingTile $ state == NodeInternalState_Initializing
+              isInitializing <- holdUniqDyn $ (== NodeInternalState_Initializing) <$> state
+              dyn_ $ bool workingTile generatingTile <$> isInitializing
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -1119,9 +1123,22 @@ nodesTab =
     tileErrors = traverse_ $ \errors ->
       dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-    tileBadgeImpliedByErrors = traverse_ $ \errors -> do
+    tileBadgeImpliedByErrors :: Maybe (Dynamic t [a]) -> Maybe (Dynamic t NodeInternalState) -> m ()
+    tileBadgeImpliedByErrors mErrors mState = for_ mErrors $ \errors -> do
       errorsEmpty <- holdUniqDyn $ null <$> errors
-      iconDyn $ ffor errorsEmpty $ \e -> "tiny circle " <> bool "red" "green" e
+      let color = maybe (pure badgeColor) (fmap badgeColorInternal) mState
+      iconDyn $ ("tiny circle " <>) <$> (color <*> errorsEmpty)
+
+    badgeColor :: Bool -> Text
+    badgeColor = bool "red" "green"
+
+    badgeColorInternal :: NodeInternalState -> Bool -> Text
+    badgeColorInternal = \case
+      NodeInternalState_Stopped -> const "orange"
+      NodeInternalState_Initializing -> const "grey"
+      NodeInternalState_Starting -> const "grey"
+      NodeInternalState_Running -> badgeColor
+      NodeInternalState_Failed -> const "red"
 
     tileBlockStats getBlock node = do
       b <- maybeDyn $ getBlock <$> node
@@ -1169,6 +1186,10 @@ nodesTab =
               divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
               divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
 
+    -- TODO: errors' is a Maybe because we statically state that public nodes
+    -- don't display a status icon, but I don't think that's a good way to
+    -- execute that design.  Pass in what you have, and decide to show the icon
+    -- or not in CSS
     standardNodeTile
       :: m () -- ^ Title
       -> m () -- ^ Subtitle
@@ -1181,7 +1202,7 @@ nodesTab =
       -> m ()
     standardNodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node =
       nodeTileWithSections $
-        [ tileHeader title subtitle menuContents (tileBadgeImpliedByErrors errors') errors'
+        [ tileHeader title subtitle menuContents (tileBadgeImpliedByErrors errors' Nothing) errors'
         , tileBlockStats getBlock node
         ]
         <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
