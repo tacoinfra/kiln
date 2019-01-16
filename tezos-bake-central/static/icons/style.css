@@ -1,10 +1,10 @@
 @font-face {
   font-family: 'tezos-icons';
-  src:  url('fonts/tezos-icons.eot?mhp11i');
-  src:  url('fonts/tezos-icons.eot?mhp11i#iefix') format('embedded-opentype'),
-    url('fonts/tezos-icons.ttf?mhp11i') format('truetype'),
-    url('fonts/tezos-icons.woff?mhp11i') format('woff'),
-    url('fonts/tezos-icons.svg?mhp11i#tezos-icons') format('svg');
+  src:  url('fonts/tezos-icons.eot?s4bwha');
+  src:  url('fonts/tezos-icons.eot?s4bwha#iefix') format('embedded-opentype'),
+    url('fonts/tezos-icons.ttf?s4bwha') format('truetype'),
+    url('fonts/tezos-icons.woff?s4bwha') format('woff'),
+    url('fonts/tezos-icons.svg?s4bwha#tezos-icons') format('svg');
   font-weight: normal;
   font-style: normal;
 }
@@ -24,6 +24,9 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+.icon-id-badge:before {
+  content: "\e91a";
+}
 .icon-alert-badge:before {
   content: "\e919";
 }
