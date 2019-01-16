@@ -818,9 +818,8 @@ nodesList = do
               in ( title
                  , subtitle
                  , nodeStatus (_nodeSummary_alertCount ns)
-                 , if isRight (_nodeSummary_node ns)
-                   then tooltipped TooltipPos_BottomCenter (text "This node is run by Kiln.") kilnLogo
-                   else blank))
+                 , whenM (isRight (_nodeSummary_node ns)) $
+                     tooltipped TooltipPos_BottomCenter (text "This node is run by Kiln.") kilnLogo))
            <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
@@ -964,6 +963,7 @@ nodesTab =
           ) publicNodeConfigDyn rawPublicNodesDyn
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
+      -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
 
       dyn_ $ ffor useBlocker $ \case
@@ -981,9 +981,10 @@ nodesTab =
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
 
-          -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-          let dropInternal = fmapMaybe $ preview _Left . _nodeSummary_node
-          void $ listWithKey (dropInternal . MMap.getMonoidalMap <$> nodesDyn) $ \nodeId vDyn -> do
+          let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+              (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+
+          void $ listWithKey external $ \nodeId vDyn -> do
             let
               (title, subtitle) = splitDynPure $ nodeDataIdentification . Left <$> vDyn
 
@@ -1007,77 +1008,75 @@ nodesTab =
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
               nodeDetails
 
-          let dropExternal = fmapMaybe $ preview _Right . _nodeSummary_node
-          dyn_ $ ffor (listToMaybe . Map.assocs . dropExternal . MMap.getMonoidalMap <$> nodesDyn) $ \case
-            Nothing -> blank
-            Just (nodeId, nodeData) -> do
-              errors <- errorMessages nodeId
-              let state = _nodeInternalData_state nodeData
+          void $ listWithKey internal $ \nodeId nodeData -> do
+            errors <- errorMessages nodeId
+            let state = _nodeInternalData_state <$> nodeData
 
-                  internalNodeMenu :: m ()
-                  internalNodeMenu = do
-                    let
-                      stopModal = confirmationModal
-                        ("Stop this node?")
-                        ("You can always restart this node from the tile menu.")
-                        ("Stop node")
+                internalNodeMenu :: m ()
+                internalNodeMenu = do
+                  let
+                    stopModal = confirmationModal
+                      ("Stop this node?")
+                      ("You can always restart this node from the tile menu.")
+                      ("Stop node")
 
-                    if _nodeInternalData_running nodeData
-                      then tileMenuEntryModal "Stop Node" $ stopModal $ (PublicRequest_UpdateInternalNode False <$)
-                      else do
-                        start <- tileMenuEntry "Start Node"
-                        void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
+                  dyn_ $ ffor nodeData $ \nd ->
+                    if _nodeInternalData_running nd
+                    then tileMenuEntryModal "Stop Node" $ stopModal $ (PublicRequest_UpdateInternalNode False <$)
+                    else do
+                      start <- tileMenuEntry "Start Node"
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
 
-                    tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
+                  tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
-                  badge :: m ()
-                  badge = do
-                    let b = icon . ("tiny circle " <>)
-                    case _nodeInternalData_state nodeData of
-                      NodeInternalState_Stopped -> b "orange"
-                      NodeInternalState_Initializing -> b "grey"
-                      NodeInternalState_Starting -> b "grey"
-                      NodeInternalState_Running -> tileBadgeImpliedByErrors $ Just errors
-                      NodeInternalState_Failed -> b "red"
+                badge :: m ()
+                badge = do
+                  let b = icon . ("tiny circle " <>)
+                  dyn_ $ ffor state $ \case
+                    NodeInternalState_Stopped -> b "orange"
+                    NodeInternalState_Initializing -> b "grey"
+                    NodeInternalState_Starting -> b "grey"
+                    NodeInternalState_Running -> tileBadgeImpliedByErrors $ Just errors
+                    NodeInternalState_Failed -> b "red"
 
-                  title :: m ()
-                  title = text "Kiln Node"
+                title :: m ()
+                title = text "Kiln Node"
 
-                  subtitle :: m ()
-                  subtitle = do
-                    kilnLogo
-                    divClass "ui sub header" $ text $ case state of
-                      NodeInternalState_Stopped -> "Stopped"
-                      NodeInternalState_Initializing -> "Initializing"
-                      NodeInternalState_Starting -> "Starting"
-                      NodeInternalState_Running -> "Running"
-                      NodeInternalState_Failed -> "Failed"
+                subtitle :: m ()
+                subtitle = do
+                  kilnLogo
+                  divClass "ui sub header" $ dynText $ ffor state $ \case
+                    NodeInternalState_Stopped -> "Stopped"
+                    NodeInternalState_Initializing -> "Initializing"
+                    NodeInternalState_Starting -> "Starting"
+                    NodeInternalState_Running -> "Running"
+                    NodeInternalState_Failed -> "Failed"
 
-                  workingTile :: m ()
-                  workingTile = do
-                    nodeDetails <- watchNodeDetails nodeId
-                    standardNodeTile
-                      title
-                      subtitle
-                      internalNodeMenu
-                      (>>= getNodeHeadBlock)
-                      (Just errors)
-                      (Just $ (=<<) _nodeDetailsData_peerCount)
-                      (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
-                      nodeDetails
+                workingTile :: m ()
+                workingTile = do
+                  nodeDetails <- watchNodeDetails nodeId
+                  standardNodeTile
+                    title
+                    subtitle
+                    internalNodeMenu
+                    (>>= getNodeHeadBlock)
+                    (Just errors)
+                    (Just $ (=<<) _nodeDetailsData_peerCount)
+                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+                    nodeDetails
 
-                  generatingTile :: m ()
-                  generatingTile = nodeTileWithSections $
-                    [ tileHeader title subtitle internalNodeMenu badge Nothing
-                    , do
-                        divClass "ui row" $ do
-                          icon "id-badge"
-                          divClass "ui active tiny inline loader" blank
-                        divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
-                        divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the netowrk. This may take several minutes."
-                    ]
+                generatingTile :: m ()
+                generatingTile = nodeTileWithSections $
+                  [ tileHeader title subtitle internalNodeMenu badge Nothing
+                  , do
+                      divClass "ui row" $ do
+                        icon "id-badge"
+                        divClass "ui active tiny inline loader" blank
+                      divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
+                      divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the netowrk. This may take several minutes."
+                  ]
 
-              bool workingTile generatingTile $ state == NodeInternalState_Initializing
+            dyn_ $ ffor state $ bool workingTile generatingTile . (== NodeInternalState_Initializing)
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)

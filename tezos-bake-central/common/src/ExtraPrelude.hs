@@ -64,6 +64,7 @@ module ExtraPrelude
   , when
 
   , (***)
+  , (&&&)
   , (%~)
   , (^?)
   , (^.)
@@ -83,7 +84,7 @@ module ExtraPrelude
   ) where
 
 import Control.Applicative (Const (..), liftA2, liftA3, (<|>))
-import Control.Arrow ((***))
+import Control.Arrow ((***), (&&&))
 import Control.Category ((<<<), (>>>))
 import Control.Lens (Iso, Lens, Lens', Prism, Prism', ifor, ifor_, itraverse, itraverse_, preview, view,
                      views, (%~), (<&>), (^.), (^?), _1, _2, _3, _Just, _Left, _Nothing, _Right)
