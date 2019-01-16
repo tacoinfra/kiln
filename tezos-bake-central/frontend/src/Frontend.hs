@@ -815,10 +815,12 @@ nodesList = do
         _ -> MonitoredStatus_Unhealthy
   nodes <- (\ns ->
               let (title, subtitle) = nodeSummaryIdentification ns
-              in (title
+              in ( title
                  , subtitle
                  , nodeStatus (_nodeSummary_alertCount ns)
-                 , bool blank kilnLogo $ isRight $ _nodeSummary_node ns))
+                 , if isRight (_nodeSummary_node ns)
+                   then tooltipped TooltipPos_BottomCenter (text "This node is run by Kiln.") kilnLogo
+                   else blank))
            <$$$> watchNodeAddresses
   sidebarList "Node" nodes addNodeModal
 
