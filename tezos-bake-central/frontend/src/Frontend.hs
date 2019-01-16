@@ -689,7 +689,12 @@ liveErrorsWidget = void $ do
               el "div" message
 
             NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
-              el "div" $ text $ "Connected peers has dropped below the minimum peer count (" <> tshow minPeerCount <> ")."
+              for_ node' $ \n -> do
+                let (main, _) = nodeSummaryIdentification n
+                header $ "Node has too few peers: " <> main
+                nodeLabel n
+                el "div" $ text $
+                  "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
           ErrorLogView_BakerError ne -> case ne of
             BakerErrorLogView_BakerDeactivated log -> renderBakerError
@@ -930,7 +935,7 @@ nodesTab =
               errorMessages = ffor unresolvedAlertsForThisNode $ fmap $ \case
                 NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
                 NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
-                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Low number of connected peers."
+                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Node has too few peers."
                 NodeErrorLogView_BadNodeHead l -> text $
                   fst (badNodeHeadMessage Const (Const . const "") l) <> "."
               nodeCfgDyn = _nodeSummary_node <$> vDyn

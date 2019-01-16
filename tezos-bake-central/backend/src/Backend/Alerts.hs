@@ -330,8 +330,8 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
       for_ node' $ \node -> do
         (logId, _) <- insertErrorLog $ \logId ->
           ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
-        queueAlert (Just logId) $ Alert Unresolved "Node invalid peer count" $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
+        queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
+          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeInvalidPeerCountError
@@ -348,8 +348,9 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert Nothing $ Alert Resolved "Resolved: Node has a valid number of connected peers" $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has a valid number of connected peers"
+    queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
+       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " now meets or exceeds the required minimum number of connected peers."
+
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
