@@ -16,6 +16,7 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
+import Data.Functor.Apply (liftF2)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
@@ -31,7 +32,6 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, query, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id)
 import Safe (maximumMay)
-import Text.URI (URI)
 
 import Tezos.PublicKeyHash
 import Tezos.Types
@@ -214,8 +214,9 @@ getErrorLogsImpl flt intervalMap = do
       -> (Id ErrorLog -> row -> b)
       -> ClosedInterval (WithInfinity UTCTime)
       -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
-    queryNodeAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node"))
+    queryNodeAlert sqlTable sqlFields = (liftA2 . liftA2 . liftA2) (MMap.unionWith const)
+      (queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node")))
+      (queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node")))
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     queryBakerAlert sqlTable sqlFields =
@@ -413,8 +414,31 @@ getNodeAddresses
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
-  rs :: [(Id Node, URI, Maybe Text, Maybe Int, Int)] <- [queryQ|
-      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections",
+  ext :: Map.Map (WithInfinity (Id Node)) NodeExternalData <- [queryQ|
+      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections"
+      FROM "NodeExternal" n
+      WHERE NOT n."data#deleted"
+        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
+    <&> Map.fromList . (fmap $ \(nid', uri, alias, mpc) -> (Bounded nid',
+    NodeExternalData
+      { _nodeExternalData_address = uri
+      , _nodeExternalData_alias = alias
+      , _nodeExternalData_minPeerConnections = mpc
+      }))
+  int :: Map.Map (WithInfinity (Id Node)) NodeInternalData <- [queryQ|
+      SELECT n.id, n."data#data#running", n."data#data#state", n."data#data#stateUpdated" AT TIME ZONE 'UTC' , n."data#data#backend"
+      FROM "NodeInternal" n
+      WHERE NOT n."data#deleted"
+        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
+    <&> Map.fromList . (fmap $ \(nid', running, state, stateUpdated, backend) -> (Bounded nid',
+      NodeInternalData
+      { _nodeInternalData_running = running
+      , _nodeInternalData_state = state
+      , _nodeInternalData_stateUpdated = stateUpdated
+      , _nodeInternalData_backend = backend
+      }))
+  counts :: Map.Map (WithInfinity (Id Node)) Int <- [queryQ|
+      SELECT n.id,
         (SELECT COUNT(ein.id)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
@@ -433,7 +457,16 @@ getNodeAddresses nid = do
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-      FROM "NodeExternal" n
-      WHERE NOT n."data#deleted"
-        AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-  return $ fmap (first Bounded . \(x,y,z,mpc,w) -> (x, First $ Just $ NodeSummary (NodeExternalData y z mpc) w)) rs
+      FROM (
+        SELECT n1.id FROM "NodeExternal" n1
+        WHERE NOT n1."data#deleted"
+          AND CASE WHEN ?nid is NULL THEN true ELSE n1.id = ?nid END
+        UNION
+        SELECT n2.id FROM "NodeInternal" n2
+        WHERE NOT n2."data#deleted"
+          AND CASE WHEN ?nid is NULL THEN true ELSE n2.id = ?nid END) n
+    |] <&> Map.fromList . (fmap $ first Bounded)
+  let
+    intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData NodeInternalData)
+    intExt = fmap Left ext `Map.union` fmap Right int
+  return $ Map.toList $ fmap (First . Just) $ liftF2 NodeSummary intExt counts

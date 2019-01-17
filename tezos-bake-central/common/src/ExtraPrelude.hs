@@ -35,6 +35,7 @@ module ExtraPrelude
   , def
   , first
   , fold
+  , foldM
   , for
   , for_
   , fromMaybe
@@ -63,6 +64,7 @@ module ExtraPrelude
   , when
 
   , (***)
+  , (&&&)
   , (%~)
   , (^?)
   , (^.)
@@ -82,11 +84,11 @@ module ExtraPrelude
   ) where
 
 import Control.Applicative (Const (..), liftA2, liftA3, (<|>))
-import Control.Arrow ((***))
+import Control.Arrow ((***), (&&&))
 import Control.Category ((<<<), (>>>))
 import Control.Lens (Iso, Lens, Lens', Prism, Prism', ifor, ifor_, itraverse, itraverse_, preview, view,
                      views, (%~), (<&>), (^.), (^?), _1, _2, _3, _Just, _Left, _Nothing, _Right)
-import Control.Monad (guard, join, when, (<=<), (>=>))
+import Control.Monad (foldM, guard, join, when, (<=<), (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (MonadReader (ask), asks, runReaderT)
 import Data.Bifunctor (first, second)

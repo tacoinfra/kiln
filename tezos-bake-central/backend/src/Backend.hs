@@ -86,6 +86,7 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import ExtraPrelude
 import Frontend (frontend)
+import Backend.NodeCmd
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -260,6 +261,9 @@ backendImpl cfg serve = do
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
+
+      for_ maybeNamedChain $ \namedChain ->
+        addFinalizer =<< internalNodeWorker logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
