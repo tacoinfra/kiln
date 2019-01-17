@@ -1138,15 +1138,15 @@ nodesTab =
       withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
 
       el "dl" $ do
-        el "dt" (text "Fitness")
-        el "dd" $
-          withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
+        el "div" $ do
+          el "dt" (text "Fitness")
+          el "dd" $
+            withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
 
-        el "br" blank
-
-        el "dt" (text "Baked")
-        el "dd" $ do
-          withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
+        el "div" $ do
+          el "dt" (text "Baked")
+          el "dd" $ do
+            withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
     tileConnectionStats getPeerCount' getNetworkStats' node =
       if isNothing getPeerCount' && isNothing getNetworkStats'
@@ -1275,8 +1275,6 @@ bakersTab =
               (dynText titleUniq)
               subtitleUniq
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-              (const Nothing)
-              (const Nothing)
               -- if you have both a bake and endorse for the same level, you
               -- must *first* bake the block at that level, then you may
               -- immediately endorse that block.  the times are the same,
@@ -1343,15 +1341,13 @@ bakersTab =
       :: m () -- ^ Title
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
-      -> (b -> Maybe Double) -- ^ (Optional) Function to get the bake success of the baker
-      -> (b -> Maybe Double) -- ^ (Optional) Function to get the endorsement success of the baker
       -> (BakerSummary -> Maybe (RightKind, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
-      -> Dynamic t (Maybe b) -- ^ Details
+      -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t Bool -- ^ have network connectivity
       -> m ()
-    tile title subtitle mkRemoveReq _getBakeSuccess' _getEndorseSuccess' getNextEvent' errors' bakerDyn details' connected = do
+    tile title subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' connected = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
@@ -1373,35 +1369,44 @@ bakersTab =
           True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
           False -> blank
 
-        (details'' :: Dynamic t (Maybe (Dynamic t b))) <- maybeDyn details'
+        (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
-          Just _details -> el "dl" $ do
-            --el "dt" (text "Bake Success:")
-            --el "dd" $
-            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
+          Just details -> el "dl" $ do
+            let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
+            el "div" $ do
+              el "dt" (text "Available Balance")
+              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
+                text . tez . _cacheDelegateInfo_balance
 
-            --el "br" blank
+            el "div" $ do
+              el "dt" (text "Staking Balance")
+              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
+                text . tez . _cacheDelegateInfo_stakingBalance
+            --el "div" $ do
+            --  el "dt" (text "Bake Success:")
+            --  el "dd" $
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getBakeSuccess'
 
-            --el "dt" (text "Endorsement Success:")
-            --el "dd" $ do
-            --  withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
+            --el "div" $ do
+            --  el "dt" (text "Endorsement Success:")
+            --  el "dd" $ do
+            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . getEndorseSuccess'
 
-            --el "br" blank
-            pure ()
         nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
         latestHead <- watchLatestHead
         dparameters <- watchProtoInfo
         dyn_ $ ffor nextEventDyn $ \case
           Nothing -> blank
           Just eventDyn -> el "dl" $ do
-            el "dt" (text "Next:")
-            el "dd" $ do
-              (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
-              (dynText $ tshow . unRawLevel . snd <$> eventDyn)
-              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
-              text nbsp
-              dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
+            el "div" $ do
+              el "dt" (text "Next")
+              el "dd" $ do
+                (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
+                (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                text nbsp
+                dyn_ $ ffor etaDyn $ maybe blank $ localHumanizedTimestamp (pure Nothing)
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon

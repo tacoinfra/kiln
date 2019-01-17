@@ -792,13 +792,20 @@ img.credits-obsidian {
         margin-block-start: 0;
         margin-block-end: 0;
 
-        > dt {
-          display: inline;
-        }
-        > dd {
-          font-weight: bold;
-          display: inline;
-          margin-inline-start: @5px;
+        > div {
+          > dt {
+            display: inline;
+          }
+
+          > dt::after {
+            content: ":";
+          }
+
+          > dd {
+            font-weight: bold;
+            display: inline;
+            margin-inline-start: @5px;
+          }
         }
       }
 
