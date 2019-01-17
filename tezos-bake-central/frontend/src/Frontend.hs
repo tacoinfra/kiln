@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -17,8 +18,8 @@ module Frontend where
 import Control.Lens ((<>~), imap)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
-import Control.Monad.Reader (ReaderT)
-import Data.Dependent.Sum (DSum(..))
+import Control.Monad.Reader (ReaderT, lift)
+import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
 import Data.List (intersperse, sortBy)
@@ -67,7 +68,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute)
+import Common.Route (AppRoute(..))
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
@@ -76,10 +77,18 @@ import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 import Frontend.Settings
 import Frontend.Watch
 
+import Obelisk.Route.Frontend
+
+type RouteConstraints t r m =
+  ( Routed t (R r) m
+  , RouteToUrl (R r) m
+  , SetRoute t (R r) m
+  )
+
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
-  , _frontend_body = prerender (return ()) frontendBody
+  , _frontend_body = prerender blank frontendBody
   }
 
 frontendBody
@@ -88,6 +97,7 @@ frontendBody
     , HasJS x m
     , MonadFix (Performable m)
     , PrimMonad m
+    , RouteConstraints t AppRoute m
     )
   => m ()
 frontendBody = void $ do
@@ -112,7 +122,7 @@ frontendBody = void $ do
       <$> (T.replace "http" "ws" <$> routeScheme)
       <*> (Uri.unRText . Uri.authHost <$> routeAuthority)
       <*> pure (fromIntegral $ fromMaybe 80 wsPort)
-      <*> pure (renderPathPieces $ maybe (pure listenPath) ((<> pure listenPath) . snd) (Uri.uriPath route))
+      <*> pure (renderPathPieces [listenPath])
 
   rec
     (socketState, _) <- runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
@@ -165,13 +175,6 @@ withFrontendContext f = do
 isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
--- NB: The order of these constructors determines the order of the tabs in the UI.
-data UITab = UITab_Nodes
-           -- | UITab_Baker PublicKeyHash
-           -- | UITab_Client (Id Client) URI
-           | UITab_Options
-  deriving (Eq, Ord, Show)
-
 appMain
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -179,44 +182,41 @@ appMain
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , RouteConstraints t AppRoute m
     )
   => m ()
 appMain = do
-  elClass "div" "app-frame" $ do
-    rec
-      selectTab <- appSidebar selectedTab
-      selectedTab <- holdDyn initialTab selectTab
+  elClass "div" "app-frame" $ mdo
+    appSidebar
 
-    rec
-      let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
-      (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
-        (def
-          & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
-          & SemUi.sidebarConfig_dimming .~ pure False
-          & SemUi.sidebarConfig_closeOnClick .~ pure False
-          & SemUi.sidebarConfig_width .~ pure SemUi.SidebarWidth_VeryWide
-        )
-        -- Container for the content the sidebar accompanies. "app-right" must
-        -- be this and not a child div for flexbox's sake.
-        (\f -> SemUi.ui "div" $ f $ def
-          & SemUi.classes SemUi.|~ "app-right")
-        -- Sidebar content
-        (\f -> SemUi.menu
-          (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
-          $ do
-            e <- divClass "sidebar-title" $ do
-              divClass "ui left floated header" $ text "Notifications"
-              divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-            liveErrorsWidget
-            pure e)
-        -- Accompanying content
+    let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
+    (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
+      (def
+        & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
+        & SemUi.sidebarConfig_dimming .~ pure False
+        & SemUi.sidebarConfig_closeOnClick .~ pure False
+        & SemUi.sidebarConfig_width .~ pure SemUi.SidebarWidth_VeryWide
+      )
+      -- Container for the content the sidebar accompanies. "app-right" must
+      -- be this and not a child div for flexbox's sake.
+      (\f -> SemUi.ui "div" $ f $ def
+        & SemUi.classes SemUi.|~ "app-right")
+      -- Sidebar content
+      (\f -> SemUi.menu
+        (f $ def & SemUi.menuConfig_inverted SemUi.|~ False & SemUi.menuConfig_vertical SemUi.|~ True)
         $ do
-          e <- appHeader
-          appContentArea selectedTab
-          pure e
+          e <- divClass "sidebar-title" $ do
+            divClass "ui left floated header" $ text "Notifications"
+            divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
+          liveErrorsWidget
+          pure e)
+      -- Accompanying content
+      $ do
+        e <- appHeader
+        appContentArea
+        pure e
     pure ()
-  where
-    initialTab = UITab_Nodes
+
 
 appName :: Text
 appName = "Kiln"
@@ -225,34 +225,37 @@ appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , HasModal t m
+     , RouteConstraints t AppRoute m
      )
-  => Dynamic t UITab
-  -> m (Event t UITab)
-appSidebar selectedTab = fmap (fmap getFirst . snd) $ runEventWriterT $ do
+  => m ()
+appSidebar = do
   SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-sidebar"
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
       )
-    $ flip runReaderT (demux selectedTab) $ do
+    $ do
         appSideHeader
         appGutter
         appSideFooter
 
-routeSelector' :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m (a,b)
+routeSelector' :: ( DomBuilder t m, SemUi.HasElConfig t e
+                  , EqTag r Identity
+                  , RouteConstraints t r m)
+               => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
-  isAtDest <- asks (\selected -> demuxed selected dest)
-  let activated = ffor isAtDest $ \isAt ->
-        if isAt then "active" else ""
-  (e, a) <- con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
-  tellEvent $ First dest <$ domEvent Click e
-  return (e,a)
+  r <- askRoute
+  let activated = ffor r $ bool "" "active" . (== dest)
+  routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: (Reflex t, MonadReader (Demux t r) m, Eq r, SemUi.HasElConfig t e, EventWriter t (First r) m, HasDomEvent t a 'ClickTag) => r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
+routeSelector :: ( DomBuilder t m, SemUi.HasElConfig t e
+                 , EqTag r Identity
+                 , RouteConstraints t r m)
+              => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
-appSideHeader :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
+appSideHeader :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m) => m ()
 appSideHeader =
   SemUi.segment
     (def
@@ -269,7 +272,7 @@ appSideHeader =
             & SemUi.menuConfig_fluid SemUi.|~ True
             )
           $ do
-              routeSelector UITab_Nodes SemUi.menuItem' def $ do
+              routeSelector (AppRoute_Nodes :/ ()) SemUi.menuItem' def $ do
                 icon "icon-tiles"
                 text "Dashboard"
         SemUi.divider def
@@ -285,7 +288,7 @@ appGutter =
         bakersList
         nodesList
 
-appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, EventWriter t (First UITab) m, MonadReader (Demux t UITab) m) => m ()
+appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -300,7 +303,7 @@ appSideFooter =
             & SemUi.menuConfig_vertical SemUi.|~ True
             )
           $ do
-              routeSelector UITab_Options SemUi.menuItem' def $ do
+              routeSelector (AppRoute_Options :/ ()) SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
         hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
@@ -376,7 +379,6 @@ headerBell = do
             )
   return $ domEvent Click e
 
-
 appContentArea
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -385,15 +387,15 @@ appContentArea
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , Routed t (R AppRoute) m
     )
-  => Dynamic t UITab -> m ()
-appContentArea selectedTab =
-  dyn_ $ ffor selectedTab $ \case
-    -- UITab_Summary -> summaryTab
-    UITab_Nodes -> nodesTabOrWelcome
-    UITab_Options -> divClass "app-content" settingsTab
-    -- UITab_Client cid addr -> clientTab cid addr
-    -- UITab_Baker pkh -> bakerTab pkh
+  => m ()
+appContentArea = do
+  r <- askRoute
+  flip runRoutedT r $ subRoute_ $ lift . \case
+    AppRoute_Index -> nodesTabOrWelcome
+    AppRoute_Nodes -> nodesTabOrWelcome
+    AppRoute_Options -> divClass "app-content" settingsTab
 
 nodesTabOrWelcome
   :: forall r m t.
