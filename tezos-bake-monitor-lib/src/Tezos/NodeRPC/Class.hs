@@ -44,6 +44,8 @@ class QueryHistory repr where -- blockscale
   rAnyConstants :: ChainId -> repr ProtoInfo
   rContract :: ChainId -> BlockHash -> ContractId -> repr Account
 
+  rManagerKey :: ChainId -> BlockHash -> ContractId -> repr ManagerKey
+
   -- This only produces results when the cycles requested are between within
   -- PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
   rBakingRights :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> repr (Seq BakingRights)
@@ -90,6 +92,7 @@ instance QueryHistory RpcQuery where
   rProtoConstants chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
   rAnyConstants chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head/context/constants"
   rContract chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
+  rManagerKey chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId <> "/manager_key")
   rBakingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rEndorsingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"

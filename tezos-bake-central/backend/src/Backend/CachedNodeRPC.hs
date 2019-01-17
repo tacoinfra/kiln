@@ -43,6 +43,7 @@ import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
+import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
@@ -65,6 +66,7 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
 import Tezos.NodeRPC.Types
+import Tezos.PublicKey
 import Tezos.Types
 
 import Backend.Common (timeout')
@@ -83,6 +85,7 @@ data NodeQuery a where
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+  NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
 deriving instance Show (NodeQuery a)
 
 
@@ -368,6 +371,10 @@ getKey params hist = \case
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
+  q@(NodeQuery_PublicKey _) -> do
+    let branches = _cachedHistory_branches hist
+    block <- maximumByMay (comparing $ view fitness) $ Map.elems branches
+    pure (view hash block, q)
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -465,7 +472,7 @@ nodeQueryDataSourceRaw q' = do
                   nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
                   nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
 
-                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
+                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx logger nodeQueryViaCache q
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -482,13 +489,14 @@ pickNode branch = do
 nodeQueryDataSourceImpl
   :: forall a.
      ChainId
+  -> BlockHash
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q of
+nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -498,6 +506,11 @@ nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q 
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
+  NodeQuery_PublicKey contractId -> do
+    managerkeyResp <- nodeRPC' $ rManagerKey chainId qBranch contractId
+    case view managerKey_key managerkeyResp of
+      Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
+      Just pk -> pure $ pk
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx

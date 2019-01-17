@@ -80,6 +80,7 @@ data CacheError
   | CacheError_NotEnoughHistory
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException
+  | CacheError_UnrevealedPublicKey !ContractId
   deriving (Show, Generic, Typeable)
 instance Exception CacheError
 makePrisms ''CacheError
