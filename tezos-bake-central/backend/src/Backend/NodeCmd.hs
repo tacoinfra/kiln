@@ -121,8 +121,8 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
         FROM "NodeInternal"
         |]
       if shouldRun
-      then return ()
-      else waitUntilShouldRun
+        then return ()
+        else waitUntilShouldRun
   waitUntilShouldRun
   callNode logger db (nodePaths namedChain) pid
   threadDelay' 10

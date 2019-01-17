@@ -29,6 +29,7 @@ library
     , dependent-map
     , dependent-sum
     , dependent-sum-template
+    , directory
     -- , diagrams-core
     -- , diagrams-lib
     -- , diagrams-svg
@@ -64,6 +65,7 @@ library
     , obelisk-frontend
     , obelisk-route
     , postgresql-simple
+    , process
     , random-extras
     , random-fu
     , reflex
@@ -76,13 +78,15 @@ library
     , safe
     , safe-exceptions
     , semigroupoids
+    , shelly
     , snap-core
     , snap-loader-static
     , snap-server
     , stm
     , svg-builder
-    , text
+    , template-haskell
     , temporary
+    , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
     , these
