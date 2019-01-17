@@ -18,7 +18,7 @@ module Frontend where
 import Control.Lens ((<>~), imap)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
-import Control.Monad.Reader (ReaderT, lift)
+import Control.Monad.Reader (ReaderT)
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
@@ -83,6 +83,7 @@ type RouteConstraints t r m =
   ( Routed t (R r) m
   , RouteToUrl (R r) m
   , SetRoute t (R r) m
+  , EqTag r Identity
   )
 
 frontend :: Frontend (R AppRoute)
@@ -116,7 +117,7 @@ frontendBody = void $ do
         "http" -> 80
         "https" -> 443
         _ -> 80)
-    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen"
+    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
 
     wsUrl = WebSocketUrl
       <$> (T.replace "http" "ws" <$> routeScheme)
@@ -240,18 +241,14 @@ appSidebar = do
         appGutter
         appSideFooter
 
-routeSelector' :: ( DomBuilder t m, SemUi.HasElConfig t e
-                  , EqTag r Identity
-                  , RouteConstraints t r m)
+routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
   r <- askRoute
   let activated = ffor r $ bool "" "active" . (== dest)
   routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: ( DomBuilder t m, SemUi.HasElConfig t e
-                 , EqTag r Identity
-                 , RouteConstraints t r m)
+routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
@@ -392,7 +389,7 @@ appContentArea
   => m ()
 appContentArea = do
   r <- askRoute
-  flip runRoutedT r $ subRoute_ $ lift . \case
+  flip runRoutedT r $ subRoute_ $ \case
     AppRoute_Index -> nodesTabOrWelcome
     AppRoute_Nodes -> nodesTabOrWelcome
     AppRoute_Options -> divClass "app-content" settingsTab

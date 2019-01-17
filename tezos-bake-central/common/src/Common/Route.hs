@@ -16,7 +16,7 @@ import Prelude hiding (id, (.))
 
 import Control.Category
 import Control.Monad.Except
-import Control.Monad.Reader (ReaderT)
+import Control.Monad.Reader (MonadReader(..), ReaderT)
 import Data.Functor.Identity
 import Data.Functor.Sum
 import Data.Text (Text)
@@ -26,6 +26,11 @@ import Obelisk.Route.TH
 import Rhyolite.Frontend.App (RhyoliteWidget)
 
 -- TODO: Upstream
+instance MonadReader r' m => MonadReader r' (RoutedT t r m) where
+  ask = lift ask
+  local = mapRoutedT . local
+
+
 instance (Monad m, Routed t r m) => Routed t r (ReaderT r' m) where
   askRoute = lift askRoute
 
