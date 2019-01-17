@@ -139,8 +139,8 @@ updateNetworkStats
   -> NodeData
   -> NodeDetailsData
   -> m (Either RpcError ())
-updateNetworkStats appConfig httpMgr db nid nodeExt before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address nodeExt)) $ do
+updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address node)) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
     pure $ before
@@ -155,7 +155,7 @@ updateNetworkStats appConfig httpMgr db nid nodeExt before = runExceptT $ do
   -- for this node.m
   when (before /= after) $ inDb $ do
     let
-      minPeerCount = nodeData_minPeerConnections nodeExt
+      minPeerCount = nodeData_minPeerConnections node
     for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
       flip runReaderT appConfig $
         if (peerCount < fromIntegral minPeerCount)
@@ -236,8 +236,8 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     theseNodeRecords <- getNodes db CondEmpty
 
     -- give them all a chance to
-    ifor_ theseNodeRecords $ \nodeId (Node, nodeExt, nodeDetails) ->
-      updateNetworkStats appConfig httpMgr db nodeId nodeExt nodeDetails >>= \case
+    ifor_ theseNodeRecords $ \nodeId (Node, node, nodeDetails) ->
+      updateNetworkStats appConfig httpMgr db nodeId node nodeDetails >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
