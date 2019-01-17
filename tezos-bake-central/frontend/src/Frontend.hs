@@ -679,13 +679,13 @@ liveErrorsWidget = void $ do
                 el "div" $
                   text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-            NodeErrorLogView_BadNodeHead l ->
+            NodeErrorLogView_BadNodeHead l -> do
               for_ node' $ \n -> do
-              let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
-              let (addr, mAlias) = nodeSummaryIdentification n
-              header $ heading <> ": " <> fromMaybe addr mAlias
-              nodeLabel n
-              el "div" message
+                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
+                let (primary, _) = nodeSummaryIdentification n
+                header $ heading <> ": " <> primary
+                nodeLabel n
+                el "div" message
 
             NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
               for_ node' $ \n -> do
