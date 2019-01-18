@@ -39,6 +39,7 @@ import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -334,13 +335,13 @@ cycleStartHashes blkHash = do
     branch <- blkHash `Map.lookup` (_cachedHistory_blocks history)
     let
       minLvl = _cachedHistory_minLevel history
-      lvl = minLvl + RawLevel (length branch)
+      lvl = minLvl + RawLevel (fromIntegral $ length branch)
       cycle = levelToCycle protoInfo lvl
       preservedCycles = _protoInfo_preservedCycles protoInfo
       cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
       minLevels = firstLevelInCycle protoInfo <$> cycles
       maxLevels = pred . firstLevelInCycle protoInfo . succ <$> cycles
-      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . unRawLevel . subtract minLvl <$> minLevels
+      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
     return $ getZipList $ RightsCycleInfo
       <$> ZipList branches
       <*> ZipList cycles
@@ -558,7 +559,7 @@ ancestors ::
 ancestors (RawLevel n) branch = do
   hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
-    Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
+    Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
 calculateBakeEfficiency ::

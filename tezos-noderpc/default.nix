@@ -5,6 +5,7 @@
     {
       overrides = self: super:
         {
+          micro-ecc = self.callCabal2nix "micro-ecc" (hackGet ../dep/micro-ecc-haskell) {};
           tezos-bake-monitor-lib = self.callCabal2nix "tezos-bake-monitor-lib" ../tezos-bake-monitor-lib {};
           tezos-noderpc = self.callCabal2nix "tezos-noderpc" ./. {};
           heist = dontCheck super.heist;
