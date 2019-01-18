@@ -101,6 +101,7 @@ data Notify
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
+  | Notify_NodeInternal !(Id Node) !(Maybe NodeInternalData)
   | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
@@ -280,6 +281,12 @@ instance ToField NamedChain where
 
 instance FromField NamedChain where
   fromField f b = read <$> fromField f b
+
+instance FromField NodeInternalState where
+  fromField f b = read <$> fromField f b
+
+instance ToField NodeInternalState where
+  toField v = toField (show v)
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -524,6 +531,19 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
+  - primitive: NodeInternalState
+  - entity: NodeInternal
+    autoKey: null
+    keys:
+      - name: NodeInternalId
+        default: true
+    constructors:
+      - name: NodeInternal
+        uniques:
+          - name: NodeInternalId
+            type: primary
+            fields: [_nodeInternal_id]
+  - embedded: NodeInternalData
   - entity: NodeDetails
     autoKey: null
     keys:

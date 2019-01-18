@@ -27,6 +27,7 @@ import Database.Groundhog
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
+import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
@@ -330,8 +331,8 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
       for_ node' $ \node -> do
         (logId, _) <- insertErrorLog $ \logId ->
           ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
-        queueAlert (Just logId) $ Alert Unresolved "Node invalid peer count" $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has " <> tshow actualPeerCount <> " connected peers but is expected to have a minimum of " <> tshow minPeerCount
+        queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
+          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeInvalidPeerCountError
@@ -348,30 +349,41 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
-    queueAlert Nothing $ Alert Resolved "Resolved: Node has a valid number of connected peers" $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has a valid number of connected peers"
+    queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
+       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " now meets or exceeds the required minimum number of connected peers."
+
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125
 
+firstSuccess :: Monad m => [m (Maybe a)] -> m (Maybe a)
+firstSuccess = \case
+  []     -> pure Nothing
+  (x:xs) -> x >>= maybe (firstSuccess xs) (pure . Just)
+
+queryNodeTables :: Monad m => (Identifier -> m (Maybe a)) -> m (Maybe a)
+queryNodeTables q = firstSuccess $ fmap q ["NodeExternal", "NodeInternal"]
+
 reportBadNodeHeadError
-  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
+  :: forall m a latestHead nodeHead lca.
+     ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m)
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBadNodeHead) <- listToMaybe <$> [queryQ|
+  let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
+      existingLog nodeTable = listToMaybe <$> [queryQ|
     SELECT el.id, t.id
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
-      JOIN "NodeExternal" n ON n.id = t.node
+      JOIN ?nodeTable n ON n.id = t.node
      WHERE t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
-  case existingLog of
+  queryNodeTables existingLog >>= \case
     Nothing -> do
       void $ insertErrorLog $ \logId -> ErrorLogBadNodeHead
         { _errorLogBadNodeHead_log = logId

@@ -56,6 +56,13 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
+watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe NodeInternalData))
+watchInternalNode = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
+
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty

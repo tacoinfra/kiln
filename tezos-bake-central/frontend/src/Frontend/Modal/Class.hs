@@ -8,6 +8,7 @@ module Frontend.Modal.Class where
 import Control.Monad.Reader (MonadReader (ask), ReaderT (..))
 import Control.Monad.Trans (MonadTrans (lift))
 import Reflex (Event, Reflex, EventWriterT)
+import Obelisk.Route.Frontend (RoutedT, askRoute, runRoutedT)
 
 class HasModal t m where
   type ModalM m :: * -> *
@@ -24,3 +25,9 @@ instance (Monad m, Reflex t, HasModal t m) => HasModal t (ReaderT r m) where
   tellModal ev = do
     r <- ask
     lift $ tellModal $ (fmap . fmap) (flip runReaderT r) ev
+
+instance (Monad m, Reflex t, HasModal t m) => HasModal t (RoutedT t r m) where
+  type ModalM (RoutedT t r m) = RoutedT t r (ModalM m) -- Transform the modal's monad
+  tellModal ev = do
+    r <- askRoute
+    lift $ tellModal $ (fmap . fmap) (flip runRoutedT r) ev

@@ -31,6 +31,7 @@ import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.EventM as EventM
 import qualified GHCJS.DOM.GlobalEventHandlers as Events
 import Language.Javascript.JSaddle (MonadJSM)
+import Obelisk.Route.Frontend
 import Reflex.Dom.Core
 import Reflex.Host.Class (MonadReflexCreateTrigger)
 
@@ -66,6 +67,15 @@ instance HasJSContext m => HasJSContext (ModalT t m) where
 #if !defined(ghcjs_HOST_OS)
 instance MonadJSM m => MonadJSM (ModalT t m)
 #endif
+
+instance (Monad m, Routed t r m) => Routed t r (ModalT t m) where
+  askRoute = lift askRoute
+
+instance (Monad m, RouteToUrl r m) => RouteToUrl r (ModalT t m) where
+  askRouteToUrl = lift askRouteToUrl
+
+instance (Reflex t, Monad m, SetRoute t r m) => SetRoute t r (ModalT t m) where
+  modifyRoute = lift . modifyRoute
 
 instance EventWriter t w m => EventWriter t w (ModalT t m) where
   tellEvent = lift . tellEvent
