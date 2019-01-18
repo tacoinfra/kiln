@@ -12,7 +12,8 @@ module Backend.Upgrade where
 import Control.Exception.Safe (try)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (logInfo)
+import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import Data.Maybe
@@ -25,15 +26,19 @@ import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Rhyolite.Backend.Schema
 
 import Backend.Alerts
+import Backend.Alerts.Common
+import Backend.Config (AppConfig)
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogNetworkUpdate(..))
+import Common.Alerts
 import ExtraPrelude
 import Tezos.Chain
 
@@ -46,25 +51,27 @@ upgradeCheckWorker
   -> LoggingEnv
   -> Http.Manager
   -> Pool Postgresql
+  -> AppConfig
   -> m (IO ())
-upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db = do
+upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db appConfig = do
   liftIO $ forM_ mchain $ runLoggingEnv logger . runDb (Identity db) . clearUnrelatedNetworkUpdateError
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr (runLoggingEnv logger . runDb (Identity db))
-    void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
+    forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
+    void $ updateUpstreamVersion upgradeBranch httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
-  :: (MonadIO m, PersistBackend db, PostgresRaw db, SqlDb (PhantomDb db))
+  :: ( MonadIO m, MonadLogger m, Control.Monad.Trans.Control.MonadBaseControl IO m)
   => NamedChain
   -> Text
   -> Http.Manager
-  -> (forall a. db a -> m a)
+  -> Pool Postgresql
+  -> AppConfig
   -> m ()
-notifyChainUpgrade namedChain gitLabProjectId httpMgr inDb =
+notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
   getTezosBranch httpMgr gitLabProjectId (showNamedChain namedChain) >>= \case
-    Left err -> liftIO $ print err -- TODO use proper logging
-    Right commitId -> inDb $ do
+    Left err -> $(logError) err -- TODO use proper log message
+    Right commitId -> runDb (Identity db) $ do
       mLastCommit <- getLatestNamedChainUpgradeLog namedChain
       when (preview (_Just . _3) mLastCommit /= Just commitId) $ do
         now <- getTime
@@ -78,12 +85,21 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr inDb =
               , _errorLog_noticeSentAt = Just now
               }
         eid <- insert errorLog
-        _ <- insertNotify $ ErrorLogNetworkUpdate
-          { _errorLogNetworkUpdate_log = toId eid
-          , _errorLogNetworkUpdate_namedChain = namedChain
-          , _errorLogNetworkUpdate_commit = commitId
-          , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
-          }
+        let elua = ErrorLogNetworkUpdate
+              { _errorLogNetworkUpdate_log = toId eid
+              , _errorLogNetworkUpdate_namedChain = namedChain
+              , _errorLogNetworkUpdate_commit = commitId
+              , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
+              }
+        _ <- insertNotify elua
+        -- Only send an email when we get a new value, not when we initially
+        -- populate the cache.
+        when (mLastCommit /= Nothing) $ do
+          let (header, bodyFirstPara) = networkUpdateDescription namedChain
+          flip runReaderT appConfig $ queueAlert (Just $ toId eid) $ Alert Unresolved header $ T.unlines
+            [ bodyFirstPara
+            , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
+            ]
         return ()
 
 getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, Text))
