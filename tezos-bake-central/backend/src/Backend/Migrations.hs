@@ -133,11 +133,18 @@ dropTableIfExists table ta = do
 
 extraIndexes :: Migrate m => m ()
 extraIndexes = do
-  createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx"
+  createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx" Nothing
+  createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
+  createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
 
-
-createIndex :: (Migrate m) => QualifiedIdentifier -> [Either Text Identifier] -> Identifier -> m ()
-createIndex table@(QualifiedIdentifier tableSchema _tableName) columns indexIdent = do
+createIndex
+  :: (Migrate m)
+  => QualifiedIdentifier
+  -> [Either Text Identifier]
+  -> Identifier
+  -> Maybe Text
+  -> m ()
+createIndex table@(QualifiedIdentifier tableSchema _tableName) columns indexIdent condition = do
   let indexName = fromIdentifier indexIdent
   -- TODO: this only verifies that the index exists, not that it uses the right columns in the right order.
   -- JOIN pg_catalog.pg_attribute a  ON a.attrelid = t.oid
@@ -155,8 +162,9 @@ createIndex table@(QualifiedIdentifier tableSchema _tableName) columns indexIden
   case needIndex of
     True -> do
       let sqlCode = "CREATE INDEX " <> quoteNameSql indexIdent
-             <> " ON " <> tableSql table
-             <> " (" <> T.intercalate ", " (either id quoteNameSql <$> columns) <> ")"
+            <> " ON " <> tableSql table
+            <> " (" <> T.intercalate ", " (either id quoteNameSql <$> columns) <> ")"
+            <> maybe "" (" WHERE " <>) condition
       $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString $ T.unpack sqlCode)
     False -> return ()
 
