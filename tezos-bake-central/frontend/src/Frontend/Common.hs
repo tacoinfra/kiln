@@ -20,6 +20,7 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import Data.Fixed (divMod')
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -84,7 +85,15 @@ hrefLink :: DomBuilder t m => Text -> m a -> m a
 hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
-tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
+tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
+  where (wholes :: Integer, parts) = n `divMod'` 1
+        wholes' = reverse $ f $ reverse $ show wholes
+        parts' = T.dropWhileEnd (== '.')
+                 $ T.dropAround (== '0')
+                 $ tshow parts
+        f = \case
+          (a0 : a1 : a2 : as) -> a0 : a1 : a2 : ',' : f as
+          as -> as
 
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
 localTimestamp t = do
