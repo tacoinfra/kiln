@@ -4,6 +4,7 @@
 
 module Common.Alerts where
 
+import Prelude hiding (cycle)
 import Data.Aeson
 import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
@@ -172,6 +173,60 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
+
+bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
+bakerAccusedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right <> "."
+  , _bakerErrorDescriptions_tile = "Accused of double" <> right <> "."
+  , _bakerErrorDescriptions_notification =
+      plaintextErrorDescription firstParagraph
+      <> ".\n\nSecurity deposits and rewards may have been confiscated."
+      <> bool "" ("\n\n" <> turnOffShort) accusedInSameCycle
+  , _bakerErrorDescriptions_problem = firstParagraph
+      <> errorEmphasis ("All security deposits and rewards earned in cycle "
+                        <> cycle <> upTo <> " not previously confiscated by "
+                        <> "prior accusations have been confiscated by the "
+                        <> "network.")
+      <> " Half of the security deposits "
+      <> "are delivered to the baker of "
+      <> errorEmphasis ("block level " <> accusedLevel)
+      <> ". The other half, along with any rewards, are burned."
+      <> bool "" (errorEmphasis ("This baker may be re-accused for this "
+                                 <> "offense (and any new deposits and "
+                                 <> "rewards confiscated) for each block or "
+                                 <> "endorsement it signs in the remainder "
+                                 <> "of cycle " <> cycle <> "."))
+                 accusedInSameCycle
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = bool
+      ("Because this accusation was made in a cycle following that in which "
+       <> "the double " <> rightI <> " occurred no further tez can be "
+       <> "confiscated and it is safe to continue running your baker.")
+      turnOffShort
+      accusedInSameCycle
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_Baker BakerLogTag_BakerAccused :=> pure elog
+  }
+  where
+    firstParagraph =
+      "This baker has been accused of double " <> errorPlain right
+      <> " " <> errorEmphasis ("block level " <> lvl)
+      <> " in " <> errorEmphasis ("cycle " <> cycle) <> ". The accusation was baked at "
+      <> errorEmphasis ("block level " <> accusedLevel) <> ".\n\n"
+    turnOffShort = 
+      "\n\nThis baker should be turned off for the remainder of the cycle to "
+      <> "avoid losing deposits and rewards for upcoming rights."
+    cycle = tshow $ unCycle $ _errorLogBakerAccused_cycle elog
+    lvl = tshow $ unRawLevel $ _errorLogBakerAccused_level elog
+    accusedLevel = tshow $ unRawLevel $ _errorLogBakerAccused_accusedLevel elog
+    right = case _errorLogBakerAccused_right elog of
+      RightKind_Baking -> "baking"
+      RightKind_Endorsing -> "endorsement"
+    rightI = case _errorLogBakerAccused_right elog of
+      RightKind_Baking -> "bake"
+      RightKind_Endorsing -> "endorsement"
+    upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
+    accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle $ elog
 
 -- Skip the final sentence as there is no easy way to abstract over doing or not
 -- doing the link.
