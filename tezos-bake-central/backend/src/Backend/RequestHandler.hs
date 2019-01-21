@@ -147,22 +147,22 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               notify $ Notify_NodeInternal nid Nothing
         where
           clearErrors nid = do
-            elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
-            elnwc <- selectMap' ErrorLogNodeWrongChainConstructor (ErrorLogNodeWrongChain_nodeField ==. nid)
-            elbnh <- selectMap' ErrorLogBadNodeHeadConstructor (ErrorLogBadNodeHead_nodeField ==. nid)
+            elin <- select (ErrorLogInaccessibleNode_nodeField ==. nid)
+            elnwc <- select (ErrorLogNodeWrongChain_nodeField ==. nid)
+            elbnh <- select (ErrorLogBadNodeHead_nodeField ==. nid)
 
             now <- getTime
             let
               logIds :: [Id ErrorLog] = mconcat
-                [ _errorLogInaccessibleNode_log <$> toList elin
-                , _errorLogNodeWrongChain_log <$> toList elnwc
-                , _errorLogBadNodeHead_log <$> toList elbnh
+                [ _errorLogInaccessibleNode_log <$> elin
+                , _errorLogNodeWrongChain_log <$> elnwc
+                , _errorLogBadNodeHead_log <$> elbnh
                 ]
             update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId logIds)
 
-            for_ (MMap.keys elin) $ notify . mkDefaultNotify
-            for_ (MMap.keys elnwc) $ notify . mkDefaultNotify
-            for_ (MMap.keys elbnh) $ notify . mkDefaultNotify
+            for_ elin $ notify . mkDefaultNotify  . (Id @ErrorLogInaccessibleNode) . _errorLogInaccessibleNode_log
+            for_ elnwc $ notify . mkDefaultNotify . (Id @ErrorLogNodeWrongChain) . _errorLogNodeWrongChain_log
+            for_ elbnh $ notify . mkDefaultNotify . (Id @ErrorLogBadNodeHead) . _errorLogBadNodeHead_log
 
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
@@ -400,16 +400,17 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_NodeWrongChain -> pure Nothing
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_BadNodeHead -> pure Nothing
+          LogTag_NodeInvalidPeerCount -> pure Nothing
           LogTag_MultipleBakersForSameBaker -> pure Nothing
           LogTag_NetworkUpdate -> do
             let eid = _errorLogNetworkUpdate_log specificLog
-            n <- fmap (Notify_ErrorLogNetworkUpdate . toId) . listToMaybe <$> project AutoKeyField (ErrorLogNetworkUpdate_logField `in_` [eid])
+            n <- fmap (Notify_ErrorLogNetworkUpdate . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
             return $ (,) <$> pure eid <*> n
           LogTag_BakerDeactivated -> pure Nothing
           LogTag_BakerDeactivationRisk -> pure Nothing
           LogTag_BakerMissed -> do
             let eid = _errorLogBakerMissed_log specificLog
-            n <- fmap (Notify_ErrorLogBakerMissed . toId) . listToMaybe <$> project AutoKeyField (ErrorLogBakerMissed_logField `in_` [eid])
+            n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
             return $ (,) <$> pure eid <*> n
 
         for_ elid_notifier' $ \(elid, notifier) -> do

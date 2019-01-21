@@ -38,6 +38,7 @@ import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogNetworkUpdate(..))
+import Rhyolite.Schema (Id(..))
 import Common.Alerts
 import ExtraPrelude
 import Tezos.Chain
@@ -84,19 +85,19 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Just now
               }
-        eid <- insert errorLog
-        let elua = ErrorLogNetworkUpdate
-              { _errorLogNetworkUpdate_log = toId eid
-              , _errorLogNetworkUpdate_namedChain = namedChain
-              , _errorLogNetworkUpdate_commit = commitId
-              , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
-              }
-        _ <- insertNotify elua
+        eid <- toId <$> insert errorLog
+        _ <- insert ErrorLogNetworkUpdate
+          { _errorLogNetworkUpdate_log = eid
+          , _errorLogNetworkUpdate_namedChain = namedChain
+          , _errorLogNetworkUpdate_commit = commitId
+          , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
+          }
+        notify $ mkDefaultNotify (Id eid :: Id ErrorLogNetworkUpdate)
         -- Only send an email when we get a new value, not when we initially
         -- populate the cache.
         when (mLastCommit /= Nothing) $ do
           let (header, bodyFirstPara) = networkUpdateDescription namedChain
-          flip runReaderT appConfig $ queueAlert (Just $ toId eid) $ Alert Unresolved header $ T.unlines
+          flip runReaderT appConfig $ queueAlert (Just eid) $ Alert Unresolved header $ T.unlines
             [ bodyFirstPara
             , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
             ]

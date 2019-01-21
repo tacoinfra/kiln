@@ -23,7 +23,7 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id (..), unId)
+import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
 
@@ -218,19 +218,19 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     handleErrorLog
-      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
-      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2) -- (EntityWithId e, PersistBackend m2, PostgresRaw m2)
       => (e -> m2 (BakeView a)) -> (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog' k getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
-      specificLog' :: Maybe e <- getId specificLogId
+      specificLog' :: Maybe e <- getIdBy specificLogId
       logNodeSummary <- for (fmap nodeIdForNodeErrorLogView . nodeErrorViewOnly . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId

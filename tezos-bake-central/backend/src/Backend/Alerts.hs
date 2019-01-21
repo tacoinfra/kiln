@@ -8,10 +8,11 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-{-# OPTIONS_GHC -Wall -fno-warn-partial-type-signatures -Werror #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Alerts where
 
@@ -25,14 +26,13 @@ import Data.Time (NominalDiffTime, addUTCTime)
 import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
-import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
 import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id, Json (..))
+import Rhyolite.Schema (Id(..), Json (..), IdData)
 import qualified Text.URI as Uri
 
 import Tezos.Types
@@ -45,6 +45,7 @@ import Common.Schema
 import ExtraPrelude
 import Prelude hiding (log)
 
+
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a, MonadLogger m
@@ -52,7 +53,7 @@ reportNoBakerHeartbeatError
   => Id Client -> SeenEvent -> m ()
 reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted bakers
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+    SELECT el.id, t.log
     FROM "ErrorLog" el
     JOIN "ErrorLogBakerNoHeartbeat" t ON t.log = el.id
     WHERE t.cid = ?cid AND el.stopped IS NULL
@@ -75,8 +76,8 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
       queueAlert (Just logId) $
         Alert Unresolved "Baker has not seen block for a while" $
         "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
-    Just (logId, specificLogId) -> do
-      updateErrorLogBy logId specificLogId
+    Just (logId, _specificLogId) -> do
+      updateErrorLogBy logId ErrorLogBakerNoHeartbeat_logField
         [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
         , ErrorLogBakerNoHeartbeat_lastBlockHashField =. seenHash
         ]
@@ -94,7 +95,7 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
       AND t.client = ?cid
       AND NOT c.deleted
       AND el.stopped IS NULL
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   client :: Maybe Client <- get $ fromId cid
   when (not $ null lids) $ queueAlert Nothing $
@@ -109,7 +110,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
     WHERE elnu.log = el.id
     AND elnu."namedChain" <> ?namedChain
     AND el.stopped IS NULL
-    RETURNING elnu.id
+    RETURNING elnu.log
     |]
   for_ lids $ notify . mkDefaultNotify
 
@@ -132,7 +133,7 @@ reportBakerDeactivated
   => PublicKeyHash -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivated pkh protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id, t.fitness
+    SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
@@ -142,7 +143,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, specificLogId, oldFit) -> updateErrorLogBy logId specificLogId
+    Just (logId, _specificLogId, oldFit) -> updateErrorLogBy logId ErrorLogBakerDeactivated_logField
       [ ErrorLogBakerDeactivated_fitnessField =. max newFit oldFit ]
     Nothing -> do
       baker' <- getBaker pkh
@@ -164,11 +165,11 @@ clearBakerDeactivated pkh newFit = do
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
       AND t.fitness < ?newFit :: VARCHAR[]
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
-  log' <- for (listToMaybe lids) $ get . fromId
+  log' <- for (listToMaybe lids) $ getBy . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivatedDescriptions log) baker
 
@@ -179,7 +180,7 @@ reportBakerDeactivationRisk
   => PublicKeyHash -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id, t.fitness
+    SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
       JOIN "Baker" b ON b.publicKeyHash = t."publicKeyHash"
@@ -189,7 +190,7 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, specificLogId, oldFit) -> updateErrorLogBy logId specificLogId
+    Just (logId, _specificLogId, oldFit) -> updateErrorLogBy logId ErrorLogBakerDeactivationRisk_logField
       [ ErrorLogBakerDeactivationRisk_fitnessField =. max newFit oldFit ]
     Nothing -> do
       baker' <- getBaker pkh
@@ -211,11 +212,11 @@ clearBakerDeactivationRisk pkh newFit = do
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
       AND t.fitness < ?newFit :: VARCHAR[]
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
-  log' <- for (listToMaybe lids) $ get . fromId
+  log' <- for (listToMaybe lids) $ getBy . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
@@ -226,7 +227,7 @@ reportInaccessibleNodeError
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+    SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogInaccessibleNode" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
@@ -255,7 +256,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInaccessibleNode" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
@@ -270,7 +271,7 @@ reportNodeWrongChainError
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+    SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeWrongChain" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
@@ -302,7 +303,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id
       AND t.node = ?nodeId
       AND el.stopped IS NULL
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
@@ -315,7 +316,7 @@ reportNodeInvalidPeerCountError
   => Id Node -> Int -> Word64 -> m ()
 reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nodeNotDeleted nodeId) $ do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+    SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeInvalidPeerCount" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
@@ -345,7 +346,7 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id
       AND t.node = ?nodeId
       AND el.stopped IS NULL
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   when (not $ null lids) $ for_ node' $ \node -> do
@@ -373,7 +374,7 @@ reportBadNodeHeadError
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
   let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
       existingLog nodeTable = listToMaybe <$> [queryQ|
-    SELECT el.id, t.id
+    SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogBadNodeHead" t ON t.log = el.id
       JOIN ?nodeTable n ON n.id = t.node
@@ -393,8 +394,8 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , _errorLogBadNodeHead_latestHead = Json $ mkVeryBlockLike latestHead
         }
 
-    Just (logId, specificLogId) -> do
-      (g,l) <- returnUpdateErrorLogBy logId specificLogId
+    Just (logId, _specificLogId) -> do
+      (g,l) <- returnUpdateErrorLogBy logId ErrorLogBadNodeHead_logField
         [ ErrorLogBadNodeHead_lcaField =. (Json . mkVeryBlockLike <$> lca)
         , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
@@ -416,10 +417,10 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBadNodeHead" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
-    RETURNING t.id |]
+    RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
   node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  specErrs <- catMaybes <$> for lids getId
+  specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
@@ -429,7 +430,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
 missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
 missedBakeLog right pkh lvl =
   ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm.id, elbm.fitness
+    SELECT b."publicKeyHash", el.id, elbm.log, elbm.fitness
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
@@ -462,8 +463,8 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       , _errorLogBakerMissed_fitness = f
       }
     queueAlert (Just eid) alert
-  Just xs -> for_ xs $ \(eid, elbmid, f') -> when (f' <= f) $ do
-    updateErrorLogBy eid elbmid [ ErrorLogBakerMissed_fitnessField =. f ]
+  Just xs -> for_ xs $ \(eid, _elbmid, f') -> when (f' <= f) $ do
+    updateErrorLogBy eid ErrorLogBakerMissed_logField [ ErrorLogBakerMissed_fitnessField =. f ]
     queueAlert (Just eid) alert
   where
     alert = Alert Unresolved
@@ -488,7 +489,7 @@ clearMissedBake f right pkh lvl = do
         AND elbm.right = ?right
         AND b."publicKeyHash" = ?pkh
         AND elbm.level = ?lvl
-      RETURNING elbm.id |]
+      RETURNING elbm.log |]
   for_ lids $ notify . mkDefaultNotify
   when (not $ null lids) $ queueAlert Nothing $
     Alert Resolved
@@ -504,7 +505,7 @@ nodeNotDeleted nodeId = fmap (all not)
   $ project (NodeExternal_dataField ~> DeletableRow_deletedSelector)
   $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
 
-insertErrorLog :: (EntityWithId a, HasDefaultNotify (Id a), AutoKey a ~ DefaultKey a, PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
+insertErrorLog :: forall a m. (IdData a ~ Id ErrorLog, PersistEntity a, HasDefaultNotify (Id a), PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
 insertErrorLog mkErrorLog = do
   now <- getTime
   logId <- insert' ErrorLog
@@ -514,7 +515,8 @@ insertErrorLog mkErrorLog = do
     , _errorLog_noticeSentAt = Nothing
     }
   let errLog = mkErrorLog logId
-  notify . mkDefaultNotify =<< insert' errLog
+  insert_ errLog
+  notify $ mkDefaultNotify (Id logId :: Id a)
   pure (logId, errLog)
 
 updateErrorLog :: (HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
@@ -523,28 +525,40 @@ updateErrorLog logId specificLogId = do
   notify $ mkDefaultNotify specificLogId
 
 updateErrorLogBy
-  :: (EntityWithId a, HasDefaultNotify (Id a), GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  :: forall a ctor m.
+    ( PersistBackend m
+    , PersistEntity a
+    , IdData a ~ Id ErrorLog
+    , IsSumType a ~ HFalse
+    , HasDefaultNotify (Id a)
+    )
   => Id ErrorLog
-  -> Id a
-  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> Field a ctor (IdData a)
+  -> [Update (PhantomDb m) (RestrictionHolder a ctor)]
   -> m ()
-updateErrorLogBy logId specificLogId updates = do
+updateErrorLogBy logId idField updates = do
   updateErrorLogLastSeen logId
-  updateId specificLogId updates
-  notify $ mkDefaultNotify specificLogId
+  update updates (idField ==. logId)
+  notify $ mkDefaultNotify (Id logId :: Id a)
 
 returnUpdateErrorLogBy
-  :: (EntityWithId a, HasDefaultNotify (Id a), GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
+  :: forall a u m ctor.
+  ( IdData a ~ Id ErrorLog
+  , EntityWithIdBy u a
+  , PersistBackend m
+  , IsSumType a ~ HFalse
+  , HasDefaultNotify (Id a)
+  )
   => Id ErrorLog
-  -> Id a
-  -> [Update (PhantomDb m) (RestrictionHolder v c)]
+  -> Field a ctor (IdData a)
+  -> [Update (PhantomDb m) (RestrictionHolder a ctor)]
   -> m (ErrorLog, a)
-returnUpdateErrorLogBy logId specificLogId updates = do
+returnUpdateErrorLogBy logId idField updates = do
   g <- returnUpdateErrorLogLastSeen logId
-  updateId specificLogId updates
-  notify $ mkDefaultNotify specificLogId
-  getId specificLogId >>= \case
-    Nothing -> fail $ "returnUpdateErrorLogBy called on nonexistent specific record " <> show specificLogId
+  update updates (idField ==. logId)
+  notify $ mkDefaultNotify (Id logId :: Id a)
+  getIdBy (Id logId :: Id a) >>= \case
+    Nothing -> fail $ "returnUpdateErrorLogBy called on nonexistent specific record " <> show logId
     Just l -> return (g,l)
 
 updateErrorLogLastSeen :: PersistBackend m => Id ErrorLog -> m ()

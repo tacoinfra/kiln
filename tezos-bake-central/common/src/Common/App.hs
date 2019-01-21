@@ -26,7 +26,9 @@ module Common.App
   , AlertNotificationMethod (..)
   ) where
 
+import Control.Lens (Iso', iso)
 import Control.Lens.TH (makeLenses)
+import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
@@ -199,6 +201,35 @@ data ErrorLogView
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
+
+logViewTag :: Iso' ErrorLogView (DSum LogTag Identity)
+logViewTag = iso fromErrorLogView toErrorLogView
+
+toErrorLogView :: DSum LogTag Identity -> ErrorLogView
+toErrorLogView = \case
+  LogTag_BadNodeHead :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x)
+  LogTag_BakerDeactivated :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x)
+  LogTag_BakerDeactivationRisk :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x)
+  LogTag_BakerMissed :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x)
+  LogTag_BakerNoHeartbeat :=> Identity x -> ErrorLogView_BakerNoHeartbeat x
+  LogTag_InaccessibleNode :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x)
+  LogTag_MultipleBakersForSameBaker :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x)
+  LogTag_NetworkUpdate :=> Identity x -> ErrorLogView_NetworkUpdate x
+  LogTag_NodeInvalidPeerCount :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x)
+  LogTag_NodeWrongChain :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x)
+
+fromErrorLogView :: ErrorLogView -> DSum LogTag Identity
+fromErrorLogView = \case
+  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x) -> LogTag_BakerDeactivated :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x) -> LogTag_BakerDeactivationRisk :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x) -> LogTag_BakerMissed :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x) -> LogTag_MultipleBakersForSameBaker :=> Identity x
+  ErrorLogView_BakerNoHeartbeat x -> LogTag_BakerNoHeartbeat :=> Identity x
+  ErrorLogView_NetworkUpdate x -> LogTag_NetworkUpdate :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x) -> LogTag_BadNodeHead :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x) -> LogTag_InaccessibleNode :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x) -> LogTag_NodeInvalidPeerCount :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x) -> LogTag_NodeWrongChain :=> Identity x
 
 nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
 nodeErrorViewOnly = \case
