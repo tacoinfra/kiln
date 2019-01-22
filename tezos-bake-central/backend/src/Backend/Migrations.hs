@@ -11,14 +11,14 @@ module Backend.Migrations where
 import Backend.Schema (migrateSchema)
 import Control.Monad.Logger (MonadLogger, logInfoS)
 import qualified Data.Text as T
-import Data.List (intercalate)
+import Data.Int (Int64)
 import Data.String (fromString)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic (runMigration)
 import Database.Groundhog.Generic.Migration hiding (migrateSchema)
-import Database.PostgreSQL.Simple.Types (Query, Identifier (..), QualifiedIdentifier (..))
+import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (..))
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, sql, Only(..))
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 
 import ExtraPrelude
@@ -83,11 +83,9 @@ renameColumnIfExists table columnFrom columnTo ta = do
     _ -> pure ta
 
 renameColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> m ()
-renameColumn tableName columnNameFrom columnNameTo = do
-  let sqlCode = [sql|
-          ALTER TABLE ?tableName RENAME COLUMN ?columnNameFrom TO ?columnNameTo
-        |]
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ sqlCode)
+renameColumn tableName columnNameFrom columnNameTo = void [traceExecuteQ|
+    ALTER TABLE ?tableName RENAME COLUMN ?columnNameFrom TO ?columnNameTo
+  |]
 
 dropColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 dropColumnIfExists table columnFrom ta = do
@@ -100,16 +98,15 @@ dropColumnIfExists table columnFrom ta = do
     _ -> pure ta
 
 dropColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
-dropColumn tableName columnNameFrom = do
-  let sqlCode = [sql|
-          ALTER TABLE ?tableName DROP COLUMN ?columnNameFrom
-        |]
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ sqlCode)
+dropColumn tableName columnNameFrom = void [traceExecuteQ|
+    ALTER TABLE ?tableName DROP COLUMN ?columnNameFrom
+  |]
 
 createSequence :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
-createSequence (QualifiedIdentifier schema sequenceName) ta = do
-  let sqlCode = "CREATE SEQUENCE IF NOT EXISTS " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> sequenceName <> "\""
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString $ T.unpack sqlCode)
+createSequence sequenceName ta = do
+  void [traceExecuteQ|
+      CREATE SEQUENCE IF NOT EXISTS ?sequenceName
+    |]
   return ta
 
 renameTableIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
@@ -119,11 +116,9 @@ renameTableIfExists tableFrom tableTo ta = do
     Just _ -> renameTable tableFrom tableTo *> getTableAnalysis
 
 renameTable :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
-renameTable tableNameFrom tableNameTo = do
-  let sqlCode = [sql|
-          ALTER TABLE ?tableNameFrom RENAME TO ?tableNameTo
-        |]
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ sqlCode)
+renameTable tableNameFrom tableNameTo = void [traceExecuteQ|
+    ALTER TABLE ?tableNameFrom RENAME TO ?tableNameTo
+  |]
 
 dropTableIfExists :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
 dropTableIfExists table ta = do
@@ -177,10 +172,7 @@ tableSql (QualifiedIdentifier schema tableName) =
   <> quoteNameSql (Identifier tableName)
 
 dropTable :: (Migrate m) => QualifiedIdentifier -> m ()
-dropTable tableName = do
-  let sqlCode = [sql|DROP TABLE ?tableName|]
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ sqlCode)
-
+dropTable tableName = void [traceExecuteQ|DROP TABLE ?tableName|]
 
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
@@ -191,8 +183,7 @@ migrateNodesToSplitTable ta = do
     Just analyzedTable
       | any ((== "address") . colName) $ tableColumns analyzedTable
       -> do
-          let
-            sqlCode = [sql|
+          void [traceExecuteQ|
               CREATE TABLE "NodeExternal"
                 ( "id" INT8 NOT NULL
                 , "data#data#address" VARCHAR NOT NULL
@@ -274,6 +265,5 @@ migrateNodesToSplitTable ta = do
               ALTER TABLE "Node" DROP COLUMN "alias";
               ALTER TABLE "Node" DROP COLUMN "address";
             |]
-          $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
           getTableAnalysis
     _ -> pure ta
