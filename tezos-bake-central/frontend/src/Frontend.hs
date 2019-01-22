@@ -1068,12 +1068,12 @@ nodesTab =
                 generatingTile :: m ()
                 generatingTile = nodeTileWithSections $
                   [ tileHeader title subtitle internalNodeMenu badge Nothing
-                  , do
+                  , divClass "internal-node-tile-body" $ do
                       divClass "ui row" $ do
-                        icon "id-badge"
-                        divClass "ui active tiny inline loader" blank
+                        icon "icon-id-badge big"
+                        divClass "ui active tiny inline loader blue small" blank
                       divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
-                      divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the netowrk. This may take several minutes."
+                      divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
                   ]
 
             isInitializing <- holdUniqDyn $ (== NodeInternalState_Initializing) <$> state
