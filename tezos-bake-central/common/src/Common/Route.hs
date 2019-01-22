@@ -23,32 +23,20 @@ import Data.Text (Text)
 import Obelisk.Route
 import Obelisk.Route.Frontend
 import Obelisk.Route.TH
-import Rhyolite.Frontend.App (RhyoliteWidget)
 
 -- TODO: Upstream
 instance MonadReader r' m => MonadReader r' (RoutedT t r m) where
   ask = lift ask
   local = mapRoutedT . local
 
-
 instance (Monad m, Routed t r m) => Routed t r (ReaderT r' m) where
-  askRoute = lift askRoute
-
-instance (Monad m, Routed t r m) => Routed t r (RhyoliteWidget app t m) where
   askRoute = lift askRoute
 
 instance (Monad m, SetRoute t r m) => SetRoute t r (ReaderT r' m) where
   modifyRoute = lift . modifyRoute
 
-instance (Monad m, SetRoute t r m) => SetRoute t r (RhyoliteWidget app t m) where
-  modifyRoute = lift . modifyRoute
-
 instance (Monad m, RouteToUrl r m) => RouteToUrl r (ReaderT r' m) where
   askRouteToUrl = lift askRouteToUrl
-
-instance (Monad m, RouteToUrl r m) => RouteToUrl r (RhyoliteWidget app t m) where
-  askRouteToUrl = lift askRouteToUrl
-
 
 data AppRoute :: * -> * where
   AppRoute_Index :: AppRoute ()
