@@ -747,10 +747,13 @@ liveErrorsWidget = void $ do
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
 
+-- The current order worse...better. This is so we take the minimum of various
+-- sources of "badness"; a "weakest link" discipline. Be careful to check
+-- existing uses of the Ord instance if the order is changed.
 data MonitoredStatus
-  = MonitoredStatus_Healthy
-  | MonitoredStatus_Unhealthy
+  = MonitoredStatus_Unhealthy
   | MonitoredStatus_Unknown
+  | MonitoredStatus_Healthy
   deriving (Eq, Ord, Bounded, Enum, Show)
 
 statusColor :: IsString a => MonitoredStatus -> a
@@ -832,6 +835,21 @@ addBakerModal close = mdo
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
+nodeStatus :: Maybe NodeInternalState -> Int -> MonitoredStatus
+nodeStatus mInternalState alertCount = min fromStatus fromAlert
+  where
+    fromStatus = case mInternalState of
+      Just internalState -> case internalState of
+        NodeInternalState_Stopped -> MonitoredStatus_Unknown
+        NodeInternalState_Initializing -> MonitoredStatus_Unknown
+        NodeInternalState_Starting -> MonitoredStatus_Unknown
+        NodeInternalState_Running -> MonitoredStatus_Healthy
+        NodeInternalState_Failed -> MonitoredStatus_Unhealthy
+      Nothing -> MonitoredStatus_Healthy
+    fromAlert = case alertCount of
+      0 -> MonitoredStatus_Healthy
+      _ -> MonitoredStatus_Unhealthy
+
 nodesList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
@@ -839,13 +857,15 @@ nodesList ::
   )
   => m ()
 nodesList = do
-  let nodeStatus = \case
-        0 -> MonitoredStatus_Healthy
-        _ -> MonitoredStatus_Unhealthy
-  nodes <- (\ns -> ( nodeSummaryIdentification ns
-                   , nodeStatus (_nodeSummary_alertCount ns)
-                   , isRight $ _nodeSummary_node ns))
-           <$$$> watchNodeAddresses
+  nodes <- ffor
+    watchNodeAddresses
+    $ fmap $ fmap $ \ns ->
+      ( nodeSummaryIdentification ns
+      , nodeStatus
+        (nodeSummaryStateIfInternal ns)
+        (_nodeSummary_alertCount ns)
+      , isRight $ _nodeSummary_node ns
+      )
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -1029,6 +1049,7 @@ nodesTab =
               externalNodeMenu
               (>>= getNodeHeadBlock)
               (Just errors)
+              Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
               nodeDetails
@@ -1054,9 +1075,6 @@ nodesTab =
 
                   tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
-                badge :: m ()
-                badge = tileBadgeImpliedByErrors (Just errors) (Just state)
-
                 title :: m ()
                 title = text "Kiln Node"
 
@@ -1074,15 +1092,16 @@ nodesTab =
                 workingTile :: m ()
                 workingTile = do
                   nodeDetails <- watchNodeDetails nodeId
-                  standardNodeTile
+                  standardNodeTile @(NodeInternalData, Maybe NodeDetailsData)
                     title
                     subtitle
                     internalNodeMenu
-                    (>>= getNodeHeadBlock)
+                    ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
-                    (Just $ (=<<) _nodeDetailsData_peerCount)
-                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
-                    nodeDetails
+                    (Just $ _nodeInternalData_state . fst)
+                    (Just $ (=<<) _nodeDetailsData_peerCount . snd)
+                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
+                    ((,) <$> nodeData <*> nodeDetails)
 
                 generatingTile :: m ()
                 generatingTile = nodeTileWithSections $
@@ -1094,6 +1113,9 @@ nodesTab =
                       divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
                       divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
                   ]
+                  where
+                    badge :: m ()
+                    badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
             isInitializing <- holdUniqDyn $ (== NodeInternalState_Initializing) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
@@ -1120,6 +1142,7 @@ nodesTab =
               Nothing
               Nothing
               Nothing
+              Nothing
               vDyn
 
     tileHeader
@@ -1140,22 +1163,15 @@ nodesTab =
     tileErrors = traverse_ $ \errors ->
       dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-    tileBadgeImpliedByErrors :: Maybe (Dynamic t [a]) -> Maybe (Dynamic t NodeInternalState) -> m ()
-    tileBadgeImpliedByErrors mErrors mState = for_ mErrors $ \errors -> do
-      errorsEmpty <- holdUniqDyn $ null <$> errors
-      let color = maybe (pure badgeColor) (fmap badgeColorInternal) mState
-      iconDyn $ ("tiny circle " <>) <$> (color <*> errorsEmpty)
-
-    badgeColor :: Bool -> Text
-    badgeColor = bool "red" "green"
-
-    badgeColorInternal :: NodeInternalState -> Bool -> Text
-    badgeColorInternal = \case
-      NodeInternalState_Stopped -> const "orange"
-      NodeInternalState_Initializing -> const "grey"
-      NodeInternalState_Starting -> const "grey"
-      NodeInternalState_Running -> badgeColor
-      NodeInternalState_Failed -> const "red"
+    tileBadgeImpliedByErrors
+      :: Maybe (Dynamic t [a])
+      -> Maybe (Dynamic t NodeInternalState)
+      -> m ()
+    tileBadgeImpliedByErrors mErrors mInternalState = do
+      let color = fmap statusColor $ nodeStatus
+            <$> sequence mInternalState
+            <*> (maybe (pure 0) (fmap length) mErrors)
+      iconDyn $ ("tiny circle " <>) <$> color
 
     tileBlockStats getBlock node = do
       b <- maybeDyn $ getBlock <$> node
@@ -1213,13 +1229,15 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (a -> NodeInternalState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    standardNodeTile title subtitle menuContents getBlock errors' getPeerCount' getNetworkStats' node =
+    standardNodeTile title subtitle menuContents getBlock errors' internalState getPeerCount' getNetworkStats' node = do
+      let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
-        [ tileHeader title subtitle menuContents (tileBadgeImpliedByErrors errors' Nothing) errors'
+        [ tileHeader title subtitle menuContents badge errors'
         , tileBlockStats getBlock node
         ]
         <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
