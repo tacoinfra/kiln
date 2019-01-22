@@ -376,6 +376,15 @@ body {
       overflow-y: hidden;
       text-overflow: ellipsis;
     }
+    .header {
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+      img {
+        height: @10px;
+      }
+    }
   }
   > .ui.button {
     margin-top: @14px;
@@ -695,6 +704,20 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
+
+    .internal-node-subtitle {
+      display: flex;
+      margin-top: @4px;
+
+      img {
+        height: @10px;
+        margin-right: @10px;
+        font-size: @10px;
+      }
+      div {
+        height: @10px;
+      }
+    }
   }
 
   > .ui.card.baker-tile {

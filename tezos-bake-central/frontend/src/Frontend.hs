@@ -1042,14 +1042,15 @@ nodesTab =
                 title = text "Kiln Node"
 
                 subtitle :: m ()
-                subtitle = do
-                  kilnLogo
-                  divClass "ui sub header" $ dynText $ ffor state $ \case
-                    NodeInternalState_Stopped -> "Stopped"
-                    NodeInternalState_Initializing -> "Initializing"
-                    NodeInternalState_Starting -> "Starting"
-                    NodeInternalState_Running -> "Running"
-                    NodeInternalState_Failed -> "Failed"
+                subtitle =
+                  divClass "internal-node-subtitle" $ do
+                    kilnLogo
+                    divClass "ui sub header" $ dynText $ ffor state $ \case
+                      NodeInternalState_Stopped -> "Stopped"
+                      NodeInternalState_Initializing -> "Initializing"
+                      NodeInternalState_Starting -> "Starting"
+                      NodeInternalState_Running -> "Running"
+                      NodeInternalState_Failed -> "Failed"
 
                 workingTile :: m ()
                 workingTile = do
