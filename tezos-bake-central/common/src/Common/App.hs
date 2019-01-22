@@ -98,7 +98,7 @@ nodeDataIdentification = \case
     (_nodeExternalData_alias)
     (uriHostPortPath . _nodeExternalData_address)
     e
-  Right _ -> ("Kiln-managed Node", Nothing)
+  Right _ -> ("Kiln Node", Nothing)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
