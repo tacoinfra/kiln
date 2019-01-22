@@ -230,7 +230,7 @@ appName = "Kiln"
 appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
-     , HasModal t m
+     , HasModal t m, HasTimer t r, MonadReader r m
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -279,7 +279,12 @@ appSideHeader =
                 text "Dashboard"
         SemUi.divider def
 
-appGutter :: (MonadRhyoliteFrontendWidget Bake t m, MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m) => m ()
+appGutter
+  :: ( MonadRhyoliteFrontendWidget Bake t m
+     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+     , HasModal t m, HasTimer t r, MonadReader r m
+     )
+  => m ()
 appGutter =
   SemUi.segment
     (def
@@ -320,7 +325,10 @@ appHeader
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
-  let disconnected = isLeft <$> collectedNodesStatus
+  let disconnected = ffor collectedNodesStatus $ \case
+        Left CollectiveNodesFailure_NoNodes -> True
+        Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
+        Right () -> False
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
@@ -582,7 +590,9 @@ liveErrorsWidget = void $ do
   collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
   let dAllNodesDownTime = ffor collectedNodesStatus $ \case
         Left (CollectiveNodesFailure_AllNodesDownSince t) -> Just t
-        _ -> Nothing -- TODO think about alert for the no configured nodes case
+        Right () -> Nothing
+        -- TODO think about alert for the no configured nodes case
+        Left (CollectiveNodesFailure_NoNodes)             -> Nothing
   dTimer <- asks $ view timer
   -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
   dBakerKeys <- MMap.keys <$$> watchBakerAddresses
@@ -781,24 +791,33 @@ sidebarList name nodes' modal = do
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses ["add-" <> T.toLower name] modal
 
-bakerStatus :: BakerSummary -> MonitoredStatus
-bakerStatus bakerSummary
-  | _bakerSummary_alertCount bakerSummary > 0 = MonitoredStatus_Unhealthy
-  | _bakerSummary_nextRightFetchRemaining bakerSummary > 0 = MonitoredStatus_Unknown
-  | otherwise = MonitoredStatus_Healthy
+bakerStatus :: Either CollectiveNodesFailure BakerSummary -> MonitoredStatus
+bakerStatus = \case
+  Left e -> case e of
+    CollectiveNodesFailure_NoNodes -> MonitoredStatus_Unhealthy
+    CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
+  Right bakerSummary
+    | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
+    | _bakerSummary_nextRightFetchRemaining bakerSummary > 0 -> MonitoredStatus_Unknown
+    | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
-  ( MonadRhyoliteFrontendWidget Bake t m
+  ( MonadReader r m, HasTimer t r
+  , MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
   )
   => m ()
 bakersList = do
-  bakers <- imap (\pkh b ->
-    ( bakerSummaryIdentification (pkh, b)
-    , bakerStatus b
-    , False)
-    ) <$$> watchBakerAddresses
+  alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
+  dCollectedNodesStatus <- watchCollectiveNodesStatus alertWindow
+  bakerAddrs <- watchBakerAddresses
+  let bakers = ffor2 dCollectedNodesStatus bakerAddrs
+        $ \collectiveNodeStatus -> imap $ \pkh b ->
+          ( bakerSummaryIdentification (pkh, b)
+          , bakerStatus $ b <$ collectiveNodeStatus
+          , False
+          )
   sidebarList "Baker" bakers addBakerModal
 
 addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
@@ -1235,9 +1254,13 @@ bakersTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
-         let wantBakerData = (||)
-               <$> (any ((== MonitoredStatus_Unknown) . bakerStatus) <$> tilesDyn)
-               <*> (any isNothing <$> joinDynThroughMap bakersDetails)
+         let
+           bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
+             fmap $ \bakerSummary ->
+               bakerStatus $ bakerSummary <$ cns
+           wantBakerData = (||)
+             <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
+             <*> (any isNothing <$> joinDynThroughMap bakersDetails)
          (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
            holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
              Left _ -> \_ -> Just BakersBanner_CannotGather
@@ -1290,7 +1313,7 @@ bakersTab =
               (Just errorMessages)
               vDyn
               details
-              (not . isLeft <$> dCollectiveNodesStatus)
+              dCollectiveNodesStatus
 
             pure details
          blank
@@ -1352,9 +1375,10 @@ bakersTab =
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
-      -> Dynamic t Bool -- ^ have network connectivity
+      -> Dynamic t (Either CollectiveNodesFailure ())
       -> m ()
-    tile title subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' connected = do
+    tile title subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' dCollectiveNodesStatus = do
+      let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
@@ -1363,7 +1387,8 @@ bakersTab =
         divClass "title" $ do
           for_ errors' $ \errors -> do
             _errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ ("tiny circle " <>) . statusColor . bakerStatus <$> bakerDyn
+            iconDyn $ fmap (("tiny circle " <>) . statusColor) $ bakerStatus
+              <$> ((<$) <$> bakerDyn <*> dCollectiveNodesStatus)
           title
           divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
