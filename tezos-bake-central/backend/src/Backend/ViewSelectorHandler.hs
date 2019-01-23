@@ -224,8 +224,15 @@ getErrorLogsImpl flt intervalMap = do
     queryBakerAlert' sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "baker#publicKeyHash"))
 
+    traceQuery :: (MonadLogger f, Show q, PostgresRaw f, Pg.ToRow q, Pg.FromRow r) => Pg.Query -> q -> f [r]
+    traceQuery sql params = do
+      $(logDebugS) "SQL" (tshow sql)
+      $(logDebugS) "SQL" (tshow params)
+      query sql params
+
+    {-# INLINE queryAlert #-}
     queryAlert
-      :: (Monad f, PostgresRaw f, Pg.FromRow row)
+      :: (Monad f, PostgresRaw f, Pg.FromRow row, MonadLogger f)
       => Pg.Query
       -> [Pg.Query]
       -> Maybe (Pg.Query, Pg.Query, Pg.Query)
@@ -233,6 +240,7 @@ getErrorLogsImpl flt intervalMap = do
       -> ClosedInterval (WithInfinity UTCTime)
       -> f (MonoidalMap (Id ErrorLog) (ErrorLog, b))
     queryAlert sqlTable sqlFields related ctor (ClosedInterval lowWithInf highWithInf) = do
+      $(logDebugSH) ("queryAlert" :: Text, flt, sqlTable, sqlFields, related, lowWithInf, highWithInf)
       let
         build = \rows -> MMap.fromAscList $ flip map rows $ \((elId, elStarted, elStopped, elLastSeen, elNoticeSentAt) Pg.:. t) ->
           ( elId :: Id ErrorLog
@@ -265,7 +273,7 @@ getErrorLogsImpl flt intervalMap = do
           AlertsFilter_All -> ""
           AlertsFilter_ResolvedOnly -> " AND el.stopped IS NOT NULL"
           AlertsFilter_UnresolvedOnly -> " AND el.stopped IS NULL"
-      build <$> query (
+      build <$> (traceQuery) (
         qBase <>
           " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \
           \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
