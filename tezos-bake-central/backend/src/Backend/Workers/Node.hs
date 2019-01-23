@@ -1,4 +1,3 @@
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -86,11 +85,12 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     updatedLevel <- liftIO $ atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
-      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
-        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-        pure $ Just $ headBlockInfo ^. level
-      else
-        pure Nothing
+      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness
+        then do
+          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
+          pure $ Just $ headBlockInfo ^. level
+        else
+          pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
