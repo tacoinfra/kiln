@@ -830,8 +830,8 @@ addBakerModal close = mdo
     "Enter a Baker address to begin monitoring."
   addE <- formWithReset "Add Baker" "Begin monitoring the baker at the address entered." blank added $ do
     zipFields
-      (pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
-      (aliasField "My Baker")
+      (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
+      (formItem $ aliasField "My Baker")
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
