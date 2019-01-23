@@ -80,7 +80,7 @@ import Common.AppendIntervalMap (WithInfinity(..))
 import Common.Schema
 import ExtraPrelude
 
-stripOnly :: (Coercible (f (Only a)) (f a)) => f (Only a) -> f a
+stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
 
 data Notify
@@ -168,6 +168,10 @@ type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, Per
 
 getId :: (PersistBackend m, EntityWithId a) => Id a -> m (Maybe a)
 getId = get . fromId
+
+type EntityWithIdBy u a = (DefaultKeyId a, DefaultKey a ~ Key a (Unique u), PersistEntity a, IsUniqueKey (Key a (Unique u)))
+getIdBy :: (PersistBackend m, EntityWithIdBy u a) => Id a -> m (Maybe a)
+getIdBy = getBy . fromId
 
 updateId
   :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
@@ -648,16 +652,118 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: PublicNode
   - primitive: NamedChain
   - entity: ErrorLog
+
   - entity: ErrorLogBadNodeHead
+    autoKey: null
+    keys:
+      - name: ErrorLogBadNodeHeadId
+        default: true
+    constructors:
+      - name: ErrorLogBadNodeHead
+        uniques:
+          - name: ErrorLogBadNodeHeadId
+            type: primary
+            fields: [_errorLogBadNodeHead_log]
   - entity: ErrorLogBakerNoHeartbeat
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerNoHeartbeatId
+        default: true
+    constructors:
+      - name: ErrorLogBakerNoHeartbeat
+        uniques:
+          - name: ErrorLogBakerNoHeartbeatId
+            type: primary
+            fields: [_errorLogBakerNoHeartbeat_log]
   - entity: ErrorLogInaccessibleNode
+    autoKey: null
+    keys:
+      - name: ErrorLogInaccessibleNodeId
+        default: true
+    constructors:
+      - name: ErrorLogInaccessibleNode
+        uniques:
+          - name: ErrorLogInaccessibleNodeId
+            type: primary
+            fields: [_errorLogInaccessibleNode_log]
   - entity: ErrorLogMultipleBakersForSameBaker
+    autoKey: null
+    keys:
+      - name: ErrorLogMultipleBakersForSameBakerId
+        default: true
+    constructors:
+      - name: ErrorLogMultipleBakersForSameBaker
+        uniques:
+          - name: ErrorLogMultipleBakersForSameBakerId
+            type: primary
+            fields: [_errorLogMultipleBakersForSameBaker_log]
   - entity: ErrorLogBakerDeactivated
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerDeactivatedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerDeactivated
+        uniques:
+          - name: ErrorLogBakerDeactivatedId
+            type: primary
+            fields: [_errorLogBakerDeactivated_log]
   - entity: ErrorLogBakerDeactivationRisk
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerDeactivationRiskId
+        default: true
+    constructors:
+      - name: ErrorLogBakerDeactivationRisk
+        uniques:
+          - name: ErrorLogBakerDeactivationRiskId
+            type: primary
+            fields: [_errorLogBakerDeactivationRisk_log]
   - entity: ErrorLogNodeWrongChain
+    autoKey: null
+    keys:
+      - name: ErrorLogNodeWrongChainId
+        default: true
+    constructors:
+      - name: ErrorLogNodeWrongChain
+        uniques:
+          - name: ErrorLogNodeWrongChainId
+            type: primary
+            fields: [_errorLogNodeWrongChain_log]
   - entity: ErrorLogNodeInvalidPeerCount
+    autoKey: null
+    keys:
+      - name: ErrorLogNodeInvalidPeerCountId
+        default: true
+    constructors:
+      - name: ErrorLogNodeInvalidPeerCount
+        uniques:
+          - name: ErrorLogNodeInvalidPeerCountId
+            type: primary
+            fields: [_errorLogNodeInvalidPeerCount_log]
   - entity: ErrorLogNetworkUpdate
+    autoKey: null
+    keys:
+      - name: ErrorLogNetworkUpdateId
+        default: true
+    constructors:
+      - name: ErrorLogNetworkUpdate
+        uniques:
+          - name: ErrorLogNetworkUpdateId
+            type: primary
+            fields: [_errorLogNetworkUpdate_log]
   - entity: ErrorLogBakerMissed
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerMissedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerMissed
+        uniques:
+          - name: ErrorLogBakerMissedId
+            type: primary
+            fields: [_errorLogBakerMissed_log]
+
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -694,16 +800,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
-  , (''ErrorLogBakerMissed, 'ErrorLogBakerMissedKey)
-  , (''ErrorLogBadNodeHead, 'ErrorLogBadNodeHeadKey)
-  , (''ErrorLogBakerNoHeartbeat, 'ErrorLogBakerNoHeartbeatKey)
-  , (''ErrorLogInaccessibleNode, 'ErrorLogInaccessibleNodeKey)
-  , (''ErrorLogMultipleBakersForSameBaker, 'ErrorLogMultipleBakersForSameBakerKey)
-  , (''ErrorLogBakerDeactivated, 'ErrorLogBakerDeactivatedKey)
-  , (''ErrorLogBakerDeactivationRisk, 'ErrorLogBakerDeactivationRiskKey)
-  , (''ErrorLogNodeWrongChain, 'ErrorLogNodeWrongChainKey)
-  , (''ErrorLogNodeInvalidPeerCount, 'ErrorLogNodeInvalidPeerCountKey)
-  , (''ErrorLogNetworkUpdate, 'ErrorLogNetworkUpdateKey)
   , (''GenericCacheEntry, 'GenericCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
@@ -724,3 +820,34 @@ instance DefaultKeyId Baker where
 instance DefaultKeyId BakerDetails where
   toIdData _ (BakerDetailsKeyKey pkh) = pkh
   fromIdData _ = BakerDetailsKeyKey
+
+instance DefaultKeyId ErrorLogBakerMissed where
+  toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
+  fromIdData _ = ErrorLogBakerMissedIdKey :: Id ErrorLog -> Key ErrorLogBakerMissed (Unique ErrorLogBakerMissedId)
+instance DefaultKeyId ErrorLogBadNodeHead where
+  toIdData _ (ErrorLogBadNodeHeadIdKey eid) = eid
+  fromIdData _ = ErrorLogBadNodeHeadIdKey
+instance DefaultKeyId ErrorLogBakerNoHeartbeat where
+  toIdData _ (ErrorLogBakerNoHeartbeatIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerNoHeartbeatIdKey
+instance DefaultKeyId ErrorLogInaccessibleNode where
+  toIdData _ (ErrorLogInaccessibleNodeIdKey eid) = eid
+  fromIdData _ = ErrorLogInaccessibleNodeIdKey
+instance DefaultKeyId ErrorLogMultipleBakersForSameBaker where
+  toIdData _ (ErrorLogMultipleBakersForSameBakerIdKey eid) = eid
+  fromIdData _ = ErrorLogMultipleBakersForSameBakerIdKey
+instance DefaultKeyId ErrorLogBakerDeactivated where
+  toIdData _ (ErrorLogBakerDeactivatedIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerDeactivatedIdKey
+instance DefaultKeyId ErrorLogBakerDeactivationRisk where
+  toIdData _ (ErrorLogBakerDeactivationRiskIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerDeactivationRiskIdKey
+instance DefaultKeyId ErrorLogNodeWrongChain where
+  toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
+  fromIdData _ = ErrorLogNodeWrongChainIdKey
+instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
+  toIdData _ (ErrorLogNodeInvalidPeerCountIdKey eid) = eid
+  fromIdData _ = ErrorLogNodeInvalidPeerCountIdKey
+instance DefaultKeyId ErrorLogNetworkUpdate where
+  toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
+  fromIdData _ = ErrorLogNetworkUpdateIdKey

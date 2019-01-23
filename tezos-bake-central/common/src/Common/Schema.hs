@@ -545,7 +545,8 @@ data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
   , _errorLogNetworkUpdate_commit :: !Text
   , _errorLogNetworkUpdate_gitLabProjectId :: !Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogNetworkUpdate
+instance HasId ErrorLogNetworkUpdate where
+  type IdData ErrorLogNetworkUpdate = Id ErrorLog
 
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
@@ -554,7 +555,8 @@ data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   , _errorLogInaccessibleNode_address :: !URI
   , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogInaccessibleNode
+instance HasId ErrorLogInaccessibleNode where
+  type IdData ErrorLogInaccessibleNode = Id ErrorLog
 
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
@@ -565,7 +567,8 @@ data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
   , _errorLogNodeWrongChain_actualChainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogNodeWrongChain
+instance HasId ErrorLogNodeWrongChain where
+  type IdData ErrorLogNodeWrongChain = Id ErrorLog
 
 data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
   { _errorLogNodeInvalidPeerCount_log :: !(Id ErrorLog)
@@ -573,7 +576,8 @@ data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
   , _errorLogNodeInvalidPeerCount_minPeerCount :: !Int
   , _errorLogNodeInvalidPeerCount_actualPeerCount :: !Word64
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogNodeInvalidPeerCount
+instance HasId ErrorLogNodeInvalidPeerCount where
+  type IdData ErrorLogNodeInvalidPeerCount = Id ErrorLog
 
 -- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
@@ -582,7 +586,8 @@ data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
   , _errorLogBakerNoHeartbeat_client :: !(Id Client)
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBakerNoHeartbeat
+instance HasId ErrorLogBakerNoHeartbeat where
+  type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
 
 data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
@@ -593,7 +598,8 @@ data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
   , _errorLogMultipleBakersForSameBaker_client :: !(Id Client)
   , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogMultipleBakersForSameBaker
+instance HasId ErrorLogMultipleBakersForSameBaker where
+  type IdData ErrorLogMultipleBakersForSameBaker = Id ErrorLog
 
 data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
@@ -601,7 +607,8 @@ data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   , _errorLogBakerDeactivated_preservedCycles :: !Cycle
   , _errorLogBakerDeactivated_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBakerDeactivated
+instance HasId ErrorLogBakerDeactivated where
+  type IdData ErrorLogBakerDeactivated = Id ErrorLog
 
 data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
   { _errorLogBakerDeactivationRisk_log :: !(Id ErrorLog)
@@ -611,7 +618,8 @@ data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
   , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
   , _errorLogBakerDeactivationRisk_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBakerDeactivationRisk
+instance HasId ErrorLogBakerDeactivationRisk where
+  type IdData ErrorLogBakerDeactivationRisk = Id ErrorLog
 
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
@@ -620,7 +628,8 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   , _errorLogBadNodeHead_nodeHead :: !(Json VeryBlockLike)
   , _errorLogBadNodeHead_latestHead :: !(Json VeryBlockLike)
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBadNodeHead
+instance HasId ErrorLogBadNodeHead where
+  type IdData ErrorLogBadNodeHead = Id ErrorLog
 
 -- we wilfully ignore the branch issue; we mostly don't care on which branch you
 -- did or didn't take your rights.
@@ -637,7 +646,8 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogBakerMissed
+instance HasId ErrorLogBakerMissed where
+  type IdData ErrorLogBakerMissed = Id ErrorLog
 
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
@@ -714,6 +724,7 @@ data LogTag a where
   LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
   LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
+  LogTag_NodeInvalidPeerCount :: LogTag ErrorLogNodeInvalidPeerCount
 
 
 data BakerErrorDescriptions = BakerErrorDescriptions
@@ -797,15 +808,15 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
-  , 'ErrorLogBakerMissed
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
+  , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogMultipleBakersForSameBaker
-  , 'ErrorLogNodeWrongChain
-  , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNetworkUpdate
+  , 'ErrorLogNodeInvalidPeerCount
+  , 'ErrorLogNodeWrongChain
   , 'Event
   , 'MailServerConfig
   , 'Node

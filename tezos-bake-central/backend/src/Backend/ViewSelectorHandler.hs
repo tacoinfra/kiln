@@ -439,19 +439,19 @@ getNodeAddresses nid = do
       }))
   counts :: Map.Map (WithInfinity (Id Node)) Int <- [queryQ|
       SELECT n.id,
-        (SELECT COUNT(ein.id)
+        (SELECT COUNT(ein.log)
          FROM "ErrorLogInaccessibleNode" ein
          JOIN "ErrorLog" e
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-        + (SELECT COUNT(ein.id)
+        + (SELECT COUNT(ein.log)
          FROM "ErrorLogBadNodeHead" ein
          JOIN "ErrorLog" e
           ON e.id = ein.log
          WHERE e.stopped IS NULL
            AND ein.node = n.id)
-        + (SELECT COUNT(ein.id)
+        + (SELECT COUNT(ein.log)
          FROM "ErrorLogNodeWrongChain" ein
          JOIN "ErrorLog" e
           ON e.id = ein.log

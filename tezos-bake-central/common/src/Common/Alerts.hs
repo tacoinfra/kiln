@@ -15,8 +15,7 @@ import Reflex (FunctorMaybe, ffilter)
 
 import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
                       BakerErrorDescriptions(..), LogTag(..),
-                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..),
-                      ErrorLogNetworkUpdate (..), RightKind(..), bakerIdentification)
+                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
