@@ -433,7 +433,7 @@ nodesTabOrWelcome = do
     let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
     dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
     mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
         guard $ _errorLogNetworkUpdate_namedChain ua == chain
         return ua
       _ -> Nothing
@@ -678,29 +678,32 @@ liveErrorsWidget = void $ do
         text "Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
-    logEntry (ErrorLogView' specificLog node') =
-        case specificLog of
-          ErrorLogView_NodeError ne -> case ne of
-            NodeErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
+    logEntry (ErrorLogView' (logTag :=> Identity log) node') =
+        case logTag of
+          LogTag_NodeLogTag nlt -> case nlt of
+            NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
+              let ErrorLogInaccessibleNode _ _ address alias = log
               header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
               nodeLabel n
 
-            NodeErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) ->
+            NodeLogTag_NodeWrongChain -> do
+              let ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId = log
               for_ node' $ \n -> do
                 header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
                 nodeLabel n
                 el "div" $
                   text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-            NodeErrorLogView_BadNodeHead l -> do
+            NodeLogTag_BadNodeHead -> do
               for_ node' $ \n -> do
-                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
+                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
                 let (primary, _) = nodeSummaryIdentification n
                 header $ heading <> ": " <> primary
                 nodeLabel n
                 el "div" message
 
-            NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
+            NodeLogTag_NodeInvalidPeerCount -> do
+              let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
               for_ node' $ \n -> do
                 let (main, _) = nodeSummaryIdentification n
                 header $ "Node has too few peers: " <> main
@@ -708,33 +711,37 @@ liveErrorsWidget = void $ do
                 el "div" $ text $
                   "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
-          ErrorLogView_BakerError ne -> case ne of
-            BakerErrorLogView_BakerDeactivated log -> renderBakerError
+          LogTag_BakerLogTag blt -> case blt of
+            BakerLogTag_BakerDeactivated -> renderBakerError
               (bakerDeactivatedDescriptions log)
               (_errorLogBakerDeactivated_publicKeyHash log)
-            BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+            BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
               (_errorLogBakerDeactivationRisk_publicKeyHash log)
 
-            BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
+            BakerLogTag_MultipleBakersForSameBaker -> do
+              let ErrorLogMultipleBakersForSameBaker{} = log
               header "Multiple bakers for same baker" -- TODO Fill this out
-            BakerErrorLogView_BakerMissed elbm -> do
+            BakerLogTag_BakerMissed -> do
               let
-                rightTxt = case _errorLogBakerMissed_right elbm of
+                rightTxt = case _errorLogBakerMissed_right log of
                   RightKind_Baking -> "a bake"
                   RightKind_Endorsing -> "an endorsement"
               header $ "Missed " <> rightTxt <> " opportunity"
               el "div" $ do
-                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
+                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker log)
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
+          LogTag_BakerNoHeartbeat -> do
+            let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
             header "Baker lagging behind" -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
-          ErrorLogView_NetworkUpdate (ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain }) -> do
-            let chainText = "'" <> showNamedChain namedChain <> "'"
+          LogTag_NetworkUpdate -> do
+            let
+              ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
+              chainText = "'" <> showNamedChain namedChain <> "'"
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do
               text $ "There is a new version of the " <> chainText <> " software available on GitLab."
@@ -1022,12 +1029,12 @@ nodesTab =
           let
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \case
-                NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
-                NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
-                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Node has too few peers."
-                NodeErrorLogView_BadNodeHead l -> text $
-                  fst (badNodeHeadMessage Const (Const . const "") l) <> "."
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(tag :=> Identity log) -> case tag of
+                NodeLogTag_InaccessibleNode -> text "Unable to connect."
+                NodeLogTag_NodeWrongChain -> text "On wrong network."
+                NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
+                NodeLogTag_BadNodeHead -> text $
+                  fst (badNodeHeadMessage Const (Const . const "") log) <> "."
 
           let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
               (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
@@ -1308,15 +1315,15 @@ bakersTab =
 
               errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                Right e -> case e of
-                  BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                  BakerErrorLogView_BakerMissed elbm -> text $ "Missed " <> aRight
+                Right (tag :=> Identity log) -> case tag of
+                  BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
                     where
-                      aRight = case _errorLogBakerMissed_right elbm of
+                      aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
                         RightKind_Endorsing -> "an endorse"
-                  BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
-                  BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
+                  BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
+                  BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1361,20 +1368,21 @@ bakersTab =
                text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(tag :=> Identity log) -> case tag of
       -- TODO
-      BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-      BakerErrorLogView_BakerMissed log -> renderBakerError
+      BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+      BakerLogTag_BakerMissed -> renderBakerError
         (bakerMissedDescriptions log)
         (unId $ _errorLogBakerMissed_baker log)
-      BakerErrorLogView_BakerDeactivated log -> renderBakerError
+      BakerLogTag_BakerDeactivated -> renderBakerError
         (bakerDeactivatedDescriptions log)
         (_errorLogBakerDeactivated_publicKeyHash log)
-      BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+      BakerLogTag_BakerDeactivationRisk -> renderBakerError
         (bakerDeactivationRiskDescriptions log)
         (_errorLogBakerDeactivationRisk_publicKeyHash log)
 
       where
+        renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert

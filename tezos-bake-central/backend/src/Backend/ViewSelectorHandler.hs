@@ -17,6 +17,7 @@ import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
+import Data.Dependent.Sum (DSum (..))
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
@@ -283,52 +284,54 @@ getErrorLogsImpl flt intervalMap = do
     runQueries window = do
       leftBiasedUnions <$> sequenceA
         [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_NodeError $ NodeErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
+            (\elId (tNode, tAddress, tAlias) -> LogTag_NodeLogTag NodeLogTag_InaccessibleNode :=> Identity (ErrorLogInaccessibleNode elId tNode tAddress tAlias))
             window
 
         , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
             (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
+                LogTag_NodeLogTag NodeLogTag_NodeWrongChain :=> Identity (ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId))
             window
 
         , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
             (\elId (tNode, tMinPeerCount, tActualPeerCount) ->
-                ErrorLogView_NodeError $ NodeErrorLogView_NodeInvalidPeerCount $ ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount)
+                LogTag_NodeLogTag NodeLogTag_NodeInvalidPeerCount :=> Identity (ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount))
             window
 
         --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
-        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> LogTag_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
         --    window
 
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
-          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead
-                  ErrorLogBadNodeHead
-                    { _errorLogBadNodeHead_log = elId
-                    , _errorLogBadNodeHead_node = tNode
-                    , _errorLogBadNodeHead_lca = tLca
-                    , _errorLogBadNodeHead_nodeHead =tNodeHead
-                    , _errorLogBadNodeHead_latestHead = tLatestHead
-                    }) window
+          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> LogTag_NodeLogTag NodeLogTag_BadNodeHead :=> Identity
+            ErrorLogBadNodeHead
+             { _errorLogBadNodeHead_log = elId
+             , _errorLogBadNodeHead_node = tNode
+             , _errorLogBadNodeHead_lca = tLca
+             , _errorLogBadNodeHead_nodeHead =tNodeHead
+             , _errorLogBadNodeHead_latestHead = tLatestHead
+             })
+          window
         , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
-                  ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
+          (\elId (tPublicKeyHash, tClient, tWorker) -> LogTag_BakerLogTag BakerLogTag_MultipleBakersForSameBaker :=> Identity
+            (ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker))
           window
         , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
-          (\elId (tNamedChain, tCommit, tProjectId) -> ErrorLogView_NetworkUpdate $ ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId)
-            window
+          (\elId (tNamedChain, tCommit, tProjectId) -> LogTag_NetworkUpdate :=> Identity
+            (ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId))
+          window
 
         , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
-                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerDeactivated :=> Identity
+            (ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness))
           window
 
         , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
-                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerDeactivationRisk :=> Identity
+            (ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness))
           window
         , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
-          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerMissed $
-                   ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness)
+          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerMissed :=> Identity
+            (ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness))
           window
         ]
 
