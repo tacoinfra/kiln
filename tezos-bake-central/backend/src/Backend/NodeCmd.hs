@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NoDoAndIfThenElse #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -98,11 +99,11 @@ withNodeLock logger db f = do
           (pid':_) -> do
             $(logDebugSH) ("internal node pid:" :: Text, pid, result)
             if pid == fromOnly pid'
-            then return ()
-            else do
-              $(logWarn) "internalnode LOCK HELD"
-              threadDelay' 1
-              *> claim
+              then return ()
+              else do
+                $(logWarn) "internalnode LOCK HELD"
+                threadDelay' 1
+                *> claim
     claim
     return pid
   finally (f pid) $ runLoggingEnv logger $ runDb (Identity db) [executeQ|
