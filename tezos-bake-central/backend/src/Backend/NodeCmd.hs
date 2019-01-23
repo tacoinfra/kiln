@@ -93,10 +93,10 @@ withNodeLock logger db f = do
             SELECT "data#data#backend"
               FROM "NodeInternal"
           |]
-        $(logDebugSH) ("internal node pid:" :: Text, pid, result)
         case result of
           [] -> threadDelay' 1 *> claim
-          (pid':_) ->
+          (pid':_) -> do
+            $(logDebugSH) ("internal node pid:" :: Text, pid, result)
             if pid == fromOnly pid'
             then return ()
             else do
@@ -143,12 +143,13 @@ putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db)
             , "data#data#backend"
     |]
   for_ result $ \(nid, running', state', stateUpdated', backend') ->
-    notify (Notify_NodeInternal nid $ Just NodeInternalData
-      { _nodeInternalData_running = running'
-      , _nodeInternalData_state = state'
-      , _nodeInternalData_stateUpdated = stateUpdated'
-      , _nodeInternalData_backend = backend'
-      })
+    when ((state', backend') /= (state, Just pid)) $
+      notify (Notify_NodeInternal nid $ Just NodeInternalData
+        { _nodeInternalData_running = running'
+        , _nodeInternalData_state = state'
+        , _nodeInternalData_stateUpdated = stateUpdated'
+        , _nodeInternalData_backend = backend'
+        })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
 callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
