@@ -371,19 +371,27 @@ body {
   }
   > .ui.list > .item > .content {
     display: block;
-    > * {
-      overflow-x: hidden;
-      overflow-y: hidden;
-      text-overflow: ellipsis;
-    }
     .header {
       display: flex;
       flex-direction: row;
       justify-content: space-between;
       align-items: center;
+
+      .title {
+        display: block;
+        text-overflow: ellipsis;
+        overflow-x: hidden;
+      }
       img {
         height: @10px;
       }
+      .ui.bottom.right.popup:before {
+        right: @5px;
+      }
+    }
+    .description {
+      overflow-x: hidden;
+      text-overflow: ellipsis;
     }
   }
   > .ui.button {
