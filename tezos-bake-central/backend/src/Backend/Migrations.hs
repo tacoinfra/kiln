@@ -11,7 +11,6 @@ module Backend.Migrations where
 import Backend.Schema (migrateSchema)
 import Control.Monad.Logger (MonadLogger, logInfoS)
 import qualified Data.Text as T
-import Data.Int (Int64)
 import Data.String (fromString)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic (runMigration)

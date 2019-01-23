@@ -137,7 +137,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         Right () -> do
           getInternalNode >>= \case
             Nothing -> pure ()
-            Just (nid, nodeData) -> do
+            Just (nid, _nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
                 , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. False
