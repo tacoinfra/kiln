@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+*January 25, 2019*
+
+  * Kiln can now launch and monitor a node internal.
+  * Minimum connections alerts reported for nodes with too few peers.
+  * Available balance and staking balance on Baker's Tile so that bakers can quickly see how much tez funds are available for security deposits and staking
+  * Telegram/email notification for when the tezos-core is updated
+  * Improved logging
+  * Bug fixes, including all known issues from 0.3.0
+
 ## 0.3.0
 *January 9. 2019*
 
