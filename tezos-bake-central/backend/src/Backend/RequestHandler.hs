@@ -20,7 +20,7 @@ import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
-import Data.Functor.Infix
+import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
@@ -60,29 +60,33 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
       PublicRequest_AddInternalNode -> inDb $ do
-        project1 NodeInternal_dataField CondEmpty >>= \case
+        getInternalNode >>= \case
           Nothing -> do
-            nid <- insert' Node
-            insert $ NodeInternal
-              { _nodeInternal_id = nid
-              , _nodeInternal_data = DeletableRow
-                { _deletableRow_data = NodeInternalData
+            let nodeData = NodeInternalData
                   { _nodeInternalData_running = True
                   , _nodeInternalData_state = NodeInternalState_Stopped
                   , _nodeInternalData_stateUpdated = Nothing
                   , _nodeInternalData_backend = Nothing
                   }
+
+            nid <- insert' Node
+            insert $ NodeInternal
+              { _nodeInternal_id = nid
+              , _nodeInternal_data = DeletableRow
+                { _deletableRow_data = nodeData
                 , _deletableRow_deleted = False
                 }
               }
+            notify $ Notify_NodeInternal nid $ Just $ nodeData
 
-          Just nodeData -> do
+          Just (nid, nodeData) -> do
             when (_deletableRow_deleted nodeData || (not $ nodeData ^. deletableRow_data . nodeInternalData_running)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. True
                 ]
                 CondEmpty
+              notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
 
@@ -120,6 +124,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           [ NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. shouldRun ]
           CondEmpty
 
+        (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) ->
+          notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
+
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do
           nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
@@ -127,17 +134,17 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
             notify $ Notify_NodeExternal nid Nothing
             clearErrors nid
-        Right _ -> do
-          project1 NodeInternal_idField CondEmpty >>= \case
+        Right () -> do
+          getInternalNode >>= \case
             Nothing -> pure ()
-            Just nid -> do
+            Just (nid, nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
                 , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. False
                 ]
                 CondEmpty
               clearErrors nid
-
+              notify $ Notify_NodeInternal nid Nothing
         where
           clearErrors nid = do
             elin <- selectMap' ErrorLogInaccessibleNodeConstructor (ErrorLogInaccessibleNode_nodeField ==. nid)
@@ -426,3 +433,6 @@ getTelegramCfgId :: PersistBackend m => m (Maybe (Id TelegramConfig))
 getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
+
+getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow NodeInternalData))
+getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty
