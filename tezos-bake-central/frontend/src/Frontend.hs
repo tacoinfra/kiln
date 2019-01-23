@@ -576,7 +576,7 @@ liveErrorsWidget = void $ do
         guard $ includesFilter f filterSel
         return f
       unresolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
-      resolvedFilter = soleFilter AlertsFilter_UnresolvedOnly <$> filterDyn
+      resolvedFilter = soleFilter AlertsFilter_ResolvedOnly <$> filterDyn
   unresolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors unresolvedFilter everythingWindow
   resolvedErrorsDyn <- MMap.getMonoidalMap <$$> watchErrors resolvedFilter alertWindow
   let errorsDyn = zipDynWith (<>) unresolvedErrorsDyn resolvedErrorsDyn
