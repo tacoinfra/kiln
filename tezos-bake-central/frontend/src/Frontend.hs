@@ -1409,7 +1409,7 @@ bakersTab =
             iconDyn $ fmap (("tiny circle " <>) . statusColor) $ bakerStatus
               <$> ((<$) <$> bakerDyn <*> dCollectiveNodesStatus)
           title
-          divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+          divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
