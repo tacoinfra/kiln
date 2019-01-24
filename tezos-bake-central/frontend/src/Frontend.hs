@@ -871,7 +871,7 @@ nodesList = do
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
 addNodeModal close = do
   divClass "ui header" $ text "Add Nodes"
-  divClass "ui grid divided" $ do
+  divClass "ui grid stackable divided" $ do
     addInternal *> addExternal <* addPublic
 
   where
@@ -880,14 +880,14 @@ addNodeModal close = do
       divClass "explanation" $ text explanation
 
     addPublic = do
-      divClass "seven wide column" $ divClass "section" $ do
+      divClass "add-public column" $ do
         section
           "Connect to a Public Node"
           "We recommend adding all public nodes to enhance monitoring accuracy."
         publicNodeOptions
 
     addInternal = do
-      divClass "five wide column" $ divClass "section" $ do
+      divClass "add-internal column" $ do
         section
           "Launch a Kiln node"
           "Launch a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
@@ -902,7 +902,7 @@ addNodeModal close = do
             text "A Kiln node is running."
 
     addExternal = do
-     divClass "four wide column" $ divClass "section" $ mdo
+     divClass "add-external column" $ mdo
        let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
              icon "check blue"
              text "Node added!"

@@ -909,7 +909,19 @@ h4.dashboard-section-title {
       padding-right: 30px;
     }
 
-    .section > .ui.header {
+    .add-internal {
+      width: unit(279 / @emSize, rem);
+    }
+
+    .add-external {
+      width: unit(305 / @emSize, rem);
+    }
+
+    .add-public {
+      width: unit(379 / @emSize, rem);
+    }
+
+    .column > .ui.header {
       margin-bottom: @10px;
       font-weight: normal;
     }
@@ -948,6 +960,8 @@ h4.dashboard-section-title {
 }
 
 .modal-box.add-node {
+  width: unit(1039 / @emSize, rem);
+
   .ui.button.primary {
     display: inline-block;
     width: 100%;
