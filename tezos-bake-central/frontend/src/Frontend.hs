@@ -784,10 +784,13 @@ sidebarList name nodes' modal = do
       divClass "content" $ do
         let (title, subtitle) = splitDynPure $ ffor node $ \(tst, _, _) -> tst
         divClass "header" $ do
-          dynText title
+          divClass "title" $ dynText title
           useSymbol <- holdUniqDyn $ view _3 <$> node
-          let tooltippedKilnLogo = tooltipped TooltipPos_BottomCenter (text $ "This " <> name <> " is run by Kiln.") kilnLogo
-          divClass "ui image right floated" $ dyn_ $ bool blank tooltippedKilnLogo <$> useSymbol
+          let tooltippedKilnLogo = tooltipped
+                TooltipPos_BottomRight
+                (text $ "This " <> name <> " is run by Kiln.")
+                (divClass "ui image right floated" kilnLogo)
+          dyn_ $ bool blank tooltippedKilnLogo <$> useSymbol
 
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
