@@ -282,6 +282,9 @@ body {
         height: @40px;
         font-size: 16px;
         margin-top: 2px;
+        &.basic {
+          border-color: transparent;
+        }
       }
     }
 
