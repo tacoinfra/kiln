@@ -141,7 +141,7 @@ settingsForm cfg = holdUniqDyn =<< do
       divClass "field"
         $ validatedInput Validator.validateText
         $ def
-          & Txt.setPlaceholder "eg 435389513:ABCDefGhij6K5l1m_NoPqRstUVWxyZ8AbCD"
+          & Txt.setPlaceholder "e.g. 435389513:ABCDefGhij6K5l1m_NoPqRstUVWxyZ8AbCD"
           & Txt.setFluid
           & Txt.setChangeEvent (fromMaybe "" <$> botApiKeyEvent)
 
