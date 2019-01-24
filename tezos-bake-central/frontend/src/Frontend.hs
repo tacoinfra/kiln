@@ -473,9 +473,9 @@ welcomeScreen = do
     $ do
         text $ "Welcome to " <> appName <> "."
   divClass "" $ do
-    text $ appName <> " helps you monitor Tezos nodes to keep your system"
+    text $ appName <> " helps you participate in Tezos by running a node and monitoring"
     el "br" blank
-    text "running smoothly, with many more features to come."
+    text "Tezos nodes and bakers, with many more features to come."
     el "br" blank
     text "\160"
     el "br" blank
@@ -833,8 +833,8 @@ addBakerModal close = mdo
     "Enter a Baker address to begin monitoring."
   addE <- formWithReset "Add Baker" "Begin monitoring the baker at the address entered." blank added $ do
     zipFields
-      (pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
-      (aliasField "My Baker")
+      (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
+      (formItem $ aliasField "My Baker")
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
@@ -1412,7 +1412,7 @@ bakersTab =
             iconDyn $ fmap (("tiny circle " <>) . statusColor) $ bakerStatus
               <$> ((<$) <$> bakerDyn <*> dCollectiveNodesStatus)
           title
-          divClass "subtitle" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+          divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
