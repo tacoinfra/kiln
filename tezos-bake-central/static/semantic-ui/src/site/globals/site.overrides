@@ -500,14 +500,13 @@ body {
 }
 
 img.credits-obsidian {
-  width: 75%;
+  width: unit( (110 / @emSize), rem);
   background: white;
   border-color: white;
   border-radius: @2px;
   border-style: solid;
   border-width: @5px @10px;
-  margin-left: 12.5%;
-  margin-right: 12.5%;
+  margin-left: @7px;
 }
 
 .notifications-subsection {
