@@ -473,9 +473,9 @@ welcomeScreen = do
     $ do
         text $ "Welcome to " <> appName <> "."
   divClass "" $ do
-    text $ appName <> " helps you monitor Tezos nodes to keep your system"
+    text $ appName <> " helps you participate in Tezos by running a node and monitoring"
     el "br" blank
-    text "running smoothly, with many more features to come."
+    text "Tezos nodes and bakers, with many more features to come."
     el "br" blank
     text "\160"
     el "br" blank
