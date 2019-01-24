@@ -6,7 +6,7 @@ let
       inherit (root.ghc) frontend backend common;
     };
     ghcjs = {
-      inherit (root.ghcjs) frontend backend common;
+      inherit (root.ghcjs) frontend common;
     };
   } // root.pkgs.lib.optionalAttrs (system == "x86_64-linux") {
     dockerExe = root.pkgs.lib.hydraJob root.dockerExe;
