@@ -20,7 +20,7 @@ import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
-import Data.Foldable (for_, toList)
+import Data.Foldable (for_, traverse_, toList)
 import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -75,14 +75,14 @@ clientWorker appCfg nds =
 
       let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
-      toUpdate :: [(Id Client, URI, Maybe T.Text)] <- [queryQ|
+      toUpdate :: [(Id BakerDaemonExternal, URI, Maybe T.Text)] <- [queryQ|
         SELECT id, address, alias
-        FROM "Client" c
+        FROM "BakerDaemonExternal" c
         WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
         ORDER BY updated NULLS FIRST
       |]
 
-      _clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
+      _clientBakers <- for toUpdate $ \(Id cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
               , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
@@ -119,7 +119,13 @@ clientWorker appCfg nds =
           forkInfo <- scanForkInfo now report
           validateForkyBlocks ($(logDebugSH) . (,) ("validateForkyBlocks" :: String)) forkInfo
 
-          updateIdNotify cid [Client_updatedField =. Just now]
+          update
+            [BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_updatedSelector =. Just now]
+            (BakerDaemonExternal_idField ==. cid)
+          project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector)
+                  (BakerDaemonExternal_idField ==. cid)
+            >>= traverse_ (notify . Notify_BakerDaemonExternal cid . Just)
+
 
           -- TODO: Add back errors reported by client RPC
           -- case sortBy (compare `on` _event_time) (_report_errors report) of

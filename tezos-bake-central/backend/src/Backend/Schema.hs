@@ -84,7 +84,7 @@ stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
 
 data Notify
-  = Notify_Client !(Id Client)
+  = Notify_BakerDaemonExternal !(Id BakerDaemon) !(Maybe BakerDaemonExternalData)
   | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
@@ -116,8 +116,6 @@ instance FromJSON Notify
 class HasDefaultNotify f where
   mkDefaultNotify :: f -> Notify
 
-instance HasDefaultNotify (Id Client) where
-  mkDefaultNotify = Notify_Client
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = Notify_ErrorLogBadNodeHead
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -500,26 +498,36 @@ instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
-  - entity: Client
-    constructors:
-      - name: Client
-        uniques:
-          - name: _client_uniqueness
-            type: constraint
-            fields: [_client_address]
-  - entity: ClientInfo
-    constructors:
-      - name: ClientInfo
-        uniques:
-          - name: _clientInfo_uniqueness
-            type: constraint
-            fields: [_clientInfo_client]
-        fields:
-          - name: _clientInfo_client
-            reference:
-              table: Client
-              onDelete: cascade
   - embedded: DeletableRow
+  - entity: BakerDaemon
+    constructors:
+      - name: BakerDaemon
+  - entity: BakerDaemonExternal
+    autoKey: null
+    constructors:
+      - name: BakerDaemonExternal
+        uniques:
+          - name: BakerDaemonExternalId
+            type: primary
+            fields: [_bakerDaemonExternal_id]
+          - name: BakerDaemonExternal_uniqueness
+            type: constraint
+            fields: [_bakerDaemonExternal_data] #data#address
+  - embedded: BakerDaemonExternalData
+  - entity: BakerDaemonInfo
+    autoKey: null
+    constructors:
+      - name: BakerDaemonInfo
+        uniques:
+          - name: BakerDaemonInfoId
+            type: primary
+            fields: [_bakerDaemonInfo_id]
+        fields:
+          - name: _bakerDaemonInfo_id
+            reference:
+              table: BakerDaemon
+              onDelete: cascade
+  - embedded: BakerDaemonInfoData
   - entity: Node
     constructors:
       - name: Node
@@ -795,8 +803,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''Client, 'ClientKey)
-  , (''ClientInfo, 'ClientInfoKey)
+  , (''BakerDaemon, 'BakerDaemonKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)

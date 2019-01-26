@@ -151,32 +151,61 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_delegate em)
       (_endorsementMetadata_slots em)
 
--- TODO use `DeletableRow` when we add back this feature.
-data Client = Client
-  { _client_address :: !URI
-  , _client_alias :: !(Maybe Text)
-  , _client_updated :: !(Maybe UTCTime)
-  , _client_deleted :: !Bool
+data DeletableRow a = DeletableRow
+  { _deletableRow_data :: !a
+  , _deletableRow_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Client
 
-data ClientInfo = ClientInfo
-  { _clientInfo_client :: !(Id Client)
-  , _clientInfo_report :: !(Json Report)
-  , _clientInfo_config :: !(Json ClientConfig)
-  -- , _clientInfo_node :: Id Node
+--------------------------------------------------------------------------------
+-- Baker Daemon
+--------------------------------------------------------------------------------
+
+-- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
+data BakerDaemon = BakerDaemon
+  deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemon
+
+-- data BakerDaemonExternal = BakerDaemonExternal (WithId (Id BakerDaemon) (Deletable BakerDaemonExternal'))
+
+data BakerDaemonExternal = BakerDaemonExternal
+  { _bakerDaemonExternal_id :: !(Id BakerDaemon)
+  , _bakerDaemonExternal_data :: !(DeletableRow BakerDaemonExternalData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId ClientInfo
+instance HasId BakerDaemonExternal where
+  -- Should be the same as `IdData BakerDaemonExternalData` always.
+  type IdData BakerDaemonExternal = Id BakerDaemon
+
+data BakerDaemonExternalData = BakerDaemonExternalData
+  { _bakerDaemonExternalData_address :: !URI
+  , _bakerDaemonExternalData_alias :: !(Maybe Text)
+  , _bakerDaemonExternalData_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemonExternalData where
+  type IdData BakerDaemonExternalData = Id BakerDaemon
+
+-- data BakerDaemonDetails = BakerDaemonDetails (WithId (Id BakerDaemon) BakerDaemonDetails')
+
+data BakerDaemonInfo = BakerDaemonInfo
+  { _bakerDaemonInfo_id :: !(Id BakerDaemon)
+  , _bakerDaemonInfo_data :: BakerDaemonInfoData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+data BakerDaemonInfoData = BakerDaemonInfoData
+  { _bakerDaemonInfoData_report :: !(Json Report)
+  , _bakerDaemonInfoData_config :: !(Json ClientConfig)
+  -- , _bakerDaemonInfo_node :: Id Node
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemonInfoData where
+  type IdData BakerDaemonInfoData = Id BakerDaemon
+
+--------------------------------------------------------------------------------
+-- Node
+--------------------------------------------------------------------------------
 
 -- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
 data Node = Node
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
-
-data DeletableRow a = DeletableRow
-  { _deletableRow_data :: !a
-  , _deletableRow_deleted :: !Bool
-  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId a => HasId (DeletableRow a) where
   type IdData (DeletableRow a) = IdData a
@@ -270,6 +299,8 @@ getNodeHeadBlock n = VeryBlockLike
   <*> _nodeDetailsData_fitness n
   <*> _nodeDetailsData_headLevel n
   <*> _nodeDetailsData_headBlockBakedAt n
+
+--------------------------------------------------------------------------------
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -583,7 +614,7 @@ data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
   , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
   , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
-  , _errorLogBakerNoHeartbeat_client :: !(Id Client)
+  , _errorLogBakerNoHeartbeat_client :: !(Id BakerDaemon)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerNoHeartbeat where
   type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
@@ -594,7 +625,7 @@ data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
 data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
   { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
   , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameBaker_client :: !(Id Client)
+  , _errorLogMultipleBakersForSameBaker_client :: !(Id BakerDaemon)
   , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameBaker where
@@ -743,6 +774,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
+  , ''BakerDaemon
+  , ''BakerDaemonExternal
+  , ''BakerDaemonExternalData
+  , ''BakerDaemonInfo
+  , ''BakerDaemonInfoData
   , ''BakerData
   , ''BakerDetails
   , ''BakerRight
@@ -751,7 +787,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
-  , ''ClientInfo
   , ''ClientWorker
   , ''DeletableRow
   , ''EndorseEvent
@@ -795,6 +830,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
+  , 'BakerDaemon
+  , 'BakerDaemonExternal
+  , 'BakerDaemonExternalData
+  , 'BakerDaemonInfo
+  , 'BakerDaemonInfoData
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight

@@ -1580,21 +1580,21 @@ clientTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r
     )
-  => Id Client -> URI -> m ()
+  => Id BakerDaemon -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
   dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
     Nothing -> waitingForResponse
     Just clientInfo -> divClass "ui grid" $ do
       dparameters <- watchProtoInfo
-      let report = unJson (_clientInfo_report clientInfo)
+      let report = unJson (_bakerDaemonInfoData_report clientInfo)
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ text $ Uri.render addr
         _ <- divClass "bakers" $ do
           text "ID: "
-          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _clientInfo_config clientInfo)
+          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _bakerDaemonInfoData_config clientInfo)
 
         elClass "p" "counts" $ do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $

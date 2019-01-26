@@ -31,7 +31,7 @@ import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap')
-import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
@@ -165,22 +165,41 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             for_ elbnh $ notify . mkDefaultNotify . (Id @ErrorLogBadNodeHead) . _errorLogBadNodeHead_log
 
       PublicRequest_AddClient addr alias -> inDb $ do
-        existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
+
+        existingIds :: [Id BakerDaemon] <- project BakerDaemonExternal_idField (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_addressSelector ==. addr)
         case nonEmpty existingIds of
-          Nothing -> void $ insertNotify Client
-            { _client_address = addr
-            , _client_alias = alias
-            , _client_updated = Nothing
-            , _client_deleted = False
-            }
-          Just cids -> for_ cids $ \cid ->
-            updateIdNotify cid [Client_deletedField =. False, Client_aliasField =. alias]
+          Nothing -> do
+            nid <- insert' BakerDaemon
+            let bakerDaemonData = BakerDaemonExternalData
+                    { _bakerDaemonExternalData_address = addr
+                    , _bakerDaemonExternalData_alias = alias
+                    , _bakerDaemonExternalData_updated = Nothing
+                    }
+                bakerDaemon = BakerDaemonExternal
+                  { _bakerDaemonExternal_id = nid
+                  , _bakerDaemonExternal_data = DeletableRow
+                    { _deletableRow_data = bakerDaemonData
+                    , _deletableRow_deleted = False
+                    }
+                  }
+            insert bakerDaemon
+            notify $ Notify_BakerDaemonExternal nid $ Just bakerDaemonData
+          Just nids -> for_ nids $ \nid -> do
+            update
+              [ BakerDaemonExternal_dataField ~> DeletableRow_deletedSelector =. False
+              , BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_aliasSelector =. alias
+              -- Skip updated?
+              ]
+              (BakerDaemonExternal_idField ==. nid)
+            project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector)
+                    (BakerDaemonExternal_idField ==. nid)
+              >>= traverse_ (notify . Notify_BakerDaemonExternal nid . Just)
 
       PublicRequest_RemoveClient addr -> inDb $ do
-        cids :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
-        let inCids = In cids
-        _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
-        for_ cids $ notify . mkDefaultNotify
+        nids :: [Id BakerDaemon] <- project BakerDaemonExternal_idField (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_addressSelector ==. addr)
+        for_ nids $ \nid -> do
+          update [BakerDaemonExternal_dataField ~> DeletableRow_deletedSelector =. True] (BakerDaemonExternal_idField ==. nid)
+          notify $ Notify_BakerDaemonExternal nid Nothing
 
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ do
