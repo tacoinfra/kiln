@@ -23,13 +23,11 @@ import Data.Version (showVersion)
 import GHCJS.DOM.Types (MonadJSM)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import qualified Reflex.Dom.Form.Validators as Validator
+import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
-
-import Tezos.Types
 
 import Common.Api
 import Common.App
@@ -138,7 +136,7 @@ settingsTab = do
             dmdCfg <- maybeDyn dmCfg'
             SemUi.header
               (def
-                & SemUi.headerConfig_size SemUi.|?~ SemUi.H4
+                & SemUi.headerConfig_size SemUi.|?~ SemUi.H5
                 )
               $ dyn_ $ ffor (getEnabled <$$$> dmdCfg) $ \case
                 -- If nothing is set, return nothing
@@ -172,7 +170,7 @@ settingsTab = do
               (eEdit :: Event t Bool) <- (=<<) (switchHold never) $ dyn $ ffor route $ \case
                 SettingsRoute_Button -> do
                   divClass "notification-settings-description" $ text descr
-                  True <$$ uiButton "primary" ("Connect " <> name)
+                  True <$$ uiButton "fluid" ("Connect " <> name)
                 SettingsRoute_View dcfg -> do
                   divClass "notification-settings-description" $ text descr
                   True <$$ viewCfg dcfg
@@ -215,7 +213,10 @@ settingsTab = do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
             requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- aliasedInputForm validateUri blank never "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." "Bake Daemon Address" "http://127.0.0.1:9732/" "My Bake Daemon"
+        addE <- formWithReset "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." blank never $ do
+          zipFields
+            (formItem' "required" $ uriField "Bake Daemon Address" "http://127.0.0.1:9732/")
+            (formItem $ aliasField "My Bake Daemon")
         void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     _bakersOptions :: m ()
@@ -225,12 +226,15 @@ settingsTab = do
         bakers <- watchBakerAddresses
         _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
           el "td" $ publicKeyHashLink pkh
-          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerSummary_alias
+          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
           el "td" $ do
             eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
             requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- aliasedInputForm (Validator.Validator (first tshow . tryReadPublicKeyHashText) id) blank never "Add Baker" "Begin monitoring wallet address entered." "Baker Wallet Address" "tz..." "My Baker"
+        addE <- formWithReset "Add Baker" "Begin monitoring wallet address entered." blank never $ do
+          zipFields
+            (formItem' "required" $ pkhField "Baker Wallet Address" "tz...")
+            (formItem $ aliasField "My Baker")
         void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do

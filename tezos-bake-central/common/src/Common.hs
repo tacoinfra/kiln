@@ -19,15 +19,26 @@ nominalDiffTimeToSeconds n = numerator ratio `div` denominator ratio
   where
     ratio = toRational n
 
+humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
+humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
+  where
+    diff = Time.diffUTCTime ts now
+    localNow = Time.utcToLocalTime tz now
+    localTS = Time.utcToLocalTime tz ts
+    day = case (Time.diffDays `on` Time.localDay) localTS localNow of
+      0 -> "Today"
+      1 -> "Tomorrow"
+      d -> bool "Next %A" "%b %e" $ d >= 7
+    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> " @ %-l:%M%P %Z") $ Time.utcToZonedTime tz ts
+
 humanizeDiffTime :: Time.NominalDiffTime -> Text
-humanizeDiffTime t = T.unwords elems <> agoFromNow
+humanizeDiffTime t = T.unwords elems <> " ago"
   where
     hms :: [Integer] -> Integer -> [Integer]
     hms (x:xs) n = (n `mod` x):hms xs (n `div` x)
     hms [] n = [n]
 
     totalseconds = nominalDiffTimeToSeconds t
-    agoFromNow = bool " ago" " from now" $ totalseconds < 0
 
     -- keep 2 elements if the first is a 1, otherwise take 1 element
     take2 (xy@(x, _y):xys)
@@ -35,11 +46,15 @@ humanizeDiffTime t = T.unwords elems <> agoFromNow
       | otherwise = xy:take 1 xys
     take2 xys = take 2 $ xys
 
-    elems = mapMaybe showElem
+    putBack x [] = [x]
+    putBack _ xs = xs
+
+    elems = putBack "0s"
+      $ mapMaybe showElem
       $ take2
       $ dropWhile ((== 0) . fst)
       $ reverse
-      $ zip (hms [60,60,24] totalseconds) "smhd"
+      $ zip (hms [60,60,24] (abs totalseconds)) "smhd"
 
     showElem (n, u)
       | n == 0 = Nothing

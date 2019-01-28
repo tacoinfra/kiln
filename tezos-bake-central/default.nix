@@ -10,6 +10,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     inherit (obelisk.reflex-platform) hackGet;
     rhyolite-src = hackGet dep/rhyolite;
     rhyoliteLib = args: (import rhyolite-src).lib args;
+    nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     staticFilesImpure = toString ./result-static;
@@ -21,11 +22,15 @@ obelisk.project ./. ({ pkgs, ... }@args:
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       dependent-sum-aeson-orphans = hackGet dep/dependent-sum-aeson-orphans;
       functor-infix = hackGet dep/functor-infix;
+      micro-ecc = hackGet ../dep/micro-ecc-haskell;
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };
 
     overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+      backend = overrideCabal super.backend (drv:{
+        librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
+      });
       backend-db = if supportGargoyle
         then
           enableCabalFlag (addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"

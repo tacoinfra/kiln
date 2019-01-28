@@ -13,6 +13,7 @@ library
     Tezos.History
     Tezos.NodeRPC
     Tezos.NodeRPC.Network
+    Tezos.Signature.Verify
   other-modules:
     Paths_tezos_noderpc
   -- other-extensions:
@@ -21,10 +22,13 @@ library
     , aeson
     , bytestring
     , containers
+    , cryptonite
     , deepseq
     , http-client
     , http-types
     , lens
+    , memory
+    , micro-ecc
     , modern-uri
     , monad-logger
     , mtl

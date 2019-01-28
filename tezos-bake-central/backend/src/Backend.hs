@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -77,7 +76,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
-import Backend.Workers.Baker (bakerWorker)
+import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -86,6 +85,7 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import ExtraPrelude
 import Frontend (frontend)
+import Backend.NodeCmd
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -130,6 +130,10 @@ backendImpl cfg serve = do
   !(pgConnString :: Maybe Text) <- liftA2 (<|>)
     (pure $ _opts_pgConnectionString cfg)
     (getConfigFromFile Just $ configPath Config.db)
+
+  !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
+    (pure $ _opts_networkGitLabProjectId cfg)
+    (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
   let
     maybeNamedChain = either Just (const Nothing) chain
@@ -196,13 +200,26 @@ backendImpl cfg serve = do
 
       -- Set nodes overrides based on configuration
       for_ nodes $ \ns -> do
-        update [Node_deletedField =. True] CondEmpty
-        update [Node_deletedField =. False] (Node_addressField `in_` toList ns)
-        enabled <- project Node_addressField (Node_deletedField ==. False)
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] CondEmpty
+        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. False]
+          ((NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector) `in_` toList ns)
+        enabled <- project (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
+          ((NodeExternal_dataField ~> DeletableRow_deletedSelector) ==. False)
 
         let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress ->
-          insert $ mkNode newAddress Nothing
+        for_ needToAdd $ \newAddress -> do
+          nid <- insert' Node
+          insert $ NodeExternal
+            { _nodeExternal_id = nid
+            , _nodeExternal_data = DeletableRow
+              { _deletableRow_data = NodeExternalData
+                { _nodeExternalData_address = newAddress
+                , _nodeExternalData_alias = Nothing
+                , _nodeExternalData_minPeerConnections = Nothing
+                }
+              , _deletableRow_deleted = False
+              }
+            }
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
@@ -238,10 +255,14 @@ backendImpl cfg serve = do
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< clientWorker appConfig dataSrc
-      addFinalizer =<< bakerWorker dataSrc
+      addFinalizer =<< bakerRightsWorker dataSrc
+      addFinalizer =<< bakerWorker appConfig dataSrc
 
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+
+      for_ maybeNamedChain $ \namedChain ->
+        addFinalizer =<< internalNodeWorker logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
@@ -309,6 +330,7 @@ data Opts = Opts
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
   , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Set URI))
+  , _opts_networkGitLabProjectId :: !(Maybe Text)
   }
 
 instance Semigroup Opts where
@@ -324,10 +346,11 @@ instance Semigroup Opts where
     , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
     , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
     , _opts_nodes = _opts_nodes b <> _opts_nodes a -- Union the sets if there are multiple
+    , _opts_networkGitLabProjectId = _opts_networkGitLabProjectId b <|> _opts_networkGitLabProjectId a
     }
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -360,6 +383,9 @@ optsArgDescr =
 
   , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
+
+  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (\x -> mempty { _opts_networkGitLabProjectId = Just $ T.pack x })
+      "The GitLab project id to query for network updates. Defaults to off." -- TODO default
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg f var)

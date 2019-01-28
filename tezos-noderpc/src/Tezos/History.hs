@@ -97,11 +97,11 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
             stepBlock = VeryBlockLike
               { _veryBlockLike_hash = lastButOneHash
               , _veryBlockLike_predecessor = lastHash
-              , _veryBlockLike_level = blk ^. level - RawLevel prefixLen + 1
+              , _veryBlockLike_level = blk ^. level - RawLevel (fromIntegral prefixLen) + 1
               , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
               , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
               }
-            remainingLevels = numLevels - RawLevel prefixLen + 1
+            remainingLevels = numLevels - RawLevel (fromIntegral prefixLen) + 1
           preflight <- nodeRPC $ rBlock chainId lastButOneHash
           -- if (stepBlock ^. level /= preflight ^.level) || (stepBlock ^. predecessor /= preflight ^. predecessor)
           --   then  do

@@ -1,4 +1,3 @@
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -20,21 +19,26 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Align
+import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
+import Data.These
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
+import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
+import qualified Text.URI.QQ as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
@@ -44,7 +48,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
-                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError)
+                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
+                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -80,11 +85,12 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     updatedLevel <- liftIO $ atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
-      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
-        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-        pure $ Just $ headBlockInfo ^. level
-      else
-        pure Nothing
+      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness
+        then do
+          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
+          pure $ Just $ headBlockInfo ^. level
+        else
+          pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
@@ -99,42 +105,120 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
     now <- getTime
-    updateId nodeId
-      [ Node_headLevelField =. Just (headBlockInfo ^. monitorBlock_level)
-      , Node_headBlockHashField =. Just (headBlockInfo ^. monitorBlock_hash)
-      , Node_headBlockBakedAtField =. Just (headBlockInfo ^. monitorBlock_timestamp)
-      , Node_fitnessField =. Just (headBlockInfo ^. monitorBlock_fitness)
-      , Node_updatedField =. Just now
-      , Node_headBlockPredField =. Just (headBlockInfo ^. monitorBlock_predecessor)
-      ]
-    getId nodeId >>= traverse_ (notify . Notify_Node nodeId)
+    let p = (NodeDetails_dataField ~>)
+    project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
+      [] -> insert $ NodeDetails
+        { _nodeDetails_id = nodeId
+        , _nodeDetails_data = mkNodeDetails
+          { _nodeDetailsData_headLevel = Just (headBlockInfo ^. monitorBlock_level)
+          , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. monitorBlock_hash)
+          , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. monitorBlock_timestamp)
+          , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
+          , _nodeDetailsData_updated = Just now
+          , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
+          }
+        }
+      (_:_) -> update
+        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
+        , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
+        , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
+        , p NodeDetailsData_updatedSelector =. Just now
+        , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
+        ]
+        (NodeDetails_idField `in_` [nodeId])
+    newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
+    traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
 
-updateNetworkStats :: (MonadIO m, MonadLogger m, MonadBaseControl IO m) => Http.Manager -> Pool Postgresql -> Id Node -> Node -> m (Either RpcError ())
-updateNetworkStats httpMgr db nid before = do
-  after' :: Either RpcError Node <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+updateNetworkStats
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  => AppConfig
+  -> Http.Manager
+  -> Pool Postgresql
+  -> Id Node
+  -> NodeData
+  -> NodeDetailsData
+  -> m (Either RpcError ())
+updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address node)) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
-
     pure $ before
-      { _node_peerCount = Just connections
-      , _node_networkStat = networkStat
+      { _nodeDetailsData_peerCount = Just connections
+      , _nodeDetailsData_networkStat = networkStat
       }
 
-  case after' of
-    Left err -> pure $ Left err
-    Right after -> do
-      -- We will rely on the block monitor to clear any inaccessible endpoint errors for this node.
-      when (before /= after) $ inDb $ do
-        updateId nid
-          [ Node_peerCountField =. _node_peerCount after
-          , Node_networkStatField =. _node_networkStat after
-          ]
-        getId nid >>= traverse_ (notify . Notify_Node nid)
-      pure $ Right ()
-
-  where
-    nodeAddr = _node_address before
+  let
     inDb = runDb (Identity db)
+
+  -- We will rely on the block monitor to clear any inaccessible endpoint errors
+  -- for this node.m
+  when (before /= after) $ inDb $ do
+    let
+      minPeerCount = nodeData_minPeerConnections node
+    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+      flip runReaderT appConfig $
+        if (peerCount < fromIntegral minPeerCount)
+          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+          else clearNodeInvalidPeerCountError nid
+
+    let p = (NodeDetails_dataField ~>)
+    update
+      [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
+      , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
+      ]
+      (NodeDetails_idField ==. nid)
+    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
+  pure ()
+
+type NodeData = Either NodeInternalData NodeExternalData
+nodeData_address :: NodeData -> URI
+nodeData_address = either (const poorGuessAtKilnURI) _nodeExternalData_address
+  where
+    -- todo: make a better job ad deciding this.
+    poorGuessAtKilnURI = [Uri.uri|http://127.0.0.1:8732|]
+nodeData_minPeerConnections :: NodeData -> Int
+nodeData_minPeerConnections = either (const 0) (fromMaybe 0 . _nodeExternalData_minPeerConnections)
+
+nodeData_alias :: NodeData -> Maybe Text
+nodeData_alias = either (const $ Just "Kiln managed node") _nodeExternalData_alias
+
+
+-- | Select from all the tables that have to do with join.
+--
+-- TODO do join in database, not Haskell. Also don't get all the data
+getNodes
+  :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
+     , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
+     )
+  => Pool Postgresql
+  -> cond
+  -> m (Map (Id Node) (Node, NodeData, NodeDetailsData))
+getNodes db constraints = do
+  (nodeIds, nodeEs, nodeIs, nodeDs) :: ( Map (Id Node) Node
+                               , Map (Id Node) NodeExternalData
+                               , Map (Id Node) NodeInternalData
+                               , Map (Id Node) NodeDetailsData
+                               )
+    <- runDb (Identity db) $ (,,,)
+      <$> (selectMap NodeConstructor CondEmpty)
+      <*> (Map.fromList <$> project
+            ( NodeExternal_idField
+            , NodeExternal_dataField ~> DeletableRow_dataSelector)
+            (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      <*> (Map.fromList <$> project
+            ( NodeInternal_idField
+            , NodeInternal_dataField ~> DeletableRow_dataSelector)
+            (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      <*> (Map.fromList <$> project
+            (NodeDetails_idField, NodeDetails_dataField)
+            constraints)
+
+  let nodeIEs :: Map (Id Node) NodeData = fmap Left nodeIs `Map.union` fmap Right nodeEs
+
+  pure $ fmapMaybe id $ alignWith
+    (these (Just . ($ mkNodeDetails)) (const Nothing) (\f a -> Just $ f a))
+    ((,,) <$> nodeIds <.> nodeIEs) nodeDs
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -149,16 +233,15 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     $(logDebug) "Update node cycle."
 
     -- read the persistent list of nodes
-    theseNodeRecords :: Map (Id Node) Node <- runDb (Identity db) $
-      selectMap NodeConstructor (Node_deletedField ==. False)
-    -- give them all a chance to
+    theseNodeRecords <- getNodes db CondEmpty
 
-    ifor_ theseNodeRecords $ \nodeId node ->
-      updateNetworkStats httpMgr db nodeId node >>= \case
+    -- give them all a chance to
+    ifor_ theseNodeRecords $ \nodeId (Node, node, nodeDetails) ->
+      updateNetworkStats appConfig httpMgr db nodeId node nodeDetails >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, n) -> (_node_address n, (i, _node_alias n))) $ Map.toList theseNodeRecords
+    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
@@ -285,8 +368,7 @@ nodeAlertWorker
   -> Pool Postgresql
   -> IO (IO ())
 nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
-  nodeHeadHashes <- fmap (Map.mapMaybe _node_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
-    selectMap NodeConstructor (Node_deletedField ==. False &&. Not (isFieldNothing Node_headBlockHashField))
+  nodeHeadHashes <- fmap (Map.mapMaybe $ view $ _3 . nodeDetailsData_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
@@ -320,11 +402,12 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
   latestBlock' <- liftIO $ atomically $ do
     let latestHeadTVar = _nodeDataSource_latestHead nds
     latestHead <- readTVar latestHeadTVar
-    if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
-      writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
-      pure $ Just $ mkVeryBlockLike blk
-    else
-      pure Nothing
+    if Just (blk ^. fitness) > latestHead ^? _Just . fitness
+      then do
+        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
+        pure $ Just $ mkVeryBlockLike blk
+      else
+        pure Nothing
 
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)

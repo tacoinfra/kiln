@@ -31,6 +31,7 @@ library
     , common
     , containers
     , data-default
+    , dependent-sum
     , exceptions
     , file-embed
     , functor-infix
@@ -54,6 +55,7 @@ library
     , rhyolite-frontend
     , safe
     , semantic-reflex
+    , semigroupoids
     , text
     , tezos-bake-monitor-lib
     , these

@@ -11,6 +11,7 @@ import Tezos.BlockHeader (Priority(..))
 import Tezos.Contract
 import Tezos.Json
 import Tezos.Level
+import Tezos.PublicKey
 import Tezos.PublicKeyHash
 import Tezos.Tez
 
@@ -47,7 +48,7 @@ data FrozenBalanceByCycle = FrozenBalanceByCycle
   , _frozenBalanceByCycle_deposit :: !Tez
   , _frozenBalanceByCycle_fees :: !Tez
   , _frozenBalanceByCycle_rewards :: !Tez
-  }
+  } deriving (Eq, Ord, Show)
 
 data DelegateInfo = DelegateInfo
   { _delegateInfo_balance :: !Tez
@@ -60,6 +61,11 @@ data DelegateInfo = DelegateInfo
   , _delegateInfo_gracePeriod :: !Cycle
   }
 
+data ManagerKey = ManagerKey
+  { _managerKey_manager :: !PublicKeyHash
+  , _managerKey_key :: !(Maybe PublicKey)
+  } deriving (Show, Eq, Ord)
+
 concat <$> traverse deriveTezosJson
   [ ''Account
   , ''AccountDelegate
@@ -67,6 +73,7 @@ concat <$> traverse deriveTezosJson
   , ''DelegateInfo
   , ''EndorsingRights
   , ''FrozenBalanceByCycle
+  , ''ManagerKey
   ]
 
 concat <$> traverse makeLenses
@@ -76,4 +83,5 @@ concat <$> traverse makeLenses
   , 'DelegateInfo
   , 'EndorsingRights
   , 'FrozenBalanceByCycle
+  , 'ManagerKey
   ]

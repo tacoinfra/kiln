@@ -20,6 +20,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import GHC.Generics (Generic)
+import qualified Text.ParserCombinators.ReadPrec as Read
 
 import Tezos.Base58Check
 
@@ -73,6 +74,12 @@ instance ToJSONKey PublicKeyHash
 
 instance Show PublicKeyHash where
   show = ("fromString " <>) . show . toPublicKeyHashText
+
+instance Read (PublicKeyHash) where
+  readsPrec =
+    Read.readPrec_to_S $ (PublicKeyHash_Ed25519 <$> Read.readS_to_Prec readsPrec)
+                Read.<++ (PublicKeyHash_Secp256k1 <$> Read.readS_to_Prec readsPrec)
+                Read.<++ (PublicKeyHash_P256 <$> Read.readS_to_Prec readsPrec)
 
 instance IsString PublicKeyHash where
   fromString x = either (error . show) id $ tryFromBase58 publicKeyHashConstructorDecoders $ fromString x

@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -8,38 +10,109 @@
 module Backend.Upgrade where
 
 import Control.Exception.Safe (try)
+import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (logInfo)
+import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
+import Data.Maybe
 import Data.Pool (Pool)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
+import Rhyolite.Backend.Schema
 
+import Backend.Alerts
+import Backend.Alerts.Common
+import Backend.Config (AppConfig)
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
-import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..))
+import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogNetworkUpdate(..))
+import Rhyolite.Schema (Id(..))
+import Common.Alerts
 import ExtraPrelude
+import Tezos.Chain
 
 upgradeCheckWorker
   :: MonadIO m
-  => Text
+  => Maybe NamedChain
+  -> Text
+  -> Text
   -> NominalDiffTime
   -> LoggingEnv
   -> Http.Manager
   -> Pool Postgresql
+  -> AppConfig
   -> m (IO ())
-upgradeCheckWorker upgradeBranch delay logger httpMgr db =
+upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db appConfig = do
+  liftIO $ forM_ mchain $ runLoggingEnv logger . runDb (Identity db) . clearUnrelatedNetworkUpdateError
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    void $ updateUpstreamVersion upgradeBranch httpMgr (runLoggingEnv logger . runDb (Identity db))
+    forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
+    void $ updateUpstreamVersion upgradeBranch httpMgr (runDb (Identity db))
+
+notifyChainUpgrade
+  :: ( MonadIO m, MonadLogger m, Control.Monad.Trans.Control.MonadBaseControl IO m)
+  => NamedChain
+  -> Text
+  -> Http.Manager
+  -> Pool Postgresql
+  -> AppConfig
+  -> m ()
+notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
+  getTezosBranch httpMgr gitLabProjectId (showNamedChain namedChain) >>= \case
+    Left err -> $(logError) err -- TODO use proper log message
+    Right commitId -> runDb (Identity db) $ do
+      mLastCommit <- getLatestNamedChainUpgradeLog namedChain
+      when (preview (_Just . _3) mLastCommit /= Just commitId) $ do
+        now <- getTime
+        forM_ mLastCommit $ \case
+          (logId, Nothing, _) -> update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` [fromId (logId :: Id ErrorLog)])
+          _ -> return ()
+        let errorLog = ErrorLog
+              { _errorLog_started = now
+              , _errorLog_stopped = if isNothing mLastCommit then Just now else Nothing
+              , _errorLog_lastSeen = now
+              , _errorLog_noticeSentAt = Just now
+              }
+        eid <- toId <$> insert errorLog
+        _ <- insert ErrorLogNetworkUpdate
+          { _errorLogNetworkUpdate_log = eid
+          , _errorLogNetworkUpdate_namedChain = namedChain
+          , _errorLogNetworkUpdate_commit = commitId
+          , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
+          }
+        notify $ mkDefaultNotify (Id eid :: Id ErrorLogNetworkUpdate)
+        -- Only send an email when we get a new value, not when we initially
+        -- populate the cache.
+        when (mLastCommit /= Nothing) $ do
+          let (header, bodyFirstPara) = networkUpdateDescription namedChain
+          flip runReaderT appConfig $ queueAlert (Just eid) $ Alert Unresolved header $ T.unlines
+            [ bodyFirstPara
+            , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
+            ]
+        return ()
+
+getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, Text))
+getLatestNamedChainUpgradeLog namedChain =
+  listToMaybe <$> [queryQ|
+    SELECT el.id, el.stopped AT TIME ZONE 'UTC', elua.commit
+    FROM "ErrorLogNetworkUpdate" elua
+    JOIN "ErrorLog" el
+    ON elua.log = el.id
+    WHERE elua."namedChain" = ?namedChain
+    ORDER BY el.started DESC
+    LIMIT 1
+    |]
 
 updateUpstreamVersion
   :: (MonadIO m, PersistBackend db)
@@ -75,8 +148,22 @@ setUpstreamVersion v = do
         ]
       getId existingId >>= traverse_ (notify . Notify_UpstreamVersion existingId)
 
+getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Text -> m (Either Text Text)
+getTezosBranch httpMgr projectId branch = do
+  let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/repository/branches/" <> branch
+  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $ do
+    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
+  return $ case resp' of
+    Left ex -> Left $ T.pack $ show ex
+    Right body -> case Http.getResponseBody body ^? key "commit" . key "id" . _String of
+      Nothing -> Left "No commit found for this branch"
+      Just commit -> Right commit
+
+gitlabApiBaseUrl :: Text
+gitlabApiBaseUrl = "https://gitlab.com/api/v4"
+
 upstreamGitLab :: Text -> Text
-upstreamGitLab branch = "https://gitlab.com/api/v4/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
+upstreamGitLab branch = gitlabApiBaseUrl <> "/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
 
 getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Text -> Http.Manager -> m V.Version
 getUpstreamVersion upgradeBranch httpMgr = do

@@ -1,5 +1,5 @@
 name: backend
-version: 0.2.3
+version: 0.4.0
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -29,6 +29,7 @@ library
     , dependent-map
     , dependent-sum
     , dependent-sum-template
+    , directory
     -- , diagrams-core
     -- , diagrams-lib
     -- , diagrams-svg
@@ -47,7 +48,9 @@ library
     , http-conduit
     , http-types
     , IntervalMap
+    , lattices
     , lens
+    , lens-aeson
     , mime-mail
     , modern-uri
     , monad-control
@@ -62,6 +65,7 @@ library
     , obelisk-frontend
     , obelisk-route
     , postgresql-simple
+    , process
     , random-extras
     , random-fu
     , reflex
@@ -73,14 +77,19 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
+    , semigroupoids
+    , shelly
     , snap-core
     , snap-loader-static
     , snap-server
     , stm
     , svg-builder
+    , template-haskell
+    , temporary
     , text
     , tezos-bake-monitor-lib
     , tezos-noderpc
+    , these
     , time
     , transformers
     , unix
@@ -115,6 +124,8 @@ library
     Backend.Workers.Client
     Backend.Workers.Baker
     Backend.Workers.Node
+    Backend.NodeCmd
+    System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
   cpp-options: -DREAL_BUILD

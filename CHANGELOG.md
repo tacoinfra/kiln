@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0
+*January 25, 2019*
+
+  * Kiln can now launch and monitor a node internal.
+  * Minimum connections alerts reported for nodes with too few peers.
+  * Available balance and staking balance on Baker's Tile so that bakers can quickly see how much tez funds are available for security deposits and staking
+  * Telegram/email notification for when the tezos-core is updated
+  * Improved logging
+  * Bug fixes, including all known issues from 0.3.0
+
+## 0.3.0
+*January 9. 2019*
+
+  * Kiln can now monitor key stastics about baker accounts
+    * Each baker's next baking or endorsing opportunity is displayed
+    * Missed baking or endorsing opportunities trigger alerts
+    * Bakers becoming deactivated or soon to be deactivated trigger an alert.
+  * Kiln informs when new versions of tezos-core are released, as well as new versions of Kiln itself.
+  * Minor UI improvements
+  * Performance improvements
+  * Bug fixes
+
+### Known Issues
+
+  * Unregistered baker addresses cause Kiln to crash.   Workaround: make sure your baker address is self delegated before adding it to Kiln.
+  * Certain alerts are no longer visible once they are resolved by the user.
+  * When Kiln cannot gather data about a baker because there aren't sufficient nodes, the status icon of the baker should be red but is green
+
 ## 0.2.3
 *November 26, 2018*
 

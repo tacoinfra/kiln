@@ -3,36 +3,15 @@
 module Backend.BalanceTracking where
 
 import Control.Monad
-import Data.Fixed
 import Data.List
-import Data.Map.Monoidal (MonoidalMap)
-import qualified Data.Map.Monoidal as MMap
 import Data.Ord
-import Data.Semigroup
 import Data.Word
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Schema
 
-import Tezos.Json (TezosWord64 (..))
-import Tezos.PublicKeyHash
-
 import Backend.Schema ()
 import Common.Schema
-
--- NB: This eventually needs to change, we can't really be getting an unbounded amount of information. Our viewselector needs to become more specific.
-getAllRewards :: (PostgresRaw m, PersistBackend m) => a -> m (MonoidalMap PublicKeyHash (First (MonoidalMap Word64 Micro), a))
-getAllRewards a = do
-  rewards <- [queryQ|
-    SELECT d."publicKeyHash", COALESCE(pr.level, 0), COALESCE(pr.amount, 0)
-    FROM "Baker" d
-    LEFT OUTER JOIN "PendingReward" pr
-      ON d.id = pr.baker
-    |] -- selectAll -- PendingReward
-  let rewardMap' = MMap.fromListWith (MMap.unionWith (+))
-        [(baker, MMap.singleton (unTezosWord64 level) amount) | (baker, level, amount) <- rewards]
-      rewardMap = fmap (\x -> (First x, a)) rewardMap'
-  return rewardMap
 
 getMaxLevel :: (Monad m, PostgresRaw m) => m (Maybe Word64)
 getMaxLevel = do

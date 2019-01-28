@@ -10,7 +10,6 @@ import Data.Either.Validation
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
-import qualified Text.URI as Uri
 
 import Common.Schema
 import Tezos.Types
@@ -51,16 +50,6 @@ onBadForkState k fi = case _forkInfo_forkStatus fi of
   Left ForkStatus_TooOld -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_TooOld}
   Left ForkStatus_Forked -> Failure $ k fi {_forkInfo_forkStatus = Left ForkStatus_Forked}
   _ -> Success ()
-
-showBadFork :: Node -> ForkInfo -> Error
-showBadFork node (ForkInfo status bakedTime bakedHash) = Error bakedTime $ T.concat
-          [ "node: ", maybe "" toBase58Text $ _node_identity node
-          , "@", Uri.render $ _node_address node
-          , " BAKER STATE:" , either showForkStatus (const "good") status
-          , " for block:", toBase58Text bakedHash
-          , " @ ",  T.pack $ show bakedTime
-          , "\n"
-          ]
 
 validateForkyBlocks :: ([ForkInfo] -> f ()) -> [ForkInfo] -> f ()
 validateForkyBlocks f xs = case traverse (onBadForkState pure) xs of

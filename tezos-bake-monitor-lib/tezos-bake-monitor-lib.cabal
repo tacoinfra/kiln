@@ -20,10 +20,12 @@ library
     Tezos.BalanceUpdate
     Tezos.Base16ByteString
     Tezos.Base58Check
+    Tezos.Binary
     Tezos.Block
     Tezos.BlockHeader
     Tezos.Chain
     Tezos.Contract
+    Tezos.Envelope
     Tezos.Fitness
     Tezos.Json
     Tezos.Lenses
@@ -48,6 +50,7 @@ library
       base
     , aeson
     , async
+    , binary
     , base16-bytestring
     , base58-bytestring
     , bytestring
@@ -56,6 +59,7 @@ library
     , cryptohash
     , cryptonite
     , deepseq
+    , functor-infix
     , groups
     , hashable
     , hashing

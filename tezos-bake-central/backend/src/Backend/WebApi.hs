@@ -29,7 +29,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (BlockBaker, CacheError)
+import Common.Schema (BlockBaker, CacheDelegateInfo, CacheError)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
