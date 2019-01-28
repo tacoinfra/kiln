@@ -16,7 +16,7 @@
   content: 'Optional';
   color: @grey;
   position: absolute;
-  top:0;
+  top: 0.25rem;
   right:0;
 }
 
@@ -28,7 +28,7 @@
   content: 'Required';
   color: @grey;
   position: absolute;
-  top:0;
+  top: 0.25rem;
   right:0;
 }
 
