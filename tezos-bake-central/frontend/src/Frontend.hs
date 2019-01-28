@@ -954,9 +954,8 @@ publicNodeOptions = do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
-        divClass "twelve wide column" $ do
-          divClass "header" $ text $ showPublicNode pn
-          divClass "description" $ text $ describePublicNode pn
+        divClass "header" $ text $ showPublicNode pn
+        divClass "description" $ text $ describePublicNode pn
 
     let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
