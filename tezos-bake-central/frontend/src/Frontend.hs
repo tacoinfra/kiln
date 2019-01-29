@@ -673,9 +673,9 @@ liveErrorsWidget = void $ do
     synthEntry :: SynthError -> m ()
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
-      errorLabel "My Bakers" $ toPublicKeyHashText <$> pkhs
+      errorLabel "My Bakers" $ Identity $ T.take 20 (toPublicKeyHashText $ NEL.head pkhs) <> "..."
       el "div" $
-        text "Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
+        text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' specificLog node') =
