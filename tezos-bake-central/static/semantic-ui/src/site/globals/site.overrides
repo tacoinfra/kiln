@@ -137,6 +137,10 @@ h6.ui.header {
       > .column > .description {
         color: @grey;
       }
+
+      > .column > .ui.icon.header {
+        margin-bottom: 0;
+      }
     }
   }
 
