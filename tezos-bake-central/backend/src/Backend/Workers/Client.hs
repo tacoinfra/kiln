@@ -18,7 +18,6 @@ import Common.Schema
 import Common.Verification (validateForkyBlocks)
 import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
-import Control.Monad (unless, void)
 import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
 import Data.Foldable (for_, toList)
@@ -26,14 +25,13 @@ import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (nonEmpty)
-import Data.Semigroup (Sum (..), getSum, (<>))
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
-import Rhyolite.Backend.DB.PsqlSimple (Values (..), executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
@@ -111,16 +109,6 @@ clientWorker appCfg nds =
           -- know if the baker itself is active.  The reqards should be computed
           -- based on nodes reporting new blocks.  Even if we baked, if that was
           -- a different branch, there's no reward.
-          let bakingReward baker blk = _protoInfo_blockReward protoInfo + getSum ((foldMap . foldMap) (Sum . sumFees baker . _bakedEventOperation_data) (_bakedEvent_operations $ _event_detail blk))
-              rewardDelay l =
-                let c = fromIntegral l `div` _protoInfo_blocksPerCycle protoInfo + 1
-                    rc = c + (let Cycle x = _protoInfo_preservedCycles protoInfo in fromIntegral x)
-                in rc * _protoInfo_blocksPerCycle protoInfo
-              insertValues = Values ["text", "varchar", "int8", "int8"]
-                [ (bakerPkh, toBase58Text (_bakedEvent_hash $ _event_detail b), rewardDelay (blockLevel b) , bakingReward bakerPkh b)
-                | b <- _report_baked report
-                , bakerPkh <- _clientConfig_bakers clientConfig
-                ]
 
           _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
                           VALUES (?cid, ?reportJson, ?clientConfigJson)

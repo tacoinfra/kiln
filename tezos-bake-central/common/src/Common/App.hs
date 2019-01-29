@@ -26,7 +26,9 @@ module Common.App
   , AlertNotificationMethod (..)
   ) where
 
+import Control.Lens (Iso', iso)
 import Control.Lens.TH (makeLenses)
+import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
@@ -36,7 +38,6 @@ import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
-import qualified Text.URI as Uri
 import Reflex (Additive, FunctorMaybe (..), Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
@@ -46,6 +47,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common (uriHostPortPath)
 import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
@@ -78,7 +80,7 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_node :: NodeExternalData
+  { _nodeSummary_node :: Either NodeExternalData NodeInternalData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
@@ -90,9 +92,15 @@ bakerSummaryIdentification = aliasedIdentification
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
-nodeSummaryIdentification = aliasedIdentification
-  (_nodeExternalData_alias . _nodeSummary_node)
-  (Uri.render . _nodeExternalData_address . _nodeSummary_node)
+nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
+
+nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, Maybe Text)
+nodeDataIdentification = \case
+  Left e -> aliasedIdentification
+    (_nodeExternalData_alias)
+    (uriHostPortPath . _nodeExternalData_address)
+    e
+  Right _ -> ("Kiln Node", Nothing)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
@@ -104,7 +112,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a)
+  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
@@ -162,6 +170,7 @@ instance ToJSON MailServerView
 data NodeErrorLogView
   = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
   | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
+  | NodeErrorLogView_NodeInvalidPeerCount !ErrorLogNodeInvalidPeerCount
   | NodeErrorLogView_BadNodeHead !ErrorLogBadNodeHead
   deriving (Eq, Ord, Generic, Typeable, Show)
 instance FromJSON NodeErrorLogView
@@ -193,6 +202,35 @@ data ErrorLogView
 instance FromJSON ErrorLogView
 instance ToJSON ErrorLogView
 
+logViewTag :: Iso' ErrorLogView (DSum LogTag Identity)
+logViewTag = iso fromErrorLogView toErrorLogView
+
+toErrorLogView :: DSum LogTag Identity -> ErrorLogView
+toErrorLogView = \case
+  LogTag_BadNodeHead :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x)
+  LogTag_BakerDeactivated :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x)
+  LogTag_BakerDeactivationRisk :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x)
+  LogTag_BakerMissed :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x)
+  LogTag_BakerNoHeartbeat :=> Identity x -> ErrorLogView_BakerNoHeartbeat x
+  LogTag_InaccessibleNode :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x)
+  LogTag_MultipleBakersForSameBaker :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x)
+  LogTag_NetworkUpdate :=> Identity x -> ErrorLogView_NetworkUpdate x
+  LogTag_NodeInvalidPeerCount :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x)
+  LogTag_NodeWrongChain :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x)
+
+fromErrorLogView :: ErrorLogView -> DSum LogTag Identity
+fromErrorLogView = \case
+  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x) -> LogTag_BakerDeactivated :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x) -> LogTag_BakerDeactivationRisk :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x) -> LogTag_BakerMissed :=> Identity x
+  ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x) -> LogTag_MultipleBakersForSameBaker :=> Identity x
+  ErrorLogView_BakerNoHeartbeat x -> LogTag_BakerNoHeartbeat :=> Identity x
+  ErrorLogView_NetworkUpdate x -> LogTag_NetworkUpdate :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x) -> LogTag_BadNodeHead :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x) -> LogTag_InaccessibleNode :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x) -> LogTag_NodeInvalidPeerCount :=> Identity x
+  ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x) -> LogTag_NodeWrongChain :=> Identity x
+
 nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
 nodeErrorViewOnly = \case
   ErrorLogView_NodeError v -> Just v
@@ -202,6 +240,7 @@ nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
 nodeIdForNodeErrorLogView = \case
   NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_node ein
   NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_node enwc
+  NodeErrorLogView_NodeInvalidPeerCount enipc -> _errorLogNodeInvalidPeerCount_node enipc
   NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_node ebnh
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
@@ -222,6 +261,7 @@ errorLogIdForErrorLogView = \case
     NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
     NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
     NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
+    NodeErrorLogView_NodeInvalidPeerCount ebipc -> _errorLogNodeInvalidPeerCount_log ebipc
   ErrorLogView_BakerError be -> case be of
     BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
     BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm

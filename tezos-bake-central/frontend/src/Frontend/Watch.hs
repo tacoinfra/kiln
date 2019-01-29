@@ -56,6 +56,13 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
+watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe NodeInternalData))
+watchInternalNode = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
+
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
@@ -204,13 +211,20 @@ data CollectiveNodesFailure
   -- ^ The last time any of the node was up, there must have been up
   deriving (Eq, Ord, Show)
 
+nodeSummaryStateIfInternal :: NodeSummary -> Maybe NodeInternalState
+nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . nodeInternalData_state
+
 watchCollectiveNodesStatus
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
   dNodes <- watchNodeAddresses
-  let dmNids = NEL.nonEmpty . MMap.keys <$> dNodes
+  let dmNids = NEL.nonEmpty
+        <$> MMap.keys
+        <$> ffilter (maybe True (== NodeInternalState_Running)
+                     . nodeSummaryStateIfInternal)
+        <$> dNodes
   ebn <- watchErrorsByNode alertWindow
   holdUniqDyn $ ffor2 dmNids ebn $ \case
     Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes

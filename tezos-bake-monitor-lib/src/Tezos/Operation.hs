@@ -1,9 +1,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -18,6 +24,7 @@ import Data.Semigroup
 #endif
 import Data.ByteString (ByteString)
 import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import Data.Typeable
 import GHC.Word
@@ -27,6 +34,8 @@ import qualified Data.HashMap.Strict as HashMap
 import Tezos.BalanceUpdate
 import Tezos.Base16ByteString
 import Tezos.Base58Check
+import qualified Tezos.Binary as B
+import Tezos.Binary ((<**))
 import Tezos.BlockHeader
 import Tezos.Contract
 import Tezos.Json
@@ -49,6 +58,34 @@ data Operation = Operation
   , _operation_signature :: !(Maybe Signature) --          "signature": { "$ref": "#/definitions/Signature" }
   }
   deriving (Eq, Ord, Show, Typeable)
+
+data OpKind
+  = OpKind_SeedNonceRevelation
+  | OpKind_DoubleEndorsementEvidence
+  | OpKind_DoubleBakingEvidence
+  | OpKind_ActivateAccount
+  | OpKind_Endorsement
+  | OpKind_Proposals
+  | OpKind_Ballot
+  | OpKind_Reveal
+  | OpKind_Transaction
+  | OpKind_Origination
+  | OpKind_Delegation
+  | OpKind_Manager [OpKindManager]
+
+data OpKindManager
+  = OpKindManager_Reveal
+  | OpKindManager_Transaction
+  | OpKindManager_Origination
+  | OpKindManager_Delegation
+
+data Op (a :: OpKind) = Op
+  { _op_branch :: !BlockHash
+  , _op_contents :: !(OpContentsList a)
+  , _op_signature :: !(Maybe Signature)
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
 --
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
@@ -63,6 +100,28 @@ data OperationContents
   | OperationContents_Transaction                 !OperationContentsTransaction
   | OperationContents_Origination                 !OperationContentsOrigination
   | OperationContents_Delegation                  !OperationContentsDelegation
+  deriving (Eq, Ord, Show, Typeable)
+
+data OpContentsList (a :: OpKind) where
+  OpContentsList_Single :: OpContents a -> OpContentsList a
+  OpContentsList_Cons :: OpContents ('OpKind_Manager (a : '[])) -> OpContentsList ('OpKind_Manager as) -> OpContentsList ('OpKind_Manager (a : as))
+  deriving Typeable
+
+deriving instance Eq (OpContentsList a)
+deriving instance Ord (OpContentsList a)
+deriving instance Show (OpContentsList a)
+
+data OpContents (a :: OpKind) where
+  OpContents_Endorsement :: !OpContentsEndorsement -> OpContents 'OpKind_Endorsement
+  deriving Typeable
+
+deriving instance Eq (OpContents a)
+deriving instance Ord (OpContents a)
+deriving instance Show (OpContents a)
+
+data OpContentsEndorsement = OpContentsEndorsement
+  { _opContentsEndorsement_level :: !RawLevel
+  }
   deriving (Eq, Ord, Show, Typeable)
 
 instance FromJSON OperationContents where
@@ -393,6 +452,38 @@ data OperationContentsDelegation = OperationContentsDelegation
 
 data OperationResultDelegation = OperationResultDelegation
   deriving (Eq, Ord, Show, Typeable)
+
+stripEndorsement :: Operation -> Maybe (Op 'OpKind_Endorsement)
+stripEndorsement (Operation { _operation_branch = branch, _operation_contents = contents, _operation_signature = sig })
+  | length contents /= 1 = Nothing
+  | otherwise = case Seq.index contents 0 of
+      OperationContents_Endorsement (OperationContentsEndorsement { _operationContentsEndorsement_level = level }) ->
+        Just $ Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
+      _ -> Nothing
+
+instance B.TezosBinary OpContentsEndorsement where
+  put = B.puts _opContentsEndorsement_level
+  get = OpContentsEndorsement <$> B.get
+
+instance B.TezosBinary (OpContents 'OpKind_Endorsement) where
+  put = \case
+    OpContents_Endorsement op -> B.put @Word8 0 <* B.put op
+  get = B.get @Word8 >>= \case
+    0 -> OpContents_Endorsement <$> B.get
+    _ -> fail "not an endorsement"
+
+instance B.TezosBinary (OpContentsList 'OpKind_Endorsement) where
+  put = \case
+    OpContentsList_Single op -> B.put op
+  get = OpContentsList_Single <$> B.get
+
+instance B.TezosUnsignedBinary (Op 'OpKind_Endorsement) where
+  putUnsigned = shellHeaderEncoding <** B.puts _op_contents
+    where
+      shellHeaderEncoding = B.puts _op_branch
+  getUnsigned = shellHeaderDecoding <*> B.get <*> pure Nothing
+    where
+      shellHeaderDecoding = Op <$> B.get
 
 concat <$> traverse deriveTezosJson
   [ ''Operation

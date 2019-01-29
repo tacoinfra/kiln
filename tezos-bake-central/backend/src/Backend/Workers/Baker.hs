@@ -16,7 +16,7 @@ import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at
 import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (guard, mzero)
-import Control.Monad.Except (MonadError, runExceptT, ExceptT(..))
+import Control.Monad.Except (MonadError, runExceptT, throwError, ExceptT(..))
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
@@ -36,7 +36,7 @@ import Data.Sequence (Seq())
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
-import Reflex (fforMaybe)
+import Reflex (fforMaybe, fmapMaybe)
 import Rhyolite.Backend.DB (runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, In(..))
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
@@ -99,8 +99,8 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
     $(logDebug) $ "BAKER baseline " <> tshow (_rightsCycleInfo_branch <$> cycleHashes)
 
-    -- * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
-    -- * then actually obtain the rights for all bakers at the oldest cycle we still want.
+    --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
+    --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
@@ -205,7 +205,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
             Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
             Just ((pId, p):|_)
-              -- | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
+              --  | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
               | _bakerRightsCycleProgress_progress p < lvl -> do
                 _ <- [executeQ|
                   UPDATE "BakerRightsCycleProgress"
@@ -246,7 +246,6 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     db = _nodeDataSource_pool nds
 
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
-    let
     currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
@@ -254,11 +253,18 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
         (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
       return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
-    wantedActions <- for currentState $ \(baker, details) ->
-      getWantedAction protoInfo headBlock baker details
+    wantedActions <- for currentState $ \(baker, details) -> do
+      res <- runExceptT $ getWantedAction protoInfo headBlock baker details
+      case res of
+        Right commit -> do
+          $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
+          pure $ Just commit
+        Left (err :: CacheError) -> do
+          $(logErrorSH) ("bakerWorker failed to process baker: " <> tshow baker, err)
+          pure Nothing
 
     -- beware of the jellyfish
-    runDb (Identity db) $ runReaderT (sequence_ wantedActions) appConfig
+    runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
 
   case res of
     Right () -> $(logDebug) $ "bakerWorker DONE"
@@ -329,48 +335,56 @@ getWantedAction protoInfo headBlock baker details = do
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
 
-  di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl pkh)
-  let
-    gracePeriod = _cacheDelegateInfo_gracePeriod di
+  -- TODO divide above and below this into two separate workers.
 
-    updateDetails :: mCommit ()
-    updateDetails = do
-      existingIds <- project BakerDetails_publicKeyHashField
-        ( BakerDetails_publicKeyHashField ==. pkh
-        &&. BakerDetails_branchField ~> VeryBlockLike_fitnessSelector <=. headFitness
-        )
-
+  -- This is the things that fails. First go look up the account, and see who/if
+  -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
+  -- and cache that.
+  delegate <- _accountDelegate_value . _account_delegate <$>
+    nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
+  selfDelegateActions <- case delegate of
+    Nothing -> pure []
+    Just delegatePkh -> do
+      di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl delegatePkh)
       let
-        newVal = BakerDetails
-          { _bakerDetails_publicKeyHash = pkh
-          -- , _bakerDetails_nextBakeRights = _bakingRights_level <$> Map.lookup pkh bakingRights
-          -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup pkh endorsingRights
-          , _bakerDetails_branch = mkVeryBlockLike headBlock
-          , _bakerDetails_delegateInfo = Just $ Json di
-          }
-      case nonEmpty existingIds of
-        Nothing -> void $ insert newVal
-        Just brids -> for_ brids $ \brid ->
-          update
-            [ BakerDetails_branchField =. _bakerDetails_branch newVal
-            , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
-            ]
-            ( BakerDetails_publicKeyHashField ==. brid)
-      notify $ mkDefaultNotify newVal
+        gracePeriod = _cacheDelegateInfo_gracePeriod di
 
-    -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
-    -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
-    deactivationAlerts :: mCommit ()
-    deactivationAlerts =
-      if _cacheDelegateInfo_deactivated di
-        then reportBakerDeactivated pkh protoInfo headFitness
-        else do
-          clearBakerDeactivated pkh headFitness
-          if (1 >= gracePeriod - headCycle)
-            then reportBakerDeactivationRisk pkh gracePeriod headCycle protoInfo headFitness
-            else clearBakerDeactivationRisk pkh headFitness
+        updateDetails :: mCommit ()
+        updateDetails = do
+          existingIds <- project BakerDetails_publicKeyHashField
+            ( BakerDetails_publicKeyHashField ==. delegatePkh
+            &&. BakerDetails_branchField ~> VeryBlockLike_fitnessSelector <=. headFitness
+            )
 
-  return $ sequence_ $
-    [ deactivationAlerts
-    , updateDetails
-    ] ++ bakingEndorsingAlerts
+          let
+            newVal = BakerDetails
+              { _bakerDetails_publicKeyHash = delegatePkh
+              -- , _bakerDetails_nextBakeRights = _bakingRights_level <$> Map.lookup delegatePkh bakingRights
+              -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup delegatePkh endorsingRights
+              , _bakerDetails_branch = mkVeryBlockLike headBlock
+              , _bakerDetails_delegateInfo = Just $ Json di
+              }
+          case nonEmpty existingIds of
+            Nothing -> void $ insert newVal
+            Just brids -> for_ brids $ \brid ->
+              update
+                [ BakerDetails_branchField =. _bakerDetails_branch newVal
+                , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
+                ]
+                ( BakerDetails_publicKeyHashField ==. brid)
+          notify $ mkDefaultNotify newVal
+
+        -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
+        -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
+        deactivationAlerts :: mCommit ()
+        deactivationAlerts =
+          if _cacheDelegateInfo_deactivated di
+            then reportBakerDeactivated delegatePkh protoInfo headFitness
+            else do
+              clearBakerDeactivated delegatePkh headFitness
+              if (1 >= gracePeriod - headCycle)
+                then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
+                else clearBakerDeactivationRisk delegatePkh headFitness
+      pure [deactivationAlerts, updateDetails]
+
+  return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts

@@ -44,6 +44,7 @@ library
     , reflex-dom-core
     , rhyolite-common
     , rhyolite-datastructures
+    , rhyolite-frontend
     , safe-exceptions
     , scientific
     , template-haskell

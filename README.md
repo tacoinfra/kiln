@@ -1,25 +1,29 @@
 # Overview
 
-[Obsidian Systems’](https://obsidian.systems/) Monitoring Software provides individuals running Tezos nodes with a locally hosted graphical interface, enabling easy and effective node monitoring. In addition to the nodes they manage (‘Monitored Nodes’), users can also elect to view information from ‘Public Nodes’ managed by Obsidian Systems, the Tezos Foundation, and OCamlPro (tzscan.io).
+[Obsidian Systems’](https://obsidian.systems/) Monitoring Software, Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring. The dashboard displays a tile with relevant information for all nodes and bakers it is monitoring and it alerts the user of any issues that may be encountered.
 
-The Software alerts users within the GUI if a Monitored Node:
+Kiln alerts users within the GUI if a Monitored Node:
 
 * Is on the wrong network
 * Is not on the fittest branch
 * Falls behind the current head block level
 * Cannot be reached by the Monitoring Software (e.g. is offline)
+* Reports fewer than a specified number of active peer connections
 
 Or if a Monitored Baker:
 
-* Has been deactivated due to inactivity or will be within one cycle
 * Misses a baking or endorsing opportunity
+* Has been deactivated due to inactivity or will be within one cycle
 
-In addition to these in-app alerts, users can connect their SMTP Mail Server to send alerts to the email addresses of their choice.
+Or if the monitored network:
 
-This version (v0.3.0) is a very early version of our Monitoring Software. Near-term improvements include, but are not limited to:
-* Improving the UI and user-flow
+* Has an update pushed. For instance, if a user is monitoring mainnet with Kiln, they will be notified is mainnet is updated.
+
+In addition to these in-app alerts, users can configure Kiln to send Telegram alerts or use their SMTP Mail Server to send alerts to the email addresses of their choice.
+
+This version (v0.4.0) is an early version of Kiln. Near-term improvements include, but are not limited to:
 * Expanding baker monitoring
-* Introducing new alert pathways
+* Baking from Kiln's GUI
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
 
@@ -56,20 +60,20 @@ Now you can download and run the monitor like this:
 On Linux:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.3.0 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.4.0 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS:
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.3.0 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.4.0 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.3.0 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.4.0 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
 ## Updating an older Docker container
 
@@ -98,10 +102,10 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.3.0 ...
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.4.0 ...
 ```
 
-you can replace `0.3.0` with another available version.
+you can replace `0.4.0` with another available version.
 
 You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
 
@@ -194,10 +198,14 @@ Once you’ve added at least one node or Public Node, the Dashboard will show yo
 
 Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
-### Configuring email notifications
+### Adding a baker
 
-Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.
+Click *Add Baker* from the left panel and input the public key hash (PKH) of the baker you would like to monitor. Kiln will then use Monitored Nodes to gather information about that baker from the blockchain. This initial query can take up to a few hours, and requires the user to monitor at least one node.
 
 ### Configuring Telegram notifications
 
 Click *Settings* from the left panel then click *Connect Telegram* and follow the instructions in the popup.
+
+### Configuring email notifications
+
+Click *Settings* from the left panel and provide the SMTP configuration for your SMTP server in the form under *Email*. Add an email address to receive alerts and click *Save Settings*.

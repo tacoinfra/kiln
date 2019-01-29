@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -19,6 +20,7 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
 import qualified Data.ByteString.Base16 as BS16
+import Data.Fixed (divMod')
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -28,11 +30,13 @@ import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import Data.Version (Version, showVersion)
+import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
-import Reflex.Dom.Form.Widgets (formItem, formItem', validatedInput)
+import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
+import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
@@ -43,6 +47,7 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common (humanizeTimestamp)
+import Common.Api (PublicRequest)
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
@@ -80,7 +85,15 @@ hrefLink :: DomBuilder t m => Text -> m a -> m a
 hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
-tez (Tez n) = T.dropWhileEnd (=='.') (T.dropWhileEnd (== '0') (tshow n)) <> "ꜩ"
+tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
+  where (wholes :: Integer, parts) = n `divMod'` 1
+        wholes' = reverse $ f $ reverse $ show wholes
+        parts' = T.dropWhileEnd (== '.')
+                 $ T.dropAround (== '0')
+                 $ tshow parts
+        f = \case
+          (a0 : a1 : a2 : as) -> a0 : a1 : a2 : ',' : f as
+          as -> as
 
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
 localTimestamp t = do
@@ -329,6 +342,9 @@ icon i = elClass "i" (iconClass i) blank
 iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
 iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
+kilnLogo :: DomBuilder t m => m ()
+kilnLogo = elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
+
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
 updatedWithInit d = do
@@ -382,6 +398,20 @@ cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
+confirmationModal :: MonadRhyoliteFrontendWidget app t m
+                  => Text
+                  -> Text
+                  -> Text
+                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> Event t ()
+                  -> m (Event t ())
+confirmationModal title msg btn mkReq = cancelableModal $ \close -> do
+  el "h3" $ text title
+  el "p" $ text msg
+  confirm <- divClass "buttons" $ uiButton "primary" btn
+  response <- requestingIdentity $ public <$> mkReq confirm
+  pure $ leftmost [response, close]
+
 data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
   deriving (Eq, Show, Ord)
 
@@ -424,39 +454,64 @@ manageMenu click menuEl = mdo
 
   pure $ leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
 
+uriField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+         => Text -> Text -> m (Dynamic t (Either Text Uri.URI))
+uriField lbl ph = validatedInput validateUri $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text lbl)
 
-aliasedInputForm
-  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m, Eq a)
-  => Validator.Validator t m a
+pkhField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+         => Text -> Text -> m (Dynamic t (Either Text PublicKeyHash))
+pkhField lbl ph = validatedInput validateBakerAddr $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text lbl)
+
+aliasField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+           => Text -> m (Dynamic t (Either Text (Maybe Text)))
+aliasField ph = validatedInput (Validator.optional Validator.validateText) $ def
+  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ text "Alias")
+
+minConnectionsField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace, Num a, Ord a, Read a, Show a)
+                    => m (Dynamic t (Either Text (Maybe a)))
+minConnectionsField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Nothing) Nothing) $ def
+  & Txt.setPlaceholder ("e.g. " <> "5")
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ do
+                     text "Minimum Peer Connections"
+                     divClass "explanation" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
+
+zipFields :: (Applicative m, Reflex t)
+          => m (Dynamic t (Either Text a))
+          -> m (Dynamic t (Either Text b))
+          -> m (Dynamic t (Either Text (a, b)))
+zipFields = zipFieldsWith (,)
+
+zipFieldsWith :: (Applicative m, Reflex t)
+              => (a -> b -> c)
+              -> m (Dynamic t (Either Text a))
+              -> m (Dynamic t (Either Text b))
+              -> m (Dynamic t (Either Text c))
+zipFieldsWith = (liftA2 . liftA2 . liftA2)
+
+formWithReset
+  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m)
+  => Text -- ^ Form label
+  -> Text -- ^ Submit button tooltip
   -> m () -- ^ Feedback after submit
   -> Event t () -- ^ Reset the form
-  -> Text -- ^ Label
-  -> Text -- ^ Submit tooltip
-  -> Text -- ^ Field label
-  -> Text -- ^ Placeholder
-  -> Text -- ^ Alias field placeholder
-  -> m (Event t (a, Maybe Text))
-aliasedInputForm validator feedback reset label info fieldlabel placeholder aliasPlaceHolder = divClass "ui form fields" $ do
-  (namedAddress, submitEvt) <- formWithSubmit $ do
-    let
-      fields = (liftA2.liftA2.liftA2) (,)
-        (formItem' "required"
-          $ validatedInput validator
-          $ def & Txt.setPlaceholder ("e.g. " <> placeholder)
-                & Txt.setFluid
-                & Txt.addLabel (el "label" $ text fieldlabel))
-        (formItem
-          $ validatedInput (Validator.optional Validator.validateText)
-          $ def & Txt.setPlaceholder ("e.g. " <> aliasPlaceHolder)
-                & Txt.setFluid
-                & Txt.addLabel (el "label" $ text "Alias"))
-
-    namedAddress <- fmap join $ widgetHold fields $ fields <$ reset
-
+  -> m (Dynamic t (Either Text a)) -- ^ Fields
+  -> m (Event t a)
+formWithReset lbl ttp feedback reset fields = divClass "ui form fields" $ do
+  (val, submitEvt) <- formWithSubmit $ do
+    val <- fmap join $ widgetHold fields $ fields <$ reset
     feedback
-    _ <- submitButtonWithInfoCls "fluid primary" label info
-    return namedAddress
-  return $ filterRight $ tag (current namedAddress) submitEvt
+    _ <- submitButtonWithInfoCls "fluid primary" lbl ttp
+    pure val
+  return $ filterRight $ current val <@ submitEvt
 
 nbsp :: Text
 nbsp = "\x00A0"

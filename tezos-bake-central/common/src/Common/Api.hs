@@ -28,12 +28,18 @@ import Common.Schema (LogTag)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
-    PublicRequest_AddNode
+    PublicRequest_AddExternalNode
       :: URI
       -> Maybe Text
+      -> Maybe Int
       -> PublicRequest Bake ()
+    PublicRequest_AddInternalNode
+      :: PublicRequest Bake ()
     PublicRequest_RemoveNode
-      :: URI
+      :: Either URI ()
+      -> PublicRequest Bake ()
+    PublicRequest_UpdateInternalNode
+      :: Bool
       -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: URI -- address of client to subscribe to

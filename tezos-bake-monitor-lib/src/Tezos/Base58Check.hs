@@ -16,6 +16,8 @@ module Tezos.Base58Check where
 import Control.DeepSeq (NFData)
 import Control.Monad
 import Data.Aeson
+import Data.Binary.Builder (fromByteString)
+import Data.Binary.Get (getByteString)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base58
@@ -41,6 +43,7 @@ import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
 import qualified Data.ByteArray as BA
 #endif
 
+import qualified Tezos.Binary as B
 import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- see ~/tezos/src/lib_crypto/base58.ml
@@ -216,6 +219,10 @@ instance IsBase58Hash t => Read (HashedValue t) where
         Read.String valText <- Read.lexP
         Right val <- return $ fromBase58 $ T.encodeUtf8 $ T.pack valText
         return val
+
+instance IsBase58Hash t => B.TezosBinary (HashedValue t) where
+  build = fromByteString . fromShort . unHashedValue
+  get = (HashedValue . toShort) <$> getByteString (hashSize $ Proxy @t)
 
 
 instance IsBase58Hash 'HashType_BlockHash where

@@ -23,7 +23,7 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id (..), unId)
+import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
 
@@ -49,7 +49,7 @@ notifyHandler
   -> BakeViewSelector a
   -> m (BakeView a)
 notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
-  -- $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
+  --  $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
   case fromJSON (_notifyMessage_value notifyMessage) of
     Aeson.Error e -> do
       $(logWarn) $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
@@ -73,6 +73,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
         (ErrorLogView_NodeError . NodeErrorLogView_NodeWrongChain)
         eid
+      Notify_ErrorLogNodeInvalidPeerCount eid -> handleErrorLog _errorLogNodeInvalidPeerCount_log
+        (ErrorLogView_NodeError . NodeErrorLogView_NodeInvalidPeerCount)
+        eid
       Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
         (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
         eid
@@ -86,6 +89,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log ErrorLogView_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
+      Notify_NodeInternal eid ent -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
       Notify_NodeDetails eid ent -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
       Notify_Notificatee eid -> handleNotificatee eid
       Notify_Parameters eid ent -> handleParameters eid ent
@@ -143,6 +147,16 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         Nothing -> pure [(Bounded nid, First Nothing)]
         Just _ -> getNodeAddresses (Just $ nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
+
+    {-# INLINE handleNodeInternal #-}
+    handleNodeInternal
+      :: (Monad m', PostgresRaw m')
+      => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
+    handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeInternalV <- case mNodeInternalData of
+        Nothing -> pure [(Bounded nid, First Nothing)]
+        Just _ -> getNodeAddresses (Just $ nid)
+      pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }
 
     handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
     handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence
@@ -204,19 +218,19 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     handleErrorLog
-      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
-      :: forall e m2. (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2) -- (EntityWithId e, PersistBackend m2, PostgresRaw m2)
       => (e -> m2 (BakeView a)) -> (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
     handleErrorLog' k getLogId toView specificLogId = do
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
-      specificLog' :: Maybe e <- getId specificLogId
+      specificLog' :: Maybe e <- getIdBy specificLogId
       logNodeSummary <- for (fmap nodeIdForNodeErrorLogView . nodeErrorViewOnly . toView =<< specificLog') $ \logNodeId -> do
         whenM (viewSelects (Bounded logNodeId) nodeAddressesVS) $ do
           newNodeCounts <- getNodeAddresses $ Just logNodeId

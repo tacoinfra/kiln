@@ -10,8 +10,6 @@ import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
--- import Data.Attoparsec.ByteString ((<?>))
-import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Function (on)
 import Data.Foldable (toList)
@@ -25,6 +23,8 @@ import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
 
 import Tezos.Base16ByteString
+import qualified Tezos.Binary as B
+import Tezos.ShortByteString (ShortByteString, toShort, fromShort)
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }
@@ -87,3 +87,8 @@ instance Ord a => Semigroup (FitnessF a) where
 instance Ord a => Monoid (FitnessF a) where
   mempty = FitnessF mempty
   mappend = (<>)
+
+instance B.TezosBinary Fitness where
+  build (FitnessF xs) = B.build $ B.DynamicSize $ fmap (B.DynamicSize . fromShort . unbase16ByteString) xs
+  put (FitnessF xs) = B.put $ B.DynamicSize $ fmap (B.DynamicSize . fromShort . unbase16ByteString) xs
+  get = (FitnessF . fmap (Base16ByteString . toShort . B.unDynamicSize) . B.unDynamicSize) <$> B.get

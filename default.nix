@@ -258,7 +258,7 @@ let
   };
 
 in obApp // {
-  inherit dockerExe dockerImage;
+  inherit pkgs dockerExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =

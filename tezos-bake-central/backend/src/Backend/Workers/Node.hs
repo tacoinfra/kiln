@@ -1,4 +1,3 @@
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -39,6 +38,7 @@ import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
+import qualified Text.URI.QQ as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
@@ -48,7 +48,8 @@ import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
-                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError)
+                       reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
+                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -84,11 +85,12 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     updatedLevel <- liftIO $ atomically $ do
       let latestHeadTVar = _nodeDataSource_latestHead nds
       latestHead <- readTVar latestHeadTVar
-      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness then do
-        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-        pure $ Just $ headBlockInfo ^. level
-      else
-        pure Nothing
+      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness
+        then do
+          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
+          pure $ Just $ headBlockInfo ^. level
+        else
+          pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
@@ -130,14 +132,15 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
 
 updateNetworkStats
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => Http.Manager
+  => AppConfig
+  -> Http.Manager
   -> Pool Postgresql
-  -> URI
   -> Id Node
+  -> NodeData
   -> NodeDetailsData
   -> m (Either RpcError ())
-updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
+updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address node)) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
     pure $ before
@@ -151,6 +154,14 @@ updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
   -- We will rely on the block monitor to clear any inaccessible endpoint errors
   -- for this node.m
   when (before /= after) $ inDb $ do
+    let
+      minPeerCount = nodeData_minPeerConnections node
+    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+      flip runReaderT appConfig $
+        if (peerCount < fromIntegral minPeerCount)
+          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+          else clearNodeInvalidPeerCountError nid
+
     let p = (NodeDetails_dataField ~>)
     update
       [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
@@ -159,6 +170,19 @@ updateNetworkStats httpMgr db nodeAddr nid before = runExceptT $ do
       (NodeDetails_idField ==. nid)
     project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
   pure ()
+
+type NodeData = Either NodeInternalData NodeExternalData
+nodeData_address :: NodeData -> URI
+nodeData_address = either (const poorGuessAtKilnURI) _nodeExternalData_address
+  where
+    -- todo: make a better job ad deciding this.
+    poorGuessAtKilnURI = [Uri.uri|http://127.0.0.1:8732|]
+nodeData_minPeerConnections :: NodeData -> Int
+nodeData_minPeerConnections = either (const 0) (fromMaybe 0 . _nodeExternalData_minPeerConnections)
+
+nodeData_alias :: NodeData -> Maybe Text
+nodeData_alias = either (const $ Just "Kiln managed node") _nodeExternalData_alias
+
 
 -- | Select from all the tables that have to do with join.
 --
@@ -169,25 +193,32 @@ getNodes
      )
   => Pool Postgresql
   -> cond
-  -> m (Map (Id Node) (Node, NodeExternalData, NodeDetailsData))
+  -> m (Map (Id Node) (Node, NodeData, NodeDetailsData))
 getNodes db constraints = do
-  (nodeIds, nodeEs, nodeDs) :: ( Map (Id Node) Node
+  (nodeIds, nodeEs, nodeIs, nodeDs) :: ( Map (Id Node) Node
                                , Map (Id Node) NodeExternalData
+                               , Map (Id Node) NodeInternalData
                                , Map (Id Node) NodeDetailsData
                                )
-    <- runDb (Identity db) $ liftA3 (,,)
-      (selectMap NodeConstructor CondEmpty)
-      (Map.fromList <$> project
-        ( NodeExternal_idField
-        , NodeExternal_dataField ~> DeletableRow_dataSelector)
-        (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
-      (Map.fromList <$> project
-        (NodeDetails_idField, NodeDetails_dataField)
-        constraints)
+    <- runDb (Identity db) $ (,,,)
+      <$> (selectMap NodeConstructor CondEmpty)
+      <*> (Map.fromList <$> project
+            ( NodeExternal_idField
+            , NodeExternal_dataField ~> DeletableRow_dataSelector)
+            (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      <*> (Map.fromList <$> project
+            ( NodeInternal_idField
+            , NodeInternal_dataField ~> DeletableRow_dataSelector)
+            (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False))
+      <*> (Map.fromList <$> project
+            (NodeDetails_idField, NodeDetails_dataField)
+            constraints)
+
+  let nodeIEs :: Map (Id Node) NodeData = fmap Left nodeIs `Map.union` fmap Right nodeEs
 
   pure $ fmapMaybe id $ alignWith
     (these (Just . ($ mkNodeDetails)) (const Nothing) (\f a -> Just $ f a))
-    ((,,) <$> nodeIds <.> nodeEs) nodeDs
+    ((,,) <$> nodeIds <.> nodeIEs) nodeDs
 
 nodeWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
@@ -205,12 +236,12 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     theseNodeRecords <- getNodes db CondEmpty
 
     -- give them all a chance to
-    ifor_ theseNodeRecords $ \nodeId (Node, nodeExt, nodeDetails) ->
-      updateNetworkStats httpMgr db (_nodeExternalData_address nodeExt) nodeId nodeDetails >>= \case
+    ifor_ theseNodeRecords $ \nodeId (Node, node, nodeDetails) ->
+      updateNetworkStats appConfig httpMgr db nodeId node nodeDetails >>= \case
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (_nodeExternalData_address nE, (i, _nodeExternalData_alias nE))) $ Map.toList theseNodeRecords
+    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
@@ -371,11 +402,12 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
   latestBlock' <- liftIO $ atomically $ do
     let latestHeadTVar = _nodeDataSource_latestHead nds
     latestHead <- readTVar latestHeadTVar
-    if Just (blk ^. fitness) > latestHead ^? _Just . fitness then do
-      writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
-      pure $ Just $ mkVeryBlockLike blk
-    else
-      pure Nothing
+    if Just (blk ^. fitness) > latestHead ^? _Just . fitness
+      then do
+        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
+        pure $ Just $ mkVeryBlockLike blk
+      else
+        pure Nothing
 
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)

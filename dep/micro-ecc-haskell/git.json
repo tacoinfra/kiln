@@ -1,0 +1,7 @@
+{
+  "url": "https://gitlab.com/xplat/micro-ecc-haskell.git",
+  "rev": "ae703b818a666b7dddfd7f5a052473ed2c5c763e",
+  "sha256": "0hsizhhgqkyzjqzr0kj8ks8j98whinqikwza4qp3m8r4pzq0shsh",
+  "fetchSubmodules": false,
+  "branch": "master"
+}

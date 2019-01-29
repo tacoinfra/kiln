@@ -10,18 +10,22 @@ module Backend.Migrations where
 
 import Backend.Schema (migrateSchema)
 import Control.Monad.Logger (MonadLogger, logInfoS)
-import Data.List (intercalate)
+import qualified Data.Text as T
 import Data.String (fromString)
 import Database.Groundhog.Core
 import Database.Groundhog.Generic (runMigration)
 import Database.Groundhog.Generic.Migration hiding (migrateSchema)
+import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (..))
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, sql, Only(..))
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 
 import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
+
+convQN :: QualifiedIdentifier -> QualifiedName
+convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
 migrateKiln :: (Migrate m) => m ()
 migrateKiln = (getTableAnalysis >>= preMigrate >>= autoMigrate) *> extraIndexes
@@ -36,18 +40,29 @@ preMigrate :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 preMigrate =
       migrateParameters
   >=> migratePublicNodeHead
-  >=> dropTableIfExists (Nothing, "ErrorLogUpgradeNotice")
-  >=> dropTableIfExists (Nothing, "PendingReward")
-  >=> dropColumnIfExists (Nothing, "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
-  >=> renameColumnIfExists (Nothing, "Delegate") "deleted" "data#deleted"
-  >=> renameColumnIfExists (Nothing, "Delegate") "alias" "data#data#alias"
-  >=> renameTableIfExists (Nothing, "Delegate") "Baker"
+  >=> dropTableIfExists (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
+  >=> dropTableIfExists (QualifiedIdentifier Nothing "PendingReward")
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerDeactivated") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerDeactivationRisk") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerMissed") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerNoHeartbeat") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogMultipleBakersForSameBaker") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeInvalidPeerCount") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
+  >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
+  >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
+  >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
   >=> migrateNodesToSplitTable
+  >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
-  let table = (Nothing, "Parameters")
-  analyzedTable' <- analyzeTable ta table
+  let table = QualifiedIdentifier Nothing "Parameters"
+  analyzedTable' <- analyzeTable ta (convQN table)
   let
     hasHeadTimestamp = any ((== "headTimestamp") . colName) . tableColumns
     hasOriginationSize = any ((== "protoInfo#originationSize") . colName) . tableColumns
@@ -59,69 +74,82 @@ migrateParameters ta = do
 
 migratePublicNodeHead :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migratePublicNodeHead ta = do
-  let table = (Nothing, "PublicNodeHead")
-  hasHeadBlockHash <- fmap (any ((== "headBlock#hash") . colName) . tableColumns) <$> analyzeTable ta table
+  let table = QualifiedIdentifier Nothing "PublicNodeHead"
+  hasHeadBlockHash <- fmap (any ((== "headBlock#hash") . colName) . tableColumns) <$> analyzeTable ta (convQN table)
   case hasHeadBlockHash of
     Nothing -> pure ta
     Just False -> dropTable table *> getTableAnalysis
     Just True -> pure ta
 
-renameColumnIfExists :: (Migrate m) => QualifiedName -> String -> String -> TableAnalysis m -> m (TableAnalysis m)
+renameColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 renameColumnIfExists table columnFrom columnTo ta = do
-  maybeTableInfo <- analyzeTable ta table
+  maybeTableInfo <- analyzeTable ta (convQN table)
   let columnExists = do
         tableInfo <- maybeTableInfo
-        return $ columnFrom `elem` fmap colName (tableColumns tableInfo)
+        return $ columnFrom `elem` fmap (Identifier . T.pack . colName) (tableColumns tableInfo)
   case columnExists of
     Just True -> renameColumn table columnFrom columnTo *> getTableAnalysis
     _ -> pure ta
 
-renameColumn :: (Migrate m) => QualifiedName -> String -> String -> m ()
-renameColumn (schema, tableName) columnNameFrom columnNameTo = do
-  let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" RENAME COLUMN \"" <> columnNameFrom <> "\" TO \"" <> columnNameTo <> "\""
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+renameColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> m ()
+renameColumn tableName columnNameFrom columnNameTo = void [traceExecuteQ|
+    ALTER TABLE ?tableName RENAME COLUMN ?columnNameFrom TO ?columnNameTo
+  |]
 
-dropColumnIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
+dropColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 dropColumnIfExists table columnFrom ta = do
-  maybeTableInfo <- analyzeTable ta table
+  maybeTableInfo <- analyzeTable ta (convQN table)
   let columnExists = do
         tableInfo <- maybeTableInfo
-        return $ columnFrom `elem` fmap colName (tableColumns tableInfo)
+        return $ columnFrom `elem` fmap (Identifier . T.pack . colName) (tableColumns tableInfo)
   case columnExists of
     Just True -> dropColumn table columnFrom *> getTableAnalysis
     _ -> pure ta
 
-dropColumn :: (Migrate m) => QualifiedName -> String -> m ()
-dropColumn (schema, tableName) columnNameFrom = do
-  let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableName <> "\" DROP COLUMN \"" <> columnNameFrom <> "\""
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+dropColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
+dropColumn tableName columnNameFrom = void [traceExecuteQ|
+    ALTER TABLE ?tableName DROP COLUMN ?columnNameFrom
+  |]
 
-renameTableIfExists :: (Migrate m) => QualifiedName -> String -> TableAnalysis m -> m (TableAnalysis m)
+createSequence :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
+createSequence sequenceName ta = do
+  void [traceExecuteQ|
+      CREATE SEQUENCE IF NOT EXISTS ?sequenceName
+    |]
+  return ta
+
+renameTableIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 renameTableIfExists tableFrom tableTo ta = do
-  analyzeTable ta tableFrom >>= \case
+  analyzeTable ta (convQN tableFrom) >>= \case
     Nothing -> pure ta
     Just _ -> renameTable tableFrom tableTo *> getTableAnalysis
 
-renameTable :: (Migrate m) => QualifiedName -> String -> m ()
-renameTable (schema, tableNameFrom) tableNameTo = do
-  let sqlCode = "ALTER TABLE " <> maybe "" (\x -> "\"" <> x <> "\".") schema <> "\"" <> tableNameFrom <> "\" RENAME TO \"" <> tableNameTo <> "\""
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+renameTable :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
+renameTable tableNameFrom tableNameTo = void [traceExecuteQ|
+    ALTER TABLE ?tableNameFrom RENAME TO ?tableNameTo
+  |]
 
-dropTableIfExists :: (Migrate m) => QualifiedName -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIfExists :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
 dropTableIfExists table ta = do
-  analyzeTable ta table >>= \case
+  analyzeTable ta (convQN table) >>= \case
     Nothing -> pure ta
     Just _ -> dropTable table *> getTableAnalysis
 
-
-
 extraIndexes :: Migrate m => m ()
 extraIndexes = do
-  createIndex (Nothing, "ErrorLog") ["started"] "_errorLog_started_idx"
+  createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx" Nothing
+  createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
+  createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
 
-
-createIndex :: (Migrate m) => QualifiedName -> [String] -> String -> m ()
-createIndex table@(tableSchema, _tableName) columns indexName = do
+createIndex
+  :: (Migrate m)
+  => QualifiedIdentifier
+  -> [Either Text Identifier]
+  -> Identifier
+  -> Maybe Text
+  -> m ()
+createIndex table@(QualifiedIdentifier tableSchema _tableName) columns indexIdent condition = do
+  let indexName = fromIdentifier indexIdent
   -- TODO: this only verifies that the index exists, not that it uses the right columns in the right order.
   -- JOIN pg_catalog.pg_attribute a  ON a.attrelid = t.oid
   --   where a.attnum = ANY(ix.indkey)
@@ -137,23 +165,23 @@ createIndex table@(tableSchema, _tableName) columns indexName = do
       AND c.nspname = COALESCE(?tableSchema, 'public') |]
   case needIndex of
     True -> do
-          let sqlCode = "CREATE INDEX " <> quoteNameSql indexName
-                 <> " ON " <> tableSql table
-                 <> " (" <> intercalate ", " (quoteNameSql <$> columns) <> ")"
-          $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
+      let sqlCode = "CREATE INDEX " <> quoteNameSql indexIdent
+            <> " ON " <> tableSql table
+            <> " (" <> T.intercalate ", " (either id quoteNameSql <$> columns) <> ")"
+            <> maybe "" (" WHERE " <>) condition
+      $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString $ T.unpack sqlCode)
     False -> return ()
 
-quoteNameSql :: String -> String
-quoteNameSql x = "\"" <> x <> "\""
+quoteNameSql :: Identifier -> Text
+quoteNameSql x = "\"" <> fromIdentifier x <> "\""
 
-tableSql :: QualifiedName -> String
-tableSql (schema, tableName) = maybe "" ((<> ".") . quoteNameSql) schema <> "\"" <> tableName <> "\""
+tableSql :: QualifiedIdentifier -> Text
+tableSql (QualifiedIdentifier schema tableName) =
+  maybe "" ((<> ".") . quoteNameSql . Identifier) schema
+  <> quoteNameSql (Identifier tableName)
 
-dropTable :: (Migrate m) => QualifiedName -> m ()
-dropTable table = do
-  let sqlCode = "DROP TABLE " <> tableSql table
-  $(logInfoS) "SQL" (tshow sqlCode) *> void (execute_ $ fromString sqlCode)
-
+dropTable :: (Migrate m) => QualifiedIdentifier -> m ()
+dropTable tableName = void [traceExecuteQ|DROP TABLE ?tableName|]
 
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
@@ -164,8 +192,7 @@ migrateNodesToSplitTable ta = do
     Just analyzedTable
       | any ((== "address") . colName) $ tableColumns analyzedTable
       -> do
-          let
-            sqlCode = [sql|
+          void [traceExecuteQ|
               CREATE TABLE "NodeExternal"
                 ( "id" INT8 NOT NULL
                 , "data#data#address" VARCHAR NOT NULL
@@ -247,6 +274,5 @@ migrateNodesToSplitTable ta = do
               ALTER TABLE "Node" DROP COLUMN "alias";
               ALTER TABLE "Node" DROP COLUMN "address";
             |]
-          $(logInfoS) "SQL" "" {-(tshow sql)-} *> void (execute_ sqlCode)
           getTableAnalysis
     _ -> pure ta

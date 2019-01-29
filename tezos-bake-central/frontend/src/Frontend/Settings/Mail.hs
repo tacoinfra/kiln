@@ -152,13 +152,13 @@ mailServerForm (srv0, emails0) = do
           $ validatedInput Validator.validateText
           $ defTxt "Host"
             & Txt.setInitial (_mailServerView_hostName srv0)
-            & Txt.setPlaceholder "eg 127.0.0.1"
+            & Txt.setPlaceholder "e.g. 127.0.0.1"
 
         tellFieldErr (_1 . mailServerView_portNumber) <=< formItem' "required three wide"
           $ validatedInput (Validator.validateNumeric "port" (Just 0, Just 65535) (Just 1))
           $ defTxt "Port"
             & Txt.setInitial (tshow $ _mailServerView_portNumber srv0)
-            & Txt.setPlaceholder "eg 465"
+            & Txt.setPlaceholder "e.g. 465"
 
         tellFieldErr (_1 . mailServerView_smtpProtocol) <=< formItem' "required three wide"
           $ fmap (fmap (maybe (Left "Please select a protocol") Right) . SemUi._dropdown_value)

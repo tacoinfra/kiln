@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -86,6 +85,7 @@ import Common.Schema
 import Common.URI (mkRootUri)
 import ExtraPrelude
 import Frontend (frontend)
+import Backend.NodeCmd
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -212,9 +212,10 @@ backendImpl cfg serve = do
           insert $ NodeExternal
             { _nodeExternal_id = nid
             , _nodeExternal_data = DeletableRow
-              { _deletableRow_data =NodeExternalData
+              { _deletableRow_data = NodeExternalData
                 { _nodeExternalData_address = newAddress
                 , _nodeExternalData_alias = Nothing
+                , _nodeExternalData_minPeerConnections = Nothing
                 }
               , _deletableRow_deleted = False
               }
@@ -258,7 +259,10 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerWorker appConfig dataSrc
 
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db
+        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+
+      for_ maybeNamedChain $ \namedChain ->
+        addFinalizer =<< internalNodeWorker logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

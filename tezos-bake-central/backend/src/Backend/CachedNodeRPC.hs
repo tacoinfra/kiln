@@ -39,10 +39,12 @@ import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
+import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
@@ -65,6 +67,7 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
 import Tezos.NodeRPC.Types
+import Tezos.PublicKey
 import Tezos.Types
 
 import Backend.Common (timeout')
@@ -83,6 +86,7 @@ data NodeQuery a where
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+  NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
 deriving instance Show (NodeQuery a)
 
 
@@ -331,13 +335,13 @@ cycleStartHashes blkHash = do
     branch <- blkHash `Map.lookup` (_cachedHistory_blocks history)
     let
       minLvl = _cachedHistory_minLevel history
-      lvl = minLvl + RawLevel (length branch)
+      lvl = minLvl + RawLevel (fromIntegral $ length branch)
       cycle = levelToCycle protoInfo lvl
       preservedCycles = _protoInfo_preservedCycles protoInfo
       cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
       minLevels = firstLevelInCycle protoInfo <$> cycles
       maxLevels = pred . firstLevelInCycle protoInfo . succ <$> cycles
-      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . unRawLevel . subtract minLvl <$> minLevels
+      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
     return $ getZipList $ RightsCycleInfo
       <$> ZipList branches
       <*> ZipList cycles
@@ -368,6 +372,10 @@ getKey params hist = \case
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
+  q@(NodeQuery_PublicKey _) -> do
+    let branches = _cachedHistory_branches hist
+    block <- maximumByMay (comparing $ view fitness) $ Map.elems branches
+    pure (view hash block, q)
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -465,7 +473,7 @@ nodeQueryDataSourceRaw q' = do
                   nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
                   nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
 
-                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) protoInfo ctx logger nodeQueryViaCache q
+                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx logger nodeQueryViaCache q
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -482,13 +490,14 @@ pickNode branch = do
 nodeQueryDataSourceImpl
   :: forall a.
      ChainId
+  -> BlockHash
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q of
+nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -498,6 +507,11 @@ nodeQueryDataSourceImpl chainId _proto ctx logger self' q = runExceptT $ case q 
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
+  NodeQuery_PublicKey contractId -> do
+    managerkeyResp <- nodeRPC' $ rManagerKey chainId qBranch contractId
+    case view managerKey_key managerkeyResp of
+      Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
+      Just pk -> pure $ pk
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
@@ -545,7 +559,7 @@ ancestors ::
 ancestors (RawLevel n) branch = do
   hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
-    Just branchPath -> return $ fmap fst $ take n $ LCA.toList branchPath
+    Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
 calculateBakeEfficiency ::
