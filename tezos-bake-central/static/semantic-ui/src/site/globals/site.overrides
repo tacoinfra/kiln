@@ -255,7 +255,7 @@ body {
     > .ui.vertical.menu {
       margin-top: unit(40 / @emSize, rem);
       margin-bottom: unit(30 / @emSize, rem);
-      > .link.item:only-child {
+      .link.item:only-child {
         background-color: @white;
         border: solid @1px @grey;
         border-radius: @3px;
