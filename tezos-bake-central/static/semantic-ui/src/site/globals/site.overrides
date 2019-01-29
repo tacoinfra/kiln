@@ -259,6 +259,11 @@ body {
     > .ui.vertical.menu {
       margin-top: unit(40 / @emSize, rem);
       margin-bottom: unit(30 / @emSize, rem);
+
+      a:hover {
+        text-decoration: none;
+      }
+
       .link.item:only-child {
         background-color: @white;
         border: solid @1px @grey;
@@ -270,6 +275,10 @@ body {
         }
       }
     }
+  }
+
+  .app-side-footer > .ui.vertical.menu > a:hover {
+    text-decoration: none;
   }
 }
 
