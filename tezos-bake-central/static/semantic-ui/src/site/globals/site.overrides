@@ -857,6 +857,27 @@ img.credits-obsidian {
         }
       }
 
+      table.baker-balance {
+        border-spacing: 0;
+        > tr > td:first-child::after {
+          content: ":";
+        }
+        > tr > td.baker-balance-whole {
+          padding-right: 0;
+          text-align: right;
+          font-weight: bold;
+        }
+        > tr > td.baker-balance-part {
+          padding-left: 0;
+          text-align: left;
+          font-weight: bold;
+        }
+        .tez {
+          margin-left: 0.3rem;
+          color: @grey;
+        }
+      }
+
       > .peer-count {
         font-size: @16px;
       }

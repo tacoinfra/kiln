@@ -85,7 +85,11 @@ hrefLink :: DomBuilder t m => Text -> m a -> m a
 hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
-tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
+tez t = let (w, p, tz) = tez' t
+         in w <> p <> tz
+
+tez' :: Tez -> (Text, Text, Text)
+tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
   where (wholes :: Integer, parts) = n `divMod'` 1
         wholes' = reverse $ f $ reverse $ show wholes
         parts' = T.dropWhileEnd (== '.')

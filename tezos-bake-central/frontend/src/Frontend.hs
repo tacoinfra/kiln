@@ -1425,17 +1425,27 @@ bakersTab =
         (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
-          Just details -> el "dl" $ do
+          Just details -> elClass "table" "baker-balance" $ do
             let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "div" $ do
-              el "dt" (text "Available Balance")
-              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-                text . tez . _cacheDelegateInfo_balance
+            el "tr" $ do
+              el "td" (text "Available Balance")
+              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
+                text w
+              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
+                text p
+                elClass "span" "tez" $ text tz
 
-            el "div" $ do
-              el "dt" (text "Staking Balance")
-              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-                text . tez . _cacheDelegateInfo_stakingBalance
+            el "tr" $ do
+              el "td" (text "Staking Balance")
+              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+                text w
+              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+                text p
+                elClass "span" "tez" $ text tz
 
             --el "div" $ do
             --  el "dt" (text "Bake Success:")
