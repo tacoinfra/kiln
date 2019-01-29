@@ -76,10 +76,11 @@ clientWorker appCfg nds =
       let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
       toUpdate :: [(Id BakerDaemonExternal, URI, Maybe T.Text)] <- [queryQ|
-        SELECT id, address, alias
+        SELECT c.id, c."data#data#address", c."data#data#alias"
         FROM "BakerDaemonExternal" c
-        WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
-        ORDER BY updated NULLS FIRST
+        WHERE NOT c."data#deleted" AND
+          (c."data#data#updated" < ?maxTime OR c."data#data#updated" IS NULL)
+        ORDER BY c."data#data#updated" NULLS FIRST
       |]
 
       _clientBakers <- for toUpdate $ \(Id cid, address, _alias) -> do
