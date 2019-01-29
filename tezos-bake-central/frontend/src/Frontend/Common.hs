@@ -92,7 +92,7 @@ tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
                  $ T.dropAround (== '0')
                  $ tshow parts
         f = \case
-          (a0 : a1 : a2 : as) -> a0 : a1 : a2 : ',' : f as
+          (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
