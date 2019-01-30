@@ -83,7 +83,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             when (_deletableRow_deleted nodeData || (not $ nodeData ^. deletableRow_data . nodeInternalData_running)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
-                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. True
+                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> ProcessState_runningSelector =. True
                 ]
                 CondEmpty
               notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
