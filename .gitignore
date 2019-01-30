@@ -8,3 +8,4 @@ ghcid-output.txt
 */.ghc.environment.*
 cabal.project.local
 node_modules
+tezos-bake-central/.tezos-node
