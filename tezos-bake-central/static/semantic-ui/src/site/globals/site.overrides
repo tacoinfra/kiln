@@ -400,7 +400,7 @@ body {
       .title {
         display: block;
         text-overflow: ellipsis;
-        overflow-x: hidden;
+        overflow: hidden;
       }
       img {
         height: @10px;
@@ -410,7 +410,7 @@ body {
       }
     }
     .description {
-      overflow-x: hidden;
+      overflow: hidden;
       text-overflow: ellipsis;
     }
   }
