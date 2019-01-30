@@ -233,29 +233,34 @@ instance HasId NodeExternalData where
 
 data NodeInternal = NodeInternal
   { _nodeInternal_id :: !(Id Node)
-  , _nodeInternal_data :: !(DeletableRow NodeInternalData)
+  , _nodeInternal_processDataId :: !(DeletableRow (Id ProcessDataId))
   } deriving (Eq, Ord, Show, Generic, Typeable)
+
 instance HasId NodeInternal where
-  -- Should be the same as `IdData NodeInternalData` always.
   type IdData NodeInternal = Id Node
 
-data NodeInternalState
-   = NodeInternalState_Stopped
-   | NodeInternalState_Initializing
-   | NodeInternalState_Starting
-   | NodeInternalState_Running
-   | NodeInternalState_Failed
+data ProcessDataId = ProcessDataId
+  deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId ProcessDataId
+
+data ProcessState
+   = ProcessState_Stopped
+   | ProcessState_Initializing
+   | ProcessState_Starting
+   | ProcessState_Running
+   | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
-data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we *want* the node in;
-  , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
-  , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
-  , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
+data ProcessData = ProcessData
+  { _processData_id :: !(Id ProcessDataId)
+  , _processData_running :: !Bool -- the state we *want* the node in;
+  , _processData_state :: !ProcessState -- the state the node is actually in.
+  , _processData_updated :: !(Maybe UTCTime) -- the time the node's state was last set.
+  , _processData_backend :: !(Maybe Int) -- a "unique" process id
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance HasId NodeInternalData where
-  type IdData NodeInternalData = Id Node
+instance HasId ProcessData where
+  type IdData ProcessData = Id ProcessDataId
 
 -- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
 
@@ -808,8 +813,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
-  , ''NodeInternalData
-  , ''NodeInternalState
+  , ''ProcessData
+  , ''ProcessState
   , ''NodeDetails
   , ''NodeDetailsData
   , ''Parameters
@@ -862,7 +867,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'NodeInternalData
+  , 'ProcessData
   , 'NodeDetails
   , 'NodeDetailsData
   , 'Parameters
