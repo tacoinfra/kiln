@@ -101,7 +101,7 @@ data Notify
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
-  | Notify_NodeInternal !(Id Node) !(Maybe NodeInternalData)
+  | Notify_NodeInternal !(Id Node) !(Maybe ProcessData)
   | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
   | Notify_Notificatee !(Id Notificatee)
   | Notify_Parameters !(Id Parameters) Parameters
@@ -284,10 +284,10 @@ instance ToField NamedChain where
 instance FromField NamedChain where
   fromField f b = read <$> fromField f b
 
-instance FromField NodeInternalState where
+instance FromField ProcessState where
   fromField f b = read <$> fromField f b
 
-instance ToField NodeInternalState where
+instance ToField ProcessState where
   toField v = toField (show v)
 
 instance PersistField Tez where
@@ -543,7 +543,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
-  - primitive: NodeInternalState
+  - primitive: ProcessState
   - entity: NodeInternal
     autoKey: null
     keys:
@@ -555,7 +555,16 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: NodeInternalId
             type: primary
             fields: [_nodeInternal_id]
-  - embedded: NodeInternalData
+  - entity: ProcessDataId
+    # constructors:
+    #   - name: ProcessDataId
+  - entity: ProcessData
+    # constructors:
+    #   - name: ProcessData
+    #     uniques:
+    #       - name: ProcessDataId
+    #         type: primary
+    #         fields: [_processData_id]
   - entity: NodeDetails
     autoKey: null
     keys:
@@ -812,6 +821,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
+  , (''ProcessDataId, 'ProcessDataIdKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''TelegramConfig, 'TelegramConfigKey)
