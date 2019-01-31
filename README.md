@@ -1,6 +1,6 @@
 # Overview
 
-[Obsidian Systems’](https://obsidian.systems/) Monitoring Software, Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring. The dashboard displays a tile with relevant information for all nodes and bakers it is monitoring and it alerts the user of any issues that may be encountered.
+[Obsidian Systems’](https://obsidian.systems/) Monitoring Software, Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring. The dashboard displays a tile with relevant information for all nodes and bakers it is monitoring and it alerts the user of any issues that may be encountered. Kiln can also run a Tezos node.
 
 Kiln alerts users within the GUI if a Monitored Node:
 
@@ -111,11 +111,21 @@ You can remove old images and containers for the monitor safely. All your data i
 
 # System Requirements
 
+## For Monitoring
+
 **Disk:** The monitor uses PostgreSQL for *all* storage. The entire database typically uses about 1-2GB.
 
 **Memory:** Idle memory usage is typically under 1GB. When initializing history (usually right after start-up or adding your first node) memory can spike to about 3GB for a short time.
 
 **CPU:** Running with at least 2 cores is recommended.
+
+## For Running a Node
+
+**Disk:** A node running in Kiln will sync with the Tezos blockchain, which is currently ~70GB.
+
+**Memory:** Recommendated RAM for running a Tezos Node is 8GB. We make the same recommendations when running a node in Kiln. *If you are using our Docker Image, note that Docker's default memory allocation is 2GB.* Increasing this allocation to the recommended 8GB is highly recommended.
+
+**CPU**: Running with at least 2 cores is recommended.
 
 # Building from Source
 
@@ -185,6 +195,10 @@ nix-build -A dockerImage --no-out-link
 The result of this command will be the path to a Docker image. You can load it with `docker load -i <path>`.
 
 # Initial Setup
+
+### Running a node
+
+Click *Add Node* in the left panel. Then click *Start Node* on the left side of the modal. Kiln will generate an identity for a local node with the RPC port 8732 and immediately begin syncing with the blockchain. If this port is already in use, Kiln will have difficulty monitoring this node. The Kiln Node can be stopped or restarted through the options menu on the Node's tile on the Dashboard.
 
 ### Adding monitored nodes
 
