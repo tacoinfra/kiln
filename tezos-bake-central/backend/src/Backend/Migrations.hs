@@ -289,27 +289,31 @@ migrateProcessDataToSplitTable ta = do
       -> do
           void [traceExecuteQ|
               CREATE TABLE "ProcessData"
-                ("id" INT8 PRIMARY KEY UNIQUE
+                ( "id" INT8 PRIMARY KEY UNIQUE
                 , "running" BOOLEAN NOT NULL
                 , "state" VARCHAR NOT NULL
                 , "updated" TIMESTAMP NULL
                 , "backend" INT8 NULL);
               INSERT INTO "ProcessData"
-                  ( "backend"
-                  , "updated"
-                  , "state"
+                  ( "id"
                   , "running"
+                  , "state"
+                  , "updated"
+                  , "backend"
                   )
-                  SELECT "data#data#backend"
-                       , "data#data#stateUpdated"
-                       , "data#data#state"
+                  SELECT "id"
                        , "data#data#running"
+                       , "data#data#state"
+                       , "data#data#stateUpdated"
+                       , "data#data#backend"
                   FROM "NodeInternal";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#running";
-              ALTER TABLE "NodeInternal" ADD COLUMN "data#data" INT8 NOT NULL;
+              ALTER TABLE "NodeInternal" ADD COLUMN "data#data" INT8 NULL;
+              UPDATE "NodeInternal" SET "data#data" = "id";
+              ALTER TABLE "NodeInternal" ALTER COLUMN "data#data" SET NOT NULL;
               ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
             |]
           getTableAnalysis
