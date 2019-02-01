@@ -1075,10 +1075,16 @@ nodesTab =
                 internalNodeMenu :: m ()
                 internalNodeMenu = do
                   let
-                    stopModal = confirmationModal
-                      ("Stop this node?")
-                      ("You can always restart this node from the tile menu.")
-                      ("Stop node")
+                    stopModal = warningModal
+                      "Stop Node?"
+                      [ "This node is run by Kiln. Stopping it may affect any bakers you are running which depend on it." ]
+                      "Stop Node"
+                    removeModal = warningModal
+                      "Remove Node?"
+                      [ "This node is run by Kiln. Removing it may affect any bakers you are running which depend on it."
+                      , "All data for this node will be deleted from Kiln."
+                      ]
+                      "Stop and Remove Node"
 
                   running :: Dynamic t Bool <- holdUniqDyn $ _nodeInternalData_running <$> nodeData
                   dyn_ $ ffor running $ \case
@@ -1087,7 +1093,7 @@ nodesTab =
                       start <- tileMenuEntry "Start Node"
                       void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
 
-                  tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
+                  tileMenuEntryModal "Remove Node" $ removeModal $ (PublicRequest_RemoveNode (Right ()) <$)
 
                 title :: m ()
                 title = text "Kiln Node"
@@ -1532,7 +1538,7 @@ removeItemModal :: MonadRhyoliteFrontendWidget app t m
                 -> (Event t () -> Event t (PublicRequest app ()))
                 -> Event t ()
                 -> m (Event t ())
-removeItemModal name = confirmationModal
+removeItemModal name = reminderModal
   ("Remove this " <> name <> "?")
   ("You can always add this " <> name <> " again from the \"Add " <> T.toTitle name <> "\" button.")
   ("Remove " <> T.toTitle name)
