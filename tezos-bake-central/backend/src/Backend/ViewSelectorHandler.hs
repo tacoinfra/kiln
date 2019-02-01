@@ -433,17 +433,18 @@ getNodeAddresses nid = do
       , _nodeExternalData_alias = alias
       , _nodeExternalData_minPeerConnections = mpc
       }))
-  int :: Map.Map (WithInfinity (Id Node)) ProcessState <- [queryQ|
-      SELECT n.id, n."processStateId#data"
-      FROM "NodeInternal" n
-      WHERE NOT n."processStateId#deleted"
+  int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
+      SELECT n.id, p.running, p.state, p.updated, p.backend
+        FROM "NodeInternal" n
+        JOIN "ProcessData" p ON p.id = n."data#data"
+      WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
     <&> Map.fromList . (fmap $ \(nid', running, state, stateUpdated, backend) -> (Bounded nid',
-      ProcessState
-      { _nodeInternalData_running = running
-      , _nodeInternalData_state = state
-      , _nodeInternalData_stateUpdated = stateUpdated
-      , _nodeInternalData_backend = backend
+      ProcessData
+      { _processData_running = running
+      , _processData_state = state
+      , _processData_updated = stateUpdated
+      , _processData_backend = backend
       }))
   counts :: Map.Map (WithInfinity (Id Node)) Int <- [queryQ|
       SELECT n.id,
@@ -475,6 +476,6 @@ getNodeAddresses nid = do
           AND CASE WHEN ?nid is NULL THEN true ELSE n2.id = ?nid END) n
     |] <&> Map.fromList . (fmap $ first Bounded)
   let
-    intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData ProcessState)
+    intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData ProcessData)
     intExt = fmap Left ext `Map.union` fmap Right int
   return $ Map.toList $ fmap (First . Just) $ liftF2 NodeSummary intExt counts

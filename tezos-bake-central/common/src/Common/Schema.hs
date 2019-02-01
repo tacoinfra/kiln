@@ -233,15 +233,11 @@ instance HasId NodeExternalData where
 
 data NodeInternal = NodeInternal
   { _nodeInternal_id :: !(Id Node)
-  , _nodeInternal_processDataId :: !(DeletableRow (Id ProcessDataId))
+  , _nodeInternal_data :: !(DeletableRow (Id ProcessData))
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
-
-data ProcessDataId = ProcessDataId
-  deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId ProcessDataId
 
 data ProcessState
    = ProcessState_Stopped
@@ -252,15 +248,13 @@ data ProcessState
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data ProcessData = ProcessData
-  { _processData_id :: !(Id ProcessDataId)
-  , _processData_running :: !Bool -- the state we *want* the node in;
+  { _processData_running :: !Bool -- the state we *want* the node in;
   , _processData_state :: !ProcessState -- the state the node is actually in.
   , _processData_updated :: !(Maybe UTCTime) -- the time the node's state was last set.
   , _processData_backend :: !(Maybe Int) -- a "unique" process id
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance HasId ProcessData where
-  type IdData ProcessData = Id ProcessDataId
+instance HasId ProcessData
 
 -- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
 

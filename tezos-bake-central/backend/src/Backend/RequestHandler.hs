@@ -62,31 +62,37 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_AddInternalNode -> inDb $ do
         getInternalNode >>= \case
           Nothing -> do
-            let nodeData = NodeInternalData
-                  { _nodeInternalData_running = True
-                  , _nodeInternalData_state = NodeInternalState_Stopped
-                  , _nodeInternalData_stateUpdated = Nothing
-                  , _nodeInternalData_backend = Nothing
+            let processData = ProcessData
+                  { _processData_running = True
+                  , _processData_state = ProcessState_Stopped
+                  , _processData_updated = Nothing
+                  , _processData_backend = Nothing
                   }
 
+            pdid <- insert' processData
             nid <- insert' Node
             insert $ NodeInternal
               { _nodeInternal_id = nid
               , _nodeInternal_data = DeletableRow
-                { _deletableRow_data = nodeData
+                { _deletableRow_data = pdid
                 , _deletableRow_deleted = False
                 }
               }
-            notify $ Notify_NodeInternal nid $ Just $ nodeData
+            notify $ Notify_NodeInternal nid $ Just $ processData
 
           Just (nid, nodeData) -> do
-            when (_deletableRow_deleted nodeData || (not $ nodeData ^. deletableRow_data . nodeInternalData_running)) $ do
+            processData <- do
+              getId (nodeData ^. deletableRow_data) >>= \case
+                Nothing -> error "NodeInternal ProcessData not found"
+                (Just v) -> pure v
+            when (_deletableRow_deleted nodeData || (not $ _processData_running processData)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
-                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> ProcessState_runningSelector =. True
                 ]
-                CondEmpty
-              notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
+                (NodeInternal_idField ==. nid)
+              update [ProcessData_runningField =. True]
+                (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
+              notify $ Notify_NodeInternal nid $ Just processData
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
 
@@ -120,12 +126,16 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
       PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
-        update
-          [ NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. shouldRun ]
-          CondEmpty
-
-        (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) ->
-          notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
+        -- XXX why updated < NOW() - 5 min
+        _ <- [executeQ|
+          UPDATE "ProcessData" p SET running = ?shouldRun
+            FROM "NodeInternal" n
+          WHERE p.id = n."data#data"
+             AND (p.backend IS NULL
+               OR p.updated < NOW() - interval '5 minutes')|]
+        (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
+          processData <- getId $ _deletableRow_data nodeData
+          notify $ Notify_NodeInternal nid processData
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do
@@ -140,9 +150,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             Just (nid, _nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
-                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. False
                 ]
                 CondEmpty
+              _ <- [executeQ|
+                UPDATE "ProcessData" p SET running = False
+                  FROM "NodeInternal" n
+                WHERE p.id = n."data#data"|]
               clearErrors nid
               notify $ Notify_NodeInternal nid Nothing
         where
@@ -454,5 +467,5 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
 
-getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow NodeInternalData))
+getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow (Id ProcessData)))
 getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty

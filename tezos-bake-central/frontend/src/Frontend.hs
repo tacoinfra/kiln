@@ -838,16 +838,16 @@ addBakerModal close = mdo
   added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
   pure $ leftmost [added, close]
 
-nodeStatus :: Maybe NodeInternalState -> Int -> MonitoredStatus
+nodeStatus :: Maybe ProcessState -> Int -> MonitoredStatus
 nodeStatus mInternalState alertCount = min fromStatus fromAlert
   where
     fromStatus = case mInternalState of
       Just internalState -> case internalState of
-        NodeInternalState_Stopped -> MonitoredStatus_Unknown
-        NodeInternalState_Initializing -> MonitoredStatus_Unknown
-        NodeInternalState_Starting -> MonitoredStatus_Unknown
-        NodeInternalState_Running -> MonitoredStatus_Healthy
-        NodeInternalState_Failed -> MonitoredStatus_Unhealthy
+        ProcessState_Stopped -> MonitoredStatus_Unknown
+        ProcessState_Initializing -> MonitoredStatus_Unknown
+        ProcessState_Starting -> MonitoredStatus_Unknown
+        ProcessState_Running -> MonitoredStatus_Healthy
+        ProcessState_Failed -> MonitoredStatus_Unhealthy
       Nothing -> MonitoredStatus_Healthy
     fromAlert = case alertCount of
       0 -> MonitoredStatus_Healthy
@@ -1059,7 +1059,7 @@ nodesTab =
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
-            state <- holdUniqDyn $ _nodeInternalData_state <$> nodeData
+            state <- holdUniqDyn $ _processData_state <$> nodeData
             let
                 internalNodeMenu :: m ()
                 internalNodeMenu = do
@@ -1069,7 +1069,7 @@ nodesTab =
                       ("You can always restart this node from the tile menu.")
                       ("Stop node")
 
-                  running :: Dynamic t Bool <- holdUniqDyn $ _nodeInternalData_running <$> nodeData
+                  running :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
                   dyn_ $ ffor running $ \case
                     True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalNode False <$)
                     False -> do
@@ -1086,22 +1086,22 @@ nodesTab =
                   divClass "internal-node-subtitle" $ do
                     kilnLogo
                     divClass "ui sub header" $ dynText $ ffor state $ \case
-                      NodeInternalState_Stopped -> "Stopped"
-                      NodeInternalState_Initializing -> "Initializing"
-                      NodeInternalState_Starting -> "Starting"
-                      NodeInternalState_Running -> "Running"
-                      NodeInternalState_Failed -> "Failed"
+                      ProcessState_Stopped -> "Stopped"
+                      ProcessState_Initializing -> "Initializing"
+                      ProcessState_Starting -> "Starting"
+                      ProcessState_Running -> "Running"
+                      ProcessState_Failed -> "Failed"
 
                 workingTile :: m ()
                 workingTile = do
                   nodeDetails <- watchNodeDetails nodeId
-                  standardNodeTile @(NodeInternalData, Maybe NodeDetailsData)
+                  standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                     title
                     subtitle
                     internalNodeMenu
                     ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
-                    (Just $ _nodeInternalData_state . fst)
+                    (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                     (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
                     ((,) <$> nodeData <*> nodeDetails)
@@ -1120,7 +1120,7 @@ nodesTab =
                     badge :: m ()
                     badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
-            isInitializing <- holdUniqDyn $ (== NodeInternalState_Initializing) <$> state
+            isInitializing <- holdUniqDyn $ (== ProcessState_Initializing) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
@@ -1168,7 +1168,7 @@ nodesTab =
 
     tileBadgeImpliedByErrors
       :: Maybe (Dynamic t [a])
-      -> Maybe (Dynamic t NodeInternalState)
+      -> Maybe (Dynamic t ProcessState)
       -> m ()
     tileBadgeImpliedByErrors mErrors mInternalState = do
       let color = fmap statusColor $ nodeStatus
@@ -1232,7 +1232,7 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
-      -> Maybe (a -> NodeInternalState) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node

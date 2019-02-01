@@ -149,9 +149,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     {-# INLINE handleNodeInternal #-}
     handleNodeInternal
       :: (Monad m', PostgresRaw m')
-      => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
-    handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
-      nodeInternalV <- case mNodeInternalData of
+      => Id Node -> Maybe ProcessData -> m' (BakeView a)
+    handleNodeInternal nid mProcessData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeInternalV <- case mProcessData of
         Nothing -> pure [(Bounded nid, First Nothing)]
         Just _ -> getNodeAddresses (Just $ nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }

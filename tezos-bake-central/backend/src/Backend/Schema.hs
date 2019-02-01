@@ -29,6 +29,7 @@ module Backend.Schema
 
   -- Re-exports
   , toId
+  , Only(..)
   ) where
 
 import Control.Lens (Field1, Field2)
@@ -543,7 +544,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
-  - primitive: ProcessState
   - entity: NodeInternal
     autoKey: null
     keys:
@@ -555,16 +555,8 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: NodeInternalId
             type: primary
             fields: [_nodeInternal_id]
-  - entity: ProcessDataId
-    # constructors:
-    #   - name: ProcessDataId
   - entity: ProcessData
-    # constructors:
-    #   - name: ProcessData
-    #     uniques:
-    #       - name: ProcessDataId
-    #         type: primary
-    #         fields: [_processData_id]
+  - primitive: ProcessState
   - entity: NodeDetails
     autoKey: null
     keys:
@@ -821,7 +813,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
-  , (''ProcessDataId, 'ProcessDataIdKey)
+  , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''TelegramConfig, 'TelegramConfigKey)

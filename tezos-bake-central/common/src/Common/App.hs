@@ -80,7 +80,7 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_node :: Either NodeExternalData NodeInternalData
+  { _nodeSummary_node :: Either NodeExternalData ProcessData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
@@ -94,7 +94,7 @@ bakerSummaryIdentification = aliasedIdentification
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
 nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
 
-nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, Maybe Text)
+nodeDataIdentification :: Either NodeExternalData ProcessData -> (Text, Maybe Text)
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
     (_nodeExternalData_alias)

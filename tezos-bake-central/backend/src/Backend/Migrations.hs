@@ -58,6 +58,7 @@ preMigrate =
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
   >=> migrateNodesToSplitTable
+  >=> migrateProcessDataToSplitTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
@@ -274,6 +275,42 @@ migrateNodesToSplitTable ta = do
               ALTER TABLE "Node" DROP COLUMN "identity";
               ALTER TABLE "Node" DROP COLUMN "alias";
               ALTER TABLE "Node" DROP COLUMN "address";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+-- | Move the data into the new tables and then do the "unsafe" column drop.
+migrateProcessDataToSplitTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataToSplitTable ta = do
+  let table = (Nothing, "NodeInternal")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "data#data#backend") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              CREATE TABLE "ProcessData"
+                ("id" INT8 PRIMARY KEY UNIQUE
+                , "running" BOOLEAN NOT NULL
+                , "state" VARCHAR NOT NULL
+                , "updated" TIMESTAMP NULL
+                , "backend" INT8 NULL);
+              INSERT INTO "ProcessData"
+                  ( "backend"
+                  , "updated"
+                  , "state"
+                  , "running"
+                  )
+                  SELECT "data#data#backend"
+                       , "data#data#stateUpdated"
+                       , "data#data#state"
+                       , "data#data#running"
+                  FROM "NodeInternal";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#running";
+              ALTER TABLE "NodeInternal" ADD COLUMN "data#data" INT8 NOT NULL;
+              ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
             |]
           getTableAnalysis
     _ -> pure ta

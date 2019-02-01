@@ -56,7 +56,7 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
-watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe NodeInternalData))
+watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProcessData))
 watchInternalNode = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
@@ -211,8 +211,8 @@ data CollectiveNodesFailure
   -- ^ The last time any of the node was up, there must have been up
   deriving (Eq, Ord, Show)
 
-nodeSummaryStateIfInternal :: NodeSummary -> Maybe NodeInternalState
-nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . nodeInternalData_state
+nodeSummaryStateIfInternal :: NodeSummary -> Maybe ProcessState
+nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . processData_state
 
 watchCollectiveNodesStatus
   :: MonadRhyoliteFrontendWidget Bake t m
@@ -222,7 +222,7 @@ watchCollectiveNodesStatus alertWindow = do
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys
-        <$> ffilter (maybe True (== NodeInternalState_Running)
+        <$> ffilter (maybe True (== ProcessState_Running)
                      . nodeSummaryStateIfInternal)
         <$> dNodes
   ebn <- watchErrorsByNode alertWindow
