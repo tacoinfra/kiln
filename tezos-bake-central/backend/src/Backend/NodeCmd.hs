@@ -123,7 +123,7 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
         |]
       if shouldRun
         then return ()
-        else waitUntilShouldRun
+        else threadDelay' 5 *> waitUntilShouldRun
   waitUntilShouldRun
   callNode logger db (nodePaths namedChain) pid
   threadDelay' 10
@@ -173,6 +173,12 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
           {-# INLINE go #-}
           go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
           go = do
+            shouldDelete <- fmap (> 0) $ runDb (Identity db) $ count
+              (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. True)
+            liftIO $ when shouldDelete $ do
+              for_ (_nodeConfigFile_dataDir defaultConfig) $ \dir -> readProcess "rm" ["-rf", dir] ""
+              terminateProcess ph
+
             -- TODO poll db for exit request
             shouldRun <- fmap or $ runDb (Identity db) $ project
               (NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector)
