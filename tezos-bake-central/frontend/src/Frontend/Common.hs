@@ -95,7 +95,7 @@ tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
           (a0 : a1 : a2 : as) -> a0 : a1 : a2 : ',' : f as
           as -> as
 
-localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Time.UTCTime -> m ()
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
   text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz t
