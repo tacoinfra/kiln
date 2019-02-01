@@ -660,7 +660,7 @@ liveErrorsWidget = void $ do
   where
     timestamped (lbl,ts) = el "div" $ do
       el "label" $ text lbl
-      localTimestamp $ pure ts
+      localTimestamp ts
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
