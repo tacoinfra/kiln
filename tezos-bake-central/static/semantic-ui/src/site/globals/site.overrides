@@ -326,15 +326,15 @@ body {
         .tooltip-description {
           color: @grey;
           font-size: @12px;
-
-          .icon.circle {
-            margin-left: @8px;
-            margin-right: @8px;
-          }
         }
       }
     }
   }
+}
+
+.icon.circle.healthy-node {
+  margin-left: @8px;
+  margin-right: @8px;
 }
 
 .app-header {

@@ -365,10 +365,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
-        el "p" $ do
-          text "Add a node from the left panel or make sure any nodes you’ve already added are"
-          icon "circle small green"
-          text "healthy."
+        el "p" $ ensureHealthyNodes
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -1358,7 +1355,7 @@ bakersTab =
              el "p" $ do
                el "strong" $ text "Fix:"
                text " "
-               text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
+               ensureHealthyNodes)
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
