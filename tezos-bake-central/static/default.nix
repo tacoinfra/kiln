@@ -14,4 +14,5 @@ in pkgs.stdenv.mkDerivation {
       # ln -s ${semui.bakemonitor-semantic-ui} $out/semantic-ui
       cp -r ${semui.bakemonitor-semantic-ui} $out/semantic-ui
     '';
+    passthru = { inherit semui; };
   }
