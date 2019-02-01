@@ -702,8 +702,7 @@ liveErrorsWidget = void $ do
 
             NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
               for_ node' $ \n -> do
-                let (main, _) = nodeSummaryIdentification n
-                header $ "Node has too few peers: " <> main
+                header $ "Node has too few peers"
                 nodeLabel n
                 el "div" $ text $
                   "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
