@@ -126,7 +126,6 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
       PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
-        -- XXX why updated < NOW() - 5 min
         _ <- [executeQ|
           UPDATE "ProcessData" p SET running = ?shouldRun
             FROM "NodeInternal" n
