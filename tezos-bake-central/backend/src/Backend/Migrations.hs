@@ -42,6 +42,7 @@ preMigrate =
   >=> migratePublicNodeHead
   >=> dropTableIfExists (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
   >=> dropTableIfExists (QualifiedIdentifier Nothing "PendingReward")
+  >=> dropTableIfExists (QualifiedIdentifier Nothing "ClientInfo")
   >=> dropTableIfExists (QualifiedIdentifier Nothing "Client")
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerDeactivated") "id"
