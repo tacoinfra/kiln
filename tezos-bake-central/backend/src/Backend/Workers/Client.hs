@@ -31,7 +31,7 @@ import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
@@ -105,18 +105,9 @@ clientWorker appCfg nds =
             else
               clearNoBakerHeartbeatError cid
 
-          -- TODO: this is quite "wrong" in the sense that we haven't confirmed the
-          -- acceptance of this block, we should really only use this event to
-          -- know if the baker itself is active.  The reqards should be computed
-          -- based on nodes reporting new blocks.  Even if we baked, if that was
-          -- a different branch, there's no reward.
-
-          _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                          VALUES (?cid, ?reportJson, ?clientConfigJson)
-                          ON CONFLICT (client) DO UPDATE SET
-                            report = ?reportJson
-                          , config = ?clientConfigJson
-                          |]
+          let bakerDaemonInfo = (BakerDaemonInfo cid (BakerDaemonInfoData reportJson clientConfigJson))
+          insertByAll bakerDaemonInfo
+            >>= either (const $ replaceBy BakerDaemonInfoId bakerDaemonInfo) (const $ return ())
           forkInfo <- scanForkInfo now report
           validateForkyBlocks ($(logDebugSH) . (,) ("validateForkyBlocks" :: String)) forkInfo
 

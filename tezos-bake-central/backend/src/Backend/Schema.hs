@@ -516,6 +516,9 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - embedded: BakerDaemonExternalData
   - entity: BakerDaemonInfo
     autoKey: null
+    keys:
+      - name: BakerDaemonInfoId
+        default: true
     constructors:
       - name: BakerDaemonInfo
         uniques:
