@@ -434,16 +434,16 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.running, p.state, p.updated, p.backend
+      SELECT n.id, p.running, p.state, p.updated AT TIME ZONE 'UTC', p.backend
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', running, state, stateUpdated, backend) -> (Bounded nid',
+    <&> Map.fromList . (fmap $ \(nid', running, state, updated, backend) -> (Bounded nid',
       ProcessData
       { _processData_running = running
       , _processData_state = state
-      , _processData_updated = stateUpdated
+      , _processData_updated = updated
       , _processData_backend = backend
       }))
   counts :: Map.Map (WithInfinity (Id Node)) Int <- [queryQ|
