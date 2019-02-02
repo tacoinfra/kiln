@@ -150,12 +150,12 @@ putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db)
             , p.updated AT TIME ZONE 'UTC'
             , p.backend
     |]
-  for_ result $ \(nid, running', state', stateUpdated', backend') ->
+  for_ result $ \(nid, running', state', updated', backend') ->
     when ((state', backend') /= (state, Just pid)) $
       notify (Notify_NodeInternal nid $ Just ProcessData
         { _processData_running = running'
         , _processData_state = state'
-        , _processData_updated = stateUpdated'
+        , _processData_updated = updated'
         , _processData_backend = backend'
         })
 
