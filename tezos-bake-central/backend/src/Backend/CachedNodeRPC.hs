@@ -1,9 +1,12 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -14,7 +17,9 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-} -- for MonadError instance
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -24,14 +29,32 @@ module Backend.CachedNodeRPC where
 import Prelude hiding (cycle)
 
 import Control.Applicative (ZipList (..))
+import Control.Arrow (left)
 import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
                                retry, writeTQueue, writeTVar)
 import Control.Exception.Safe (MonadMask, withException)
-import Control.Lens (TraversableWithIndex, re)
+import Control.Lens (TraversableWithIndex)
+import Control.Lens (re)
+import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
+import Control.Monad.Base (MonadBase)
+import Control.Monad.Catch (ExitCase (..))
+import Control.Monad.Catch (MonadCatch)
+import Control.Monad.Catch (MonadThrow)
+import Control.Monad.Catch (catch)
+import Control.Monad.Catch (generalBracket)
+import Control.Monad.Catch (mask)
+import Control.Monad.Catch (throwM)
+import Control.Monad.Catch (uninterruptibleMask)
+import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
+import Control.Monad.Except (catchError)
+import Control.Monad.Except (liftEither)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
+import Control.Monad.Logger (monadLoggerLog)
+import Control.Monad.Reader (local)
+import Control.Monad.Reader (reader)
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
@@ -140,8 +163,107 @@ class HasNodeDataSource a where
 instance HasNodeDataSource NodeDataSource where
   nodeDataSource = id
 
-class MonadNodeQuery m where
-  nodeRPCOrBust :: BlockHash -> NodeQuery a -> m a
+class MonadLogger m => MonadNodeQuery m where
+  data AnswerM m :: * -> *
+  asksNodeDataSource :: (NodeDataSource -> a) -> m a
+  nqThrowError :: CacheError -> m a
+  nqCatchError :: m a -> (CacheError -> m a) -> m a
+  nqInDB :: (forall n. (MonadLogger n, PostgresRaw n) => n a) -> m a
+  nqAtomically :: STM a -> m a
+  default nqAtomically :: MonadIO m => STM a -> m a
+  nqAtomically action = liftIO $ atomically action
+  default nqAtomicallyWithTime :: MonadIO m => ReaderT UTCTime STM a -> m a
+  nqAtomicallyWithTime :: ReaderT UTCTime STM a -> m a
+  nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
+  answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
+  withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
+  nodeRPCOrBust :: ProtoInfo -> BlockHash -> NodeQuery a -> m a
+
+askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
+askNodeDataSource = asksNodeDataSource id
+
+nqLiftEither :: (MonadNodeQuery m) => Either CacheError a -> m a
+nqLiftEither = \case
+  Left e -> nqThrowError e
+  Right v -> pure v
+
+nqTry :: (MonadNodeQuery m) => m a -> m (Either CacheError a)
+nqTry action = (Right <$> action) `nqCatchError` (pure . Left)
+
+newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT CacheError (ReaderT NodeDataSource IO) a }
+
+runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, MonadIO m) => NodeQueryQueued a -> m a
+runNodeQueryQueued action = do
+  nds <- view nodeDataSource
+  (liftEither =<<) $ fmap (left (review asCacheError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
+
+deriving newtype instance Functor NodeQueryQueued
+deriving newtype instance Applicative NodeQueryQueued
+deriving newtype instance Monad NodeQueryQueued
+deriving newtype instance MonadIO NodeQueryQueued
+deriving newtype instance MonadBase IO NodeQueryQueued
+deriving newtype instance MonadBaseControl IO NodeQueryQueued
+deriving newtype instance MonadThrow NodeQueryQueued
+deriving newtype instance MonadCatch NodeQueryQueued
+deriving newtype instance MonadMask NodeQueryQueued
+instance MonadLogger NodeQueryQueued where
+  monadLoggerLog a b c d = do
+    logger <- asksNodeDataSource _nodeDataSource_logger
+    runLoggingEnv logger $ monadLoggerLog a b c d
+
+instance MonadNodeQuery NodeQueryQueued where
+  data AnswerM NodeQueryQueued a = NodeQueryQueuedAnswerM { unNodeQueryQueuedAnswerM :: ReaderT UTCTime STM (Maybe (Either CacheError a)) }
+  asksNodeDataSource = NodeQueryQueued . asks
+  nqThrowError = NodeQueryQueued . throwError
+  nqCatchError action handler = NodeQueryQueued $ catchError (unNodeQueryQueued action) (unNodeQueryQueued . handler)
+  nqInDB action = do
+    db <- asksNodeDataSource _nodeDataSource_pool
+    runDb (Identity db) $ action
+  answerImmediate = return . return . NodeQueryQueuedAnswerM
+  withFinishWith nds cb = do
+    -- A separate TVar for keeping the actual API result (outside the cache structure)
+    apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
+    action <- cb $ writeTVar' apiResultVar . Just
+    let ioQueue = _nodeDataSource_ioQueue nds
+    liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
+    return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
+  nodeRPCOrBust protoInfo qBranch q = (NodeQueryQueued . atomicallyWith) (pickNode qBranch) >>= \case
+    Nothing -> nqThrowError CacheError_NoSuitableNode
+    Just anyNode -> do
+      dsrc <- askNodeDataSource
+      let
+        ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+
+        nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+        nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
+
+      result <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+      nqLiftEither result
+
+newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
+
+deriving newtype instance Functor NodeQueryImmediate
+deriving newtype instance Applicative NodeQueryImmediate
+deriving newtype instance Monad NodeQueryImmediate
+deriving newtype instance MonadIO NodeQueryImmediate
+deriving newtype instance MonadBase IO NodeQueryImmediate
+deriving newtype instance MonadBaseControl IO NodeQueryImmediate
+deriving newtype instance MonadThrow NodeQueryImmediate
+deriving newtype instance MonadCatch NodeQueryImmediate
+deriving newtype instance MonadMask NodeQueryImmediate
+instance MonadLogger NodeQueryImmediate where
+  monadLoggerLog a b c d = do
+    logger <- asksNodeDataSource _nodeDataSource_logger
+    runLoggingEnv logger $ monadLoggerLog a b c d
+instance MonadNodeQuery NodeQueryImmediate where
+  newtype AnswerM NodeQueryImmediate a = NodeQueryImmediateAnswerM { unNodeQueryImmediateAnswerM :: a }
+  asksNodeDataSource = NodeQueryImmediate . asksNodeDataSource
+  nqThrowError = NodeQueryImmediate . nqThrowError
+  nqCatchError action handler = NodeQueryImmediate $ nqCatchError (unNodeQueryImmediate action) (unNodeQueryImmediate . handler)
+  nqInDB action = NodeQueryImmediate $ nqInDB $ action
+  answerImmediate getResult = return $ fmap NodeQueryImmediateAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
+  withFinishWith _ cb = (fmap NodeQueryImmediateAnswerM . nqLiftEither =<<) <$> cb return
+  nodeRPCOrBust p h q = NodeQueryImmediate $ nodeRPCOrBust p h q
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
@@ -151,8 +273,20 @@ deriving instance Functor NodeQueryTResult
 
 newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: m (NodeQueryTResult a) }
 
-instance Applicative m => MonadNodeQuery (NodeQueryT m) where
-  nodeRPCOrBust h q = NodeQueryT $ pure $ NodeQueryTResult_Query h q
+instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
+  newtype AnswerM (NodeQueryT m) a = NodeQueryTAnswerM { unNodeQueryTAnswerM :: a }
+  asksNodeDataSource = lift . views nodeDataSource
+  nqThrowError e = lift $ throwError $ e ^. re asCacheError
+  nqCatchError action handler = NodeQueryT $ catching asCacheError (unNodeQueryT action) (unNodeQueryT . handler)
+  nqInDB = id
+  answerImmediate getResult = return $ fmap NodeQueryTAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
+  withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
+  nodeRPCOrBust _ h q = NodeQueryT $ pure $ NodeQueryTResult_Query h q
+
+instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m) where
+  monadLoggerLog a b c d = do
+    logger <- asksNodeDataSource _nodeDataSource_logger
+    runLoggingEnv logger $ monadLoggerLog a b c d
 
 instance Monad m => Monad (NodeQueryT m) where
   return = NodeQueryT . return . NodeQueryTResult_Done
@@ -172,6 +306,57 @@ instance MonadTrans NodeQueryT where
 instance MonadIO m => MonadIO (NodeQueryT m) where
   liftIO = lift . liftIO
 
+instance MonadReader r m => MonadReader r (NodeQueryT m) where
+  ask = lift ask
+  local = mapNodeQueryT . local
+  reader = lift . reader
+
+instance MonadError e m => MonadError e (NodeQueryT m) where
+  throwError = lift . throwError
+  catchError (NodeQueryT m) h = NodeQueryT $ catchError m (unNodeQueryT . h)
+
+instance MonadThrow m => MonadThrow (NodeQueryT m) where
+  throwM = lift . throwM
+
+instance MonadCatch m => MonadCatch (NodeQueryT m) where
+  catch (NodeQueryT m) h = NodeQueryT $ catch m (unNodeQueryT . h)
+
+-- mostly copied from the MonadMask instances for EitherT, ExceptT, and MaybeT
+instance MonadMask m => MonadMask (NodeQueryT m) where
+  mask f = NodeQueryT $ mask $ \u -> unNodeQueryT $ f $ \(NodeQueryT b) -> NodeQueryT $ u b
+  uninterruptibleMask f = NodeQueryT $ uninterruptibleMask $ \u -> unNodeQueryT $ f $ \(NodeQueryT b) -> NodeQueryT $ u b
+  generalBracket acquire release use = NodeQueryT $ do
+    (ranswer, rreleased) <- generalBracket
+      (unNodeQueryT acquire)
+      (\case
+        NodeQueryTResult_Query h q -> const $ return $ NodeQueryTResult_Query h q -- query during acquire, nothing to release
+        NodeQueryTResult_Done resource -> \case
+          ExitCaseSuccess (NodeQueryTResult_Done answer) -> unNodeQueryT $ release resource $ ExitCaseSuccess answer
+          ExitCaseSuccess (NodeQueryTResult_Query _ _) -> unNodeQueryT $ release resource ExitCaseAbort
+            -- because things need to actually happen in the release handler.  The query will still get passed through
+            -- on another channel.
+          ExitCaseException e -> unNodeQueryT $ release resource $ ExitCaseException e
+          ExitCaseAbort -> unNodeQueryT $ release resource ExitCaseAbort)
+      (\case
+        NodeQueryTResult_Query h q -> return $ NodeQueryTResult_Query h q
+        NodeQueryTResult_Done resource -> unNodeQueryT $ use resource)
+    return $ case ranswer of
+      NodeQueryTResult_Query h q -> NodeQueryTResult_Query h q
+        -- let the query from 'use' win even if both are queries, both
+        -- because it is first, and because 'release' will be called
+        -- with different arguments on the final retry.
+      NodeQueryTResult_Done answer -> case rreleased of
+        NodeQueryTResult_Query h q -> NodeQueryTResult_Query h q
+        NodeQueryTResult_Done released -> NodeQueryTResult_Done (answer, released)
+
+instance (Monad m, PostgresRaw m) => PostgresRaw (NodeQueryT m)
+
+-- | Map the unwrapped computation using the given function.
+--
+-- * @'unNodeQueryT' ('mapNodeQueryT' f m) = f ('unNodeQueryT' m)@
+mapNodeQueryT :: (m (NodeQueryTResult a) -> n (NodeQueryTResult b)) -> NodeQueryT m a -> NodeQueryT n b
+mapNodeQueryT f m = NodeQueryT $ f (unNodeQueryT m)
+
 {- | Run a database transaction using information from the node RPC.
      If information is needed from the node and it is not already
      cached in the database (or memory), the transaction will be
@@ -187,14 +372,19 @@ runNodeQueryT
     , MonadError e m, AsCacheError e
     , MonadLogger m
     )
-  => NodeQueryT (DbPersist Postgresql m) a -> m a
-runNodeQueryT f = go
+  => NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m a
+runNodeQueryT f = go 0
   where
-    go = tryNodeQueryT f >>= \case
-      NodeQueryTResult_Done v -> return v
-      NodeQueryTResult_Query _ q -> do
-        _ <- nodeQueryDataSource q -- just get this into cache
-        go
+    go n = do
+      $(logDebugSH) ("RPC monad attempt number" :: Text, n :: Int, "starting" :: Text)
+      tryNodeQueryT f >>= \case
+        NodeQueryTResult_Done v -> do
+          $(logDebugSH) ("RPC monad attempt number" :: Text, n, "succeeded" :: Text)
+          return v
+        NodeQueryTResult_Query _ q -> do
+          $(logDebugSH) ("RPC monad attempt number" :: Text, n, "retry for query" :: Text, q)
+          _ <- nodeQueryDataSource q -- just get this into cache
+          go $ n + 1
 
 tryNodeQueryT
   :: forall a s m.
@@ -202,12 +392,13 @@ tryNodeQueryT
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
-  => NodeQueryT (DbPersist Postgresql m) a -> m (NodeQueryTResult a)
+  => NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m (NodeQueryTResult a)
 tryNodeQueryT f = do
-  db <- view (nodeDataSource . nodeDataSource_pool)
-  runDb (Identity db) $ unNodeQueryT f >>= \case
+  nds <- view nodeDataSource
+  let db = _nodeDataSource_pool nds
+  runDb (Identity db) $ runReaderT (unNodeQueryT f) nds >>= \case
     v@(NodeQueryTResult_Done _) -> return v
-    q@(NodeQueryTResult_Query _ _) -> q <$ (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn)
+    q@(NodeQueryTResult_Query _ _) -> q <$ (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
 
 waitForParams :: (HasNodeDataSource r, MonadSTM m) => r -> m ProtoInfo
 waitForParams r = maybe retry' pure =<< readTVar' (r ^. nodeDataSource . nodeDataSource_parameters)
@@ -459,9 +650,10 @@ nodeQueryDataSource
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = do
-  getResult <- nodeQueryDataSourceRaw q
+  (view $ nodeDataSource . nodeDataSource_logger) >>= (flip runLoggingEnv $ $(logDebugSH) ("nodeQueryDataSource called" :: Text,q))
+  NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw q
   now <- liftIO getCurrentTime
-  timeout' timeoutSeconds (atomically $ maybe retry pure =<< getResult now) >>= \case
+  timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
     Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
     Just (Left e) -> throwError $ e ^. re asCacheError
     Just (Right x) -> pure x
@@ -469,58 +661,86 @@ nodeQueryDataSource q = do
     -- Base timeout
     timeoutSeconds = 60*5
 
--- Foundational caching query function exposing a low-level API to the underlying 'STM' operations.
-nodeQueryDataSourceRaw
+-- | Query cached data "nonblockingly".  Which is to say it will block for the database, but won't
+--   try to connect to the node.  Calling code can handle the condition where the data was not
+--   cached, for instance by abandoning the transaction before attempting an RPC call.
+nodeQueryDataSourceSafe
+  :: forall a m.
+    ( MonadNodeQuery (NodeQueryT m)
+    , MonadMask m
+    )
+  => NodeQuery a -> NodeQueryT m a
+nodeQueryDataSourceSafe q = do
+  $(logDebugSH) ("nodeQueryDataSourceSafe called" :: Text,q)
+  unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
+
+-- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
+--   of recursive queries, lest the dreaded deadlock heisenbunny return.
+nodeQueryDataSourceImmediate
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsCacheError e
     )
-  => NodeQuery a -> m (UTCTime -> STM (Maybe (Either CacheError a)))
+  => NodeQuery a -> m a
+nodeQueryDataSourceImmediate q = runNodeQueryQueued $ do
+  $(logDebugSH) ("nodeQueryDataSourceImmediate called" :: Text,q)
+  unNodeQueryImmediate $ unNodeQueryImmediateAnswerM <$> nodeQueryDataSourceRaw q
+
+-- Foundational caching query function exposing a low-level API to the underlying 'STM' operations.
+nodeQueryDataSourceRaw
+  :: forall m a.
+    ( MonadNodeQuery m
+    , MonadMask m
+    )
+  => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q' = do
-  dsrc <- asks $ view nodeDataSource
-  updateCache dsrc >>= \case
-    Left e -> throwError $ e ^. re asCacheError
-    Right getResult -> pure getResult
+  $(logDebugSH) ("nodeQueryDataSourceRaw called" :: Text,q')
+  dsrc <- askNodeDataSource
+  updateCache dsrc >>= nqLiftEither
 
   where
-    updateCache :: NodeDataSource -> m (Either CacheError (UTCTime -> STM (Maybe (Either CacheError a))))
-    updateCache dsrc = liftIO $ atomically $ runExceptT $ do
+    updateCache :: NodeDataSource -> m (Either CacheError (AnswerM m a))
+    updateCache dsrc = (sequence =<<) $ nqAtomically $ runExceptT @CacheError $ do
       protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
       history <- readTVar' (_nodeDataSource_history dsrc)
 
-      (qBranch, q) <- maybe (throwError $ CacheError_NotEnoughHistory ^. re asCacheError) pure $ getKey protoInfo history q'
+      (qBranch, q) <- maybe (throwError CacheError_NotEnoughHistory) pure $ getKey protoInfo history q'
 
       cache <- readTVar' cacheVar
-      case DMap.lookup q cache of
+      lift $ case DMap.lookup q cache of
         -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
-        Just avar -> pure $ \time -> flip runReaderT time $
+        Just avar -> answerImmediate $
           Just . Right <$> unpackCacheResult avar
 
         -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
-        Nothing -> do
-          -- A separate TVar for keeping the actual API result (outside the cache structure)
-          apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
+        Nothing -> withFinishWith @m dsrc $ \finishWith -> do
           let
-            -- Updates the cache key if the result is useful and sets the result 'TVar'.
-            writeResult :: Either CacheError (a, DirtyBit) -> IO ()
-            writeResult a' = liftIO $ atomicallyWithTime $ do
+            -- Updates the cache key if the result is useful and communicates the result upstream.
+            -- XXX Can't actually use this type signature since 'r' is not in scope...
+            -- writeResult :: Either CacheError (a, DirtyBit) -> m r
+            writeResult a' = nqAtomicallyWithTime $ do
               case a' of
                 Right (a, dirty) -> populateKey q a dirty
                 Left _ -> pure ()
-              writeTVar' apiResultVar $ Just $ fmap fst a'
+              lift $ finishWith $ fmap fst a'
 
-          liftSTM $ writeTQueue ioQueue $
+          return $
             -- Try very hard to write *something* into the result TVar in case of exception.
+            -- The catch handles synchronous/recoverable errors, and its result passes through,
+            -- which is necessary in the immediate case and harmless in the worker queue case.
+            -- The withException handles asynchronous/unrecoverable errors.  In the case of a
+            -- worker queue, the calling thread can still recover because it's a different
+            -- thread.  The result is thrown away meaning in the immediate case the caller
+            -- cannot recover, but this is fine because that's what is supposed to happen for
+            -- such an error.
             (writeResult =<< makeRequestAndCache protoInfo q qBranch)
-              `withException` \e ->
-                atomically (writeTVar' apiResultVar $ Just $ Left $ CacheError_SomeException e)
-
-          pure $ \_ -> readTVar apiResultVar
+              `catch` \e ->
+                nqAtomically (finishWith $ Left $ CacheError_SomeException e)
+              `withException` \x ->
+                nqAtomically (finishWith $ Left $ CacheError_SomeException x)
 
       where
-        logger = _nodeDataSource_logger dsrc
-        ioQueue = _nodeDataSource_ioQueue dsrc
         cacheVar = _nodeDataSource_cache dsrc
         chainId = _nodeDataSource_chain dsrc
 
@@ -533,107 +753,14 @@ nodeQueryDataSourceRaw q' = do
               var <- newTVar' $ CacheLine a now dirty
               writeTVar' cacheVar $ DMap.insert q (Compose var) cache
 
-        makeRequestAndCache :: ProtoInfo -> NodeQuery a' -> BlockHash -> IO (Either CacheError (a', DirtyBit))
-        makeRequestAndCache protoInfo q qBranch = runLoggingEnv logger $ flip runReaderT dsrc $
-          tryFetchFromCache chainId (_nodeDataSource_pool dsrc) q >>= \case
-            Just x -> pure $ Right $ fmap Just x
-            Nothing -> atomicallyWith (pickNode qBranch) >>= \case
-              Nothing -> pure $ Left CacheError_NoSuitableNode
-              Just anyNode -> do
-                let
-                  ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+        makeRequestAndCache :: ProtoInfo -> NodeQuery a -> BlockHash -> m (Either CacheError (a, DirtyBit))
+        makeRequestAndCache protoInfo q qBranch = nqTry $
+          tryFetchFromCache chainId q >>= \case
+            Just x -> pure $ fmap Just x :: m (a, DirtyBit)
+            Nothing -> (,Nothing) <$> nodeRPCOrBust protoInfo qBranch q :: m (a, DirtyBit)
 
-                  nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-                  nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSource qInner) dsrc
-
-                liftIO $ (fmap.fmap) (,Nothing) $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx logger nodeQueryViaCache q
-
--- | Query cached data "nonblockingly".  Which is to say it will block for the database, but won't
---   try to connect to the node.  Calling code can handle the condition where the data was not
---   cached, for instance by abandoning the transaction before attempting an RPC call.
-nodeQueryDataSourceSafe
-  :: forall a s m.
-    ( MonadIO m
-    , MonadMask m
-    , MonadNodeQuery m
-    , MonadReader s m, HasNodeDataSource s
-    , PostgresRaw m
-    )
-  => NodeQuery a -> m (Either CacheError a)
-nodeQueryDataSourceSafe q' = do
-  dsrc <- asks $ view nodeDataSource
-  updateCache dsrc
-
-  where
-    updateCache :: NodeDataSource -> m (Either CacheError a)
-    updateCache dsrc = runExceptT $ do
-      (q, qBranch, cache) <- ExceptT $ liftIO $ atomically $ runExceptT $ do
-        protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
-        history <- readTVar' (_nodeDataSource_history dsrc)
-
-        (qBranch, q) <- maybe (throwError $ CacheError_NotEnoughHistory ^. re asCacheError) pure $ getKey protoInfo history q'
-
-        cache <- readTVar' cacheVar
-        pure (q, qBranch, cache)
-      case DMap.lookup q cache of
-        -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
-        Just avar -> liftIO getCurrentTime >>= \time ->
-          liftIO $ atomically $ flip runReaderT time $ unpackCacheResult avar
-
-        -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
-        Nothing -> do
-          let
-            writeResult :: Either e (a, DirtyBit) -> m (Either e a)
-            writeResult a' = liftIO $ atomicallyWithTime $ do
-              case a' of
-                Right (a, dirty) -> populateKey q a dirty
-                Left _ -> pure ()
-              pure $ fmap fst a'
-
-          ExceptT $ (writeResult =<< makeRequestAndCache q qBranch)
-            `withException` \e ->
-              pure $ Left $ CacheError_SomeException e
-
-      where
-        logger = _nodeDataSource_logger dsrc
-        cacheVar = _nodeDataSource_cache dsrc
-        chainId = _nodeDataSource_chain dsrc
-
-        populateKey q a dirty = do
-          cache <- readTVar' cacheVar
-          case DMap.lookup q cache of
-            Just _ -> pure ()
-            Nothing -> do
-              now <- asks (^. Stm.timestamp)
-              var <- newTVar' $ CacheLine a now dirty
-              writeTVar' cacheVar $ DMap.insert q (Compose var) cache
-
-        makeRequestAndCache :: forall a'. NodeQuery a' -> BlockHash -> m (Either CacheError (a', DirtyBit))
-        makeRequestAndCache q qBranch =
-          do
-            let
-              qJson = Json $ requestToJSON q
-            -- although this is within the grasp of groundhog, this table is very hot,
-            -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
-            -- terrible:
-            -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-            resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- [queryQ|
-              SELECT "id", "chainId", "key", "value"
-              FROM "GenericCacheEntry"
-              WHERE "chainId" = ?chainId
-                AND "key" = ?qJson
-              |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
-            case nonEmpty $ resultM of
-              Nothing -> return Nothing
-              Just ((rid, result) :| _) -> case requestResponseFromJSON q of
-                Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-                  Aeson.Success v -> return $ Just (v, rid)
-                  Aeson.Error bad -> runLoggingEnv logger $ do
-                    $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-                    return Nothing
-          >>= \case
-            Just x -> pure $ Right $ fmap Just x :: m (Either CacheError (a', DirtyBit))
-            Nothing -> (Right . (,Nothing)) <$> nodeRPCOrBust qBranch q :: m (Either CacheError (a', DirtyBit))
+unliftEither :: MonadError e m => m a -> m (Either e a)
+unliftEither action = (Right <$> action) `catchError` (pure . Left)
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -657,7 +784,7 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ case q of
+nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -760,16 +887,16 @@ calculateBakeEfficiency branch len baker = do
       ]
 
 tryFetchFromCache
-  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => ChainId -> Pool Postgresql -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
-tryFetchFromCache chainId db q = do
+  :: forall m a. MonadNodeQuery m
+  => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
+tryFetchFromCache chainId q = do
   let
     qJson = Json $ requestToJSON q
   -- although this is within the grasp of groundhog, this table is very hot,
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
   -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-  resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- runDb (Identity db) $ [queryQ|
+  resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- nqInDB $ [queryQ|
     SELECT "id", "chainId", "key", "value"
     FROM "GenericCacheEntry"
     WHERE "chainId" = ?chainId
