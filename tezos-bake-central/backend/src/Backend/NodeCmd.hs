@@ -24,7 +24,7 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.FilePath (combine)
 import System.IO (hFlush)
 import System.IO.Temp (withTempFile)
@@ -176,7 +176,7 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
             shouldDelete <- fmap (> 0) $ runDb (Identity db) $ count
               (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. True)
             liftIO $ when shouldDelete $ do
-              for_ (_nodeConfigFile_dataDir defaultConfig) $ \dir -> readProcess "rm" ["-rf", dir] ""
+              for_ (_nodeConfigFile_dataDir defaultConfig) removeDirectoryRecursive
               terminateProcess ph
 
             -- TODO poll db for exit request
