@@ -33,7 +33,7 @@ import Control.Arrow (left)
 import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
                                retry, writeTQueue, writeTVar)
 import Control.Exception.Safe (MonadMask, withException)
-import Control.Lens (TraversableWithIndex)
+-- import Control.Lens (TraversableWithIndex)
 import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
@@ -70,7 +70,7 @@ import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (mapMaybe)
+-- import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
@@ -476,10 +476,12 @@ blankNodeDataSource db chain protoInfo' mgr logger = do
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
     }
+{-
 
 withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
 withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
 
+-}
 calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
 calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
@@ -564,6 +566,7 @@ dataSourceHead nds = withCache nds Nothing $ \_ -> do
   let branches = _cachedHistory_branches history
   pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
+{-
 -- | extrats the fittest known node from cache
 dataSourceNode
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
@@ -573,6 +576,7 @@ dataSourceNode nds = do
   nodes <- readTVar' $ _nodeDataSource_nodes dsrc
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
     maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
+-}
 
 takeWhileJust :: [Maybe a] -> [a]
 takeWhileJust [] = []
@@ -816,6 +820,7 @@ withCache nds dft action = do
   protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
 
+{-
 calculateBakerStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f
   , MonadReader r m, HasNodeDataSource r
@@ -836,6 +841,7 @@ calculateBakerStats pkhs = do
       return (result, a)
 
 
+-}
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
   ( MonadIO m
@@ -849,6 +855,7 @@ ancestors (RawLevel n) branch = do
     Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
+{-
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
@@ -886,6 +893,7 @@ calculateBakeEfficiency branch len baker = do
       | BakingRights _lvl d prio _ <- toList xs
       ]
 
+-}
 tryFetchFromCache
   :: forall m a. MonadNodeQuery m
   => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
