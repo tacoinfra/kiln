@@ -551,7 +551,7 @@ data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
-  = SynthError_BakersInformationDown (NonEmpty PublicKeyHash)
+  = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
 liveErrorsWidget
@@ -595,7 +595,7 @@ liveErrorsWidget = void $ do
         Left (CollectiveNodesFailure_NoNodes)             -> Nothing
   dTimer <- asks $ view timer
   -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
-  dBakerKeys <- MMap.keys <$$> watchBakerAddresses
+  dBakers <- watchBakerAddresses
 
   let
     combinedRealErrors
@@ -610,10 +610,10 @@ liveErrorsWidget = void $ do
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
       :: Dynamic t (Map.Map SynthError (ErrorLog, SynthError))
-    synthErrors = ffor3 dBakerKeys dTimer dAllNodesDownTime $
-      \bakerKeys now allNodesDownTime ->
+    synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
+      \bakers now allNodesDownTime ->
         fromMaybe mempty $ do
-          keys1 <- NEL.nonEmpty bakerKeys
+          keys1 <- NEL.nonEmpty $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -673,7 +673,8 @@ liveErrorsWidget = void $ do
     synthEntry :: SynthError -> m ()
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
-      errorLabel "My Bakers" $ Identity $ T.take 20 (toPublicKeyHashText $ NEL.head pkhs) <> "..."
+      let (pkh, bakerData) = NEL.head pkhs
+      errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ T.take 20 (toPublicKeyHashText pkh) <> "..."
       el "div" $
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
