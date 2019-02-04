@@ -886,7 +886,7 @@ img.credits-obsidian {
           font-weight: bold;
         }
         .tez {
-          margin-left: 0.3rem;
+          margin-left: @5px;
           color: @grey;
         }
       }
