@@ -62,6 +62,7 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
+import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
@@ -891,6 +892,8 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   , deriveOrdTagIdentity t
   , deriveShowTagIdentity t
   ]
+
+deriveSomeUniverse ''NodeLogTag
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

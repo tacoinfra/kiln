@@ -194,13 +194,16 @@ bakerIdForBakerErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
 
+errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
+errorLogIdForNodeLogTag = \case
+  NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
+  NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
+  NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
+  NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
+
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
-  LogTag_NodeLogTag nlt -> case nlt of
-    NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
-    NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
-    NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
-    NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
+  LogTag_NodeLogTag nlt -> errorLogIdForNodeLogTag nlt
   LogTag_BakerLogTag blt -> case blt of
     BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
     BakerLogTag_BakerMissed -> _errorLogBakerMissed_log

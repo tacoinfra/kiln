@@ -17,7 +17,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
@@ -25,7 +25,9 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
 import Data.Dependent.Sum (DSum ((:=>)))
-import Database.Groundhog.Core (Field)
+import Data.Some (Some(..))
+import Data.Universe
+import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
@@ -35,7 +37,7 @@ import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Email, Id (..))
+import Rhyolite.Schema (Email, Id (..), IdData)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -147,22 +149,28 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               notify $ Notify_NodeInternal nid Nothing
         where
           clearErrors nid = do
-            elin <- select (ErrorLogInaccessibleNode_nodeField ==. nid)
-            elnwc <- select (ErrorLogNodeWrongChain_nodeField ==. nid)
-            elbnh <- select (ErrorLogBadNodeHead_nodeField ==. nid)
-
-            now <- getTime
             let
-              logIds :: [Id ErrorLog] = mconcat
-                [ _errorLogInaccessibleNode_log <$> elin
-                , _errorLogNodeWrongChain_log <$> elnwc
-                , _errorLogBadNodeHead_log <$> elbnh
-                ]
-            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId logIds)
+              deleteLogs :: forall cstr m' t.
+                            ( Monad m', PersistBackend m'
+                            , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr)
+                         => NodeLogTag t
+                         -> Field t cstr (Id Node)
+                         -> m' [Id ErrorLog]
+              deleteLogs tag field = do
+                ids <- errorLogIdForNodeLogTag tag <$$> select (field ==. nid)
+                for_ ids $ notify . mkDefaultNotify . (Id @t)
+                pure ids
 
-            for_ elin $ notify . mkDefaultNotify  . (Id @ErrorLogInaccessibleNode) . _errorLogInaccessibleNode_log
-            for_ elnwc $ notify . mkDefaultNotify . (Id @ErrorLogNodeWrongChain) . _errorLogNodeWrongChain_log
-            for_ elbnh $ notify . mkDefaultNotify . (Id @ErrorLogBadNodeHead) . _errorLogBadNodeHead_log
+              onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
+              onTag (This tag) = case tag of
+                NodeLogTag_InaccessibleNode -> deleteLogs tag ErrorLogInaccessibleNode_nodeField
+                NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
+                NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
+                NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField
+
+            ids <- fmap concat $ for universe onTag
+            now <- getTime
+            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
