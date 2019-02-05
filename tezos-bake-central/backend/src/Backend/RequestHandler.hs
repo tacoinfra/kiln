@@ -129,9 +129,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         _ <- [executeQ|
           UPDATE "ProcessData" p SET running = ?shouldRun
             FROM "NodeInternal" n
-          WHERE p.id = n."data#data"
-             AND (p.backend IS NULL
-               OR p.updated < NOW() - interval '5 minutes')|]
+          WHERE p.id = n."data#data"|]
         (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
           processData <- getId $ _deletableRow_data nodeData
           notify $ Notify_NodeInternal nid processData
