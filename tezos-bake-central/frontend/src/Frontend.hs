@@ -24,6 +24,7 @@ import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
 import Data.List (intersperse, sortBy)
 import Data.List.NonEmpty (nonEmpty)
+import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -185,6 +186,8 @@ appMain
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
+    , MonadJSM (Performable (ModalM m))
+    , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
@@ -230,6 +233,8 @@ appName = "Kiln"
 appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+     , MonadJSM (ModalM m)
+     , MonadJSM (Performable (ModalM m))
      , HasModal t m, HasTimer t r, MonadReader r m
      , RouteConstraints t AppRoute m
      )
@@ -282,6 +287,8 @@ appSideHeader =
 appGutter
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+     , MonadJSM (ModalM m)
+     , MonadJSM (Performable (ModalM m))
      , HasModal t m, HasTimer t r, MonadReader r m
      )
   => m ()
@@ -811,6 +818,8 @@ bakersList ::
   ( MonadReader r m, HasTimer t r
   , MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , MonadJSM (ModalM m)
+  , MonadJSM (Performable (ModalM m))
   , HasModal t m
   )
   => m ()
@@ -826,17 +835,152 @@ bakersList = do
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
-addBakerModal close = mdo
-  el "h3" $ text "Add Baker"
-  divClass "basic small segment" $ text
-    "Enter a Baker address to begin monitoring."
-  addE <- formWithReset "Add Baker" "Begin monitoring the baker at the address entered." blank added $ do
-    zipFields
-      (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
-      (formItem $ aliasField "My Baker")
-  added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
-  pure $ leftmost [added, close]
+addBakerModal :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)) => Event t () -> m (Event t ())
+addBakerModal close = (<> close) . switch . current <$> workflow both
+  where
+    both = Workflow $ do
+      divClass "ui header" $ text "Add Bakers"
+      divClass "ui grid stackable divided" $ do
+        start <- startBaking
+        close' <- connectBaker
+        node <- flip tag start . current <$> watchInternalNode
+        let next = ffor node $ \case
+              Just _ -> addLedger -- TODO do we need an interstitial step to check that the node is up to date?
+              Nothing -> launchNode
+        pure (close', next)
+
+    addLedger = Workflow $ divClass "ledger-lookup" $ do
+      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Looking for Ledger Device..."
+      pb <- getPostBuild
+      rec
+        poll <- delay 5 response
+        response <- requestingIdentity $ public PublicRequest_GetConnectedLedger <$ (pb <> void poll)
+      let ledgerChoice = fmapMaybe id response
+      el "p" $ text "Connect your Ledger Device, enter the PIN and open the Tezos Baking app."
+      divClass "explanation" $ do
+        text "To install the Tezos Baking app:"
+        el "ol" $ do
+          el "li" $ do
+            text "Install and open Ledger Live: "
+            let uri = "https://www.ledger.com/pages/ledger-live"
+            hrefLink uri $ text uri
+          el "li" $ text "Navigate to Settings and turn on \"Developer Mode\""
+          el "li" $ text "Go to Manager and search for \"Tezos\""
+          el "li" $ text "Install the \"Tezos Baking\" app"
+          el "li" $ text "Open the Tezos Baking app on your ledger"
+      pure (never, ledgerNext <$> ledgerChoice)
+
+    ledgerNext ledger = Workflow $ divClass "ledger-select-account" $ mdo
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger check") blank
+      divClass "ledger-name" $ text $ unLedgerIdentifier ledger
+      elClass "h5" "ui header" $ text "Select an account to bake with."
+      let submitted = domEvent Submit formEl
+          curves = [minBound .. maxBound] :: [SigningCurve]
+          derivs = [DerivationPath "0'/0'", DerivationPath ""]
+      (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
+        let accountItem (secretKey, account, balance) = do
+              let selected = demuxed selectionDemux $ Just (secretKey, account)
+              (e, _) <- elClass' "a" "link item" $ do
+                SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
+                text $ toPublicKeyHashText account
+                fancyTez balance
+              pure $ (secretKey, account) <$ domEvent Click e
+        pb <- getPostBuild
+        response <- for (liftA2 (,) curves derivs) $ \(c,d) -> requestingIdentity $ public (PublicRequest_ClientShowLedger $ SecretKey ledger c d) <$ pb
+        dr <- foldDyn (\ma as -> maybe as (:as) ma) [] $ leftmost response
+        selection <- foldDyn (\a b -> if b == Just a then Nothing else Just a) Nothing $ leftmost [accountFromList, accountSpecific]
+        let selectionDemux = demux selection
+        accountFromList <- switchHold never <=< dyn $ ffor dr $ \accounts -> do
+          e <- divClass "ui block list" $ fmap leftmost $ traverse accountItem (reverse $ L.sortOn (\(_, _, t) -> t) accounts)
+          when (length accounts < 6) $ divClass "ledger-accounts-loader" $ do
+            divClass "ui active mini inline blue loader" blank
+            text "Loading accounts..."
+          pure e
+        divClass "explanation" $ text "Don't see your account? Enter a specific signing curve and derivation path."
+        specificRequest <- divClass "two fields" $ do
+          curve <- divClass "ui field" $ do
+            el "label" $ text "Signing Curve"
+            SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity $ head curves) never $ SemUi.TaggedStatic $
+              Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
+          derivation <- divClass "ui field" $ do
+            el "label" $ text "Derivation Path"
+            fmap DerivationPath . value <$> inputElement (def & inputElementConfig_initialValue .~ unDerivationPath (head derivs))
+          debounce 1 $ updated $ (,) <$> value curve <*> derivation
+        specificResult <- requestingIdentity $ leftmost
+          [ ffor specificRequest $ \(Identity c, d) -> public (PublicRequest_ClientShowLedger $ SecretKey ledger c d)
+          , public (PublicRequest_ClientShowLedger $ SecretKey ledger (head curves) (head derivs)) <$ pb
+          ]
+        specificItem <- holdDyn Nothing $ leftmost [Just <$> specificResult, Nothing <$ specificRequest]
+        accountSpecific <- divClass "ui block list" $ switchHold never <=< dyn $ ffor specificItem $ \case
+          Just (Just i) -> accountItem i
+          Just Nothing -> pure never -- loaded, no result
+          Nothing -> divClass "ledger-pkh-loader" $ do
+            divClass "ui active tiny inline blue loader" blank
+            text "Importing PKH..."
+            pure never
+        divClass "ui divider" blank
+        text "Kiln must register the selected account as a delegate and authorize the Ledger Device to bake for the account. Continue?"
+        divClass "ui error message" $ do
+          text "Select an account from the list above, or enter a specific signing curve and derivation path."
+        elAttr "button" ("type" =: "submit" <> "class" =: "ui primary button") $
+          text "Register As Delegate & Authorize Ledger to Bake"
+        pure selection
+      hasError <- holdDyn False $ leftmost
+        [ True <$ ffilter isNothing (tag (current selection) submitted)
+        , False <$ updated selection
+        ]
+      let register = fmapMaybe id $ tag (current selection) submitted
+      pure (never, uncurry registerDelegate <$> register)
+
+    registerDelegate sk pkh = Workflow $ divClass "ledger-lookup" $ do
+      -- TODO
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Respond to the prompt on your Ledger Device..."
+      el "p" $ text "Your Ledger Device should show the following prompt:"
+      elClass "h6" "ui header" $ text $ "Authorize Baking With Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
+      divClass "explanation" $ do
+        el "p" $ text "tezos-client import secret key my_ledger <secret key>"
+        text $ "Provide Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+        el "p" $ text "tezos-client register key my_ledger as delegate"
+        el "p" $ text "tezos-client authorize ledger to bake for my_ledger"
+        text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      pure (never, never)
+
+    launchNode = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the block chain before baking."
+      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
+      launch <- uiButton "primary" "Launch Node"
+      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      pure (close', never)
+
+    startBaking = divClass "start-baking column" $ do
+      elClass "h5" "ui header" $ text "Start Baking"
+      divClass "explanation" $ do
+        text "Bake and endorse on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
+        hrefLink "https://www.ledger.com/products/ledger-nano-s" $ text "Ledger Device" -- TODO is the link correct?
+        text ". Kiln only supports running a single baker."
+      baker <- maybeDyn =<< watchInternalBaker
+      switchHold never <=< dyn $ ffor baker $ \case
+        Nothing -> uiButton "primary fluid" "Start Baking"
+        Just _ -> do
+          kilnLogo
+          text "A Kiln baker is running."
+          pure never
+
+    connectBaker = divClass "connect-baker column" $ mdo
+      elClass "h5" "ui header" $ text "Connect via Address"
+      divClass "explanation" $ text "Monitor a local or remote baker via public key hash (PKH)."
+      addE <- formWithReset "Add Baker" "Monitor a local or remote baker via public key hash (PKH)." blank added $ do
+        zipFields
+          (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
+          (formItem $ aliasField "My Baker")
+      added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
+      pure $ leftmost [added, close]
 
 nodeStatus :: Maybe NodeInternalState -> Int -> MonitoredStatus
 nodeStatus mInternalState alertCount = min fromStatus fromAlert

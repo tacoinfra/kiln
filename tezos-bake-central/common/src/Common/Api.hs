@@ -57,6 +57,11 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
+    PublicRequest_GetConnectedLedger
+      :: PublicRequest Bake (Maybe LedgerIdentifier)
+    PublicRequest_ClientShowLedger
+      :: SecretKey
+      -> PublicRequest Bake (Maybe (SecretKey, PublicKeyHash, Tez))
     PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text

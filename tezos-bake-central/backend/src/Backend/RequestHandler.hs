@@ -18,6 +18,7 @@ module Backend.RequestHandler where
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
@@ -38,6 +39,7 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.ClientCmd
 import Backend.Http (runHttpT)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
@@ -58,6 +60,12 @@ requestHandler
 requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
+
+      PublicRequest_GetConnectedLedger -> getConnectedLedger
+      PublicRequest_ClientShowLedger secretKey -> runMaybeT $ do
+        account <- MaybeT $ showLedger secretKey
+        balance <- MaybeT $ getBalanceFor account
+        pure (secretKey, account, balance)
 
       PublicRequest_AddInternalNode -> inDb $ do
         getInternalNode >>= \case

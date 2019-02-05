@@ -99,6 +99,11 @@ tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
+fancyTez :: DomBuilder t m => Tez -> m ()
+fancyTez t = let (w, p, tz) = tez' t in elClass "span" "fancy-tez" $ do
+  text $ w <> p
+  elClass "span" "tez" $ text tz
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)

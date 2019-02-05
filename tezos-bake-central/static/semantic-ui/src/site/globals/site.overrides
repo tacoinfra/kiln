@@ -443,6 +443,52 @@ body {
   }
 }
 
+.ui.block.list {
+  > a.link.item {
+    color: @black;
+    text-decoration: none;
+  }
+  > .item {
+    background-color: @offWhite;
+    height: unit(42 / @emSize, rem);
+    padding: unit(6 / @emSize, rem) unit(9 / @emSize, rem) !important;
+    margin: unit(2.5 / @emSize, rem) 0;
+    line-height: unit(30 / @emSize, rem);
+    border-radius: unit(3 / @emSize, rem);
+    font-size: unit(14 / @emSize, rem);
+
+    &:hover {
+      background-color: #f3f4f6;
+    }
+
+    > .icon-check {
+      width: unit(24 / @emSize, rem);
+      position: relative;
+      margin-right: unit(22 / @emSize, rem);
+      height: 100%;
+      float: left;
+
+      &.active:before {
+        background-color: @blue;
+        color: @white;
+      }
+
+      &:before {
+        display: block;
+        position: absolute;
+        top: 50%;
+        margin-top: unit(-12 / @emSize, rem);
+        width: unit(24 / @emSize, rem);
+        height: unit(24 / @emSize, rem);
+        line-height: unit(24 / @emSize, rem);
+        text-align: center;
+        border-radius: 50%;
+        background-color: #d8dce6;
+        color: @slate;
+      }
+    }
+  }
+}
 
 .app-right {
   height: 100%;
@@ -613,6 +659,66 @@ img.credits-obsidian {
         margin-left: @20px;
       }
     }
+  }
+}
+
+img.ledger {
+  display: block;
+  width: unit(100 / @emSize, rem);
+  margin: @15px auto;
+}
+
+.ledger-lookup {
+  .ui.header {
+    display: block;
+    font-size: @20px;
+    text-align: center;
+    .ui.loader {
+      margin-right: @14px;
+    }
+  }
+  > .ui.header+p {
+    width: unit(280 / @emSize, rem);
+    margin: @20px auto @30px auto;
+    text-align: center;
+    font-size: @14px;
+  }
+}
+
+.ledger-select-account {
+  .ledger-name {
+    text-align: center;
+    color: @grey;
+    font-size: @12px;
+    margin-top: -@20px;
+    margin-bottom: @10px;
+  }
+  .fancy-tez {
+    float: right;
+  }
+  .ui.block.list {
+    margin: @20px 0;
+  }
+  .ledger-accounts-loader {
+    text-align: center;
+    margin: @50px 0;
+    .ui.loader {
+      margin-right: @14px;
+    }
+  }
+  .ledger-pkh-loader {
+    margin: @20px 0 @30px 0;
+    .ui.loader {
+      margin-right: @14px;
+    }
+  }
+}
+
+.fancy-tez {
+  font-weight: bold;
+  > .tez {
+    margin-left: 0.3rem;
+    color: @grey;
   }
 }
 
@@ -969,6 +1075,17 @@ h4.dashboard-section-title {
       width: unit(379 / @emSize, rem);
     }
 
+    .start-baking {
+      width: unit(279 / @emSize, rem);
+      > .ui.button {
+        margin-top: unit(22 / @emSize, rem);
+      }
+    }
+
+    .connect-baker {
+      width: unit(413 / @emSize, rem);
+    }
+
     .column > .ui.header {
       margin-bottom: @10px;
       font-weight: normal;
@@ -987,7 +1104,7 @@ h4.dashboard-section-title {
 }
 
 .modal-box.add-baker {
-  width: unit(500 / @emSize, rem);
+  width: unit(766 / @emSize, rem);
   max-width: 95%;
 
   h3 {
