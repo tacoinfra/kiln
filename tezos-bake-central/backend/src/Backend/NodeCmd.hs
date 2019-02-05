@@ -132,24 +132,25 @@ putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql 
 putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
   $(logDebugSH) ("putState" :: Text, pid, state)
   result <- [queryQ|
-    UPDATE "NodeInternal"
+    UPDATE "NodeInternal" n
     SET "data#data#state" = ?state
       , "data#data#stateUpdated" = NOW()
       , "data#data#backend" = ?pid
-    WHERE COALESCE ("data#data#backend", ?pid) = ?pid
-    RETURNING "id"
-            , "data#data#running"
-            , "data#data#state"
-            , "data#data#stateUpdated" AT TIME ZONE 'UTC'
-            , "data#data#backend"
+    FROM (SELECT "data#data#state", "data#data#backend" FROM "NodeInternal" WHERE COALESCE ("data#data#backend", ?pid) = ?pid FOR UPDATE) y
+    WHERE COALESCE (n."data#data#backend", ?pid) = ?pid
+    RETURNING n."id"
+            , n."data#data#running"
+            , y."data#data#state"
+            , n."data#data#stateUpdated" AT TIME ZONE 'UTC'
+            , y."data#data#backend"
     |]
   for_ result $ \(nid, running', state', stateUpdated', backend') ->
     when ((state', backend') /= (state, Just pid)) $
       notify (Notify_NodeInternal nid $ Just NodeInternalData
         { _nodeInternalData_running = running'
-        , _nodeInternalData_state = state'
+        , _nodeInternalData_state = state
         , _nodeInternalData_stateUpdated = stateUpdated'
-        , _nodeInternalData_backend = backend'
+        , _nodeInternalData_backend = (Just pid)
         })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
