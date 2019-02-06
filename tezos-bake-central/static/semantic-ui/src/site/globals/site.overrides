@@ -709,16 +709,30 @@ img.credits-obsidian {
 
   .dashboard-section-overview-body {
     flex: 1;
+    font-size: @12px;
 
     .ui.header {
-      margin-bottom: @13px;
-
       .ui.loader {
         margin-right: @10px;
       }
     }
 
+    .alert-entity {
+      margin-top: @2px;
+      margin-bottom: @16px;
+
+      label:not(.secondary-label) {
+        margin-right: @9px;
+        font-weight: 700;
+      }
+      label.secondary-label {
+        color: @grey;
+      }
+    }
+
     .description {
+      margin-top: @13px;
+      font-size: @12px;
       color: @grey;
 
       .buttons {

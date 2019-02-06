@@ -454,6 +454,7 @@ networkUpdateAlert elua = do
   renderResolvableSplashAlert
     (icon "icon-alert-badge big blue")
     header
+    Nothing
     (do el "p" $ text $ bodyFirstPara
         el "p" $ do
           text "Get the new software here  🡒  "
@@ -657,7 +658,7 @@ liveErrorsWidget = void $ do
   where
     timestamped (lbl,ts) = el "div" $ do
       el "label" $ text lbl
-      localTimestamp $ pure ts
+      localTimestamp ts
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
@@ -703,8 +704,7 @@ liveErrorsWidget = void $ do
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
               for_ node' $ \n -> do
-                let (main, _) = nodeSummaryIdentification n
-                header $ "Node has too few peers: " <> main
+                header $ "Node has too few peers"
                 nodeLabel n
                 el "div" $ text $
                   "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -1353,10 +1353,12 @@ bakersTab =
           (do
              divClass "ui active inline loader small blue" blank
              text "Gathering baker data...")
+          Nothing
           (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
         BakersBanner_CannotGather -> renderSplashAlert
           (icon "icon-disconnected big red")
           (text "Cannot gather baker data - no nodes online.")
+          Nothing
           (do
              el "p" $ text "Kiln cannot gather baker data if no nodes are synced with the blockchain."
              el "p" $ do
@@ -1385,7 +1387,8 @@ bakersTab =
           renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
             (_bakerErrorDescriptions_title dsc)
-            (do dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+            (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
+            (do
                 el "div" $ text $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
@@ -1481,11 +1484,12 @@ bakersTab =
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
   -> Text -- ^ Title
+  -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
   -> m ()
-renderResolvableSplashAlert splashIcon title desc mReq = do
-  renderSplashAlert splashIcon (text title) $ do
+renderResolvableSplashAlert splashIcon title entity desc mReq = do
+  renderSplashAlert splashIcon (text title) entity $ do
     desc
     for_ mReq $ \resolveReq -> do
       resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
@@ -1494,12 +1498,14 @@ renderResolvableSplashAlert splashIcon title desc mReq = do
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
   -> m () -- ^ Title
+  -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> m ()
-renderSplashAlert splashIcon title desc = do
+renderSplashAlert splashIcon title entity desc = do
   elClass "div" "dashboard-section-overview-icon" $ splashIcon
   elClass "div" "dashboard-section-overview-body" $ do
     divClass "ui header" $ title
+    for_ entity $ divClass "alert-entity"
     divClass "description" $ desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
