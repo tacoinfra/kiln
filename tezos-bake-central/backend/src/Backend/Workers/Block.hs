@@ -54,8 +54,10 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Scrape blocks cycle."
 
-    _ <- liftIO $ atomically $
+    (params, dsh) <- liftIO $ atomically $
       (,) <$> waitForParams nds <*> dataSourceHead nds
+    let headLevelMay = (^. level) <$> dsh
+    let cutoffLevel = maybe 0 (rightsContextLevel params) headLevelMay
 
     queuedBlockOrNot <- inDb $ do
       [queryQ|
@@ -65,7 +67,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
         where hash = (
           select hash
           from "BlockTodo"
-          where (not "parsedParent" or not "parsedAccusations") and chain = ?chainId and ("claimedBy" is null or "claimedAt" < now() - interval ?claimTimeout)
+          where (not "parsedParent" or not "parsedAccusations") and chain = ?chainId and ("claimedBy" is null or "claimedAt" < now() - interval ?claimTimeout) and level >= ?cutoffLevel
           order by level desc
           limit 1
           for update skip locked
