@@ -718,16 +718,17 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+-- Re-ordering these can yield errors
+-- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where
+  LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
   LogTag_Node :: NodeLogTag a -> LogTag a
   LogTag_Baker :: BakerLogTag a -> LogTag a
-  -- | Misc baker /daemon/ error.
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
+  -- | Misc baker /daemon/ error.
 
 deriving instance Eq (LogTag a)
--- Weird-ass GHC bug if I uncomment this!!
---deriving instance Ord (LogTag a)
+deriving instance Ord (LogTag a)
 deriving instance Show (LogTag a)
 
 data NodeLogTag a where
