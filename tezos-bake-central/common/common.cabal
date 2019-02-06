@@ -55,6 +55,7 @@ library
     , transformers-compat
     , universe
     , universe-base
+    , universe-template
     , uri-encode
     , writer-cps-mtl
 
