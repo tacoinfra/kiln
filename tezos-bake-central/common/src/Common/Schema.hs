@@ -720,8 +720,8 @@ instance HasId TelegramMessageQueue
 data LogTag a where
   LogTag_NodeLogTag :: NodeLogTag a -> LogTag a
   LogTag_BakerLogTag :: BakerLogTag a -> LogTag a
+  -- | Misc baker /daemon/ error.
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  -- ^ Misc baker /daemon/ error.
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
 
 deriving instance Eq (LogTag a)
