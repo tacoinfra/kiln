@@ -13,10 +13,7 @@ import Tezos.Chain (NamedChain, showNamedChain)
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema ( ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..)
-                     , BakerErrorDescriptions(..), LogTag(..), BakerLogTag (..)
-                     , ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..)
-                     , RightKind(..), bakerIdentification)
+import Common.Schema
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
