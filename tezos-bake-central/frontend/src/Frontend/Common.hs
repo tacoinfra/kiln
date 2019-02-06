@@ -534,6 +534,12 @@ nodeLabel = uncurry errorLabel . nodeSummaryIdentification
 bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
 bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
 
+ensureHealthyNodes :: DomBuilder t m => m ()
+ensureHealthyNodes = do
+  text "Add a node from the left panel or make sure any nodes you’ve already added are"
+  icon "circle healthy-node small green"
+  text "healthy."
+
 makeLenses ''FrontendContext
 
 instance HasFrontendConfig (FrontendContext t) where
