@@ -144,6 +144,7 @@ extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx" Nothing
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
   createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
+  createIndex (QualifiedIdentifier Nothing "BlockTodo") [Right "level"] "_blockTodo_levelWhereNotParsed_idx" (Just "NOT \"parsedParent\" OR NOT \"parsedAccusations\"")
 
 createIndex
   :: (Migrate m)
