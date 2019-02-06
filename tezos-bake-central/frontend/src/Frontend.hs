@@ -551,7 +551,7 @@ data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
-  = SynthError_BakersInformationDown (NonEmpty PublicKeyHash)
+  = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
 liveErrorsWidget
@@ -595,7 +595,7 @@ liveErrorsWidget = void $ do
         Left (CollectiveNodesFailure_NoNodes)             -> Nothing
   dTimer <- asks $ view timer
   -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
-  dBakerKeys <- MMap.keys <$$> watchBakerAddresses
+  dBakers <- watchBakerAddresses
 
   let
     combinedRealErrors
@@ -610,10 +610,10 @@ liveErrorsWidget = void $ do
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
       :: Dynamic t (Map.Map SynthError (ErrorLog, SynthError))
-    synthErrors = ffor3 dBakerKeys dTimer dAllNodesDownTime $
-      \bakerKeys now allNodesDownTime ->
+    synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
+      \bakers now allNodesDownTime ->
         fromMaybe mempty $ do
-          keys1 <- NEL.nonEmpty bakerKeys
+          keys1 <- NEL.nonEmpty $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -673,9 +673,10 @@ liveErrorsWidget = void $ do
     synthEntry :: SynthError -> m ()
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
-      errorLabel "My Bakers" $ toPublicKeyHashText <$> pkhs
+      let (pkh, bakerData) = NEL.head pkhs
+      errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ T.take 20 (toPublicKeyHashText pkh) <> "..."
       el "div" $
-        text "Kiln cannot gather data about this baker if no nodes are synced with the blockchain."
+        text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' (logTag :=> Identity log) node') =
@@ -961,9 +962,8 @@ publicNodeOptions = do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
-        divClass "twelve wide column" $ do
-          divClass "header" $ text $ showPublicNode pn
-          divClass "description" $ text $ describePublicNode pn
+        divClass "header" $ text $ showPublicNode pn
+        divClass "description" $ text $ describePublicNode pn
 
     let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
@@ -1434,17 +1434,27 @@ bakersTab =
         (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
         dyn_ $ ffor details'' $ \case
           Nothing -> blank
-          Just details -> el "dl" $ do
+          Just details -> elClass "table" "baker-balance" $ do
             let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "div" $ do
-              el "dt" (text "Available Balance")
-              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-                text . tez . _cacheDelegateInfo_balance
+            el "tr" $ do
+              el "td" (text "Available Balance")
+              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
+                text w
+              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
+                text p
+                elClass "span" "tez" $ text tz
 
-            el "div" $ do
-              el "dt" (text "Staking Balance")
-              el "dd" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $
-                text . tez . _cacheDelegateInfo_stakingBalance
+            el "tr" $ do
+              el "td" (text "Staking Balance")
+              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+                text w
+              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+                let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+                text p
+                elClass "span" "tez" $ text tz
 
             --el "div" $ do
             --  el "dt" (text "Bake Success:")
