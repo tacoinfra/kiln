@@ -62,28 +62,28 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_ErrorLogBakerMissed eid -> handleErrorLog'
         (handleBakerAddress . unId . _errorLogBakerMissed_baker)
         _errorLogBakerMissed_log
-        (LogTag_BakerLogTag BakerLogTag_BakerMissed)
+        (LogTag_Baker BakerLogTag_BakerMissed)
         eid
       Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
-        (LogTag_NodeLogTag NodeLogTag_BadNodeHead)
+        (LogTag_Node NodeLogTag_BadNodeHead)
         eid
       Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log
-        (LogTag_NodeLogTag NodeLogTag_InaccessibleNode)
+        (LogTag_Node NodeLogTag_InaccessibleNode)
         eid
       Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
-        (LogTag_NodeLogTag NodeLogTag_NodeWrongChain)
+        (LogTag_Node NodeLogTag_NodeWrongChain)
         eid
       Notify_ErrorLogNodeInvalidPeerCount eid -> handleErrorLog _errorLogNodeInvalidPeerCount_log
-        (LogTag_NodeLogTag NodeLogTag_NodeInvalidPeerCount)
+        (LogTag_Node NodeLogTag_NodeInvalidPeerCount)
         eid
       Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
-        (LogTag_BakerLogTag BakerLogTag_MultipleBakersForSameBaker)
+        (LogTag_Baker BakerLogTag_MultipleBakersForSameBaker)
         eid
       Notify_ErrorLogBakerDeactivated eid -> handleErrorLog _errorLogBakerDeactivated_log
-        (LogTag_BakerLogTag BakerLogTag_BakerDeactivated)
+        (LogTag_Baker BakerLogTag_BakerDeactivated)
         eid
       Notify_ErrorLogBakerDeactivationRisk eid -> handleErrorLog _errorLogBakerDeactivationRisk_log
-        (LogTag_BakerLogTag BakerLogTag_BakerDeactivationRisk)
+        (LogTag_Baker BakerLogTag_BakerDeactivationRisk)
         eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log LogTag_BakerNoHeartbeat eid
       Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log LogTag_NetworkUpdate eid
@@ -225,7 +225,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
       :: forall e u m2
-      . (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2) -- (EntityWithId e, PersistBackend m2, PostgresRaw m2)
+      . (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2)
       => (e -> m2 (BakeView a))
       -> (e -> Id ErrorLog)
       -> LogTag e

@@ -284,17 +284,17 @@ getErrorLogsImpl flt intervalMap = do
     runQueries window = do
       leftBiasedUnions <$> sequenceA
         [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> LogTag_NodeLogTag NodeLogTag_InaccessibleNode :=> Identity (ErrorLogInaccessibleNode elId tNode tAddress tAlias))
+            (\elId (tNode, tAddress, tAlias) -> LogTag_Node NodeLogTag_InaccessibleNode :=> Identity (ErrorLogInaccessibleNode elId tNode tAddress tAlias))
             window
 
         , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
             (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                LogTag_NodeLogTag NodeLogTag_NodeWrongChain :=> Identity (ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId))
+                LogTag_Node NodeLogTag_NodeWrongChain :=> Identity (ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId))
             window
 
         , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
             (\elId (tNode, tMinPeerCount, tActualPeerCount) ->
-                LogTag_NodeLogTag NodeLogTag_NodeInvalidPeerCount :=> Identity (ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount))
+                LogTag_Node NodeLogTag_NodeInvalidPeerCount :=> Identity (ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount))
             window
 
         --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
@@ -302,7 +302,7 @@ getErrorLogsImpl flt intervalMap = do
         --    window
 
         , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
-          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> LogTag_NodeLogTag NodeLogTag_BadNodeHead :=> Identity
+          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> LogTag_Node NodeLogTag_BadNodeHead :=> Identity
             ErrorLogBadNodeHead
              { _errorLogBadNodeHead_log = elId
              , _errorLogBadNodeHead_node = tNode
@@ -312,7 +312,7 @@ getErrorLogsImpl flt intervalMap = do
              })
           window
         , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> LogTag_BakerLogTag BakerLogTag_MultipleBakersForSameBaker :=> Identity
+          (\elId (tPublicKeyHash, tClient, tWorker) -> LogTag_Baker BakerLogTag_MultipleBakersForSameBaker :=> Identity
             (ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker))
           window
         , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
@@ -321,16 +321,16 @@ getErrorLogsImpl flt intervalMap = do
           window
 
         , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerDeactivated :=> Identity
+          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> LogTag_Baker BakerLogTag_BakerDeactivated :=> Identity
             (ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness))
           window
 
         , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerDeactivationRisk :=> Identity
+          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> LogTag_Baker BakerLogTag_BakerDeactivationRisk :=> Identity
             (ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness))
           window
         , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
-          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> LogTag_BakerLogTag BakerLogTag_BakerMissed :=> Identity
+          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> LogTag_Baker BakerLogTag_BakerMissed :=> Identity
             (ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness))
           window
         ]

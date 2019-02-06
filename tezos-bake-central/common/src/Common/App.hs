@@ -172,7 +172,7 @@ type ErrorLogView = DSum LogTag Identity
 
 nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
 nodeErrorViewOnly = \case
-  LogTag_NodeLogTag nlt :=> v -> Just $ nlt :=> v
+  LogTag_Node nlt :=> v -> Just $ nlt :=> v
   _ -> Nothing
 
 nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
@@ -184,7 +184,7 @@ nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
 bakerErrorViewOnly = \case
-  LogTag_BakerLogTag blt :=> v -> Just $ blt :=> v
+  LogTag_Baker blt :=> v -> Just $ blt :=> v
   _ -> Nothing
 
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
@@ -203,8 +203,8 @@ errorLogIdForNodeLogTag = \case
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
-  LogTag_NodeLogTag nlt -> errorLogIdForNodeLogTag nlt
-  LogTag_BakerLogTag blt -> case blt of
+  LogTag_Node nlt -> errorLogIdForNodeLogTag nlt
+  LogTag_Baker blt -> case blt of
     BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
     BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
     BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
