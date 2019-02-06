@@ -24,6 +24,7 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.Schema (fromId)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.IO (hFlush)
@@ -136,28 +137,21 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
 putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> ProcessState -> m ()
 putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
   $(logDebugSH) ("putState" :: Text, pid, state)
-  result <- [queryQ|
-    UPDATE "ProcessData" p
-      SET state = ?state
-        , updated = NOW()
-        , backend = ?pid
-      FROM "NodeInternal" n
-    WHERE (p.id = n."data#data")
-      AND COALESCE (p.backend, ?pid) = ?pid
-    RETURNING n.id
-            , p.running
-            , p.state
-            , p.updated AT TIME ZONE 'UTC'
-            , p.backend
-    |]
-  for_ result $ \(nid, running', state', updated', backend') ->
-    when ((state', backend') /= (state, Just pid)) $
-      notify (Notify_NodeInternal nid $ Just ProcessData
-        { _processData_running = running'
-        , _processData_state = state'
-        , _processData_updated = updated'
-        , _processData_backend = backend'
-        })
+  let
+    backend_ = ProcessData_backendField
+    state_ = ProcessData_stateField
+    backend = Just pid
+
+  pdIds <- project (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) $ CondEmpty
+  for_ pdIds $ \(nid, pdid) -> get (fromId pdid) >>= \case
+    Nothing -> return ()
+    (Just p) ->
+      when ((_processData_state p /= state) || (_processData_backend p /= backend)) $ do
+        update [backend_ =. backend , state_ =. state] $ AutoKeyField ==. (fromId pdid)
+        notify (Notify_NodeInternal nid $ Just $ p
+          { _processData_state = state
+          , _processData_backend = backend
+          })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
 callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
