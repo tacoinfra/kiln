@@ -15,10 +15,13 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- Needed for nested `deriveArgDict`
+{-# LANGUAGE UndecidableInstances #-}
 
 -- TODO do everywhere
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
@@ -44,8 +47,9 @@ import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.GADT.Show.TH (deriveGShow)
+import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
+import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
+import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
 import Data.Dependent.Sum (DSum)
 import Data.Function (on)
 import Data.Map (Map)
@@ -714,17 +718,42 @@ data TelegramMessageQueue = TelegramMessageQueue
 instance HasId TelegramMessageQueue
 
 data LogTag a where
-  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
-  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
+  LogTag_NodeLogTag :: NodeLogTag a -> LogTag a
+  LogTag_BakerLogTag :: BakerLogTag a -> LogTag a
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
-  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
-  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
-  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
+  -- ^ Misc baker *daemon* error.
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
-  LogTag_NodeInvalidPeerCount :: LogTag ErrorLogNodeInvalidPeerCount
 
+deriving instance Eq (LogTag a)
+-- Weird-ass GHC bug if I uncomment this!!
+--deriving instance Ord (LogTag a)
+deriving instance Show (LogTag a)
+
+data NodeLogTag a where
+  NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
+  NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
+  NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
+  NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
+
+deriving instance Eq (NodeLogTag a)
+deriving instance Ord (NodeLogTag a)
+deriving instance Show (NodeLogTag a)
+
+-- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
+-- chain entity: Delegates, and the background process tezos-baker both
+-- referred to by the name "Baker".  that's confusing; especially when some
+-- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
+-- of a background process and a delegate. we should really rename one or both
+-- to minimize confusion between these two ideas.
+data BakerLogTag a where
+  BakerLogTag_MultipleBakersForSameBaker :: BakerLogTag ErrorLogMultipleBakersForSameBaker
+  BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
+  BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
+  BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
+
+deriving instance Eq (BakerLogTag a)
+deriving instance Ord (BakerLogTag a)
+deriving instance Show (BakerLogTag a)
 
 data BakerErrorDescriptions = BakerErrorDescriptions
   { _bakerErrorDescriptions_title :: !Text
@@ -840,14 +869,28 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
 
 return []
 
-deriveArgDict ''LogTag
-deriveGCompare ''LogTag
-deriveGEq ''LogTag
-deriveGShow ''LogTag
-deriveJSONGADT ''LogTag
+fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
-
-
+-- Do this is second because it is downstream
+fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

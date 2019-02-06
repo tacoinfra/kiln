@@ -393,24 +393,26 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert (tag :=> (Identity specificLog)) -> inDb $ do
+      PublicRequest_ResolveAlert (tag :=> Identity specificLog) -> inDb $ do
         -- TODO: this is not the only place we encode knowledge of which alert types can be manually resolved
         elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
-          LogTag_InaccessibleNode -> pure Nothing
-          LogTag_NodeWrongChain -> pure Nothing
+          LogTag_NodeLogTag nlt -> case nlt of
+            NodeLogTag_InaccessibleNode -> pure Nothing
+            NodeLogTag_NodeWrongChain -> pure Nothing
+            NodeLogTag_BadNodeHead -> pure Nothing
+            NodeLogTag_NodeInvalidPeerCount -> pure Nothing
+          LogTag_BakerLogTag blt -> case blt of
+            BakerLogTag_MultipleBakersForSameBaker -> pure Nothing
+            BakerLogTag_BakerDeactivated -> pure Nothing
+            BakerLogTag_BakerDeactivationRisk -> pure Nothing
+            BakerLogTag_BakerMissed -> do
+              let eid = _errorLogBakerMissed_log specificLog
+              n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
+              return $ (,) <$> pure eid <*> n
           LogTag_BakerNoHeartbeat -> pure Nothing
-          LogTag_BadNodeHead -> pure Nothing
-          LogTag_NodeInvalidPeerCount -> pure Nothing
-          LogTag_MultipleBakersForSameBaker -> pure Nothing
           LogTag_NetworkUpdate -> do
             let eid = _errorLogNetworkUpdate_log specificLog
             n <- fmap (Notify_ErrorLogNetworkUpdate . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
-            return $ (,) <$> pure eid <*> n
-          LogTag_BakerDeactivated -> pure Nothing
-          LogTag_BakerDeactivationRisk -> pure Nothing
-          LogTag_BakerMissed -> do
-            let eid = _errorLogBakerMissed_log specificLog
-            n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
             return $ (,) <$> pure eid <*> n
 
         for_ elid_notifier' $ \(elid, notifier) -> do
