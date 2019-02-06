@@ -223,7 +223,7 @@ data NodeInternalState
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we *want* the node in;
+  { _nodeInternalData_running :: !Bool -- the state we /want/ the node in;
   , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
   , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
   , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
@@ -464,7 +464,7 @@ instance Aeson.ToJSONKey RightKind
 
 -- It's an explicit choice not to include either the priority; this reduces the
 -- amount of reduntant data since we only really care about expected returns
--- rather than all possible.  For the same reason we *do* include endorsement
+-- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.
 data BakerRight = BakerRight
   { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
@@ -638,7 +638,7 @@ instance HasId ErrorLogBadNodeHead where
 -- did or didn't take your rights.
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
--- new uncle occurs in which the baker *did* exercise their rights, or the user
+-- new uncle occurs in which the baker /did/ exercise their rights, or the user
 -- manually acknowledges the error.  If the network is branch hopping; its
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
@@ -721,7 +721,7 @@ data LogTag a where
   LogTag_NodeLogTag :: NodeLogTag a -> LogTag a
   LogTag_BakerLogTag :: BakerLogTag a -> LogTag a
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  -- ^ Misc baker *daemon* error.
+  -- ^ Misc baker /daemon/ error.
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
 
 deriving instance Eq (LogTag a)
