@@ -172,7 +172,7 @@ type ErrorLogView = DSum LogTag Identity
 
 nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
 nodeErrorViewOnly = \case
-  LogTag_NodeLogTag nlt :=> v -> Just $ nlt :=> v
+  LogTag_Node nlt :=> v -> Just $ nlt :=> v
   _ -> Nothing
 
 nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
@@ -184,7 +184,7 @@ nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
 bakerErrorViewOnly = \case
-  LogTag_BakerLogTag blt :=> v -> Just $ blt :=> v
+  LogTag_Baker blt :=> v -> Just $ blt :=> v
   _ -> Nothing
 
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
@@ -194,14 +194,17 @@ bakerIdForBakerErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
 
+errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
+errorLogIdForNodeLogTag = \case
+  NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
+  NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
+  NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
+  NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
+
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
-  LogTag_NodeLogTag nlt -> case nlt of
-    NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
-    NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
-    NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
-    NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
-  LogTag_BakerLogTag blt -> case blt of
+  LogTag_Node nlt -> errorLogIdForNodeLogTag nlt
+  LogTag_Baker blt -> case blt of
     BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
     BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
     BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log

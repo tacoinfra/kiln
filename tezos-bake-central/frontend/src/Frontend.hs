@@ -679,7 +679,7 @@ liveErrorsWidget = void $ do
     logEntry :: ErrorLogView' -> m ()
     logEntry (ErrorLogView' (logTag :=> Identity log) node') =
         case logTag of
-          LogTag_NodeLogTag nlt -> case nlt of
+          LogTag_Node nlt -> case nlt of
             NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
               let ErrorLogInaccessibleNode _ _ address alias = log
               header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
@@ -709,7 +709,7 @@ liveErrorsWidget = void $ do
                 el "div" $ text $
                   "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
-          LogTag_BakerLogTag blt -> case blt of
+          LogTag_Baker blt -> case blt of
             BakerLogTag_BakerDeactivated -> renderBakerError
               (bakerDeactivatedDescriptions log)
               (_errorLogBakerDeactivated_publicKeyHash log)
