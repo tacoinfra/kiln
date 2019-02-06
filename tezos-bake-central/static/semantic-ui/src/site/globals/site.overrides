@@ -88,6 +88,10 @@ h6.ui.header {
     .buttons {
       text-align: center;
       margin-top: @30px;
+
+      .ui.button.primary.close {
+        width: unit(166 / @emSize, rem);
+      }
     }
   }
 
