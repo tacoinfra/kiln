@@ -92,7 +92,9 @@ library
     , these
     , time
     , transformers
+    , transformers-base
     , unix
+    , universe
     , uri-encode
 
   exposed-modules:
