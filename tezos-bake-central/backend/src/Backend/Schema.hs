@@ -515,6 +515,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: constraint
             fields: [_bakerDaemonExternal_data] #data#address
   - embedded: BakerDaemonExternalData
+  - entity: BakerDaemonInternal
+    autoKey: null
+    keys:
+      - name: BakerDaemonInternalId
+        default: true
+    constructors:
+      - name: BakerDaemonInternal
+        uniques:
+          - name: BakerDaemonInternalId
+            type: primary
+            fields: [_bakerDaemonInternal_id]
   - entity: BakerDaemonInfo
     autoKey: null
     keys:
