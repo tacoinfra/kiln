@@ -17,7 +17,7 @@ Or if a Monitored Baker:
 
 Or if the monitored network:
 
-* Has an update pushed. For instance, if a user is monitoring mainnet with Kiln, they will be notified is mainnet is updated.
+* Has an update pushed. For instance, if a user is monitoring mainnet with Kiln, they will be notified if mainnet is updated.
 
 In addition to these in-app alerts, users can configure Kiln to send Telegram alerts or use their SMTP Mail Server to send alerts to the email addresses of their choice.
 
