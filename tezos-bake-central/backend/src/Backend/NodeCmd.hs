@@ -82,18 +82,22 @@ withNodeLock logger db f = do
       {-# INLINE claim #-}
       claim :: forall m1. (MonadBaseControl IO m1, MonadIO m1, MonadLogger m1) => m1 ()
       claim = do
-        let state = NodeInternalState_Stopped
+        let state = ProcessState_Stopped
         result <- runDb (Identity db) $ do
           _ <- [executeQ|
-            UPDATE "NodeInternal"
-            SET "data#data#stateUpdated" = NOW()
-              , "data#data#backend" = ?pid
-              , "data#data#state" = ?state
-            WHERE "data#data#backend" IS NULL
-               OR "data#data#stateUpdated" < NOW() - interval '5 minutes'|]
+            UPDATE "ProcessData" p
+              SET updated = NOW()
+                , backend = ?pid
+                , state = ?state
+              FROM "NodeInternal" n
+            WHERE (p."id" = n."data#data")
+               AND (p.backend IS NULL
+                 OR p.updated < NOW() - interval '5 minutes')|]
           [queryQ|
-            SELECT "data#data#backend"
-              FROM "NodeInternal"
+            SELECT p.backend
+              FROM "NodeInternal" n
+              JOIN "ProcessData" p ON p.id = n."data#data"
+            WHERE NOT n."data#deleted"
           |]
         case result of
           [] -> threadDelay' 1 *> claim
@@ -108,10 +112,10 @@ withNodeLock logger db f = do
     claim
     return pid
   finally (f pid) $ runLoggingEnv logger $ runDb (Identity db) [executeQ|
-    UPDATE "NodeInternal"
-    SET "data#data#stateUpdated" = NOW()
-      , "data#data#backend" = NULL
-    WHERE "data#data#backend" = ?pid |]
+    UPDATE "ProcessData"
+    SET updated = NOW()
+      , backend = NULL
+      WHERE backend = ?pid |]
     >>= liftIO . print
 
 internalNodeWorker :: MonadIO m => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
@@ -119,8 +123,9 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
   let
     waitUntilShouldRun = do
       shouldRun <- any fromOnly <$> runDb (Identity db) [queryQ|
-        SELECT COALESCE(BOOL_OR("data#data#running"), false)
-        FROM "NodeInternal"
+        SELECT COALESCE(BOOL_OR(p.running), false)
+        FROM "NodeInternal" n
+        JOIN "ProcessData" p ON p.id = n."data#data"
         |]
       if shouldRun
         then return ()
@@ -129,26 +134,27 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
   callNode logger db (nodePaths namedChain) pid
   threadDelay' 10
 
-putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> NodeInternalState -> m ()
+putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> ProcessState -> m ()
 putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
   $(logDebugSH) ("putState" :: Text, pid, state)
   let
-    id_ = NodeInternal_idField
-    data_ = NodeInternal_dataField ~> DeletableRow_dataSelector
-    backend_ = data_ ~> NodeInternalData_backendSelector
-    state_ = data_ ~> NodeInternalData_stateSelector
+    backend_ = ProcessData_backendField
+    state_ = ProcessData_stateField
     backend = Just pid
 
-  result <- project NodeInternalConstructor $ state_ /=. state &&. (backend_ ==. backend ||. backend_ ==. (Nothing :: Maybe Int))
-  update [backend_ =. backend , state_ =. state] $ id_ `in_` fmap _nodeInternal_id result
-  for_ result $ \(NodeInternal nid ndata) ->
-    notify (Notify_NodeInternal nid $ Just $ (_deletableRow_data $ ndata)
-      { _nodeInternalData_state = state
-      , _nodeInternalData_backend = backend
-      })
+  pdIds <- project (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) $ CondEmpty
+  for_ pdIds $ \(nid, pdid) -> get (fromId pdid) >>= \case
+    Nothing -> return ()
+    (Just p) ->
+      when ((_processData_state p /= state) || (_processData_backend p /= backend)) $ do
+        update [backend_ =. backend , state_ =. state] $ AutoKeyField ==. (fromId pdid)
+        notify (Notify_NodeInternal nid $ Just $ p
+          { _processData_state = state
+          , _processData_backend = backend
+          })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
-callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
   let nodeConfig = defaultConfig
   let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
   let versionFile = dataDir `combine` "version.json"
@@ -165,7 +171,7 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
   when (not haveIdentityFile) $
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
 
-  putState logger db pid NodeInternalState_Starting
+  putState logger db pid ProcessState_Starting
 
   liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
     where
@@ -175,22 +181,27 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
           go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
           go = do
             -- TODO poll db for exit request
-            shouldRun <- fmap or $ runDb (Identity db) $ project
-              (NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector)
-              (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+            shouldRun <- runDb (Identity db) $
+              or . stripOnly <$> [queryQ|
+                SELECT p.running
+                  FROM "NodeInternal" n
+                  JOIN "ProcessData" p ON p.id = n."data#data"
+                WHERE NOT n."data#deleted"
+                |]
+
             (liftIO $ getProcessExitCode ph) >>= \case
               Nothing -> do
-                putState logger db pid NodeInternalState_Running
+                putState logger db pid ProcessState_Running
                 when (not shouldRun) $ liftIO $ terminateProcess ph
                 (threadDelay' 1) *> go
               Just e -> liftIO $
                 if shouldRun
                   -- TODO: logging!
                   then do
-                    putState logger db pid NodeInternalState_Failed
+                    putState logger db pid ProcessState_Failed
                     print ("node exited unexpectedly" :: Text, e)
                   else do
-                    putState logger db pid NodeInternalState_Stopped
+                    putState logger db pid ProcessState_Stopped
                     print ("node exited sucessfully" :: Text, e)
 
         go

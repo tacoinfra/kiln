@@ -49,8 +49,9 @@ import Prelude hiding (log)
 reportNoBakerHeartbeatError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a, MonadLogger m
+     , SqlDb (PhantomDb m)
      )
-  => Id Client -> SeenEvent -> m ()
+  => Id BakerDaemon -> SeenEvent -> m ()
 reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted bakers
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNoHeartbeat) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
@@ -72,10 +73,16 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
         , _errorLogBakerNoHeartbeat_client = cid
         }
 
-      client :: Maybe Client <- get $ fromId cid
+      -- Use a simple "get" primitive with Beam
+      client :: Maybe BakerDaemonExternalData <- do
+        cs <- project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector) $ (BakerDaemonExternal_idField `in_` [cid]) `limitTo` 1
+        pure $ case cs of
+          [] -> Nothing
+          [c] -> Just c
+          (_:_:_) -> error "BakerDaemonExternal primary key constraint invalidated"
       queueAlert (Just logId) $
         Alert Unresolved "Baker has not seen block for a while" $
-        "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has not seen a block for while!"
+        "Baker" <> maybe "" (" " <>) (client >>= _bakerDaemonExternalData_alias) <> " at " <> maybe "?" (Uri.render . _bakerDaemonExternalData_address) client <> " has not seen a block for while!"
     Just (logId, _specificLogId) -> do
       updateErrorLogBy logId ErrorLogBakerNoHeartbeat_logField
         [ ErrorLogBakerNoHeartbeat_lastLevelField =. seenLevel
@@ -83,24 +90,34 @@ reportNoBakerHeartbeatError cid eventDetail = do -- TODO: Only on non-deleted ba
         ]
 
 
-clearNoBakerHeartbeatError :: (Monad m, PersistBackend m,
-                               PostgresLargeObject m, MonadIO m, MonadReader a m, MonadLogger m,
-                               HasAppConfig a) => Id Client -> m ()
+clearNoBakerHeartbeatError
+  :: ( Monad m, PersistBackend m
+     , PostgresLargeObject m, MonadIO m, MonadReader a m, MonadLogger m
+     , SqlDb (PhantomDb m)
+     , HasAppConfig a)
+  => Id BakerDaemon
+  -> m ()
 clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
   lids :: [Id ErrorLogBakerNoHeartbeat] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerNoHeartbeat" t
-      JOIN "Client" c ON t.client = c.id
+      JOIN "BakerDaemon" c ON t.client = c.id
     WHERE t.log = el.id
       AND t.client = ?cid
       AND NOT c.deleted
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  client :: Maybe Client <- get $ fromId cid
+  -- Use a simple "get" primitive with Beam
+  client :: Maybe BakerDaemonExternalData <- do
+    cs <- project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector) $ (BakerDaemonExternal_idField `in_` [cid]) `limitTo` 1
+    pure $ case cs of
+      [] -> Nothing
+      [c] -> Just c
+      (_:_:_) -> error "BakerDaemonExternal primary key constraint invalidated"
   when (not $ null lids) $ queueAlert Nothing $
     Alert Resolved "Resolved: Baker has now seen a block" $
-    "Baker" <> maybe "" (" " <>) (client >>= _client_alias) <> " at " <> maybe "?" (Uri.render . _client_address) client <> " has now seen a block again"
+    "Baker" <> maybe "" (" " <>) (client >>= _bakerDaemonExternalData_alias) <> " at " <> maybe "?" (Uri.render . _bakerDaemonExternalData_address) client <> " has now seen a block again"
 
 clearUnrelatedNetworkUpdateError :: (PersistBackend m, PostgresRaw m) => NamedChain -> m ()
 clearUnrelatedNetworkUpdateError namedChain = do

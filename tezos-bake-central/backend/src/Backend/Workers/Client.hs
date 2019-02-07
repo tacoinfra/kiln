@@ -20,7 +20,7 @@ import Control.Exception.Safe (Handler (..), catches)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Logger (logDebugSH, logErrorSH, logInfo)
 import Control.Monad.Reader (runReaderT)
-import Data.Foldable (for_, toList)
+import Data.Foldable (for_, traverse_, toList)
 import Data.Function (on)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity (..))
@@ -31,7 +31,7 @@ import Data.Traversable (for)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (getTime, runDb)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Id (..), Json (..))
 import Safe (maximumByMay)
@@ -75,14 +75,15 @@ clientWorker appCfg nds =
 
       let blockHeightTimeout :: NominalDiffTime = fromIntegral $ max 15 $ (5*) $ sum $ take 3 $ toList $ _protoInfo_timeBetweenBlocks protoInfo
 
-      toUpdate :: [(Id Client, URI, Maybe T.Text)] <- [queryQ|
-        SELECT id, address, alias
-        FROM "Client" c
-        WHERE (c.updated < ?maxTime OR c.updated IS NULL) AND NOT c.deleted
-        ORDER BY updated NULLS FIRST
+      toUpdate :: [(Id BakerDaemonExternal, URI, Maybe T.Text)] <- [queryQ|
+        SELECT c.id, c."data#data#address", c."data#data#alias"
+        FROM "BakerDaemonExternal" c
+        WHERE NOT c."data#deleted" AND
+          (c."data#data#updated" < ?maxTime OR c."data#data#updated" IS NULL)
+        ORDER BY c."data#data#updated" NULLS FIRST
       |]
 
-      _clientBakers <- for toUpdate $ \(cid, address, _alias) -> do
+      _clientBakers <- for toUpdate $ \(Id cid, address, _alias) -> do
         let handlingHttpExc f = (Just <$> f) `catches`
               [ Handler $ \(e :: Http.JSONException) -> $(logErrorSH) e $> Nothing
               , Handler $ \(e :: Http.HttpException) -> $(logErrorSH) e $> Nothing
@@ -104,22 +105,19 @@ clientWorker appCfg nds =
             else
               clearNoBakerHeartbeatError cid
 
-          -- TODO: this is quite "wrong" in the sense that we haven't confirmed the
-          -- acceptance of this block, we should really only use this event to
-          -- know if the baker itself is active.  The reqards should be computed
-          -- based on nodes reporting new blocks.  Even if we baked, if that was
-          -- a different branch, there's no reward.
-
-          _ <- [executeQ| INSERT INTO "ClientInfo" (client, report, config)
-                          VALUES (?cid, ?reportJson, ?clientConfigJson)
-                          ON CONFLICT (client) DO UPDATE SET
-                            report = ?reportJson
-                          , config = ?clientConfigJson
-                          |]
+          let bakerDaemonInfo = (BakerDaemonInfo cid (BakerDaemonInfoData reportJson clientConfigJson))
+          insertByAll bakerDaemonInfo
+            >>= either (const $ replaceBy BakerDaemonInfoId bakerDaemonInfo) (const $ return ())
           forkInfo <- scanForkInfo now report
           validateForkyBlocks ($(logDebugSH) . (,) ("validateForkyBlocks" :: String)) forkInfo
 
-          updateIdNotify cid [Client_updatedField =. Just now]
+          update
+            [BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_updatedSelector =. Just now]
+            (BakerDaemonExternal_idField ==. cid)
+          project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector)
+                  (BakerDaemonExternal_idField ==. cid)
+            >>= traverse_ (notify . Notify_BakerDaemonExternal cid . Just)
+
 
           -- TODO: Add back errors reported by client RPC
           -- case sortBy (compare `on` _event_time) (_report_errors report) of

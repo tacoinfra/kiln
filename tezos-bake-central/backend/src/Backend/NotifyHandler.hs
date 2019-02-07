@@ -18,7 +18,7 @@ import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..))
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
@@ -55,7 +55,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       $(logWarn) $ "Unable to parse NotifyMessage: " <> tshow (_notifyMessage_value notifyMessage) <> ": " <> tshow e
       pure mempty
     Aeson.Success notification -> case notification of
-      Notify_Client eid -> handleClient eid
+      Notify_BakerDaemonExternal eid mBaker -> handleClient eid mBaker
       Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
@@ -104,14 +104,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     latestHeadVS = _bakeViewSelector_latestHead aggVS
 
     summaryVS = _bakeViewSelector_summary aggVS
-    handleClient cid = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
-      client :: Maybe Client <- fmap listToMaybe $
-        select $ AutoKeyField ==. fromId cid &&. Client_deletedField ==. False
-      infos :: Maybe ClientInfo <- fmap listToMaybe $ select (ClientInfo_clientField ==. cid)
+    handleClient cid client = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
+      infos :: Maybe BakerDaemonInfoData <- fmap listToMaybe $ project BakerDaemonInfo_dataField (BakerDaemonInfo_idField ==. cid)
       let
         clientsPatch = mempty
           { _bakeView_clients = toRangeView1 clientsVS cid $ Just $ First infos
-          , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ First $ _client_address <$> client
+          , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ First $ _bakerDaemonExternalData_address <$> client
           }
       summaryPatch <- whenM (viewSelects () summaryVS) $ do
         -- maxLevel <- getMaxLevel
@@ -151,9 +149,9 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
     {-# INLINE handleNodeInternal #-}
     handleNodeInternal
       :: (Monad m', PostgresRaw m')
-      => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
-    handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
-      nodeInternalV <- case mNodeInternalData of
+      => Id Node -> Maybe ProcessData -> m' (BakeView a)
+    handleNodeInternal nid mProcessData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
+      nodeInternalV <- case mProcessData of
         Nothing -> pure [(Bounded nid, First Nothing)]
         Just _ -> getNodeAddresses (Just $ nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }

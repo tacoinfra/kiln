@@ -79,7 +79,7 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_node :: Either NodeExternalData NodeInternalData
+  { _nodeSummary_node :: Either NodeExternalData ProcessData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
@@ -93,7 +93,7 @@ bakerSummaryIdentification = aliasedIdentification
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
 nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
 
-nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, Maybe Text)
+nodeDataIdentification :: Either NodeExternalData ProcessData -> (Text, Maybe Text)
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
     (_nodeExternalData_alias)
@@ -103,8 +103,8 @@ nodeDataIdentification = \case
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
-  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
-  , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
+  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id BakerDaemon) (Deletable URI) a)
+  , _bakeViewSelector_clients :: !(RangeSelector (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
@@ -126,8 +126,8 @@ data BakeViewSelector a = BakeViewSelector
 
 data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
-  , _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
-  , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
+  , _bakeView_clientAddresses :: !(RangeView' (Id BakerDaemon) (Deletable URI) a)
+  , _bakeView_clients :: !(RangeView (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
@@ -150,7 +150,7 @@ data BakeView a = BakeView
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
-  -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
+  -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 

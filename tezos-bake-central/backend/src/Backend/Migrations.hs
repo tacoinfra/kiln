@@ -40,8 +40,10 @@ preMigrate :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 preMigrate =
       migrateParameters
   >=> migratePublicNodeHead
-  >=> dropTableIfExists (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
-  >=> dropTableIfExists (QualifiedIdentifier Nothing "PendingReward")
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "PendingReward")
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "ClientInfo")
+  >=> dropTableIfExists True (QualifiedIdentifier Nothing "Client")
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "Delegate") "id" -- No, it's not possible to promote the existing unique key to the primary key.  oh well.
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerDeactivated") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerDeactivationRisk") "id"
@@ -57,6 +59,7 @@ preMigrate =
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
   >=> migrateNodesToSplitTable
+  >=> migrateProcessDataToSplitTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
@@ -69,7 +72,7 @@ migrateParameters ta = do
   case analyzedTable' of
     Nothing -> pure ta
     Just analyzedTable -> if hasHeadTimestamp analyzedTable || not (hasOriginationSize analyzedTable)
-      then dropTable table *> getTableAnalysis
+      then dropTable table False *> getTableAnalysis
       else pure ta
 
 migratePublicNodeHead :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
@@ -78,7 +81,7 @@ migratePublicNodeHead ta = do
   hasHeadBlockHash <- fmap (any ((== "headBlock#hash") . colName) . tableColumns) <$> analyzeTable ta (convQN table)
   case hasHeadBlockHash of
     Nothing -> pure ta
-    Just False -> dropTable table *> getTableAnalysis
+    Just False -> dropTable table False *> getTableAnalysis
     Just True -> pure ta
 
 renameColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
@@ -129,11 +132,11 @@ renameTable tableNameFrom tableNameTo = void [traceExecuteQ|
     ALTER TABLE ?tableNameFrom RENAME TO ?tableNameTo
   |]
 
-dropTableIfExists :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
-dropTableIfExists table ta = do
+dropTableIfExists :: (Migrate m) => Bool -> QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIfExists cascade table ta = do
   analyzeTable ta (convQN table) >>= \case
     Nothing -> pure ta
-    Just _ -> dropTable table *> getTableAnalysis
+    Just _ -> dropTable table cascade *> getTableAnalysis
 
 extraIndexes :: Migrate m => m ()
 extraIndexes = do
@@ -180,8 +183,10 @@ tableSql (QualifiedIdentifier schema tableName) =
   maybe "" ((<> ".") . quoteNameSql . Identifier) schema
   <> quoteNameSql (Identifier tableName)
 
-dropTable :: (Migrate m) => QualifiedIdentifier -> m ()
-dropTable tableName = void [traceExecuteQ|DROP TABLE ?tableName|]
+dropTable :: (Migrate m) => QualifiedIdentifier -> Bool -> m ()
+dropTable tableName cascade = if cascade
+  then void [traceExecuteQ|DROP TABLE ?tableName CASCADE|]
+  else void [traceExecuteQ|DROP TABLE ?tableName|]
 
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
@@ -273,6 +278,46 @@ migrateNodesToSplitTable ta = do
               ALTER TABLE "Node" DROP COLUMN "identity";
               ALTER TABLE "Node" DROP COLUMN "alias";
               ALTER TABLE "Node" DROP COLUMN "address";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+-- | Move the data into the new tables and then do the "unsafe" column drop.
+migrateProcessDataToSplitTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataToSplitTable ta = do
+  let table = (Nothing, "NodeInternal")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "data#data#backend") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              CREATE TABLE "ProcessData"
+                ( "id" INT8 PRIMARY KEY UNIQUE
+                , "running" BOOLEAN NOT NULL
+                , "state" VARCHAR NOT NULL
+                , "updated" TIMESTAMP NULL
+                , "backend" INT8 NULL);
+              INSERT INTO "ProcessData"
+                  ( "id"
+                  , "running"
+                  , "state"
+                  , "updated"
+                  , "backend"
+                  )
+                  SELECT "id"
+                       , "data#data#running"
+                       , "data#data#state"
+                       , "data#data#stateUpdated"
+                       , "data#data#backend"
+                  FROM "NodeInternal";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
+              ALTER TABLE "NodeInternal" DROP COLUMN "data#data#running";
+              ALTER TABLE "NodeInternal" ADD COLUMN "data#data" INT8 NULL;
+              UPDATE "NodeInternal" SET "data#data" = "id";
+              ALTER TABLE "NodeInternal" ALTER COLUMN "data#data" SET NOT NULL;
+              ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
             |]
           getTableAnalysis
     _ -> pure ta

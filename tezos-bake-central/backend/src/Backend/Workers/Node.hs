@@ -171,7 +171,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
     project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
   pure ()
 
-type NodeData = Either NodeInternalData NodeExternalData
+type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: NodeData -> URI
 nodeData_address = either (const poorGuessAtKilnURI) _nodeExternalData_address
   where
@@ -197,7 +197,7 @@ getNodes
 getNodes db constraints = do
   (nodeIds, nodeEs, nodeIs, nodeDs) :: ( Map (Id Node) Node
                                , Map (Id Node) NodeExternalData
-                               , Map (Id Node) NodeInternalData
+                               , Map (Id Node) (Id ProcessData)
                                , Map (Id Node) NodeDetailsData
                                )
     <- runDb (Identity db) $ (,,,)
