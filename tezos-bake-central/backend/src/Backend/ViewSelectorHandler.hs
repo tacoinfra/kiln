@@ -220,6 +220,7 @@ getErrorLogsImpl flt intervalMap = do
       (queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node")))
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
+    -- TODO: make every bakeralert work with the Id Baker column, probably
     queryBakerAlert sqlTable sqlFields =
       queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
     queryBakerAlert' sqlTable sqlFields =
