@@ -885,6 +885,8 @@ type LogTagConstraints e =
   , Show (IdData e)
   , DefaultKey e ~ Key e (Unique (DefaultKeyUnique e))
   , DefaultKeyId e
+  , HasDefaultNotify (Id e)
+  , IdData e ~ Id ErrorLog
   , IsUniqueKey (Key e (Unique (DefaultKeyUnique e)))
   , PersistEntity e
   )
