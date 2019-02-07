@@ -260,19 +260,11 @@ data ProcessState
    | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
-<<<<<<< HEAD
-data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we /want/ the node in;
-  , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
-  , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
-  , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
-=======
 data ProcessData = ProcessData
   { _processData_running :: !Bool -- the state we *want* the process to be in;
   , _processData_state :: !ProcessState -- the state the process is actually in.
   , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
   , _processData_backend :: !(Maybe Int) -- a "unique" process id
->>>>>>> dn-process-state
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId ProcessData
