@@ -62,6 +62,7 @@ import Tezos.Types
 import Common (humanBytes)
 import Common (unixEpoch)
 import Common.Alerts (AlertsFilter(..))
+import Common.Alerts (BakerErrorDescriptions(..))
 import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
@@ -1392,7 +1393,7 @@ bakersTab =
             (_bakerErrorDescriptions_title dsc)
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                el "div" $ text $ _bakerErrorDescriptions_problem dsc
+                el "div" $ htmlErrorDescription $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
                   el "strong" $ text "Fix:"

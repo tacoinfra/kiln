@@ -50,7 +50,6 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
 import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
 import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
-import Data.Dependent.Sum (DSum)
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -756,18 +755,6 @@ data BakerLogTag a where
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
-
-data BakerErrorDescriptions = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title :: !Text
-  , _bakerErrorDescriptions_tile :: !Text
-  , _bakerErrorDescriptions_notification :: !Text
-  , _bakerErrorDescriptions_problem :: !Text
-  , _bakerErrorDescriptions_warning :: !(Maybe Text)
-  , _bakerErrorDescriptions_fix :: !Text
-  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
-  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
-  }
-
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''BakeEfficiency
