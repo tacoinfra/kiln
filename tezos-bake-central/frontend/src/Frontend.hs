@@ -724,17 +724,11 @@ liveErrorsWidget = void $ do
             BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
               (_errorLogBakerDeactivationRisk_publicKeyHash log)
-
             BakerLogTag_MultipleBakersForSameBaker -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
-            BakerLogTag_BakerMissed -> do
-              let
-                rightTxt = case _errorLogBakerMissed_right log of
-                  RightKind_Baking -> "a bake"
-                  RightKind_Endorsing -> "an endorsement"
-              header $ "Missed " <> rightTxt <> " opportunity"
-              el "div" $ do
-                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker log)
+            BakerLogTag_BakerMissed -> renderBakerError
+              (bakerMissedDescriptions log)
+              (unId $ _errorLogBakerMissed_baker log)
 
           LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
