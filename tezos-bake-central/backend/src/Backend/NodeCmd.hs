@@ -73,6 +73,10 @@ nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 -- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
 
+-- If the ProcessData.backend is not null/Nothing then it could mean that
+-- the previous worker did not exit cleanly. or the kiln process died without doing
+-- a clean termination of the node.
+-- So we wait for 5 min from the updated time before starting the node again
 withNodeLock :: (MonadMask m, MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> (Int -> m ()) -> m ()
 withNodeLock logger db f = do
   pid <- runLoggingEnv logger $ do
@@ -129,18 +133,17 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
         |]
       if shouldRun
         then return ()
-        else waitUntilShouldRun
+        else (liftIO $ threadDelay' 1) >> waitUntilShouldRun
   waitUntilShouldRun
   callNode logger db (nodePaths namedChain) pid
   threadDelay' 10
 
-putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> ProcessState -> m ()
-putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
-  $(logDebugSH) ("putState" :: Text, pid, state)
+putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Maybe Int -> ProcessState -> m ()
+putState logger db backend state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
+  $(logDebugSH) ("putState" :: Text, backend, state)
   let
     backend_ = ProcessData_backendField
     state_ = ProcessData_stateField
-    backend = Just pid
 
   pdIds <- project (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) $ CondEmpty
   for_ pdIds $ \(nid, pdid) -> get (fromId pdid) >>= \case
@@ -154,7 +157,7 @@ putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db)
           })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
-callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+callNode logger db nodePath pid = (putState logger db (Just pid) ProcessState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
   let nodeConfig = defaultConfig
   let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
   let versionFile = dataDir `combine` "version.json"
@@ -171,7 +174,7 @@ callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializ
   when (not haveIdentityFile) $
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
 
-  putState logger db pid ProcessState_Starting
+  putState logger db (Just pid) ProcessState_Starting
 
   liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
     where
@@ -180,7 +183,6 @@ callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializ
           {-# INLINE go #-}
           go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
           go = do
-            -- TODO poll db for exit request
             shouldRun <- runDb (Identity db) $
               or . stripOnly <$> [queryQ|
                 SELECT p.running
@@ -191,17 +193,17 @@ callNode logger db nodePath pid = (putState logger db pid ProcessState_Initializ
 
             (liftIO $ getProcessExitCode ph) >>= \case
               Nothing -> do
-                putState logger db pid ProcessState_Running
+                putState logger db (Just pid) ProcessState_Running
                 when (not shouldRun) $ liftIO $ terminateProcess ph
                 (threadDelay' 1) *> go
               Just e -> liftIO $
                 if shouldRun
                   -- TODO: logging!
                   then do
-                    putState logger db pid ProcessState_Failed
+                    putState logger db Nothing ProcessState_Failed
                     print ("node exited unexpectedly" :: Text, e)
                   else do
-                    putState logger db pid ProcessState_Stopped
+                    putState logger db Nothing ProcessState_Stopped
                     print ("node exited sucessfully" :: Text, e)
 
         go
