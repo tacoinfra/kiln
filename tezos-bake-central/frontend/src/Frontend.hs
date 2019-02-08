@@ -654,11 +654,11 @@ liveErrorsWidget = void $ do
       elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
         dyn_ . fmap (either logEntry synthEntry) =<< holdUniqDyn widgetDyn
         el "div" $ do
-          el "label" $ text "First seen"
+          el "label" $ text "First Detected"
           localTimestamp' $ _errorLog_started <$> logDyn
         el "div" $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> "Last seen"
+            Nothing -> "Last Detected"
             Just _ -> "Stopped"
           localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> _errorLog_lastSeen log
@@ -750,10 +750,11 @@ liveErrorsWidget = void $ do
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do
               text $ "There is a new version of the " <> chainText <> " software available on GitLab."
+
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
       header $ _bakerErrorDescriptions_title dsc
-      dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+      divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
 pluralOf :: Text -> Text
