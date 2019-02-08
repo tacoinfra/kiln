@@ -57,13 +57,13 @@ You can stop this database by running `docker container stop tezos-monitor-postg
 
 Now you can download and run the monitor like this:
 
-On Linux:
+On Linux and macOS (Docker Toolbox):
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.4.0 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
-On macOS:
+On macOS (Docker Desktop for Mac):
 
 ```shell
 DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.4.0 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
