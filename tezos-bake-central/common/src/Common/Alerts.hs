@@ -103,8 +103,8 @@ plaintextErrorDescription = \case
   ErrorDescription_Emphasis t -> t
   ErrorDescription_Concat t t' -> ((<>) `on` plaintextErrorDescription) t t'
 
-errorVar :: Text -> ErrorDescription
-errorVar = ErrorDescription_Emphasis
+errorEmphasis :: Text -> ErrorDescription
+errorEmphasis = ErrorDescription_Emphasis
 
 errorPlain :: Text -> ErrorDescription
 errorPlain = ErrorDescription_Plain
@@ -125,7 +125,7 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
-  , _bakerErrorDescriptions_problem = "In the past " <> errorVar (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
+  , _bakerErrorDescriptions_problem = "In the past " <> errorEmphasis (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
   , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
   , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
   , _bakerErrorDescriptions_resolved = \b ->
@@ -161,7 +161,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight
   , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
-  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorVar (" block level " <> lvl) <> "."
+  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorEmphasis (" block level " <> lvl) <> "."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
