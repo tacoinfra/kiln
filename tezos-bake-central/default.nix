@@ -8,8 +8,7 @@ in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
-    rhyolite-src = hackGet dep/rhyolite;
-    rhyoliteLib = args: (import rhyolite-src).lib args;
+    rhyolite = import (hackGet dep/rhyolite);
     nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
     staticFiles = pkgs.callPackage ./static {};
@@ -27,7 +26,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };
 
-    overrides = pkgs.lib.composeExtensions (rhyoliteLib args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+    overrides = pkgs.lib.composeExtensions (rhyolite args).haskellOverrides (self: super: with pkgs.haskell.lib; {
       backend = overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
       });

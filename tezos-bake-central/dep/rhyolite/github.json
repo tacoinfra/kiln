@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "rhyolite",
-  "branch": "tezos-reunification",
-  "rev": "5a529a03b0ea2a28a762f5735026670242c6c544",
-  "sha256": "0p83s7gka9bg77n6yqvmxfg4fqzpnp2xzmgi37m0h8fgircs157q"
+  "branch": "develop",
+  "rev": "cf91a392dec6c497fe121942a3de899dbb05c014",
+  "sha256": "07l44mk7hdf2467ar99kwadsc9cbv6yb5rhpajb2xbbyl12hf5xi"
 }
