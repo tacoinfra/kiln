@@ -397,13 +397,17 @@ formIsLoading comp state submitted = do
 basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
 
-cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModal = cancelableModalWithClasses []
+cancelableModal :: (DomBuilder t m, PostBuild t m, MonadFix m) => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModal f = cancelableModalWithClasses (fmap (pure [],) . f)
 
-cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
-  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
-  divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+cancelableModalWithClasses
+  :: (DomBuilder t m, PostBuild t m, MonadFix m)
+  => (Event t () -> m (Dynamic t [Text], Event t ())) -> Event t () -> m (Event t ())
+cancelableModalWithClasses f close = mdo
+  (classes, e) <- elDynAttr "div" (ffor classes $ \cs -> "class"=:T.unwords ("modal-box":cs)) $ do
+    (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+    divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+  pure e
 
 confirmationModal :: MonadRhyoliteFrontendWidget app t m
                   => Text

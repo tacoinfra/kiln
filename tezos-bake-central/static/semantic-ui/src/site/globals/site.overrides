@@ -666,58 +666,6 @@ img.credits-obsidian {
   }
 }
 
-img.ledger {
-  display: block;
-  width: unit(100 / @emSize, rem);
-  margin: @15px auto;
-}
-
-.ledger-lookup {
-  .ui.header {
-    display: block;
-    font-size: @20px;
-    text-align: center;
-    .ui.loader {
-      margin-right: @14px;
-    }
-  }
-  > .ui.header+p {
-    width: unit(280 / @emSize, rem);
-    margin: @20px auto @30px auto;
-    text-align: center;
-    font-size: @14px;
-  }
-}
-
-.ledger-select-account {
-  .ledger-name {
-    text-align: center;
-    color: @grey;
-    font-size: @12px;
-    margin-top: -@20px;
-    margin-bottom: @10px;
-  }
-  .fancy-tez {
-    float: right;
-  }
-  .ui.block.list {
-    margin: @20px 0;
-  }
-  .ledger-accounts-loader {
-    text-align: center;
-    margin: @50px 0;
-    .ui.loader {
-      margin-right: @14px;
-    }
-  }
-  .ledger-pkh-loader {
-    margin: @20px 0 @30px 0;
-    .ui.loader {
-      margin-right: @14px;
-    }
-  }
-}
-
 .fancy-tez {
   font-weight: bold;
   > .tez {
@@ -1143,6 +1091,119 @@ h4.dashboard-section-title {
     margin-left: auto;
     margin-right: auto;
     display: block;
+  }
+
+  img.ledger {
+    display: block;
+    width: unit(100 / @emSize, rem);
+    margin: @15px auto;
+  }
+
+  .ledger-name {
+    text-align: center;
+    color: @grey;
+    font-size: @12px;
+    margin-top: -@20px;
+    margin-bottom: @10px;
+  }
+
+  h5.ui.header {
+    margin: @20px 0;
+    > .icon {
+      font-size: 1em;
+      vertical-align: text-bottom;
+    }
+  }
+
+  &.connect-device {
+    width: unit(611 / @emSize, rem);
+    .ui.header {
+      display: block;
+      font-size: @20px;
+      text-align: center;
+      .ui.loader {
+        margin-right: @14px;
+      }
+    }
+    .ui.header+p {
+      width: unit(280 / @emSize, rem);
+      margin: @20px auto @30px auto;
+      text-align: center;
+      font-size: @14px;
+    }
+    .explanation {
+      line-height: @16px;
+    }
+    .explanation > ol {
+      margin: 0;
+    }
+  }
+
+  &.select-account {
+    width: unit(660 / @emSize, rem);
+    .ui.header {
+      text-align: center;
+    }
+    .explanation {
+      margin-bottom: @11px;
+    }
+    .fancy-tez {
+      float: right;
+    }
+    .ui.block.list {
+      margin: @20px 0;
+    }
+    .ledger-accounts-loader {
+      text-align: center;
+      margin: @50px 0;
+      .ui.loader {
+        margin-right: @14px;
+      }
+    }
+    .ledger-pkh-loader {
+      margin: @20px 0 @30px 0;
+      .ui.loader {
+        margin-right: @14px;
+      }
+    }
+    p {
+      text-align: center;
+    }
+  }
+
+  &.ledger-prompt {
+    width: unit(593 / @emSize, rem);
+    text-align: center;
+    h5.ui.header {
+      font-size: @20px;
+      line-height: @30px;
+    }
+    h6 {
+      font-size: @16px;
+      margin: @20px auto 0 auto;
+    }
+  }
+
+  &.setup-complete {
+    width: unit(532 / @emSize, rem);
+    text-align: center;
+    h6.ui.header {
+      font-size: @16px;
+      margin: @20px 0;
+    }
+  }
+
+  &.ledger-declined {
+    width: unit(590 / @emSize, rem);
+    text-align: center;
+  }
+
+  &.ledger-disconnected {
+    width: unit(422 / @emSize, rem);
+  }
+
+  &.launch-node {
+    width: unit(660 / @emSize, rem);
   }
 }
 
