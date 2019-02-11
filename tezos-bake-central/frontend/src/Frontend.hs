@@ -876,7 +876,7 @@ addBakerModal close = (<> close) . switch . current <$> workflow both
           (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
           (formItem $ aliasField "My Baker")
       added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
-      pure $ leftmost [added, close]
+      pure added
 
     addLedger = Workflow $ divClass "ledger-lookup" $ do
       elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
