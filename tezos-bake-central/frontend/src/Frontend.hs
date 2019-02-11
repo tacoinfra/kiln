@@ -849,115 +849,6 @@ addBakerModal close = (<> close) . switch . current <$> workflow both
               Nothing -> launchNode
         pure (close', next)
 
-    addLedger = Workflow $ divClass "ledger-lookup" $ do
-      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
-      elClass "h5" "ui header" $ do
-        divClass "ui active small inline blue loader" blank
-        text "Looking for Ledger Device..."
-      pb <- getPostBuild
-      rec
-        poll <- delay 5 response
-        response <- requestingIdentity $ public PublicRequest_GetConnectedLedger <$ (pb <> void poll)
-      let ledgerChoice = fmapMaybe id response
-      el "p" $ text "Connect your Ledger Device, enter the PIN and open the Tezos Baking app."
-      divClass "explanation" $ do
-        text "To install the Tezos Baking app:"
-        el "ol" $ do
-          el "li" $ do
-            text "Install and open Ledger Live: "
-            let uri = "https://www.ledger.com/pages/ledger-live"
-            hrefLink uri $ text uri
-          el "li" $ text "Navigate to Settings and turn on \"Developer Mode\""
-          el "li" $ text "Go to Manager and search for \"Tezos\""
-          el "li" $ text "Install the \"Tezos Baking\" app"
-          el "li" $ text "Open the Tezos Baking app on your ledger"
-      pure (never, ledgerNext <$> ledgerChoice)
-
-    ledgerNext ledger = Workflow $ divClass "ledger-select-account" $ mdo
-      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger check") blank
-      divClass "ledger-name" $ text $ unLedgerIdentifier ledger
-      elClass "h5" "ui header" $ text "Select an account to bake with."
-      let submitted = domEvent Submit formEl
-          curves = [minBound .. maxBound] :: [SigningCurve]
-          derivs = [DerivationPath "0'/0'", DerivationPath ""]
-      (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
-        let accountItem (secretKey, account, balance) = do
-              let selected = demuxed selectionDemux $ Just (secretKey, account)
-              (e, _) <- elClass' "a" "link item" $ do
-                SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
-                text $ toPublicKeyHashText account
-                fancyTez balance
-              pure $ (secretKey, account) <$ domEvent Click e
-        pb <- getPostBuild
-        response <- for (liftA2 (,) curves derivs) $ \(c,d) -> requestingIdentity $ public (PublicRequest_ClientShowLedger $ SecretKey ledger c d) <$ pb
-        dr <- foldDyn (\ma as -> maybe as (:as) ma) [] $ leftmost response
-        selection <- foldDyn (\a b -> if b == Just a then Nothing else Just a) Nothing $ leftmost [accountFromList, accountSpecific]
-        let selectionDemux = demux selection
-        accountFromList <- switchHold never <=< dyn $ ffor dr $ \accounts -> do
-          e <- divClass "ui block list" $ fmap leftmost $ traverse accountItem (reverse $ L.sortOn (\(_, _, t) -> t) accounts)
-          when (length accounts < 6) $ divClass "ledger-accounts-loader" $ do
-            divClass "ui active mini inline blue loader" blank
-            text "Loading accounts..."
-          pure e
-        divClass "explanation" $ text "Don't see your account? Enter a specific signing curve and derivation path."
-        specificRequest <- divClass "two fields" $ do
-          curve <- divClass "ui field" $ do
-            el "label" $ text "Signing Curve"
-            SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity $ head curves) never $ SemUi.TaggedStatic $
-              Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
-          derivation <- divClass "ui field" $ do
-            el "label" $ text "Derivation Path"
-            fmap DerivationPath . value <$> inputElement (def & inputElementConfig_initialValue .~ unDerivationPath (head derivs))
-          debounce 1 $ updated $ (,) <$> value curve <*> derivation
-        specificResult <- requestingIdentity $ leftmost
-          [ ffor specificRequest $ \(Identity c, d) -> public (PublicRequest_ClientShowLedger $ SecretKey ledger c d)
-          , public (PublicRequest_ClientShowLedger $ SecretKey ledger (head curves) (head derivs)) <$ pb
-          ]
-        specificItem <- holdDyn Nothing $ leftmost [Just <$> specificResult, Nothing <$ specificRequest]
-        accountSpecific <- divClass "ui block list" $ switchHold never <=< dyn $ ffor specificItem $ \case
-          Just (Just i) -> accountItem i
-          Just Nothing -> pure never -- loaded, no result
-          Nothing -> divClass "ledger-pkh-loader" $ do
-            divClass "ui active tiny inline blue loader" blank
-            text "Importing PKH..."
-            pure never
-        divClass "ui divider" blank
-        text "Kiln must register the selected account as a delegate and authorize the Ledger Device to bake for the account. Continue?"
-        divClass "ui error message" $ do
-          text "Select an account from the list above, or enter a specific signing curve and derivation path."
-        elAttr "button" ("type" =: "submit" <> "class" =: "ui primary button") $
-          text "Register As Delegate & Authorize Ledger to Bake"
-        pure selection
-      hasError <- holdDyn False $ leftmost
-        [ True <$ ffilter isNothing (tag (current selection) submitted)
-        , False <$ updated selection
-        ]
-      let register = fmapMaybe id $ tag (current selection) submitted
-      pure (never, uncurry registerDelegate <$> register)
-
-    registerDelegate sk pkh = Workflow $ divClass "ledger-lookup" $ do
-      -- TODO
-      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
-      elClass "h5" "ui header" $ do
-        divClass "ui active small inline blue loader" blank
-        text "Respond to the prompt on your Ledger Device..."
-      el "p" $ text "Your Ledger Device should show the following prompt:"
-      elClass "h6" "ui header" $ text $ "Authorize Baking With Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
-      divClass "explanation" $ do
-        el "p" $ text "tezos-client import secret key my_ledger <secret key>"
-        text $ "Provide Public Key? Public Key Hash " <> toPublicKeyHashText pkh
-        el "p" $ text "tezos-client register key my_ledger as delegate"
-        el "p" $ text "tezos-client authorize ledger to bake for my_ledger"
-        text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
-      pure (never, never)
-
-    launchNode = Workflow $ do
-      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the block chain before baking."
-      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
-      launch <- uiButton "primary" "Launch Node"
-      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
-      pure (close', never)
-
     startBaking = divClass "start-baking column" $ do
       elClass "h5" "ui header" $ text "Start Baking"
       divClass "explanation" $ do
@@ -981,6 +872,179 @@ addBakerModal close = (<> close) . switch . current <$> workflow both
           (formItem $ aliasField "My Baker")
       added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
       pure $ leftmost [added, close]
+
+    addLedger = Workflow $ divClass "ledger-lookup" $ do
+      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Looking for Ledger Device..."
+      pb <- getPostBuild
+      rec
+        poll <- delay 5 response
+        response <- requestingIdentity $ public PublicRequest_ClientGetConnectedLedger <$ (pb <> void poll)
+      let ledgerChoice = fmapMaybe id response
+      el "p" $ text "Connect your Ledger Device, enter the PIN and open the Tezos Baking app."
+      divClass "explanation" $ do
+        text "To install the Tezos Baking app:"
+        el "ol" $ do
+          el "li" $ do
+            text "Install and open Ledger Live: "
+            let uri = "https://www.ledger.com/pages/ledger-live"
+            hrefLink uri $ text uri
+          el "li" $ text "Navigate to Settings and turn on \"Developer Mode\""
+          el "li" $ text "Go to Manager and search for \"Tezos\""
+          el "li" $ text "Install the \"Tezos Baking\" app"
+          el "li" $ text "Open the Tezos Baking app on your ledger"
+      pure (never, ledgerNext <$> ledgerChoice)
+
+    ledgerNext ledger = Workflow $ divClass "ledger-select-account" $ mdo
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger check") blank
+      divClass "ledger-name" $ text $ unLedgerIdentifier ledger
+      elClass "h5" "ui header" $ text "Select an account to bake with."
+      let submitted = domEvent Submit formEl
+          curves = [minBound .. maxBound] :: [SigningCurve]
+          derivs = [DerivationPath "0'/0'", DerivationPath ""]
+      (formEl, (reqErr, selection)) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
+        let accountItem (secretKey, account, balance) = do
+              let selected = demuxed selectionDemux $ Just (secretKey, account)
+              (e, _) <- elClass' "a" "link item" $ do
+                SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
+                text $ toPublicKeyHashText account
+                fancyTez balance
+              pure $ (secretKey, account) <$ domEvent Click e
+        pb <- getPostBuild
+        let f rs (c, d) = fmap (:rs) $ requestingIdentity $ public (PublicRequest_ClientShowLedger $ SecretKey ledger c d) <$ head rs
+        listResponse <- foldM f [Right Nothing <$ pb] (liftA2 (,) curves derivs)
+        let (listError, listResult) = fanEither $ leftmost listResponse
+        dr <- foldDyn (\ma as -> maybe as (:as) ma) [] listResult
+        selection <- foldDyn (\a b -> if b == Just a then Nothing else Just a) Nothing $ leftmost [accountFromList, accountSpecific]
+        let selectionDemux = demux selection
+        accountFromList <- switchHold never <=< dyn $ ffor dr $ \accounts -> do
+          e <- divClass "ui block list" $ fmap leftmost $ traverse accountItem (reverse $ L.sortOn (\(_, _, t) -> t) accounts)
+          when (length accounts < 6) $ divClass "ledger-accounts-loader" $ do
+            divClass "ui active mini inline blue loader" blank
+            text "Loading accounts..."
+          pure e
+        divClass "explanation" $ text "Don't see your account? Enter a specific signing curve and derivation path."
+        specificRequest <- divClass "two fields" $ do
+          curve <- divClass "ui field" $ do
+            el "label" $ text "Signing Curve"
+            SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity $ head curves) never $ SemUi.TaggedStatic $
+              Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
+          derivation <- divClass "ui field" $ do
+            el "label" $ text "Derivation Path"
+            fmap DerivationPath . value <$> inputElement (def & inputElementConfig_initialValue .~ unDerivationPath (head derivs))
+          debounce 1 $ updated $ (,) <$> value curve <*> derivation
+        specificResponse <- requestingIdentity $ leftmost
+          [ ffor specificRequest $ \(Identity c, d) -> public (PublicRequest_ClientShowLedger $ SecretKey ledger c d)
+          , public (PublicRequest_ClientShowLedger $ SecretKey ledger (head curves) (head derivs)) <$ pb
+          ]
+        let (specificError, specificResult) = fanEither specificResponse
+        specificItem <- holdDyn Nothing $ leftmost [Just <$> specificResult, Nothing <$ specificRequest]
+        accountSpecific <- divClass "ui block list" $ switchHold never <=< dyn $ ffor specificItem $ \case
+          Just (Just i) -> accountItem i
+          Just Nothing -> pure never -- loaded, no result
+          Nothing -> divClass "ledger-pkh-loader" $ do
+            divClass "ui active tiny inline blue loader" blank
+            text "Importing PKH..."
+            pure never
+        divClass "ui divider" blank
+        text "Kiln must register the selected account as a delegate and authorize the Ledger Device to bake for the account. Continue?"
+        divClass "ui error message" $ do
+          text "Select an account from the list above, or enter a specific signing curve and derivation path."
+        elAttr "button" ("type" =: "submit" <> "class" =: "ui primary button") $
+          text "Register As Delegate & Authorize Ledger to Bake"
+        pure (leftmost [listError, specificError], selection)
+      hasError <- holdDyn False $ leftmost
+        [ True <$ ffilter isNothing (tag (current selection) submitted)
+        , False <$ updated selection
+        ]
+      let register = fmapMaybe id $ tag (current selection) submitted
+      pure (never, leftmost [uncurry importSecretKey <$> register, handleError (ledgerNext ledger) <$> reqErr])
+
+    handleError recover = \case
+      ClientError_RequestDeclinedByLedger -> requestDeclinedByLedger recover
+      ClientError_LedgerDisconnected -> ledgerDisconnected recover
+      e -> Workflow $ do
+        elClass "h5" "ui header" $ text "Something went wrong"
+        divClass "explanation" $ text $ T.pack $ show e
+        retry <- uiButton "primary" "Retry"
+        pure (never, recover <$ retry)
+
+    importSecretKey sk pkh = Workflow $ divClass "ledger-lookup" $ do
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Importing secret key: respond to the prompt on your Ledger Device..."
+      el "p" $ text "Your Ledger Device should show the following prompt:"
+      elClass "h6" "ui header" $ text $ "Provide Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
+      pb <- getPostBuild
+      response <- requestingIdentity $ public (PublicRequest_ClientImportSecretKey "ledger_kiln" sk) <$ pb
+      let next = \case
+            Right () -> authorizeLedgerToBake pkh
+            Left e -> handleError (importSecretKey sk pkh) e
+      pure (never, next <$> response)
+
+    authorizeLedgerToBake pkh = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Authorizing ledger to bake: respond to the prompt on your Ledger Device..."
+      el "p" $ text "Your Ledger Device should show the following prompt:"
+      elClass "h6" "ui header" $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      pb <- getPostBuild
+      response <- requestingIdentity $ public (PublicRequest_ClientAuthorizeLedgerToBake "ledger_kiln") <$ pb
+      let next = \case
+            Right () -> registerAsDelegate pkh
+            Left e -> handleError (authorizeLedgerToBake pkh) e
+      pure (never, next <$> response)
+
+    registerAsDelegate pkh = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        divClass "ui active small inline blue loader" blank
+        text "Registering as delegate: respond to the prompt on your Ledger Device..."
+      el "p" $ text "Your Ledger Device should show the following prompt:"
+      elClass "h6" "ui header" $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      pb <- getPostBuild
+      response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate "ledger_kiln") <$ pb
+      let next = \case
+            Right () -> setupComplete pkh
+            Left e -> handleError (registerAsDelegate pkh) e
+      pure (never, next <$> response)
+
+    setupComplete pkh = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui icon header" $ do
+        elClass "i" "ui icon icon-check" blank
+        text "Setup is complete!"
+      -- TODO update the following text when baker is actually running
+      elClass "h6" "ui header" $ text $ "Kiln is now ready to run a baker using the address: " <> toPublicKeyHashText pkh
+      divClass "explanation" $ text $ "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or endorse. It takes at least 6 cycles after registering to receive rights."
+      continue <- uiButton "primary" "Continue"
+      pure (continue, never)
+
+    requestDeclinedByLedger tryAgain = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui icon header" $ do
+        elClass "i" "ui icon icon-cross red" blank
+        text "The request was declined by the Ledger Device."
+      divClass "explanation" $ text $ "If you did not intend to reject the prompt on the Ledger Device you may click retry."
+      retry <- uiButton "primary" "Retry"
+      pure (never, tryAgain <$ retry)
+
+    ledgerDisconnected tryAgain = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ text "Ledger Device was disconnected."
+      restart <- uiButton "primary" "Restart"
+      pure (never, tryAgain <$ restart) -- TODO restart should go back to start?
+
+    launchNode = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the block chain before baking."
+      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
+      launch <- uiButton "primary" "Launch Node"
+      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      pure (close', never)
 
 nodeStatus :: Maybe NodeInternalState -> Int -> MonitoredStatus
 nodeStatus mInternalState alertCount = min fromStatus fromAlert

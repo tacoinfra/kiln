@@ -61,8 +61,11 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_GetConnectedLedger -> getConnectedLedger
-      PublicRequest_ClientShowLedger secretKey -> runMaybeT $ do
+      PublicRequest_ClientAuthorizeLedgerToBake alias -> runClientT $ authorizeLedgerToBake alias
+      PublicRequest_ClientRegisterKeyAsDelegate alias -> registerKeyAsDelegate alias
+      PublicRequest_ClientImportSecretKey alias sk -> runClientT $ importSecretKey alias sk
+      PublicRequest_ClientGetConnectedLedger -> getConnectedLedger
+      PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
         account <- MaybeT $ showLedger secretKey
         balance <- MaybeT $ getBalanceFor account
         pure (secretKey, account, balance)

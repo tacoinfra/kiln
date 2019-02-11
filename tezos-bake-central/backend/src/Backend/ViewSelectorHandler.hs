@@ -124,7 +124,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   --     flip itraverse (_bakeViewSelector_bakerStats vs) $ \(i, j) -> _
   --     -- calculateBakerStats (_bakeViewSelector_bakerStats vs)
 
-
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
