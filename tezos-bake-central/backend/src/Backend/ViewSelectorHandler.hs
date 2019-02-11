@@ -243,7 +243,7 @@ getErrorLogsImpl flt intervalMap = do
     queryAlert sqlTable sqlFields related ctor (ClosedInterval lowWithInf highWithInf) = do
       $(logDebugSH) ("queryAlert" :: Text, flt, sqlTable, sqlFields, related, lowWithInf, highWithInf)
       let
-        build = \rows -> MMap.fromAscList $ flip map rows $ \((elId, elStarted, elStopped, elLastSeen, elNoticeSentAt) Pg.:. t) ->
+        build = \rows -> MMap.fromDistinctAscList $ flip map rows $ \((elId, elStarted, elStopped, elLastSeen, elNoticeSentAt) Pg.:. t) ->
           ( elId :: Id ErrorLog
           , ( ErrorLog
                 { _errorLog_started = elStarted
@@ -277,7 +277,7 @@ getErrorLogsImpl flt intervalMap = do
       build <$> (traceQuery) (
         qBase <>
           " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \
-          \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
+          \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromDistinctAscList' above.
         (lowWithInf, highWithInf)
 
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))

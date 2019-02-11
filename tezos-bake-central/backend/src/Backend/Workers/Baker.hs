@@ -144,11 +144,11 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
       pkhs = Set.fromList $ fmap (_bakerRightsCycleProgress_publicKeyHash . getMax) $ toList needProgress
       -- drop the already completed bakers.
       unfinished :: MonoidalMap Cycle (NonEmpty BakerRightsCycleProgress)
-      unfinished = MMap.mapMaybe (nonEmpty . toList) $ curryMap $ flip MMap.mapMaybe needProgress $ \(Max p) -> do
+      unfinished = MMap.mapMaybe (nonEmpty . join . toList) $ curryMap $ flip MMap.mapMaybe needProgress $ \(Max p) -> do
         cycle' <- Map.lookup (_bakerRightsCycleProgress_cycle p) cycleHashesByCycle
         -- if we're already at maxLevel, then we're done here.
         guard (_bakerRightsCycleProgress_progress p < rightsLookAhead + _rightsCycleInfo_maxLevel cycle')
-        return p
+        return [p]
 
 
       mNextUnfinished :: Maybe (NonEmpty BakerRightsCycleProgress, RightsCycleInfo) = do
