@@ -26,7 +26,6 @@ module Common.App
   , AlertNotificationMethod (..)
   ) where
 
-import Control.Lens (Iso', iso)
 import Control.Lens.TH (makeLenses)
 import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON)
@@ -167,108 +166,51 @@ data MailServerView = MailServerView
 instance FromJSON MailServerView
 instance ToJSON MailServerView
 
-data NodeErrorLogView
-  = NodeErrorLogView_InaccessibleNode !ErrorLogInaccessibleNode
-  | NodeErrorLogView_NodeWrongChain !ErrorLogNodeWrongChain
-  | NodeErrorLogView_NodeInvalidPeerCount !ErrorLogNodeInvalidPeerCount
-  | NodeErrorLogView_BadNodeHead !ErrorLogBadNodeHead
-  deriving (Eq, Ord, Generic, Typeable, Show)
-instance FromJSON NodeErrorLogView
-instance ToJSON NodeErrorLogView
-
--- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
--- chain entity: Delegates, and the background process tezos-baker both
--- referred to by the name "Baker".  that's confusing; especially when some
--- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
--- of a background process and a delegate. we should really rename one or both
--- to minimize confusion between these two ideas.
-data BakerErrorLogView
-  = BakerErrorLogView_MultipleBakersForSameBaker !ErrorLogMultipleBakersForSameBaker
-  | BakerErrorLogView_BakerMissed !ErrorLogBakerMissed
-  | BakerErrorLogView_BakerDeactivated !ErrorLogBakerDeactivated
-  | BakerErrorLogView_BakerDeactivationRisk !ErrorLogBakerDeactivationRisk
-  deriving (Eq, Ord, Generic, Typeable, Show)
-instance FromJSON BakerErrorLogView
-instance ToJSON BakerErrorLogView
-
--- TODO: Switch to 'DSum LogTag Identity', also spit node and baker tags out of LogTag.
-data ErrorLogView
-  = ErrorLogView_NodeError NodeErrorLogView
-  | ErrorLogView_BakerError !BakerErrorLogView
-  | ErrorLogView_BakerNoHeartbeat !ErrorLogBakerNoHeartbeat
-  -- ^ Misc baker *daemon* error.
-  | ErrorLogView_NetworkUpdate !ErrorLogNetworkUpdate
-  deriving (Eq, Ord, Generic, Typeable, Show)
-instance FromJSON ErrorLogView
-instance ToJSON ErrorLogView
-
-logViewTag :: Iso' ErrorLogView (DSum LogTag Identity)
-logViewTag = iso fromErrorLogView toErrorLogView
-
-toErrorLogView :: DSum LogTag Identity -> ErrorLogView
-toErrorLogView = \case
-  LogTag_BadNodeHead :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x)
-  LogTag_BakerDeactivated :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x)
-  LogTag_BakerDeactivationRisk :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x)
-  LogTag_BakerMissed :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x)
-  LogTag_BakerNoHeartbeat :=> Identity x -> ErrorLogView_BakerNoHeartbeat x
-  LogTag_InaccessibleNode :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x)
-  LogTag_MultipleBakersForSameBaker :=> Identity x -> ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x)
-  LogTag_NetworkUpdate :=> Identity x -> ErrorLogView_NetworkUpdate x
-  LogTag_NodeInvalidPeerCount :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x)
-  LogTag_NodeWrongChain :=> Identity x -> ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x)
-
-fromErrorLogView :: ErrorLogView -> DSum LogTag Identity
-fromErrorLogView = \case
-  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivated x) -> LogTag_BakerDeactivated :=> Identity x
-  ErrorLogView_BakerError (BakerErrorLogView_BakerDeactivationRisk x) -> LogTag_BakerDeactivationRisk :=> Identity x
-  ErrorLogView_BakerError (BakerErrorLogView_BakerMissed x) -> LogTag_BakerMissed :=> Identity x
-  ErrorLogView_BakerError (BakerErrorLogView_MultipleBakersForSameBaker x) -> LogTag_MultipleBakersForSameBaker :=> Identity x
-  ErrorLogView_BakerNoHeartbeat x -> LogTag_BakerNoHeartbeat :=> Identity x
-  ErrorLogView_NetworkUpdate x -> LogTag_NetworkUpdate :=> Identity x
-  ErrorLogView_NodeError (NodeErrorLogView_BadNodeHead x) -> LogTag_BadNodeHead :=> Identity x
-  ErrorLogView_NodeError (NodeErrorLogView_InaccessibleNode x) -> LogTag_InaccessibleNode :=> Identity x
-  ErrorLogView_NodeError (NodeErrorLogView_NodeInvalidPeerCount x) -> LogTag_NodeInvalidPeerCount :=> Identity x
-  ErrorLogView_NodeError (NodeErrorLogView_NodeWrongChain x) -> LogTag_NodeWrongChain :=> Identity x
+type BakerErrorLogView = DSum BakerLogTag Identity
+type NodeErrorLogView = DSum NodeLogTag Identity
+type ErrorLogView = DSum LogTag Identity
 
 nodeErrorViewOnly :: ErrorLogView -> Maybe NodeErrorLogView
 nodeErrorViewOnly = \case
-  ErrorLogView_NodeError v -> Just v
+  LogTag_Node nlt :=> v -> Just $ nlt :=> v
   _ -> Nothing
 
 nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
-nodeIdForNodeErrorLogView = \case
-  NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_node ein
-  NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_node enwc
-  NodeErrorLogView_NodeInvalidPeerCount enipc -> _errorLogNodeInvalidPeerCount_node enipc
-  NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_node ebnh
+nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
+  NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_node
+  NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_node
+  NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_node
+  NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_node
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
 bakerErrorViewOnly = \case
-  ErrorLogView_BakerError v -> Just v
+  LogTag_Baker blt :=> v -> Just $ blt :=> v
   _ -> Nothing
 
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
-bakerIdForBakerErrorLogView = \case
-  BakerErrorLogView_MultipleBakersForSameBaker embfb -> _errorLogMultipleBakersForSameBaker_publicKeyHash embfb
-  BakerErrorLogView_BakerMissed elbm -> unId $ _errorLogBakerMissed_baker elbm
-  BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_publicKeyHash ebd
-  BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_publicKeyHash ebd
+bakerIdForBakerErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
+  BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_publicKeyHash
+  BakerLogTag_BakerMissed -> unId . _errorLogBakerMissed_baker
+  BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
+  BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
+
+errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
+errorLogIdForNodeLogTag = \case
+  NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
+  NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
+  NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
+  NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
-errorLogIdForErrorLogView = \case
-  ErrorLogView_NodeError ne -> case ne of
-    NodeErrorLogView_InaccessibleNode ein -> _errorLogInaccessibleNode_log ein
-    NodeErrorLogView_NodeWrongChain enwc -> _errorLogNodeWrongChain_log enwc
-    NodeErrorLogView_BadNodeHead ebnh -> _errorLogBadNodeHead_log ebnh
-    NodeErrorLogView_NodeInvalidPeerCount ebipc -> _errorLogNodeInvalidPeerCount_log ebipc
-  ErrorLogView_BakerError be -> case be of
-    BakerErrorLogView_MultipleBakersForSameBaker emb -> _errorLogMultipleBakersForSameBaker_log emb
-    BakerErrorLogView_BakerMissed elbm -> _errorLogBakerMissed_log elbm
-    BakerErrorLogView_BakerDeactivated ebd -> _errorLogBakerDeactivated_log ebd
-    BakerErrorLogView_BakerDeactivationRisk ebd -> _errorLogBakerDeactivationRisk_log ebd
-  ErrorLogView_BakerNoHeartbeat enhb -> _errorLogBakerNoHeartbeat_log enhb
-  ErrorLogView_NetworkUpdate ua -> _errorLogNetworkUpdate_log ua
+errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
+  LogTag_Node nlt -> errorLogIdForNodeLogTag nlt
+  LogTag_Baker blt -> case blt of
+    BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
+    BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
+    BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
+    BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
+  LogTag_BakerNoHeartbeat -> _errorLogBakerNoHeartbeat_log
+  LogTag_NetworkUpdate -> _errorLogNetworkUpdate_log
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView

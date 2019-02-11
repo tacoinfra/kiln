@@ -88,6 +88,10 @@ h6.ui.header {
     .buttons {
       text-align: center;
       margin-top: @30px;
+
+      .ui.button.primary.close {
+        width: unit(166 / @emSize, rem);
+      }
     }
   }
 
@@ -343,15 +347,15 @@ body {
         .tooltip-description {
           color: @grey;
           font-size: @12px;
-
-          .icon.circle {
-            margin-left: @8px;
-            margin-right: @8px;
-          }
         }
       }
     }
   }
+}
+
+.icon.circle.healthy-node {
+  margin-left: @8px;
+  margin-right: @8px;
 }
 
 .app-header {
@@ -811,16 +815,30 @@ img.ledger {
 
   .dashboard-section-overview-body {
     flex: 1;
+    font-size: @12px;
 
     .ui.header {
-      margin-bottom: @13px;
-
       .ui.loader {
         margin-right: @10px;
       }
     }
 
+    .alert-entity {
+      margin-top: @2px;
+      margin-bottom: @16px;
+
+      label:not(.secondary-label) {
+        margin-right: @9px;
+        font-weight: 700;
+      }
+      label.secondary-label {
+        color: @grey;
+      }
+    }
+
     .description {
+      margin-top: @13px;
+      font-size: @12px;
       color: @grey;
 
       .buttons {
@@ -992,7 +1010,7 @@ img.ledger {
           font-weight: bold;
         }
         .tez {
-          margin-left: 0.3rem;
+          margin-left: @5px;
           color: @grey;
         }
       }

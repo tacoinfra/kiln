@@ -15,10 +15,13 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- Needed for nested `deriveArgDict`
+{-# LANGUAGE UndecidableInstances #-}
 
 -- TODO do everywhere
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
@@ -44,8 +47,9 @@ import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.GADT.Show.TH (deriveGShow)
+import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
+import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
+import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
 import Data.Dependent.Sum (DSum)
 import Data.Function (on)
 import Data.Map (Map)
@@ -58,6 +62,7 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
+import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
@@ -230,7 +235,7 @@ data NodeInternalState
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we *want* the node in;
+  { _nodeInternalData_running :: !Bool -- the state we /want/ the node in;
   , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
   , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
   , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
@@ -471,7 +476,7 @@ instance Aeson.ToJSONKey RightKind
 
 -- It's an explicit choice not to include either the priority; this reduces the
 -- amount of reduntant data since we only really care about expected returns
--- rather than all possible.  For the same reason we *do* include endorsement
+-- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.
 data BakerRight = BakerRight
   { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
@@ -645,7 +650,7 @@ instance HasId ErrorLogBadNodeHead where
 -- did or didn't take your rights.
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
--- new uncle occurs in which the baker *did* exercise their rights, or the user
+-- new uncle occurs in which the baker /did/ exercise their rights, or the user
 -- manually acknowledges the error.  If the network is branch hopping; its
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
@@ -724,18 +729,44 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+-- Re-ordering these can yield errors
+-- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where
-  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
-  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
-  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
-  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
-  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
-  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
-  LogTag_NodeInvalidPeerCount :: LogTag ErrorLogNodeInvalidPeerCount
+  LogTag_Node :: NodeLogTag a -> LogTag a
+  LogTag_Baker :: BakerLogTag a -> LogTag a
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  --  | Misc baker /daemon/ error.
 
+deriving instance Eq (LogTag a)
+deriving instance Ord (LogTag a)
+deriving instance Show (LogTag a)
+
+data NodeLogTag a where
+  NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
+  NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
+  NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
+  NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
+
+deriving instance Eq (NodeLogTag a)
+deriving instance Ord (NodeLogTag a)
+deriving instance Show (NodeLogTag a)
+
+-- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
+-- chain entity: Delegates, and the background process tezos-baker both
+-- referred to by the name "Baker".  that's confusing; especially when some
+-- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
+-- of a background process and a delegate. we should really rename one or both
+-- to minimize confusion between these two ideas.
+data BakerLogTag a where
+  BakerLogTag_MultipleBakersForSameBaker :: BakerLogTag ErrorLogMultipleBakersForSameBaker
+  BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
+  BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
+  BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
+
+deriving instance Eq (BakerLogTag a)
+deriving instance Ord (BakerLogTag a)
+deriving instance Show (BakerLogTag a)
 
 data BakerErrorDescriptions = BakerErrorDescriptions
   { _bakerErrorDescriptions_title :: !Text
@@ -851,14 +882,30 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
 
 return []
 
-deriveArgDict ''LogTag
-deriveGCompare ''LogTag
-deriveGEq ''LogTag
-deriveGShow ''LogTag
-deriveJSONGADT ''LogTag
+fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
+-- Do this is second because it is downstream
+fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
-
+deriveSomeUniverse ''NodeLogTag
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

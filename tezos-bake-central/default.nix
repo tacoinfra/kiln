@@ -21,6 +21,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
 
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       dependent-sum-aeson-orphans = hackGet dep/dependent-sum-aeson-orphans;
+      dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
       reflex-dom-forms = hackGet dep/reflex-dom-forms;

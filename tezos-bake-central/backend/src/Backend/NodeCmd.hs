@@ -24,6 +24,7 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.Schema (fromId)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.IO (hFlush)
@@ -131,26 +132,20 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
 putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> NodeInternalState -> m ()
 putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
   $(logDebugSH) ("putState" :: Text, pid, state)
-  result <- [queryQ|
-    UPDATE "NodeInternal"
-    SET "data#data#state" = ?state
-      , "data#data#stateUpdated" = NOW()
-      , "data#data#backend" = ?pid
-    WHERE COALESCE ("data#data#backend", ?pid) = ?pid
-    RETURNING "id"
-            , "data#data#running"
-            , "data#data#state"
-            , "data#data#stateUpdated" AT TIME ZONE 'UTC'
-            , "data#data#backend"
-    |]
-  for_ result $ \(nid, running', state', stateUpdated', backend') ->
-    when ((state', backend') /= (state, Just pid)) $
-      notify (Notify_NodeInternal nid $ Just NodeInternalData
-        { _nodeInternalData_running = running'
-        , _nodeInternalData_state = state'
-        , _nodeInternalData_stateUpdated = stateUpdated'
-        , _nodeInternalData_backend = backend'
-        })
+  let
+    id_ = NodeInternal_idField
+    data_ = NodeInternal_dataField ~> DeletableRow_dataSelector
+    backend_ = data_ ~> NodeInternalData_backendSelector
+    state_ = data_ ~> NodeInternalData_stateSelector
+    backend = Just pid
+
+  result <- project NodeInternalConstructor $ state_ /=. state &&. (backend_ ==. backend ||. backend_ ==. (Nothing :: Maybe Int))
+  update [backend_ =. backend , state_ =. state] $ id_ `in_` fmap _nodeInternal_id result
+  for_ result $ \(NodeInternal nid ndata) ->
+    notify (Notify_NodeInternal nid $ Just $ (_deletableRow_data $ ndata)
+      { _nodeInternalData_state = state
+      , _nodeInternalData_backend = backend
+      })
 
 callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
 callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

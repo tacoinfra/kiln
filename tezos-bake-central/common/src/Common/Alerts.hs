@@ -13,9 +13,7 @@ import Tezos.Chain (NamedChain, showNamedChain)
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
 import Reflex (FunctorMaybe, ffilter)
 
-import Common.Schema (ErrorLog(..), ErrorLogBadNodeHead (..), ErrorLogBakerMissed(..),
-                      BakerErrorDescriptions(..), LogTag(..),
-                      ErrorLogBakerDeactivated(..), ErrorLogBakerDeactivationRisk(..), RightKind(..), bakerIdentification)
+import Common.Schema
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -130,7 +128,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
-  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_BakerMissed :=> pure elog
+  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_Baker BakerLogTag_BakerMissed :=> pure elog
   }
   where
     lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog

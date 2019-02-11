@@ -372,10 +372,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
-        el "p" $ do
-          text "Add a node from the left panel or make sure any nodes you’ve already added are"
-          icon "circle small green"
-          text "healthy."
+        el "p" $ ensureHealthyNodes
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -440,7 +437,7 @@ nodesTabOrWelcome = do
     let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
     dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
     mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, ErrorLogView_NetworkUpdate ua) -> do
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
         guard $ _errorLogNetworkUpdate_namedChain ua == chain
         return ua
       _ -> Nothing
@@ -464,6 +461,7 @@ networkUpdateAlert elua = do
   renderResolvableSplashAlert
     (icon "icon-alert-badge big blue")
     header
+    Nothing
     (do el "p" $ text $ bodyFirstPara
         el "p" $ do
           text "Get the new software here  🡒  "
@@ -558,7 +556,7 @@ data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary)
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
-  = SynthError_BakersInformationDown (NonEmpty PublicKeyHash)
+  = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
 liveErrorsWidget
@@ -602,7 +600,7 @@ liveErrorsWidget = void $ do
         Left (CollectiveNodesFailure_NoNodes)             -> Nothing
   dTimer <- asks $ view timer
   -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
-  dBakerKeys <- MMap.keys <$$> watchBakerAddresses
+  dBakers <- watchBakerAddresses
 
   let
     combinedRealErrors
@@ -617,10 +615,10 @@ liveErrorsWidget = void $ do
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
       :: Dynamic t (Map.Map SynthError (ErrorLog, SynthError))
-    synthErrors = ffor3 dBakerKeys dTimer dAllNodesDownTime $
-      \bakerKeys now allNodesDownTime ->
+    synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
+      \bakers now allNodesDownTime ->
         fromMaybe mempty $ do
-          keys1 <- NEL.nonEmpty bakerKeys
+          keys1 <- NEL.nonEmpty $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -667,7 +665,7 @@ liveErrorsWidget = void $ do
   where
     timestamped (lbl,ts) = el "div" $ do
       el "label" $ text lbl
-      localTimestamp $ pure ts
+      localTimestamp ts
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
@@ -680,68 +678,75 @@ liveErrorsWidget = void $ do
     synthEntry :: SynthError -> m ()
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
-      errorLabel "My Bakers" $ Identity $ T.take 20 (toPublicKeyHashText $ NEL.head pkhs) <> "..."
+      let (pkh, bakerData) = NEL.head pkhs
+      errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ T.take 20 (toPublicKeyHashText pkh) <> "..."
       el "div" $
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
-    logEntry (ErrorLogView' specificLog node') =
-        case specificLog of
-          ErrorLogView_NodeError ne -> case ne of
-            NodeErrorLogView_InaccessibleNode (ErrorLogInaccessibleNode _ _ address alias) -> for_ node' $ \n -> do
+    logEntry (ErrorLogView' (logTag :=> Identity log) node') =
+        case logTag of
+          LogTag_Node nlt -> case nlt of
+            NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
+              let ErrorLogInaccessibleNode _ _ address alias = log
               header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
               nodeLabel n
 
-            NodeErrorLogView_NodeWrongChain (ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId) ->
+            NodeLogTag_NodeWrongChain -> do
+              let ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId = log
               for_ node' $ \n -> do
                 header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
                 nodeLabel n
                 el "div" $
                   text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
-            NodeErrorLogView_BadNodeHead l -> do
+            NodeLogTag_BadNodeHead -> do
               for_ node' $ \n -> do
-                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) l
+                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
                 let (primary, _) = nodeSummaryIdentification n
                 header $ heading <> ": " <> primary
                 nodeLabel n
                 el "div" message
 
-            NodeErrorLogView_NodeInvalidPeerCount (ErrorLogNodeInvalidPeerCount _ _ minPeerCount _) -> do
+            NodeLogTag_NodeInvalidPeerCount -> do
+              let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
               for_ node' $ \n -> do
-                let (main, _) = nodeSummaryIdentification n
-                header $ "Node has too few peers: " <> main
+                header $ "Node has too few peers"
                 nodeLabel n
                 el "div" $ text $
                   "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
-          ErrorLogView_BakerError ne -> case ne of
-            BakerErrorLogView_BakerDeactivated log -> renderBakerError
+          LogTag_Baker blt -> case blt of
+            BakerLogTag_BakerDeactivated -> renderBakerError
               (bakerDeactivatedDescriptions log)
               (_errorLogBakerDeactivated_publicKeyHash log)
-            BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+            BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
               (_errorLogBakerDeactivationRisk_publicKeyHash log)
 
-            BakerErrorLogView_MultipleBakersForSameBaker ErrorLogMultipleBakersForSameBaker{} -> do
+            BakerLogTag_MultipleBakersForSameBaker -> do
+              let ErrorLogMultipleBakersForSameBaker{} = log
               header "Multiple bakers for same baker" -- TODO Fill this out
-            BakerErrorLogView_BakerMissed elbm -> do
+            BakerLogTag_BakerMissed -> do
               let
-                rightTxt = case _errorLogBakerMissed_right elbm of
+                rightTxt = case _errorLogBakerMissed_right log of
                   RightKind_Baking -> "a bake"
                   RightKind_Endorsing -> "an endorsement"
               header $ "Missed " <> rightTxt <> " opportunity"
               el "div" $ do
-                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker elbm)
+                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker log)
 
-          ErrorLogView_BakerNoHeartbeat (ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _) -> do
+          LogTag_BakerNoHeartbeat -> do
+            let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
             header "Baker lagging behind" -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
-          ErrorLogView_NetworkUpdate (ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain }) -> do
-            let chainText = "'" <> showNamedChain namedChain <> "'"
+          LogTag_NetworkUpdate -> do
+            let
+              ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
+              chainText = "'" <> showNamedChain namedChain <> "'"
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do
               text $ "There is a new version of the " <> chainText <> " software available on GitLab."
@@ -1229,12 +1234,12 @@ nodesTab =
           let
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \case
-                NodeErrorLogView_InaccessibleNode{} -> text "Unable to connect."
-                NodeErrorLogView_NodeWrongChain{} -> text "On wrong network."
-                NodeErrorLogView_NodeInvalidPeerCount{} -> text "Node has too few peers."
-                NodeErrorLogView_BadNodeHead l -> text $
-                  fst (badNodeHeadMessage Const (Const . const "") l) <> "."
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(tag :=> Identity log) -> case tag of
+                NodeLogTag_InaccessibleNode -> text "Unable to connect."
+                NodeLogTag_NodeWrongChain -> text "On wrong network."
+                NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
+                NodeLogTag_BadNodeHead -> text $
+                  fst (badNodeHeadMessage Const (Const . const "") log) <> "."
 
           let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
               (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
@@ -1515,15 +1520,15 @@ bakersTab =
 
               errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                Right e -> case e of
-                  BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-                  BakerErrorLogView_BakerMissed elbm -> text $ "Missed " <> aRight
+                Right (tag :=> Identity log) -> case tag of
+                  BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
                     where
-                      aRight = case _errorLogBakerMissed_right elbm of
+                      aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
                         RightKind_Endorsing -> "an endorse"
-                  BakerErrorLogView_BakerDeactivated log -> renderBakerError $ bakerDeactivatedDescriptions log
-                  BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError $ bakerDeactivationRiskDescriptions log
+                  BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
+                  BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1556,38 +1561,42 @@ bakersTab =
           (do
              divClass "ui active inline loader small blue" blank
              text "Gathering baker data...")
+          Nothing
           (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
         BakersBanner_CannotGather -> renderSplashAlert
           (icon "icon-disconnected big red")
           (text "Cannot gather baker data - no nodes online.")
+          Nothing
           (do
              el "p" $ text "Kiln cannot gather baker data if no nodes are synced with the blockchain."
              el "p" $ do
                el "strong" $ text "Fix:"
                text " "
-               text "Add a node from the left panel or make sure any nodes you’ve already added are healthy.")
+               ensureHealthyNodes)
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(tag :=> Identity log) -> case tag of
       -- TODO
-      BakerErrorLogView_MultipleBakersForSameBaker{} -> text "Multiple bakers for same baker."
-      BakerErrorLogView_BakerMissed log -> renderBakerError
+      BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+      BakerLogTag_BakerMissed -> renderBakerError
         (bakerMissedDescriptions log)
         (unId $ _errorLogBakerMissed_baker log)
-      BakerErrorLogView_BakerDeactivated log -> renderBakerError
+      BakerLogTag_BakerDeactivated -> renderBakerError
         (bakerDeactivatedDescriptions log)
         (_errorLogBakerDeactivated_publicKeyHash log)
-      BakerErrorLogView_BakerDeactivationRisk log -> renderBakerError
+      BakerLogTag_BakerDeactivationRisk -> renderBakerError
         (bakerDeactivationRiskDescriptions log)
         (_errorLogBakerDeactivationRisk_publicKeyHash log)
 
       where
+        renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
             (_bakerErrorDescriptions_title dsc)
-            (do dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+            (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
+            (do
                 el "div" $ text $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
@@ -1683,11 +1692,12 @@ bakersTab =
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
   -> Text -- ^ Title
+  -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
   -> m ()
-renderResolvableSplashAlert splashIcon title desc mReq = do
-  renderSplashAlert splashIcon (text title) $ do
+renderResolvableSplashAlert splashIcon title entity desc mReq = do
+  renderSplashAlert splashIcon (text title) entity $ do
     desc
     for_ mReq $ \resolveReq -> do
       resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
@@ -1696,12 +1706,14 @@ renderResolvableSplashAlert splashIcon title desc mReq = do
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
   -> m () -- ^ Title
+  -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> m ()
-renderSplashAlert splashIcon title desc = do
+renderSplashAlert splashIcon title entity desc = do
   elClass "div" "dashboard-section-overview-icon" $ splashIcon
   elClass "div" "dashboard-section-overview-body" $ do
     divClass "ui header" $ title
+    for_ entity $ divClass "alert-entity"
     divClass "description" $ desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()

@@ -104,11 +104,10 @@ fancyTez t = let (w, p, tz) = tez' t in elClass "span" "fancy-tez" $ do
   text $ w <> p
   elClass "span" "tez" $ text tz
 
-localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .
-    Time.utcToZonedTime tz <$> t
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz t
 
 localHumanizedTimestamp
   ::
@@ -118,16 +117,15 @@ localHumanizedTimestamp
   => Dynamic t (Maybe Text)
   -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestamp titleDyn tDyn = do
+localHumanizedTimestamp titleDyn tsDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
   tooltipped TooltipPos_BottomLeft
     (do
       whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
-      dynText ltDyn
+      dyn_ $ fmap localTimestamp tsDyn
     ) $
-    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ humanizeTimestamp tz
+    dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
 
 data TooltipPos
   = TooltipPos_TopLeft
@@ -538,6 +536,12 @@ nodeLabel = uncurry errorLabel . nodeSummaryIdentification
 
 bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
 bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
+
+ensureHealthyNodes :: DomBuilder t m => m ()
+ensureHealthyNodes = do
+  text "Add a node from the left panel or make sure any nodes you’ve already added are"
+  icon "circle healthy-node small green"
+  text "healthy."
 
 makeLenses ''FrontendContext
 

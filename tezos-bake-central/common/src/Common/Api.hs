@@ -72,11 +72,6 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_ClientRegisterKeyAsDelegate
       :: Text
       -> PublicRequest Bake (Either ClientError ())
-    PublicRequest_SetupBaker
-      :: SecretKey
-      -> PublicKeyHash
-      -> PublicRequest Bake ()
-    -- ^ Store user choice to bake on ledger with given secret key and PKH
     PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text
