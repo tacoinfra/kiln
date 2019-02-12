@@ -772,7 +772,7 @@ data LogTag a where
   LogTag_Node :: NodeLogTag a -> LogTag a
   LogTag_Baker :: BakerLogTag a -> LogTag a
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  -- | Misc baker /daemon/ error.
+  --  | Misc baker /daemon/ error.
 
 deriving instance Eq (LogTag a)
 deriving instance Ord (LogTag a)
