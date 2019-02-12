@@ -60,11 +60,11 @@ processWorker
   -> (forall m'. (Monad m', MonadIO m', PersistBackend m', MonadLogger m') => FilePath -> m' a)
   -> (a -> FilePath -> CreateProcess)
   -> Id ProcessData
-  -> (Maybe ProcessData -> Notify)
+  -> Maybe (Maybe ProcessData -> Notify)
   -> m (IO ())
-processWorker logger db config initialize process pid makeNotify = worker' $
+processWorker logger db config initialize process pid makeNotify = worker' $ do
+  waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
-    waitUntilShouldRun
     updateState ProcessState_Initializing
     withNodeConfig config $ \configFile -> do
       v <- runLoggingEnv logger $ runDb (Identity db) $ initialize configFile
@@ -151,10 +151,10 @@ processWorker logger db config initialize process pid makeNotify = worker' $
             now <- liftIO getCurrentTime
             update [state_ =. state, updated_ =. Just now]
               (AutoKeyField ==. (fromId pid))
-            notify (makeNotify $ Just $ p
+            mapM_ (\f -> notify (f $ Just $ p
               { _processData_state = state
               , _processData_updated = Just now
-              })
+              })) makeNotify
 
 withNodeConfig :: NodeConfigFile -> (FilePath -> IO a) -> IO a
 withNodeConfig nodeConfig f = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

@@ -205,11 +205,20 @@ instance HasId BakerDaemonInfoData where
 
 data BakerDaemonInternal = BakerDaemonInternal
   { _bakerDaemonInternal_id :: !(Id BakerDaemon)
-  , _bakerDaemonInternal_data :: !(DeletableRow (Id ProcessData))
+  , _bakerDaemonInternal_data :: !(DeletableRow BakerDaemonInternalData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternal where
   type IdData BakerDaemonInternal = Id BakerDaemon
+
+data BakerDaemonInternalData = BakerDaemonInternalData
+  { _bakerDaemonInternalData_alias :: !(Text)
+  , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId BakerDaemonInternalData where
+  type IdData BakerDaemonInternalData = Id BakerDaemon
 
 --------------------------------------------------------------------------------
 -- Node

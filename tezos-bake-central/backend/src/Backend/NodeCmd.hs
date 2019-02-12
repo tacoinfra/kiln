@@ -18,6 +18,7 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.Process (proc, readProcess)
+import qualified Data.Text as T
 
 import Backend.Workers.Process
 import ExtraPrelude
@@ -37,6 +38,11 @@ bakerPaths :: NamedChain -> FilePath
 bakerPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
 bakerPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
 bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-alpha")
+
+endorserPaths :: NamedChain -> FilePath
+endorserPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
+endorserPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
+endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
 
 -- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
@@ -74,7 +80,7 @@ internalNodeWorker logger db namedChain = do
     (initNode nodePath)
     (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath])
     pid
-    (Notify_NodeInternal nid)
+    (Just (Notify_NodeInternal nid))
 
 initNode :: (MonadIO m) => FilePath -> FilePath -> m ()
 initNode nodePath nodeConfigPath = do
@@ -92,29 +98,48 @@ initNode nodePath nodeConfigPath = do
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
   return ()
 
--- bakerDaemonProcess logger db namedChain = do
---   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
---     project1 (BakerDaemonInternal_idField, BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
---       (Just v) -> return v
---       Nothing -> do
---         let processData = ProcessData
---               { _processData_running = False
---               , _processData_state = ProcessState_Stopped
---               , _processData_updated = Nothing
---               , _processData_backend = Nothing
---               }
+-- Start Baker and Endorser
+bakerDaemonProcess :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
+bakerDaemonProcess logger db namedChain = do
+  (nid, BakerDaemonInternalData _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+    project1 ( BakerDaemonInternal_idField
+             , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
+      (Just v) -> return v
+      Nothing -> do
+        let processData = ProcessData
+              { _processData_running = False
+              , _processData_state = ProcessState_Stopped
+              , _processData_updated = Nothing
+              , _processData_backend = Nothing
+              }
 
---         pid <- insert' processData
---         nid <- insert' BakerDaemon
---         insert $ BakerDaemonInternal
---           { _bakerDaemonInternal_id = nid
---           , _bakerDaemonInternal_data = DeletableRow
---             { _deletableRow_data = pid
---             , _deletableRow_deleted = True
---             }
---           }
---         return (nid, pid)
---   processWorker logger db defaultConfig (const $ return ())
---     (\_ nodeConfigPath -> proc (bakerPaths namedChain) ["run", "--config-file", nodeConfigPath])
---     pid
---     (Notify_BakerDaemonInternal nid)
+        bpid <- insert' processData
+        epid <- insert' processData
+        nid <- insert' BakerDaemon
+        let v = BakerDaemonInternalData "baker-daemon-internal-alias-not-set" bpid epid
+        insert $ BakerDaemonInternal
+          { _bakerDaemonInternal_id = nid
+          , _bakerDaemonInternal_data = DeletableRow
+            { _deletableRow_data = v
+            , _deletableRow_deleted = True
+            }
+          }
+        return (nid, v)
+  bp <- processWorker logger db defaultConfig
+    fetchAlias
+    (\alias nodeConfigPath -> proc (bakerPaths namedChain) ["run", "with", "local", "node", "./.tezos-node", alias])
+    bpid
+    Nothing
+  ep <- processWorker logger db defaultConfig
+    fetchAlias
+    (\alias nodeConfigPath -> proc (endorserPaths namedChain) ["run", alias])
+    epid
+    Nothing
+  return (bp, ep)
+
+fetchAlias :: (forall m'. (Monad m', MonadIO m', PersistBackend m') => FilePath -> m' String)
+fetchAlias _ = do
+  project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
+    Nothing -> error "BakerDaemonInternal table empty"
+    (Just (BakerDaemonInternalData alias _ _)) -> return $ T.unpack alias

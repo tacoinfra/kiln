@@ -133,6 +133,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
           processData <- getId $ _deletableRow_data nodeData
           notify $ Notify_NodeInternal nid processData
+        project1 (BakerDaemonInternal_idField
+                 , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+          >>= traverse_ (\(nid, (BakerDaemonInternalData _ bPid ePid)) -> do
+            update [ProcessData_runningField =. shouldRun] (AutoKeyField `in_` (map fromId [bPid, ePid]))
+            processData <- getId $ bPid
+            notify $ Notify_BakerDaemonInternal nid processData)
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do

@@ -263,7 +263,7 @@ backendImpl cfg serve = do
 
       for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< internalNodeWorker logger db namedChain
-        -- addFinalizer =<< bakerDaemonProcess logger db namedChain
+        (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
