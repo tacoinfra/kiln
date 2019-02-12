@@ -110,6 +110,7 @@ library
     --Backend.Graphs
     Backend.Http
     Backend.Migrations
+    Backend.NodeCmd
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
@@ -120,11 +121,11 @@ library
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.WebApi
+    Backend.Workers.Baker
     Backend.Workers.Cache
     Backend.Workers.Client
-    Backend.Workers.Baker
     Backend.Workers.Node
-    Backend.NodeCmd
+    Backend.Workers.Process
     System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

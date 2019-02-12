@@ -128,11 +128,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
       PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
-        _ <- [executeQ|
-          UPDATE "ProcessData" p SET running = ?shouldRun
-            FROM "NodeInternal" n
-          WHERE p.id = n."data#data"|]
         (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
+          let pid = _deletableRow_data nodeData
+          update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
           processData <- getId $ _deletableRow_data nodeData
           notify $ Notify_NodeInternal nid processData
 

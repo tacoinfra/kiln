@@ -9,7 +9,6 @@
 
 module Backend.NodeCmd where
 
--- import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Control.Monad (when)
 import Control.Monad.Catch (MonadMask, finally)
 import Control.Monad.IO.Class ()
@@ -21,19 +20,17 @@ import Data.Pool (Pool)
 import Data.Text (Text)
 import Data.Word
 import Database.Groundhog.Postgresql
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.IO (hFlush)
+import System.IO (hFlush, Handle)
 import System.IO.Temp (withTempFile)
 import System.Process (readProcess, withCreateProcess, proc, getProcessExitCode, terminateProcess)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.TH as Aeson
-import qualified Data.ByteString.Lazy as LBS
 
+import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
@@ -43,128 +40,61 @@ import Backend.Common (worker')
 import Backend.Schema
 import Common.Schema
 
-defaultConfig :: NodeConfigFile
-defaultConfig = NodeConfigFile
-  { _nodeConfigFile_p2p = NodeConfigP2P
-    { _nodeConfigP2P_expectedProofOfWork = Nothing
-    , _nodeConfigP2P_bootstrapPeers = Nothing
-    , _nodeConfigP2P_listenAddr = Nothing
-    , _nodeConfigP2P_privateMode = Nothing
-    , _nodeConfigP2P_disableMempool = Nothing
-  }
-  , _nodeConfigFile_dataDir = Just "./.tezos-node"
-  , _nodeConfigFile_rpc = Just NodeConfigRPC
-    { _nodeConfigRPC_listenAddr = Just "127.0.0.1"
-    , _nodeConfigRPC_corsOrigin = Nothing
-    , _nodeConfigRPC_corsHeaders = Nothing
-    , _nodeConfigRPC_crt = Nothing
-    , _nodeConfigRPC_key = Nothing
-    }
-  , _nodeConfigFile_log = Nothing
-  , _nodeConfigFile_shell = Nothing
-  }
-
 -- TODO XXX OBVIOUSLY BAD
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
+bakerPaths :: NamedChain -> FilePath
+bakerPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
+bakerPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
+bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-alpha")
+
 -- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
 
--- If the ProcessData.backend is not null/Nothing then it could mean that
--- the previous worker did not exit cleanly. or the kiln process died without doing
--- a clean termination of the node.
--- So we wait for 5 min from the updated time before starting the node again
-withNodeLock :: (MonadMask m, MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> (Int -> m ()) -> m ()
-withNodeLock logger db f = do
-  pid <- runLoggingEnv logger $ do
-    pid :: Int <- runDb (Identity db) $ [queryQ|SELECT nextval('"NodeInternal_pid"') |] <&> fromOnly . head
-    $(logInfoSH) ("internal node pid:" :: Text, pid)
-    let
-      {-# INLINE claim #-}
-      claim :: forall m1. (MonadBaseControl IO m1, MonadIO m1, MonadLogger m1) => m1 ()
-      claim = do
-        let state = ProcessState_Stopped
-        result <- runDb (Identity db) $ do
-          _ <- [executeQ|
-            UPDATE "ProcessData" p
-              SET updated = NOW()
-                , backend = ?pid
-                , state = ?state
-              FROM "NodeInternal" n
-            WHERE (p."id" = n."data#data")
-               AND (p.backend IS NULL
-                 OR p.updated < NOW() - interval '5 minutes')|]
-          [queryQ|
-            SELECT p.backend
-              FROM "NodeInternal" n
-              JOIN "ProcessData" p ON p.id = n."data#data"
-            WHERE NOT n."data#deleted"
-          |]
-        case result of
-          [] -> threadDelay' 1 *> claim
-          (pid':_) -> do
-            $(logDebugSH) ("internal node pid:" :: Text, pid, result)
-            if pid == fromOnly pid'
-              then return ()
-              else do
-                $(logWarn) "internalnode LOCK HELD"
-                threadDelay' 1
-                *> claim
-    claim
-    return pid
-  finally (f pid) $ runLoggingEnv logger $ runDb (Identity db) [executeQ|
-    UPDATE "ProcessData"
-    SET updated = NOW()
-      , backend = NULL
-      WHERE backend = ?pid |]
-    >>= liftIO . print
+internalNodeWorker :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+  => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
+internalNodeWorker logger db namedChain = do
+  -- Always create a NodeInternal and corresponsing ProcessData
+  (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+    project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
+      (Just v) -> return v
+      Nothing -> do
+        let processData = ProcessData
+              { _processData_running = False
+              , _processData_state = ProcessState_Stopped
+              , _processData_updated = Nothing
+              , _processData_backend = Nothing
+              }
 
-internalNodeWorker :: MonadIO m => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
-internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pid -> runLoggingEnv logger $ do
+        pid <- insert' processData
+        nid <- insert' Node
+        insert $ NodeInternal
+          { _nodeInternal_id = nid
+          , _nodeInternal_data = DeletableRow
+            { _deletableRow_data = pid
+            , _deletableRow_deleted = True
+            }
+          }
+        return (nid, pid)
+
   let
-    waitUntilShouldRun = do
-      shouldRun <- any fromOnly <$> runDb (Identity db) [queryQ|
-        SELECT COALESCE(BOOL_OR(p.running), false)
-        FROM "NodeInternal" n
-        JOIN "ProcessData" p ON p.id = n."data#data"
-        |]
-      if shouldRun
-        then return ()
-        else (liftIO $ threadDelay' 1) >> waitUntilShouldRun
-  waitUntilShouldRun
-  callNode logger db (nodePaths namedChain) pid
-  threadDelay' 10
+    nodePath = nodePaths namedChain
+  processWorker logger db
+    defaultConfig
+    (initNode nodePath)
+    (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath])
+    pid
+    (Notify_NodeInternal nid)
 
-putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Maybe Int -> ProcessState -> m ()
-putState logger db backend state = void $ runLoggingEnv logger $ runDb (Identity db) $ do
-  $(logDebugSH) ("putState" :: Text, backend, state)
-  let
-    backend_ = ProcessData_backendField
-    state_ = ProcessData_stateField
-
-  pdIds <- project (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) $ CondEmpty
-  for_ pdIds $ \(nid, pdid) -> get (fromId pdid) >>= \case
-    Nothing -> return ()
-    (Just p) ->
-      when ((_processData_state p /= state) || (_processData_backend p /= backend)) $ do
-        update [backend_ =. backend , state_ =. state] $ AutoKeyField ==. (fromId pdid)
-        notify (Notify_NodeInternal nid $ Just $ p
-          { _processData_state = state
-          , _processData_backend = backend
-          })
-
-callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
-callNode logger db nodePath pid = (putState logger db (Just pid) ProcessState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+initNode :: (MonadIO m) => FilePath -> FilePath -> m ()
+initNode nodePath nodeConfigPath = do
   let nodeConfig = defaultConfig
   let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  liftIO (print nodeConfigPath)
-  liftIO (LBS.hPut nodeConfigHandle $ Aeson.encode nodeConfig)
-  liftIO (hFlush nodeConfigHandle)
   -- liftIO . putStrLn =<< liftIO (readProcess "cat" [nodeConfigPath] "")
   haveVersionFile <- liftIO $ doesFileExist versionFile
   when (not haveVersionFile) $
@@ -173,154 +103,31 @@ callNode logger db nodePath pid = (putState logger db (Just pid) ProcessState_In
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
+  return ()
 
-  putState logger db (Just pid) ProcessState_Starting
+-- bakerDaemonProcess logger db namedChain = do
+--   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+--     project1 (BakerDaemonInternal_idField, BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
+--       (Just v) -> return v
+--       Nothing -> do
+--         let processData = ProcessData
+--               { _processData_running = False
+--               , _processData_state = ProcessState_Stopped
+--               , _processData_updated = Nothing
+--               , _processData_backend = Nothing
+--               }
 
-  liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
-    where
-      go0 _ _ _ ph = runLoggingEnv logger $ do
-        let
-          {-# INLINE go #-}
-          go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
-          go = do
-            shouldRun <- runDb (Identity db) $
-              or . stripOnly <$> [queryQ|
-                SELECT p.running
-                  FROM "NodeInternal" n
-                  JOIN "ProcessData" p ON p.id = n."data#data"
-                WHERE NOT n."data#deleted"
-                |]
-
-            (liftIO $ getProcessExitCode ph) >>= \case
-              Nothing -> do
-                putState logger db (Just pid) ProcessState_Running
-                when (not shouldRun) $ liftIO $ terminateProcess ph
-                (threadDelay' 1) *> go
-              Just e -> liftIO $
-                if shouldRun
-                  -- TODO: logging!
-                  then do
-                    putState logger db Nothing ProcessState_Failed
-                    print ("node exited unexpectedly" :: Text, e)
-                  else do
-                    putState logger db Nothing ProcessState_Stopped
-                    print ("node exited sucessfully" :: Text, e)
-
-        go
-
-
-
-
-
-data NodeConfigRPC = NodeConfigRPC
-  { _nodeConfigRPC_listenAddr :: !(Maybe Text)
-  , _nodeConfigRPC_corsOrigin :: !(Maybe [Text])
-  , _nodeConfigRPC_corsHeaders :: !(Maybe [Text])
-  , _nodeConfigRPC_crt :: !(Maybe Text)
-  , _nodeConfigRPC_key :: !(Maybe Text)
-  }
-
-data NodeConfigP2PLimits = NodeConfigP2PLimits
-  { _nodeConfigP2PLimits_connectionTimeout :: !(Maybe Double)
-  , _nodeConfigP2PLimits_authenticationTimeout :: !(Maybe Double)
-  , _nodeConfigP2PLimits_minConnections :: !(Maybe Word16)
-  , _nodeConfigP2PLimits_expectedConnections :: !(Maybe Word16)
-  , _nodeConfigP2PLimits_maxConnections :: !(Maybe Word16)
-  , _nodeConfigP2PLimits_backlog :: !(Maybe Word8)
-  , _nodeConfigP2PLimits_maxIncomingConnections :: !(Maybe Word8)
-  , _nodeConfigP2PLimits_maxDownloadSpeed :: !(Maybe Int)
-  , _nodeConfigP2PLimits_maxUploadSpeed :: !(Maybe Int)
-  , _nodeConfigP2PLimits_swapLinger :: !(Maybe Double)
-  , _nodeConfigP2PLimits_binaryChunksSize :: !(Maybe Word8)
-  , _nodeConfigP2PLimits_readBufferSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_readQueueSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_writeQueueSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_incomingAppMessageQueueSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_incomingMessageQueueSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_outgoingMessageQueueSize :: !(Maybe Int)
-  , _nodeConfigP2PLimits_knownPointsHistorySize :: !(Maybe Word16)
-  , _nodeConfigP2PLimits_knownPeerIdsHistorySize :: !(Maybe Word16)
-  , _nodeConfigP2PLimits_maxKnownPoints :: !(Maybe (Int, Int))
-  , _nodeConfigP2PLimits_maxKnownPeerIds :: !(Maybe (Int, Int))
-  , _nodeConfigP2PLimits_greylistTimeout :: !(Maybe Int)
-  }
-
-data NodeConfigP2P = NodeConfigP2P
-  { _nodeConfigP2P_expectedProofOfWork :: !(Maybe Double)
-  , _nodeConfigP2P_bootstrapPeers :: !(Maybe [Text])
-  , _nodeConfigP2P_listenAddr :: !(Maybe Text)
-  , _nodeConfigP2P_privateMode :: !(Maybe Bool)
-  , _nodeConfigP2P_disableMempool :: !(Maybe Bool)
-  }
-data NodeConfigLog = NodeConfigLog
-  { _nodeConfigLog_output :: !(Maybe Text)
-  , _nodeConfigLog_level :: !(Maybe Text)
-  , _nodeConfigLog_rules :: !(Maybe Text)
-  , _nodeConfigLog_template :: !(Maybe Text)
-  }
-
-data NodeConfigShell = NodeConfigShell
-  { _nodeConfigShell_peerValidator :: !(Maybe NodeConfigShellPeerValidator)
-  , _nodeConfigShell_blockValidator :: !(Maybe NodeConfigShellBlockValidator)
-  , _nodeConfigShell_prevalidator :: !(Maybe NodeConfigShellPrevalidator)
-  , _nodeConfigShell_chainValidator :: !(Maybe NodeConfigShellChainValidator)
-  }
-
-data NodeConfigShellPeerValidator = NodeConfigShellPeerValidator
-  { _nodeConfigShellPeerValidator_blockHeaderRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellPeerValidator_blockOperationsRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellPeerValidator_protocolRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellPeerValidator_newHeadRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellPeerValidator_workerBacklogSize :: !(Maybe Word16)
-  , _nodeConfigShellPeerValidator_workerBacklogLevel :: !(Maybe Text)
-  , _nodeConfigShellPeerValidator_workerZombieLifetime :: !(Maybe Double)
-  , _nodeConfigShellPeerValidator_workerZombieMemory :: !(Maybe Double)
-  }
-
-data NodeConfigShellBlockValidator = NodeConfigShellBlockValidator
-  { _nodeConfigShellBlockValidator_protocolRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellBlockValidator_workerBacklogSize :: !(Maybe Word16)
-  , _nodeConfigShellBlockValidator_workerBacklogLevel :: !(Maybe Text)
-  , _nodeConfigShellBlockValidator_workerZombieLifetime :: !(Maybe Double)
-  , _nodeConfigShellBlockValidator_workerZombieMemory :: !(Maybe Double)
-  }
-data NodeConfigShellPrevalidator = NodeConfigShellPrevalidator
-  { _nodeConfigShellPrevalidator_operationsRequestTimeout :: !(Maybe Double)
-  , _nodeConfigShellPrevalidator_maxRefusedOperations :: !(Maybe Word16)
-  , _nodeConfigShellPrevalidator_workerBacklogSize :: !(Maybe Word16)
-  , _nodeConfigShellPrevalidator_workerBacklogLevel :: !(Maybe Text)
-  , _nodeConfigShellPrevalidator_workerZombieLifetime :: !(Maybe Double)
-  , _nodeConfigShellPrevalidator_workerZombieMemory :: !(Maybe Double)
-  }
-data NodeConfigShellChainValidator = NodeConfigShellChainValidator
-  { _nodeConfigShellChainValidator_bootstrapThreshold :: !(Maybe Word8)
-  , _nodeConfigShellChainValidator_workerBacklogSize :: !(Maybe Word16)
-  , _nodeConfigShellChainValidator_workerBacklogLevel :: !(Maybe Text)
-  , _nodeConfigShellChainValidator_workerZombieLifetime :: !(Maybe Double)
-  , _nodeConfigShellChainValidator_workerZombieMemory :: !(Maybe Double)
-  }
-
-data NodeConfigFile = NodeConfigFile
-  { _nodeConfigFile_p2p :: !NodeConfigP2P
-  , _nodeConfigFile_dataDir :: !(Maybe FilePath)
-  , _nodeConfigFile_rpc :: !(Maybe NodeConfigRPC)
-  , _nodeConfigFile_log :: !(Maybe NodeConfigLog)
-  , _nodeConfigFile_shell :: !(Maybe NodeConfigShell)
-  }
-
-concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
-  { Aeson.fieldLabelModifier
-    = map (\case {'_' -> '-'; x -> x})
-    . Aeson.fieldLabelModifier tezosJsonOptions
-  , Aeson.omitNothingFields = True
-    })
-  [ ''NodeConfigFile
-  , ''NodeConfigLog
-  , ''NodeConfigP2P
-  , ''NodeConfigRPC
-  , ''NodeConfigShell
-  , ''NodeConfigShellBlockValidator
-  , ''NodeConfigShellChainValidator
-  , ''NodeConfigShellPeerValidator
-  , ''NodeConfigShellPrevalidator
-  ]
+--         pid <- insert' processData
+--         nid <- insert' BakerDaemon
+--         insert $ BakerDaemonInternal
+--           { _bakerDaemonInternal_id = nid
+--           , _bakerDaemonInternal_data = DeletableRow
+--             { _deletableRow_data = pid
+--             , _deletableRow_deleted = True
+--             }
+--           }
+--         return (nid, pid)
+--   processWorker logger db defaultConfig (const $ return ())
+--     (\_ nodeConfigPath -> proc (bakerPaths namedChain) ["run", "--config-file", nodeConfigPath])
+--     pid
+--     (Notify_BakerDaemonInternal nid)

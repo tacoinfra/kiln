@@ -204,7 +204,7 @@ instance HasId BakerDaemonInfoData where
   type IdData BakerDaemonInfoData = Id BakerDaemon
 
 data BakerDaemonInternal = BakerDaemonInternal
-  { _bakerDaemonInternal_id :: !(Id Node)
+  { _bakerDaemonInternal_id :: !(Id BakerDaemon)
   , _bakerDaemonInternal_data :: !(DeletableRow (Id ProcessData))
   } deriving (Eq, Ord, Show, Generic, Typeable)
 

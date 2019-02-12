@@ -61,6 +61,7 @@ preMigrate =
   >=> migrateNodesToSplitTable
   >=> migrateProcessDataToSplitTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
+  >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
