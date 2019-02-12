@@ -13,7 +13,6 @@
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Concurrent (forkIO)
 import Control.Monad (when, unless, forever)
 import Control.Monad.Catch (MonadMask, bracket)
 import Control.Monad.Logger (MonadLogger, logWarnSH, logDebugSH, logWarn, logInfoSH)
@@ -42,8 +41,6 @@ import ExtraPrelude
 
 import Tezos.Types
 import Tezos.Json
-
-import System.Which
 
 -- Process management
 -- Worker

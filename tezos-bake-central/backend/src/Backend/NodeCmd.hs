@@ -9,34 +9,21 @@
 
 module Backend.NodeCmd where
 
-import Control.Monad (when)
-import Control.Monad.Catch (MonadMask, finally)
-import Control.Monad.IO.Class ()
-import Control.Monad.Logger (MonadLogger, logInfoSH, logDebugSH, logWarn)
+import Control.Monad.Catch (MonadMask)
 import Control.Monad.Trans.Control
-import Data.Functor.Identity (Identity(..))
-import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
-import Data.Text (Text)
-import Data.Word
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb, project1)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.IO (hFlush, Handle)
-import System.IO.Temp (withTempFile)
-import System.Process (readProcess, withCreateProcess, proc, getProcessExitCode, terminateProcess)
+import System.Process (proc, readProcess)
 
 import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
 import Tezos.Json
-import Backend.Common (threadDelay')
-import Backend.Common (worker')
 import Backend.Schema
 import Common.Schema
 
