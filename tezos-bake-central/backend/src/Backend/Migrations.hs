@@ -298,26 +298,17 @@ migrateProcessDataToSplitTable ta = do
                 , "state" VARCHAR NOT NULL
                 , "updated" TIMESTAMP NULL
                 , "backend" INT8 NULL);
-              INSERT INTO "ProcessData"
-                  ( "id"
-                  , "running"
-                  , "state"
-                  , "updated"
-                  , "backend"
-                  )
-                  SELECT "id"
-                       , "data#data#running"
-                       , "data#data#state"
-                       , "data#data#stateUpdated"
-                       , "data#data#backend"
-                  FROM "NodeInternal";
-              UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped';
+              CREATE SEQUENCE "ProcessData_id_seq";
+              ALTER TABLE "ProcessData" ALTER COLUMN "id" SET DEFAULT nextval('"ProcessData_id_seq"');
+              ALTER SEQUENCE "ProcessData_id_seq" OWNED BY "ProcessData"."id";
+              INSERT INTO "ProcessData" ("running", "state", "updated", "backend")
+                VALUES (FALSE, 'ProcessState_Stopped', NULL, NULL);
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#running";
               ALTER TABLE "NodeInternal" ADD COLUMN "data#data" INT8 NULL;
-              UPDATE "NodeInternal" SET "data#data" = "id";
+              UPDATE "NodeInternal" n SET "data#data" = p."id" FROM "ProcessData" p;
               ALTER TABLE "NodeInternal" ALTER COLUMN "data#data" SET NOT NULL;
               ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
             |]
