@@ -64,7 +64,16 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
       PublicRequest_ClientAuthorizeLedgerToBake alias -> runClientT $ authorizeLedgerToBake alias
-      PublicRequest_ClientRegisterKeyAsDelegate alias -> registerKeyAsDelegate alias
+      PublicRequest_ClientRegisterKeyAsDelegate alias -> registerKeyAsDelegate alias >>= \case
+        Left e -> pure $ Left e
+        Right () -> inDb $ do
+          bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
+          let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
+                [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
+                , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
+                ]
+          update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
+          pure $ Right ()
       PublicRequest_ClientImportSecretKey alias sk -> runClientT $ importSecretKey alias sk
       PublicRequest_ClientGetConnectedLedger -> getConnectedLedger
       PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
