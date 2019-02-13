@@ -311,6 +311,7 @@ migrateProcessDataToSplitTable ta = do
                        , "data#data#stateUpdated"
                        , "data#data#backend"
                   FROM "NodeInternal";
+              UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped';
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
