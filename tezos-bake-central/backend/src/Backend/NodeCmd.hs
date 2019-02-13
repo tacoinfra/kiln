@@ -117,7 +117,7 @@ bakerDaemonProcess logger db namedChain = do
         bpid <- insert' processData
         epid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "baker-daemon-internal-alias-not-set" bpid epid
+        let v = BakerDaemonInternalData "ledger_kiln" bpid epid
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
