@@ -99,6 +99,11 @@ tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
+fancyTez :: DomBuilder t m => Tez -> m ()
+fancyTez t = let (w, p, tz) = tez' t in elClass "span" "fancy-tez" $ do
+  text $ w <> p
+  elClass "span" "tez" $ text tz
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
@@ -392,13 +397,17 @@ formIsLoading comp state submitted = do
 basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
 
-cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModal = cancelableModalWithClasses []
+cancelableModal :: (DomBuilder t m, PostBuild t m, MonadFix m) => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModal f = cancelableModalWithClasses (fmap (pure [],) . f)
 
-cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
-  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
-  divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+cancelableModalWithClasses
+  :: (DomBuilder t m, PostBuild t m, MonadFix m)
+  => (Event t () -> m (Dynamic t [Text], Event t ())) -> Event t () -> m (Event t ())
+cancelableModalWithClasses f close = mdo
+  (classes, e) <- elDynAttr "div" (ffor classes $ \cs -> "class"=:T.unwords ("modal-box":cs)) $ do
+    (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+    divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+  pure e
 
 confirmationModal :: MonadRhyoliteFrontendWidget app t m
                   => Text

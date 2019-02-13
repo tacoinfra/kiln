@@ -29,6 +29,7 @@ library
     Tezos.Fitness
     Tezos.Json
     Tezos.Lenses
+    Tezos.Ledger
     Tezos.Level
     Tezos.Micheline
     Tezos.NodeRPC.Class

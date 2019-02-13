@@ -24,7 +24,7 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView)
-import Common.Schema (LogTag)
+import Common.Schema (LogTag, ClientError)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
   data PublicRequest Bake a where
@@ -57,6 +57,21 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
+    PublicRequest_ClientGetConnectedLedger
+      :: PublicRequest Bake (Maybe LedgerIdentifier)
+    PublicRequest_ClientShowLedger
+      :: SecretKey
+      -> PublicRequest Bake (Either ClientError (Maybe (SecretKey, PublicKeyHash, Tez)))
+    PublicRequest_ClientImportSecretKey
+      :: Text
+      -> SecretKey
+      -> PublicRequest Bake (Either ClientError ())
+    PublicRequest_ClientAuthorizeLedgerToBake
+      :: Text
+      -> PublicRequest Bake (Either ClientError ())
+    PublicRequest_ClientRegisterKeyAsDelegate
+      :: Text
+      -> PublicRequest Bake (Either ClientError ())
     PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text

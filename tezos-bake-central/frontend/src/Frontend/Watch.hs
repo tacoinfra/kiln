@@ -56,6 +56,10 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
+watchInternalBaker :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProcessData))
+watchInternalBaker = do
+  return $ return Nothing
+
 watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProcessData))
 watchInternalNode = do
   theView <- watchViewSelector . pure $ mempty

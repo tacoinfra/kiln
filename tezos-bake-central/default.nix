@@ -11,7 +11,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite = import (hackGet dep/rhyolite);
     nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
-    staticFiles = pkgs.callPackage ./static {};
+    staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
+    staticFilesImpure = toString ./result-static;
     packages = {
       backend-db = ./backend-db;
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;

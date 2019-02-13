@@ -78,6 +78,17 @@ import Tezos.Types
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
 
+data ClientError
+  = ClientError_NodeNotReady
+  | ClientError_RequestDeclinedByLedger
+  | ClientError_LedgerDisconnected
+  | ClientError_AliasAlreadyUsed
+  | ClientError_ProcessError
+  | ClientError_Other Text
+  deriving (Eq, Ord, Show, Generic, Typeable)
+instance Aeson.ToJSON ClientError
+instance Aeson.FromJSON ClientError
+
 data CacheError
   = CacheError_RpcError !RpcError
   | CacheError_NoSuitableNode

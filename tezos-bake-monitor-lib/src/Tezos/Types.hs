@@ -15,6 +15,7 @@ import Tezos.Chain as X
 import Tezos.Contract as X
 import Tezos.Fitness as X
 import Tezos.Json as X (TezosWord64 (..))
+import Tezos.Ledger as X
 import Tezos.Level as X
 import Tezos.Operation as X (Operation)
 import Tezos.PeriodSequence as X
