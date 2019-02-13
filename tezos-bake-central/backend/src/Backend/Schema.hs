@@ -86,7 +86,6 @@ stripOnly = coerce
 
 data Notify
   = Notify_BakerDaemonExternal !(Id BakerDaemon) !(Maybe BakerDaemonExternalData)
-  | Notify_BakerDaemonInternal !(Id BakerDaemon) !(Maybe ProcessData)
   | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]

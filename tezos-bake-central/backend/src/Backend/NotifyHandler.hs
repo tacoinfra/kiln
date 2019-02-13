@@ -56,7 +56,6 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       pure mempty
     Aeson.Success notification -> case notification of
       Notify_BakerDaemonExternal eid mBaker -> handleClient eid mBaker
-      Notify_BakerDaemonInternal _ _ -> error "Notify_BakerDaemonInternal NYI"
       Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
