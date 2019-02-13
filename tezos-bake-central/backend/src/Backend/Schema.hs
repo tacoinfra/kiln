@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -50,6 +51,7 @@ import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
+import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
@@ -64,10 +66,11 @@ import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, execute
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
-import Database.PostgreSQL.Simple.FromField hiding (Binary)
+import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
+import Language.Haskell.TH (conE)
 import Language.Haskell.TH (conT)
 import Language.Haskell.TH (mkName)
 import Language.Haskell.TH (nameBase)
@@ -78,6 +81,9 @@ import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
+import Rhyolite.Backend.Schema.Class (HasSingleConstructor)
+import Rhyolite.Backend.Schema.Class (SingleConstructor)
+import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
 import Rhyolite.Schema (IdData)
@@ -837,6 +843,13 @@ instance DefaultKeyId BakerDetails where
   toIdData _ (BakerDetailsKeyKey pkh) = pkh
   fromIdData _ = BakerDetailsKeyKey
 
+instance DefaultKeyId NodeExternal where
+  toIdData _ (NodeExternalIdKey nid) = nid
+  fromIdData _ = NodeExternalIdKey
+instance DefaultKeyId NodeInternal where
+  toIdData _ (NodeInternalIdKey nid) = nid
+  fromIdData _ = NodeInternalIdKey
+
 instance DefaultKeyId ErrorLogBakerMissed where
   toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
   fromIdData _ = ErrorLogBakerMissedIdKey :: Id ErrorLog -> Key ErrorLogBakerMissed (Unique ErrorLogBakerMissedId)
@@ -879,6 +892,19 @@ fmap concat $ traverse (\n ->
   , ''NodeInternal
   ] ++ errorLogNames
 
+fmap concat $ traverse (\n ->
+  let c = mkName (nameBase n <> "Constructor") in
+  [d| instance HasSingleConstructor $(conT n) where
+        type SingleConstructor $(conT n) = $(conT c)
+        singleConstructor _ = $(conE c)
+      |])
+  $
+  [ ''Baker
+  , ''Node
+  , ''NodeExternal
+  , ''NodeInternal
+  ] ++ errorLogNames
+
 type LogTagConstraints e =
   ( Eq (IdData e)
   , Ord (IdData e)
@@ -886,10 +912,12 @@ type LogTagConstraints e =
   , DefaultKey e ~ Key e (Unique (DefaultKeyUnique e))
   , DefaultKeyId e
   , HasDefaultNotify (Id e)
+  , HasSingleConstructor e
   , IdData e ~ Id ErrorLog
   , IsUniqueKey (Key e (Unique (DefaultKeyUnique e)))
   , PersistEntity e
   )
+
 nodeLogAssume :: NodeLogTag e -> (LogTagConstraints e => x) -> x
 nodeLogAssume = \case
   NodeLogTag_InaccessibleNode -> id
@@ -931,3 +959,44 @@ instance OrdTag BakerLogTag Id where
   compareTagged t _ = bakerLogAssume t compare
 instance ShowTag BakerLogTag Id where
   showTaggedPrec t = bakerLogAssume t showsPrec
+
+data Related b c r where
+  Related :: (HasSingleConstructor r, PersistEntity r, PersistField x) => Field b c x -> ForeignKey r x -> Related b c r
+
+data ForeignKey r x where
+  ForeignKey_AutoId :: forall r. EntityWithId r => ForeignKey r (Id r)
+  ForeignKey_UniqueId :: forall r u. EntityWithIdBy u r => ForeignKey r (Id r)
+  ForeignKey_UniqueIdData :: forall r u. EntityWithIdBy u r => ForeignKey r (IdData r)
+  ForeignKey_Field :: forall r x. Field r (SingleConstructor r) x -> ForeignKey r x
+
+logDep :: LogTag e -> [Some (Related e (SingleConstructor e))]
+logDep = \case
+  LogTag_NetworkUpdate -> []
+  LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
+  LogTag_Baker bTag -> pure $ This $ bakerLogDep bTag
+  LogTag_BakerNoHeartbeat -> []
+  where
+    bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
+    bothNodes = \case
+      Related fld fk -> case fk of
+        ForeignKey_AutoId -> [This (Related fld $ ForeignKey_UniqueIdData @NodeExternal), This (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
+        ForeignKey_Field fld2 -> case fld2 of {}
+
+nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
+nodeLogDep = \case
+  NodeLogTag_InaccessibleNode -> depNodeAlert ErrorLogInaccessibleNode_nodeField
+  NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
+  NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
+  NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
+  where
+    depNodeAlert f = Related f ForeignKey_AutoId
+
+bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
+bakerLogDep = \case
+  BakerLogTag_MultipleBakersForSameBaker -> depBakerAlert ErrorLogMultipleBakersForSameBaker_publicKeyHashField
+  BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
+  BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
+  BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
+  where
+    depBakerAlert' f = Related f $ ForeignKey_UniqueId
+    depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField

@@ -41,7 +41,7 @@ module Common.Schema
   ) where
 
 import Control.Exception.Safe (Exception, SomeException)
-import Control.Lens
+import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -57,6 +57,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
+import Data.Some (Some(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
@@ -879,6 +880,11 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   ]
 
 deriveSomeUniverse ''NodeLogTag
+deriveSomeUniverse ''BakerLogTag
+-- need Cale to fix this
+-- deriveSomeUniverse ''LogTag
+instance Universe (Some LogTag) where
+  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash

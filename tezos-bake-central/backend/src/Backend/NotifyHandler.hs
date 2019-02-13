@@ -11,6 +11,7 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Control.Monad.Logger (MonadLogger)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
@@ -118,7 +119,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     {-# INLINE handleNodeExternal #-}
     handleNodeExternal
-      :: (Monad m', PostgresRaw m')
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
       => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
     handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeExternalV <- case mNodeExternalData of
@@ -128,7 +129,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     {-# INLINE handleNodeInternal #-}
     handleNodeInternal
-      :: (Monad m', PostgresRaw m')
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
       => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
     handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeInternalV <- case mNodeInternalData of
@@ -196,14 +197,14 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     handleErrorLog
-      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, PersistBackend m2, PostgresRaw m2)
+      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
       => (e -> Id ErrorLog) -> LogTag e -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
       :: forall e m2
-      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, PersistBackend m2, PostgresRaw m2)
+      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
       => (e -> m2 (BakeView a))
       -> (e -> Id ErrorLog)
       -> LogTag e
