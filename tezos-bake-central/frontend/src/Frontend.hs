@@ -656,10 +656,7 @@ liveErrorsWidget = void $ do
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
-    listWithKey combinedErrors $ \_ vDyn -> do
---      vDyn' <- holdUniqDyn $ fst <$> vDyn
---      display $ _errorLog_started <$> vDyn'
---      display $ _errorLog_lastSeen <$> vDyn'
+    listWithKey combinedErrors $ \_ vDyn ->
       dyn_ $ ffor vDyn $ \(log, domBuilder) -> do
         divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
           domBuilder
