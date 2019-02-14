@@ -47,6 +47,7 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
+import Backend.Common
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -147,15 +148,31 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
-      PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
-        (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
-          let pid = _deletableRow_data nodeData
-          update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
-          processData <- getId $ _deletableRow_data nodeData
-          notify $ Notify_NodeInternal nid processData
-        project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-          >>= traverse_ (\(BakerDaemonInternalData _ bPid ePid) -> do
-            update [ProcessData_runningField =. shouldRun] (AutoKeyField `in_` (map fromId [bPid, ePid])))
+      PublicRequest_UpdateInternalNode shouldRun -> do
+        mPid <- inDb $
+          (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
+            let pid = _deletableRow_data nodeData
+            update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
+            processData <- getId $ _deletableRow_data nodeData
+            notify $ Notify_NodeInternal nid processData
+            return pid
+        let
+          updateBakerDaemon = inDb $
+            project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+              >>= traverse_ (\(BakerDaemonInternalData _ bPid ePid) -> do
+                update [ProcessData_runningField =. shouldRun]
+                  (AutoKeyField `in_` (map fromId [bPid, ePid])))
+
+          waitForNodeToStart pid =
+            (inDb $ project1 (ProcessData_stateField)
+              (AutoKeyField ==. fromId pid)) >>= \case
+            Nothing -> return ()
+            Just ProcessState_Failed -> return ()
+            Just ProcessState_Running -> updateBakerDaemon
+            _ -> threadDelay' 1 *> waitForNodeToStart pid
+        if shouldRun
+          then mapM_ waitForNodeToStart mPid
+          else updateBakerDaemon
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do
