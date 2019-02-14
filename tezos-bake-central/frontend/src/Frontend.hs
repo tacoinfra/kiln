@@ -217,7 +217,7 @@ appMain = do
           e <- divClass "sidebar-title" $ do
             divClass "ui left floated header" $ text "Notifications"
             divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-          --liveErrorsWidget
+          liveErrorsWidget
           pure e)
       -- Accompanying content
       $ do
