@@ -42,14 +42,25 @@ import ExtraPrelude
 import Tezos.Types
 import Tezos.Json
 
--- Process management
--- Worker
--- - Obtain Lock with finalizer, delay 1s
--- - Run/Stop loop
---   - Wait for start signal (_processData_running == True), delay 1s
---   - Start process (including optional initializations)
---   - Wait for process exit/ stop signal (_processData_running == False), delay 1s
---   - Repeat
+-- Daemon Process Management Worker
+-- The flow is roughly like this
+-- - Obtain lock with finalizer, delay 1s
+--     If the ProcessData.backend is not null/Nothing then it could mean that
+--     the previous worker did not exit cleanly, or the kiln process died without doing
+--     a clean termination of the node, or there is another kiln process running this daemon.
+--     So we wait for 5 min from the updated time before starting the daemon again
+--     We keep this value "updated" when we are running daemon.
+--
+-- - Wait/Start loop
+--   After we have the lock, we either wait for start signal (_processData_running == True)
+--   or start the daemon if its already true.
+--   On getting a start signal following are done
+--   - Initialization
+--       User specified code which could access NodeConfig and do DB transactions
+--   - Start the daemon process
+--     After starting the daemon we have a "Monitor/Stop loop", delay 1s
+--     it waits for process stop signal (_processData_running == False) and terminates it
+--     Also monitors if process terminates unexpectedly.
 
 processWorker
   :: ( MonadIO m
@@ -81,10 +92,6 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
         or <$> project running_ (AutoKeyField ==. (fromId pid))
       unless shouldRun $ threadDelay' 1 >> waitUntilShouldRun
 
-    -- If the ProcessData.backend is not null/Nothing then it could mean that
-    -- the previous worker did not exit cleanly. or the kiln process died without doing
-    -- a clean termination of the node.
-    -- So we wait for 5 min from the updated time before starting the node again
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
         [queryQ| SELECT nextval('"ProcessLockUniqueId"') |] <&> fromOnly . head
@@ -118,7 +125,6 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
           (AutoKeyField ==. (fromId pid))
 
     procMonitor _ _ _ ph = do
-      updateState ProcessState_Running
       runLoggingEnv logger $ go
       where
         {-# INLINE go #-}
@@ -128,6 +134,7 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
             (or <$> project running_ (AutoKeyField ==. (fromId pid)))
           (liftIO $ getProcessExitCode ph) >>= \case
             Nothing -> do
+              updateState ProcessState_Running
               unless shouldRun $ liftIO $ terminateProcess ph
               (threadDelay' 1) *> go
             Just e -> if shouldRun
@@ -136,25 +143,22 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
               else do
                 updateState ProcessState_Stopped
-                $(logInfoSH) ("Process exited sucessfully:" :: Text, pid)
+                $(logInfoSH) ("Process exited successfully:" :: Text, pid)
 
     updateState :: (MonadIO m, MonadBaseControl IO m) => ProcessState -> m ()
     updateState state = runLoggingEnv logger $ runDb (Identity db) $ do
       $(logDebugSH) ("putState:" :: Text, pid, state)
-      let
-        state_ = ProcessData_stateField
-        updated_ = ProcessData_updatedField
       get (fromId pid) >>= \case
         Nothing -> return ()
-        (Just p) ->
+        Just p ->
           when (_processData_state p /= state) $ do
             now <- liftIO getCurrentTime
             update [state_ =. state, updated_ =. Just now]
               (AutoKeyField ==. (fromId pid))
-            mapM_ (\f -> notify (f $ Just $ p
+            mapM_ (\f -> notify $ f $ Just $ p
               { _processData_state = state
               , _processData_updated = Just now
-              })) makeNotify
+              }) makeNotify
 
 withNodeConfig :: NodeConfigFile -> (FilePath -> IO a) -> IO a
 withNodeConfig nodeConfig f = withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

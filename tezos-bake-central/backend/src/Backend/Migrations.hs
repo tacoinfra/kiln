@@ -302,7 +302,8 @@ migrateProcessDataToSplitTable ta = do
               ALTER TABLE "ProcessData" ALTER COLUMN "id" SET DEFAULT nextval('"ProcessData_id_seq"');
               ALTER SEQUENCE "ProcessData_id_seq" OWNED BY "ProcessData"."id";
               INSERT INTO "ProcessData" ("running", "state", "updated", "backend")
-                VALUES (FALSE, 'ProcessState_Stopped', NULL, NULL);
+                SELECT FALSE, 'ProcessState_Stopped', NULL, NULL
+                FROM "NodeInternal";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#backend";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#stateUpdated";
               ALTER TABLE "NodeInternal" DROP COLUMN "data#data#state";
