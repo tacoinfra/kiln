@@ -74,6 +74,7 @@ import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
+import Rhyolite.Schema (IdData)
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -857,38 +858,45 @@ instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
 
+type LogTagConstraints e = (Eq (IdData e), Ord (IdData e), Show (IdData e))
+nodeLogAssume :: NodeLogTag e -> (LogTagConstraints e => x) -> x
+nodeLogAssume = \case
+  NodeLogTag_InaccessibleNode -> id
+  NodeLogTag_NodeWrongChain -> id
+  NodeLogTag_NodeInvalidPeerCount -> id
+  NodeLogTag_BadNodeHead -> id
+
+bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
+bakerLogAssume = \case
+  BakerLogTag_MultipleBakersForSameBaker -> id
+  BakerLogTag_BakerMissed -> id
+  BakerLogTag_BakerDeactivated -> id
+  BakerLogTag_BakerDeactivationRisk -> id
+
+logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
+logAssume = \case
+  LogTag_NetworkUpdate -> id
+  LogTag_Node nTag -> nodeLogAssume nTag
+  LogTag_Baker bTag -> bakerLogAssume bTag
+  LogTag_BakerNoHeartbeat -> id
+
+instance EqTag LogTag Id where
+  eqTagged t _ = logAssume t (==)
+instance OrdTag LogTag Id where
+  compareTagged t _ = logAssume t compare
+instance ShowTag LogTag Id where
+  showTaggedPrec t = logAssume t showsPrec
+
 instance EqTag NodeLogTag Id where
-  eqTagged NodeLogTag_InaccessibleNode _ = (==)
-  eqTagged NodeLogTag_NodeWrongChain _ = (==)
-  eqTagged NodeLogTag_NodeInvalidPeerCount _ = (==)
-  eqTagged NodeLogTag_BadNodeHead _ = (==)
-
+  eqTagged t _ = nodeLogAssume t (==)
 instance OrdTag NodeLogTag Id where
-  compareTagged NodeLogTag_InaccessibleNode _ = compare
-  compareTagged NodeLogTag_NodeWrongChain _ = compare
-  compareTagged NodeLogTag_NodeInvalidPeerCount _ = compare
-  compareTagged NodeLogTag_BadNodeHead _ = compare
-
+  compareTagged t _ = nodeLogAssume t compare
 instance ShowTag NodeLogTag Id where
-  showTaggedPrec NodeLogTag_InaccessibleNode = showsPrec
-  showTaggedPrec NodeLogTag_NodeWrongChain = showsPrec
-  showTaggedPrec NodeLogTag_NodeInvalidPeerCount = showsPrec
-  showTaggedPrec NodeLogTag_BadNodeHead = showsPrec
+  showTaggedPrec t = nodeLogAssume t showsPrec
 
 instance EqTag BakerLogTag Id where
-  eqTagged BakerLogTag_MultipleBakersForSameBaker _ = (==)
-  eqTagged BakerLogTag_BakerMissed _ = (==)
-  eqTagged BakerLogTag_BakerDeactivated _ = (==)
-  eqTagged BakerLogTag_BakerDeactivationRisk _ = (==)
-
+  eqTagged t _ = bakerLogAssume t (==)
 instance OrdTag BakerLogTag Id where
-  compareTagged BakerLogTag_MultipleBakersForSameBaker _ = compare
-  compareTagged BakerLogTag_BakerMissed _ = compare
-  compareTagged BakerLogTag_BakerDeactivated _ = compare
-  compareTagged BakerLogTag_BakerDeactivationRisk _ = compare
-
+  compareTagged t _ = bakerLogAssume t compare
 instance ShowTag BakerLogTag Id where
-  showTaggedPrec BakerLogTag_MultipleBakersForSameBaker = showsPrec
-  showTaggedPrec BakerLogTag_BakerMissed = showsPrec
-  showTaggedPrec BakerLogTag_BakerDeactivated = showsPrec
-  showTaggedPrec BakerLogTag_BakerDeactivationRisk = showsPrec
+  showTaggedPrec t = bakerLogAssume t showsPrec
