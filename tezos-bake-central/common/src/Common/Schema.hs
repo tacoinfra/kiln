@@ -20,6 +20,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
 -- Needed for nested `deriveArgDict`
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -50,6 +51,7 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
 import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
 import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.Dependent.Sum.Orphans ()
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map

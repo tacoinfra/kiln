@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-} -- for {Eq, Ord, Show} Notify
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -38,6 +39,13 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
+import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Sum (EqTag)
+import Data.Dependent.Sum (OrdTag)
+import Data.Dependent.Sum (ShowTag)
+import Data.Dependent.Sum (compareTagged)
+import Data.Dependent.Sum (eqTagged)
+import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Maybe (fromJust)
@@ -88,16 +96,10 @@ data Notify
   | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
-  | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
+  | Notify_ErrorLogNode !(DSum NodeLogTag Id)
+  | Notify_ErrorLogBaker !(DSum BakerLogTag Id)
   | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
-  | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
-  | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
-  | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
-  | Notify_ErrorLogNodeInvalidPeerCount !(Id ErrorLogNodeInvalidPeerCount)
   | Notify_ErrorLogNetworkUpdate !(Id ErrorLogNetworkUpdate)
-  | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
-  | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
-  | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
@@ -109,7 +111,10 @@ data Notify
   | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
   | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
-  deriving (Eq, Ord, Typeable, Generic, Show)
+  deriving (Typeable, Generic)
+deriving instance EqTag NodeLogTag Id => Eq Notify
+deriving instance OrdTag NodeLogTag Id => Ord Notify
+deriving instance ShowTag NodeLogTag Id => Show Notify
 instance ToJSON Notify
 instance FromJSON Notify
 
@@ -119,27 +124,27 @@ class HasDefaultNotify f where
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
-  mkDefaultNotify = Notify_ErrorLogBadNodeHead
+  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_BadNodeHead :=>)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
   mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
-  mkDefaultNotify = Notify_ErrorLogInaccessibleNode
+  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_InaccessibleNode :=>)
 instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
-  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
+  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_MultipleBakersForSameBaker :=>)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
-  mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_NodeWrongChain :=>)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
-  mkDefaultNotify = Notify_ErrorLogNodeInvalidPeerCount
+  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_NodeInvalidPeerCount :=>)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
   mkDefaultNotify = Notify_ErrorLogNetworkUpdate
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
-  mkDefaultNotify = Notify_ErrorLogBakerDeactivated
+  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerDeactivated :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
-  mkDefaultNotify = Notify_ErrorLogBakerDeactivationRisk
+  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerDeactivationRisk :=>)
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 instance HasDefaultNotify (Id ErrorLogBakerMissed) where
-  mkDefaultNotify = Notify_ErrorLogBakerMissed
+  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerMissed :=>)
 instance HasDefaultNotify BakerDetails where
   mkDefaultNotify = Notify_BakerDetails
 
@@ -851,3 +856,39 @@ instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
 instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
+
+instance EqTag NodeLogTag Id where
+  eqTagged NodeLogTag_InaccessibleNode _ = (==)
+  eqTagged NodeLogTag_NodeWrongChain _ = (==)
+  eqTagged NodeLogTag_NodeInvalidPeerCount _ = (==)
+  eqTagged NodeLogTag_BadNodeHead _ = (==)
+
+instance OrdTag NodeLogTag Id where
+  compareTagged NodeLogTag_InaccessibleNode _ = compare
+  compareTagged NodeLogTag_NodeWrongChain _ = compare
+  compareTagged NodeLogTag_NodeInvalidPeerCount _ = compare
+  compareTagged NodeLogTag_BadNodeHead _ = compare
+
+instance ShowTag NodeLogTag Id where
+  showTaggedPrec NodeLogTag_InaccessibleNode = showsPrec
+  showTaggedPrec NodeLogTag_NodeWrongChain = showsPrec
+  showTaggedPrec NodeLogTag_NodeInvalidPeerCount = showsPrec
+  showTaggedPrec NodeLogTag_BadNodeHead = showsPrec
+
+instance EqTag BakerLogTag Id where
+  eqTagged BakerLogTag_MultipleBakersForSameBaker _ = (==)
+  eqTagged BakerLogTag_BakerMissed _ = (==)
+  eqTagged BakerLogTag_BakerDeactivated _ = (==)
+  eqTagged BakerLogTag_BakerDeactivationRisk _ = (==)
+
+instance OrdTag BakerLogTag Id where
+  compareTagged BakerLogTag_MultipleBakersForSameBaker _ = compare
+  compareTagged BakerLogTag_BakerMissed _ = compare
+  compareTagged BakerLogTag_BakerDeactivated _ = compare
+  compareTagged BakerLogTag_BakerDeactivationRisk _ = compare
+
+instance ShowTag BakerLogTag Id where
+  showTaggedPrec BakerLogTag_MultipleBakersForSameBaker = showsPrec
+  showTaggedPrec BakerLogTag_BakerMissed = showsPrec
+  showTaggedPrec BakerLogTag_BakerDeactivated = showsPrec
+  showTaggedPrec BakerLogTag_BakerDeactivationRisk = showsPrec

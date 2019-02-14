@@ -35,6 +35,7 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
                    NodeSummary (..), BakerSummary (..),
+                   errorLogIdForNodeLogTag, errorLogIdForBakerLogTag,
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
                    mailServerConfigToView, Deletable, BakerSummary)
 import Common.Alerts (alertsFilter)
@@ -59,32 +60,18 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
-      Notify_ErrorLogBakerMissed eid -> handleErrorLog'
-        (handleBakerAddress . unId . _errorLogBakerMissed_baker)
-        _errorLogBakerMissed_log
-        (LogTag_Baker BakerLogTag_BakerMissed)
-        eid
-      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
-        (LogTag_Node NodeLogTag_BadNodeHead)
-        eid
-      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log
-        (LogTag_Node NodeLogTag_InaccessibleNode)
-        eid
-      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
-        (LogTag_Node NodeLogTag_NodeWrongChain)
-        eid
-      Notify_ErrorLogNodeInvalidPeerCount eid -> handleErrorLog _errorLogNodeInvalidPeerCount_log
-        (LogTag_Node NodeLogTag_NodeInvalidPeerCount)
-        eid
-      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
-        (LogTag_Baker BakerLogTag_MultipleBakersForSameBaker)
-        eid
-      Notify_ErrorLogBakerDeactivated eid -> handleErrorLog _errorLogBakerDeactivated_log
-        (LogTag_Baker BakerLogTag_BakerDeactivated)
-        eid
-      Notify_ErrorLogBakerDeactivationRisk eid -> handleErrorLog _errorLogBakerDeactivationRisk_log
-        (LogTag_Baker BakerLogTag_BakerDeactivationRisk)
-        eid
+      Notify_ErrorLogNode (tag :=> eid) ->
+        let (getLogId, t) = (errorLogIdForNodeLogTag &&& LogTag_Node) tag in case tag of
+          NodeLogTag_InaccessibleNode -> handleErrorLog getLogId t eid
+          NodeLogTag_NodeWrongChain -> handleErrorLog getLogId t eid
+          NodeLogTag_NodeInvalidPeerCount -> handleErrorLog getLogId t eid
+          NodeLogTag_BadNodeHead -> handleErrorLog getLogId t eid
+      Notify_ErrorLogBaker (tag :=> eid) ->
+        let (getLogId, t) = (errorLogIdForBakerLogTag &&& LogTag_Baker) tag in case tag of
+          BakerLogTag_MultipleBakersForSameBaker -> handleErrorLog getLogId t eid
+          BakerLogTag_BakerMissed -> handleErrorLog getLogId t eid
+          BakerLogTag_BakerDeactivated -> handleErrorLog getLogId t eid
+          BakerLogTag_BakerDeactivationRisk -> handleErrorLog getLogId t eid
       Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log LogTag_BakerNoHeartbeat eid
       Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log LogTag_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg

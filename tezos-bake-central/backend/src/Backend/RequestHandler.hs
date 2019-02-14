@@ -415,7 +415,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             BakerLogTag_BakerDeactivationRisk -> pure Nothing
             BakerLogTag_BakerMissed -> do
               let eid = _errorLogBakerMissed_log specificLog
-              n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
+              n <- fmap (mkDefaultNotify @(Id ErrorLogBakerMissed) . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
               return $ (,) <$> pure eid <*> n
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_NetworkUpdate -> do
