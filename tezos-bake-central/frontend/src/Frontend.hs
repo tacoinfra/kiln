@@ -649,16 +649,24 @@ liveErrorsWidget = void $ do
       & SemUi.segmentConfig_vertical SemUi.|~ True
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
-    listWithKey combinedErrors $ \_ vDyn ->
-      dyn_ $ ffor vDyn $ \(log, domBuilder) -> do
-        divClass ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error") $ do
-          domBuilder
-          timestamped ("First seen", _errorLog_started log)
-          timestamped $ maybe ("Last seen", _errorLog_lastSeen log) ("Stopped",) $ _errorLog_stopped log
+    listWithKey combinedErrors $ \_ vDyn -> do
+      let (logDyn, domBuilder) = splitDynPure vDyn
+      elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
+        dyn_ domBuilder
+        el "div" $ do
+          el "label" $ text "First seen"
+          localTimestamp' $ _errorLog_started <$> logDyn
+        el "div" $ do
+          el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
+            Nothing -> "Last seen"
+            Just _ -> "Stopped"
+          localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
+            Nothing -> _errorLog_lastSeen log
+            Just x -> x
   where
-    timestamped (lbl,ts) = el "div" $ do
-      el "label" $ text lbl
-      localTimestamp ts
+    localTimestamp' dt = do
+      tz <- asks (^. timeZone)
+      dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> dt
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
