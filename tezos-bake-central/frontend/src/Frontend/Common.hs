@@ -24,6 +24,7 @@ import Data.Fixed (divMod')
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
+import qualified Data.Map as M
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -99,10 +100,13 @@ tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
+standardTimeFormat :: String
+standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz t
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz t
 
 localHumanizedTimestamp
   ::
@@ -121,6 +125,21 @@ localHumanizedTimestamp titleDyn tsDyn = do
       dyn_ $ fmap localTimestamp tsDyn
     ) $
     dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+
+-- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
+-- tooltips since they are more lightweight
+localHumanizedTimestampBasic
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasic tsDyn = do
+  tz <- asks (^. timeZone)
+  currentTime <- asks (^. timer)
+  let attrs = ffor tsDyn $ \ts -> M.fromList
+        [ ("data-position", "bottom left")
+        , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
+        ]
+  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
 
 data TooltipPos
   = TooltipPos_TopLeft
