@@ -282,13 +282,13 @@ getErrorLogsImpl flt intervalMap = do
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
       leftBiasedUnions <$> sequenceA
-        [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> LogTag_Node NodeLogTag_InaccessibleNode :=> Identity (ErrorLogInaccessibleNode elId tNode tAddress tAlias))
+        [ queryNodeAlert "ErrorLogInaccessibleNode" ["node"]
+            (\elId (Pg.Only tNode) -> LogTag_Node NodeLogTag_InaccessibleNode :=> Identity (ErrorLogInaccessibleNode elId tNode))
             window
 
-        , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
-            (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                LogTag_Node NodeLogTag_NodeWrongChain :=> Identity (ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId))
+        , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "expectedChainId", "actualChainId"]
+            (\elId (tNode, tExpectedChainId, tActualChainId) ->
+                LogTag_Node NodeLogTag_NodeWrongChain :=> Identity (ErrorLogNodeWrongChain elId tNode tExpectedChainId tActualChainId))
             window
 
         , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
