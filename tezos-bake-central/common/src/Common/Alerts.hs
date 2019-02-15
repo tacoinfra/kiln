@@ -7,6 +7,8 @@ module Common.Alerts where
 import Data.Aeson
 import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
+import Data.String (IsString(..))
+import qualified Data.Text as T
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
@@ -83,12 +85,47 @@ badNodeHeadMessage text blockHashLink l =
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
 
+data ErrorDescription
+  = ErrorDescription_Plain Text
+  | ErrorDescription_Emphasis Text
+  | ErrorDescription_Concat ErrorDescription ErrorDescription
+  deriving (Eq, Ord)
+
+instance IsString ErrorDescription where
+  fromString = ErrorDescription_Plain . T.pack
+
+instance Semigroup ErrorDescription where
+  (<>) = ErrorDescription_Concat
+
+plaintextErrorDescription :: ErrorDescription -> Text
+plaintextErrorDescription = \case
+  ErrorDescription_Plain t -> t
+  ErrorDescription_Emphasis t -> t
+  ErrorDescription_Concat t t' -> ((<>) `on` plaintextErrorDescription) t t'
+
+errorEmphasis :: Text -> ErrorDescription
+errorEmphasis = ErrorDescription_Emphasis
+
+errorPlain :: Text -> ErrorDescription
+errorPlain = ErrorDescription_Plain
+
+data BakerErrorDescriptions = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title :: !Text
+  , _bakerErrorDescriptions_tile :: !Text
+  , _bakerErrorDescriptions_notification :: !Text
+  , _bakerErrorDescriptions_problem :: !ErrorDescription
+  , _bakerErrorDescriptions_warning :: !(Maybe Text)
+  , _bakerErrorDescriptions_fix :: !Text
+  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
+  }
+
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
-  , _bakerErrorDescriptions_problem = "In the past " <> tshow (preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
+  , _bakerErrorDescriptions_problem = "In the past " <> errorEmphasis (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
   , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
   , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
   , _bakerErrorDescriptions_resolved = \b ->
@@ -106,7 +143,7 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker has been marked as inactive."
   , _bakerErrorDescriptions_tile = "Has been marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for " <> tshow preserved <> " cycles and has been marked as inactive."
-  , _bakerErrorDescriptions_problem = "This baker has not had any activity for " <> tshow preserved <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
+  , _bakerErrorDescriptions_problem = "This baker has not had any activity for " <> errorPlain (tshow preserved) <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Re-register this baker."
   , _bakerErrorDescriptions_resolved = \b ->
@@ -124,7 +161,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight
   , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
-  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorEmphasis (" block level " <> lvl) <> "."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")

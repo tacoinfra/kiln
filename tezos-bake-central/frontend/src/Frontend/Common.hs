@@ -49,6 +49,7 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp)
 import Common.Api (PublicRequest)
+import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
@@ -577,6 +578,12 @@ ensureHealthyNodes = do
   text "Add a node from the left panel or make sure any nodes you’ve already added are"
   icon "circle healthy-node small green"
   text "healthy."
+
+htmlErrorDescription :: DomBuilder t m => ErrorDescription -> m ()
+htmlErrorDescription = \case
+  ErrorDescription_Plain t -> text t
+  ErrorDescription_Emphasis t -> el "strong" $ text t
+  ErrorDescription_Concat t t' -> ((*>) `on` htmlErrorDescription) t t'
 
 makeLenses ''FrontendContext
 

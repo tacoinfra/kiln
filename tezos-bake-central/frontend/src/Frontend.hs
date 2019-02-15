@@ -62,6 +62,7 @@ import Tezos.Types
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter(..))
+import Common.Alerts (BakerErrorDescriptions(..))
 import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
@@ -654,11 +655,11 @@ liveErrorsWidget = void $ do
       elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
         dyn_ . fmap (either logEntry synthEntry) =<< holdUniqDyn widgetDyn
         el "div" $ do
-          el "label" $ text "First seen"
+          el "label" $ text "First Detected"
           localTimestamp' $ _errorLog_started <$> logDyn
         el "div" $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> "Last seen"
+            Nothing -> "Last Detected"
             Just _ -> "Stopped"
           localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> _errorLog_lastSeen log
@@ -727,17 +728,11 @@ liveErrorsWidget = void $ do
             BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
               (_errorLogBakerDeactivationRisk_publicKeyHash log)
-
             BakerLogTag_MultipleBakersForSameBaker -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
-            BakerLogTag_BakerMissed -> do
-              let
-                rightTxt = case _errorLogBakerMissed_right log of
-                  RightKind_Baking -> "a bake"
-                  RightKind_Endorsing -> "an endorsement"
-              header $ "Missed " <> rightTxt <> " opportunity"
-              el "div" $ do
-                text $ toPublicKeyHashText (unId $ _errorLogBakerMissed_baker log)
+            BakerLogTag_BakerMissed -> renderBakerError
+              (bakerMissedDescriptions log)
+              (unId $ _errorLogBakerMissed_baker log)
 
           LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
@@ -753,10 +748,11 @@ liveErrorsWidget = void $ do
             header $ T.unwords ["New", chainText, "version."]
             el "div" $ do
               text $ "There is a new version of the " <> chainText <> " software available on GitLab."
+
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
       header $ _bakerErrorDescriptions_title dsc
-      dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+      divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
 pluralOf :: Text -> Text
@@ -1406,7 +1402,7 @@ bakersTab =
             (_bakerErrorDescriptions_title dsc)
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                el "div" $ text $ _bakerErrorDescriptions_problem dsc
+                el "div" $ htmlErrorDescription $ _bakerErrorDescriptions_problem dsc
                 for_ warning $ el "div" . text
                 el "div" $ do
                   el "strong" $ text "Fix:"

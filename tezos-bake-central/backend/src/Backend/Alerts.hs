@@ -40,7 +40,7 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.Alerts (BakerErrorDescriptions(..), badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions, plaintextErrorDescription)
 import Common.Schema
 import ExtraPrelude
 import Prelude hiding (log)
@@ -116,7 +116,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
 
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
-  [ Just $ _bakerErrorDescriptions_problem dsc
+  [ Just $ plaintextErrorDescription $ _bakerErrorDescriptions_problem dsc
   , _bakerErrorDescriptions_warning dsc
   ]
 
