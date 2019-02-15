@@ -8,6 +8,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.NodeCmd where
 
 -- import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
