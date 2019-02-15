@@ -462,6 +462,26 @@ instance PrimitivePersistField URI where
   toPrimitivePersistValue x v = toPrimitivePersistValue x (Uri.render v)
   fromPrimitivePersistValue x v = fromMaybe (error "Invalid URI") $ Uri.mkURI $ fromPrimitivePersistValue x v
 
+instance PersistField LedgerIdentifier where
+  persistName _ = "LedgerIdentifier"
+  toPersistValues = primToPersistValue
+  fromPersistValues vs = first LedgerIdentifier <$> fromPersistValues vs
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField LedgerIdentifier where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (unLedgerIdentifier v)
+  fromPrimitivePersistValue x v = LedgerIdentifier $ fromPrimitivePersistValue x v
+
+instance PersistField DerivationPath where
+  persistName _ = "DerivationPath"
+  toPersistValues = primToPersistValue
+  fromPersistValues vs = first DerivationPath <$> fromPersistValues vs
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField DerivationPath where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (unDerivationPath v)
+  fromPrimitivePersistValue x v = DerivationPath $ fromPrimitivePersistValue x v
+
 
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
@@ -499,6 +519,8 @@ instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - primitive: SigningCurve
+  - entity: SecretKey
   - embedded: DeletableRow
   - entity: BakerDaemon
     constructors:
