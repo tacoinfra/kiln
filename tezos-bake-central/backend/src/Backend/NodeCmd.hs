@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoDoAndIfThenElse #-}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -24,14 +25,16 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.FilePath (combine)
 import System.IO (hFlush)
 import System.IO.Temp (withTempFile)
-import System.Process (readProcess, withCreateProcess, proc, getProcessExitCode, terminateProcess)
+import System.Process (readProcess, withCreateProcess, proc, getProcessExitCode, terminateProcess, waitForProcess)
+import System.Timeout (timeout)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text as T
 
 import ExtraPrelude
 import System.Which
@@ -123,7 +126,7 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
         |]
       if shouldRun
         then return ()
-        else waitUntilShouldRun
+        else threadDelay' 5 *> waitUntilShouldRun
   waitUntilShouldRun
   callNode logger db (nodePaths namedChain) pid
   threadDelay' 10
@@ -168,20 +171,26 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
 
   liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
     where
-      go0 _ _ _ ph = runLoggingEnv logger $ do
-        let
+      go0 _ _ _ ph = runLoggingEnv logger go
+        where
           {-# INLINE go #-}
           go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
           go = do
-            -- TODO poll db for exit request
-            shouldRun <- fmap or $ runDb (Identity db) $ project
-              (NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector)
-              (NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-            (liftIO $ getProcessExitCode ph) >>= \case
+            nis <- runDb (Identity db) selectAll
+            let shouldDelete = any (_deletableRow_deleted . _nodeInternal_data . snd) nis
+                shouldRun = any (\(_, ni) -> let dr = _nodeInternal_data ni in not (_deletableRow_deleted dr) && _nodeInternalData_running (_deletableRow_data dr)) nis
+            when shouldDelete $ do
+              liftIO $ terminateProcess ph
+              -- Wait 5s for clean termination | TODO need to recover from processes which haven't actually terminated?
+              _ <- liftIO $ timeout 5e6 $ waitForProcess ph
+              for_ (_nodeConfigFile_dataDir defaultConfig) $ \dir -> do
+                $(logWarn) $ "Removing tezos-node data from " <> T.pack dir
+                liftIO $ removeDirectoryRecursive dir
+            liftIO (getProcessExitCode ph) >>= \case
               Nothing -> do
                 putState logger db pid NodeInternalState_Running
                 when (not shouldRun) $ liftIO $ terminateProcess ph
-                (threadDelay' 1) *> go
+                threadDelay' 1 *> go
               Just e -> liftIO $
                 if shouldRun
                   -- TODO: logging!
@@ -191,10 +200,6 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
                   else do
                     putState logger db pid NodeInternalState_Stopped
                     print ("node exited sucessfully" :: Text, e)
-
-        go
-
-
 
 
 

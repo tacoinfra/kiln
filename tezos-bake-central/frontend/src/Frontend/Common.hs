@@ -419,16 +419,37 @@ cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("
   (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
-confirmationModal :: MonadRhyoliteFrontendWidget app t m
+reminderModal :: MonadRhyoliteFrontendWidget app t m
                   => Text
                   -> Text
                   -> Text
                   -> (Event t () -> Event t (PublicRequest app ()))
                   -> Event t ()
                   -> m (Event t ())
-confirmationModal title msg btn mkReq = cancelableModal $ \close -> do
-  el "h3" $ text title
-  el "p" $ text msg
+reminderModal title msg = confirmationModal False title [msg]
+
+warningModal :: MonadRhyoliteFrontendWidget app t m
+             => Text
+             -> [Text]
+             -> Text
+             -> (Event t () -> Event t (PublicRequest app ()))
+             -> Event t ()
+             -> m (Event t ())
+warningModal = confirmationModal True
+
+confirmationModal :: MonadRhyoliteFrontendWidget app t m
+                  => Bool
+                  -> Text
+                  -> [Text]
+                  -> Text
+                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> Event t ()
+                  -> m (Event t ())
+confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses ["confirmation"] $ \close -> do
+  divClass "ui header" $ do
+    when isDangerous $ icon "icon-warning big red"
+    text title
+  for_ msgs $ el "p" . text
   confirm <- divClass "buttons" $ uiButton "primary" btn
   response <- requestingIdentity $ public <$> mkReq confirm
   pure $ leftmost [response, close]
