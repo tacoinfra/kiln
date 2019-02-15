@@ -681,14 +681,16 @@ liveErrorsWidget = void $ do
         case logTag of
           LogTag_Node nlt -> case nlt of
             NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
-              let ErrorLogInaccessibleNode _ _ address alias = log
+              let Left (NodeExternalData address alias _) = _nodeSummary_node n
               header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
               nodeLabel n
 
             NodeLogTag_NodeWrongChain -> do
-              let ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId = log
+              let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
               for_ node' $ \n -> do
-                header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
+                let nodeName = either (\(NodeExternalData address alias _) -> fromMaybe (Uri.render address) alias)
+                      (const "Kiln Node") $ _nodeSummary_node n
+                header $ "Node on wrong network: " <> nodeName
                 nodeLabel n
                 el "div" $
                   text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."

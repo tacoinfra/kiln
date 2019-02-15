@@ -241,7 +241,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     Nothing -> do
       node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node)
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId
         queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
           "Unable to connect to node, " <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
@@ -283,13 +283,12 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   case existingLog of
-    Nothing -> do
-      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-      for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node) expectedChainId actualChainId
-        queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+    Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+      (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId expectedChainId actualChainId
+      queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
+        nodeName <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
@@ -305,10 +304,10 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  when (not $ null lids) $ for_ node' $ \node -> do
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
+  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
+      nodeName <> " is on correct network"
 
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
@@ -326,14 +325,13 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   case existingLog of
-    Nothing -> do
-      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-      for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId ->
-          ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
-        queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+    Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+      (logId, _) <- insertErrorLog $ \logId ->
+        ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
+      queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
+        nodeName <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeInvalidPeerCountError
@@ -348,10 +346,10 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  when (not $ null lids) $ for_ node' $ \node -> do
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
+  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " now meets or exceeds the required minimum number of connected peers."
+      nodeName <> " now meets or exceeds the required minimum number of connected peers."
 
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
@@ -402,7 +400,8 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-        (getNodeName nodeId >>=) $ mapM_ $ \nodeName -> do
+            formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
+        (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
           queueAlert (Just logId) $ Alert Unresolved heading $
             heading <> ": " <> nodeName <> "\n\n" <> message
 
@@ -420,8 +419,9 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids $ notify . mkDefaultNotify
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
+  let formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
   when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $
-    (getNodeName nodeId >>=) $ mapM_ $ \nodeName -> do
+    (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
       queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> nodeName <> " is now in sync."
 
@@ -501,11 +501,11 @@ clearMissedBake f right pkh lvl = do
 getNodeName
   :: (PersistBackend m, SqlDb (PhantomDb m))
   => Id Node
+  -> (Maybe Text -> Text -> Text)
   -> m (Maybe Text)
-getNodeName nodeId = do
+getNodeName nodeId formatExtNodeName = do
   project1 (NodeExternal_dataField ~> DeletableRow_dataSelector) (NodeExternal_idField `in_` [nodeId]) >>= \case
-    Just n -> return $ Just $ maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n)
-      <> Uri.render (_nodeExternalData_address n)
+    Just n -> return $ Just $ formatExtNodeName (_nodeExternalData_alias n) (Uri.render (_nodeExternalData_address n))
     Nothing -> project1 NodeInternal_idField (NodeInternal_idField `in_` [nodeId]) >>= \case
       Nothing -> return Nothing
       Just _ -> return $ Just "Kiln Node"
