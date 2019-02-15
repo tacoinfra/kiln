@@ -75,7 +75,13 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                 ]
           update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
           pure $ Right ()
-      PublicRequest_ClientImportSecretKey alias sk -> runClientT $ importSecretKey alias sk
+      PublicRequest_ClientImportSecretKey alias sk -> runClientT $ do
+        -- Store secret key first as "consent"
+        inDb $ do
+          deleteAll sk -- Assuming SecretKey table should only have one row
+          insert_ sk
+        importSecretKey alias sk
+
       PublicRequest_ClientGetConnectedLedger -> getConnectedLedger
       PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
         account <- MaybeT $ showLedger secretKey
