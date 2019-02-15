@@ -369,7 +369,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
-      el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
+      el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
         el "p" $ ensureHealthyNodes
@@ -1050,7 +1050,7 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
       pure ((["ledger-disconnected"], never), tryAgain <$ retry)
 
     launchNode = Workflow $ do
-      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the block chain before baking."
+      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the blockchain before baking."
       divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
       launch <- uiButton "primary" "Launch Node"
       close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
