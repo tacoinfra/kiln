@@ -100,10 +100,13 @@ tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
+standardTimeFormat :: String
+standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz t
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz t
 
 localHumanizedTimestamp
   ::
@@ -134,7 +137,7 @@ localHumanizedTimestampBasic tsDyn = do
   currentTime <- asks (^. timer)
   let attrs = ffor tsDyn $ \ts -> M.fromList
         [ ("data-position", "bottom left")
-        , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz ts)
+        , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
         ]
   elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
 

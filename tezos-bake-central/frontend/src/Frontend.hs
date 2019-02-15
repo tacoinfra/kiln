@@ -650,9 +650,9 @@ liveErrorsWidget = void $ do
       & SemUi.segmentConfig_basic SemUi.|~ True
     ) $
     listWithKey combinedErrors $ \_ vDyn -> do
-      (logDyn, domBuilder) <- splitDynPure <$> holdUniqDyn vDyn
+      (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
       elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
-        dyn_ . fmap (either logEntry synthEntry) =<< holdUniqDyn domBuilder
+        dyn_ . fmap (either logEntry synthEntry) =<< holdUniqDyn widgetDyn
         el "div" $ do
           el "label" $ text "First seen"
           localTimestamp' $ _errorLog_started <$> logDyn
@@ -666,7 +666,7 @@ liveErrorsWidget = void $ do
   where
     localTimestamp' dt = do
       tz <- asks (^. timeZone)
-      dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> dt
+      dynText $ T.pack . Time.formatTime Time.defaultTimeLocale standardTimeFormat . Time.utcToZonedTime tz <$> dt
 
     passesFilter filterSelection log =
       filterSelection == AlertsFilter_All
