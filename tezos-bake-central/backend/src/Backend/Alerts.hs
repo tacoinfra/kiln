@@ -28,7 +28,7 @@ import Database.Groundhog
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
 import Database.PostgreSQL.Simple.Types (Identifier(..))
-import Rhyolite.Backend.DB (getTime, selectSingle)
+import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
@@ -401,11 +401,10 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-        for_ node $ \n -> do
-          let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        (getNodeName nodeId >>=) $ mapM_ $ \nodeName -> do
           queueAlert (Just logId) $ Alert Unresolved heading $
-            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> "\n\n" <> message
+            heading <> ": " <> nodeName <> "\n\n" <> message
 
 clearBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m
@@ -419,13 +418,12 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
-  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
-    queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
-        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> " is now in sync."
-
+  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $
+    (getNodeName nodeId >>=) $ mapM_ $ \nodeName -> do
+      queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
+        "Resolved: " <> nodeName <> " is now in sync."
 
 missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
 missedBakeLog right pkh lvl =
@@ -499,6 +497,18 @@ clearMissedBake f right pkh lvl = do
       rightTxt = case right of
         RightKind_Baking -> "bake"
         RightKind_Endorsing -> "endorsement"
+
+getNodeName
+  :: (PersistBackend m, SqlDb (PhantomDb m))
+  => Id Node
+  -> m (Maybe Text)
+getNodeName nodeId = do
+  project1 (NodeExternal_dataField ~> DeletableRow_dataSelector) (NodeExternal_idField `in_` [nodeId]) >>= \case
+    Just n -> return $ Just $ maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n)
+      <> Uri.render (_nodeExternalData_address n)
+    Nothing -> project1 NodeInternal_idField (NodeInternal_idField `in_` [nodeId]) >>= \case
+      Nothing -> return Nothing
+      Just _ -> return $ Just "Kiln Node"
 
 nodeNotDeleted :: (PersistBackend m, SqlDb (PhantomDb m)) => Id Node -> m Bool
 nodeNotDeleted nodeId = fmap (all not)
