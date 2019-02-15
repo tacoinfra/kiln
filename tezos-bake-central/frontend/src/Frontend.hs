@@ -688,8 +688,8 @@ liveErrorsWidget = void $ do
         case logTag of
           LogTag_Node nlt -> case nlt of
             NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
-              let Left (NodeExternalData address alias _) = _nodeSummary_node n
-              header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
+              let (address, alias) = nodeSummaryIdentification n
+              header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> address
               nodeLabel n
 
             NodeLogTag_NodeWrongChain -> do
