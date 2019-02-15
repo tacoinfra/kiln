@@ -1094,7 +1094,7 @@ addNodeModal close = do
   divClass "ui header" $ text "Add Nodes"
   e <- divClass "ui grid stackable divided" $ do
     addInternal *> addExternal <* addPublic
-  pure (pure ["add-modal"], e)
+  pure (pure ["add-node"], e)
 
   where
     section header explanation = do
