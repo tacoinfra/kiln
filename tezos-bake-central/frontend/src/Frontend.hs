@@ -60,7 +60,7 @@ import Tezos.NodeRPC.Types
 import Tezos.Types
 
 import Common (humanBytes)
-import Common (unixEpoch)
+import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter(..))
 import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerDeactivatedDescriptions)
@@ -689,14 +689,17 @@ liveErrorsWidget = void $ do
         case logTag of
           LogTag_Node nlt -> case nlt of
             NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
-              let ErrorLogInaccessibleNode _ _ address alias = log
-              header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> Uri.render address
-              nodeLabel n
+              case _nodeSummary_node n of
+                Right _ -> blank
+                Left (NodeExternalData address alias _) -> do
+                  header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address
+                  nodeLabel n
 
             NodeLogTag_NodeWrongChain -> do
-              let ErrorLogNodeWrongChain _ _ address alias expectedChainId actualChainId = log
+              let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
               for_ node' $ \n -> do
-                header $ "Node on wrong network: " <> fromMaybe (Uri.render address) alias
+                let (primary, _) = nodeSummaryIdentification n
+                header $ "Node on wrong network: " <> primary
                 nodeLabel n
                 el "div" $
                   text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."

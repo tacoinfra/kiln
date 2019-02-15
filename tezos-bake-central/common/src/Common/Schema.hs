@@ -555,9 +555,6 @@ instance HasId ErrorLogNetworkUpdate where
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
-  -- TODO why is this so denormalized?
-  , _errorLogInaccessibleNode_address :: !URI
-  , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleNode where
   type IdData ErrorLogInaccessibleNode = Id ErrorLog
@@ -565,9 +562,6 @@ instance HasId ErrorLogInaccessibleNode where
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
-  -- TODO why is this so denormalized?
-  , _errorLogNodeWrongChain_address :: !URI
-  , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
   , _errorLogNodeWrongChain_actualChainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
