@@ -726,7 +726,6 @@ liveErrorsWidget = void $ do
               (_errorLogBakerDeactivationRisk_publicKeyHash log)
 
             BakerLogTag_MultipleBakersForSameBaker -> do
-              let ErrorLogMultipleBakersForSameBaker{} = log
               header "Multiple bakers for same baker" -- TODO Fill this out
             BakerLogTag_BakerMissed -> do
               let
@@ -1034,7 +1033,7 @@ nodesTab =
           let
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(tag :=> Identity log) -> case tag of
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(t :=> Identity log) -> case t of
                 NodeLogTag_InaccessibleNode -> text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> text "On wrong network."
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
@@ -1321,7 +1320,7 @@ bakersTab =
 
               errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                Right (tag :=> Identity log) -> case tag of
+                Right (t :=> Identity log) -> case t of
                   BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
                   BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
                     where
@@ -1376,7 +1375,7 @@ bakersTab =
                ensureHealthyNodes)
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(tag :=> Identity log) -> case tag of
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(t :=> Identity log) -> case t of
       -- TODO
       BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
       BakerLogTag_BakerMissed -> renderBakerError

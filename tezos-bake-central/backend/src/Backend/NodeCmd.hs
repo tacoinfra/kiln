@@ -24,7 +24,6 @@ import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.IO (hFlush)
