@@ -60,20 +60,21 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
-      Notify_ErrorLogNode (tag :=> eid) ->
-        let (getLogId, t) = (errorLogIdForNodeLogTag &&& LogTag_Node) tag in case tag of
-          NodeLogTag_InaccessibleNode -> handleErrorLog getLogId t eid
-          NodeLogTag_NodeWrongChain -> handleErrorLog getLogId t eid
-          NodeLogTag_NodeInvalidPeerCount -> handleErrorLog getLogId t eid
-          NodeLogTag_BadNodeHead -> handleErrorLog getLogId t eid
-      Notify_ErrorLogBaker (tag :=> eid) ->
-        let (getLogId, t) = (errorLogIdForBakerLogTag &&& LogTag_Baker) tag in case tag of
-          BakerLogTag_MultipleBakersForSameBaker -> handleErrorLog getLogId t eid
-          BakerLogTag_BakerMissed -> handleErrorLog getLogId t eid
-          BakerLogTag_BakerDeactivated -> handleErrorLog getLogId t eid
-          BakerLogTag_BakerDeactivationRisk -> handleErrorLog getLogId t eid
-      Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log LogTag_BakerNoHeartbeat eid
-      Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log LogTag_NetworkUpdate eid
+      Notify_ErrorLog (tag :=> eid) -> case tag of
+        LogTag_Node t' ->
+          let (getLogId, t) = (errorLogIdForNodeLogTag &&& LogTag_Node) t' in case t' of
+            NodeLogTag_InaccessibleNode -> handleErrorLog getLogId t eid
+            NodeLogTag_NodeWrongChain -> handleErrorLog getLogId t eid
+            NodeLogTag_NodeInvalidPeerCount -> handleErrorLog getLogId t eid
+            NodeLogTag_BadNodeHead -> handleErrorLog getLogId t eid
+        LogTag_Baker t' ->
+          let (getLogId, t) = (errorLogIdForBakerLogTag &&& LogTag_Baker) t' in case t' of
+            BakerLogTag_MultipleBakersForSameBaker -> handleErrorLog getLogId t eid
+            BakerLogTag_BakerMissed -> handleErrorLog getLogId t eid
+            BakerLogTag_BakerDeactivated -> handleErrorLog getLogId t eid
+            BakerLogTag_BakerDeactivationRisk -> handleErrorLog getLogId t eid
+        LogTag_BakerNoHeartbeat -> handleErrorLog _errorLogBakerNoHeartbeat_log LogTag_BakerNoHeartbeat eid
+        LogTag_NetworkUpdate -> handleErrorLog _errorLogNetworkUpdate_log LogTag_NetworkUpdate eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
       Notify_NodeInternal eid ent -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary

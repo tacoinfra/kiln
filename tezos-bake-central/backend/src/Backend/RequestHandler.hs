@@ -11,6 +11,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.RequestHandler where
@@ -420,7 +422,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           LogTag_BakerNoHeartbeat -> pure Nothing
           LogTag_NetworkUpdate -> do
             let eid = _errorLogNetworkUpdate_log specificLog
-            n <- fmap (Notify_ErrorLogNetworkUpdate . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
+            n <- fmap (mkDefaultNotify @(Id ErrorLogNetworkUpdate) . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
             return $ (,) <$> pure eid <*> n
 
         for_ elid_notifier' $ \(elid, notifier) -> do

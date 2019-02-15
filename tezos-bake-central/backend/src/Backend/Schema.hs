@@ -97,10 +97,7 @@ data Notify
   | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
-  | Notify_ErrorLogNode !(DSum NodeLogTag Id)
-  | Notify_ErrorLogBaker !(DSum BakerLogTag Id)
-  | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
-  | Notify_ErrorLogNetworkUpdate !(Id ErrorLogNetworkUpdate)
+  | Notify_ErrorLog !(DSum LogTag Id)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
@@ -122,30 +119,37 @@ instance FromJSON Notify
 class HasDefaultNotify f where
   mkDefaultNotify :: f -> Notify
 
+instance HasDefaultNotify (DSum LogTag Id) where
+  mkDefaultNotify = Notify_ErrorLog
+instance HasDefaultNotify (DSum NodeLogTag Id) where
+  mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Node t :=> v
+instance HasDefaultNotify (DSum BakerLogTag Id) where
+  mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
+
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
-  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_BadNodeHead :=>)
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_BadNodeHead :=>)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
-  mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
+  mkDefaultNotify = mkDefaultNotify . (LogTag_BakerNoHeartbeat :=>)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
-  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_InaccessibleNode :=>)
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_InaccessibleNode :=>)
 instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
-  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_MultipleBakersForSameBaker :=>)
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_MultipleBakersForSameBaker :=>)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
-  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_NodeWrongChain :=>)
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeWrongChain :=>)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
-  mkDefaultNotify = Notify_ErrorLogNode . (NodeLogTag_NodeInvalidPeerCount :=>)
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeInvalidPeerCount :=>)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
-  mkDefaultNotify = Notify_ErrorLogNetworkUpdate
+  mkDefaultNotify = mkDefaultNotify . (LogTag_NetworkUpdate :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
-  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerDeactivated :=>)
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivated :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
-  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerDeactivationRisk :=>)
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivationRisk :=>)
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 instance HasDefaultNotify (Id ErrorLogBakerMissed) where
-  mkDefaultNotify = Notify_ErrorLogBaker . (BakerLogTag_BakerMissed :=>)
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerMissed :=>)
 instance HasDefaultNotify BakerDetails where
   mkDefaultNotify = Notify_BakerDetails
 
