@@ -67,6 +67,7 @@ import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
+import Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -910,3 +911,17 @@ bakerIdentification :: Baker -> (Text, Maybe Text)
 bakerIdentification = aliasedIdentification
   (view $ baker_data . deletableRow_data . bakerData_alias)
   (toPublicKeyHashText . _baker_publicKeyHash)
+
+errorLogNames :: [Name]
+errorLogNames =
+  [ ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogInaccessibleNode
+  , ''ErrorLogMultipleBakersForSameBaker
+  , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
+  ]

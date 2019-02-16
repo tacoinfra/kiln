@@ -68,10 +68,16 @@ import Database.PostgreSQL.Simple.FromField hiding (Binary)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
+import Language.Haskell.TH (conT)
+import Language.Haskell.TH (mkName)
+import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
+import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
+import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
+import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
 import Rhyolite.Schema (IdData)
@@ -862,7 +868,26 @@ instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
 
-type LogTagConstraints e = (Eq (IdData e), Ord (IdData e), Show (IdData e))
+fmap concat $ traverse (\n ->
+  let u = mkName (nameBase n <> "Id") in
+  [d| instance DefaultKeyIsUnique $(conT n) where
+        type DefaultKeyUnique $(conT n) = $(conT u)
+        defaultKeyToKey = id
+      |])
+  $
+  [ ''NodeExternal
+  , ''NodeInternal
+  ] ++ errorLogNames
+
+type LogTagConstraints e =
+  ( Eq (IdData e)
+  , Ord (IdData e)
+  , Show (IdData e)
+  , DefaultKey e ~ Key e (Unique (DefaultKeyUnique e))
+  , DefaultKeyId e
+  , IsUniqueKey (Key e (Unique (DefaultKeyUnique e)))
+  , PersistEntity e
+  )
 nodeLogAssume :: NodeLogTag e -> (LogTagConstraints e => x) -> x
 nodeLogAssume = \case
   NodeLogTag_InaccessibleNode -> id
