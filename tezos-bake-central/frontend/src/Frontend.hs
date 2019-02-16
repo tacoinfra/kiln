@@ -13,6 +13,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Frontend where
 
 import Control.Lens ((<>~), imap)
@@ -1032,7 +1034,7 @@ nodesTab =
           let
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(t :=> Identity log) -> case t of
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> case lTag of
                 NodeLogTag_InaccessibleNode -> text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> text "On wrong network."
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
@@ -1325,7 +1327,7 @@ bakersTab =
 
               errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                Right (t :=> Identity log) -> case t of
+                Right (lTag :=> Identity log) -> case lTag of
                   BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
                   BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
                     where
@@ -1380,7 +1382,7 @@ bakersTab =
                ensureHealthyNodes)
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(t :=> Identity log) -> case t of
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(lTag :=> Identity log) -> case lTag of
       -- TODO
       BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
       BakerLogTag_BakerMissed -> renderBakerError
