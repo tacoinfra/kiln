@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -16,6 +17,7 @@
 
 module Backend.Alerts where
 
+import Data.Dependent.Sum
 import Control.Lens ((<&>))
 import Control.Monad.Logger (MonadLogger)
 import Data.Map (Map())
@@ -40,7 +42,9 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (BakerErrorDescriptions(..), badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions, plaintextErrorDescription)
+import Common.Alerts (BakerErrorDescriptions(..), plaintextErrorDescription)
+import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
 import ExtraPrelude
 import Prelude hiding (log)
@@ -582,3 +586,13 @@ returnUpdateErrorLogLastSeen logId = do
   getId logId >>= \case
     Nothing -> fail $ "returnUpdateErrorLogLastSeen called on nonexistent record " <> show logId
     Just l -> return l
+
+resolveAlert :: PersistBackend m => DSum LogTag Identity -> m ()
+resolveAlert elv@(tag :=> _) = logAssume tag $ do
+  let eid = mkId tag (errorLogIdForErrorLogView elv)
+  now <- getTime
+  updateId (unId eid) [ErrorLog_stoppedField =. Just now]
+  notify $ mkDefaultNotify eid
+  where
+    mkId :: proxy e -> IdData e -> Id e
+    mkId _ = Id

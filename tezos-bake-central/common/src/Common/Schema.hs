@@ -20,6 +20,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
 -- Needed for nested `deriveArgDict`
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -40,7 +41,7 @@ module Common.Schema
   ) where
 
 import Control.Exception.Safe (Exception, SomeException)
-import Control.Lens
+import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -50,11 +51,13 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
 import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
 import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.Dependent.Sum.Orphans ()
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
+import Data.Some (Some(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
@@ -65,6 +68,7 @@ import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
+import Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -876,6 +880,11 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   ]
 
 deriveSomeUniverse ''NodeLogTag
+deriveSomeUniverse ''BakerLogTag
+-- need Cale to fix this
+-- deriveSomeUniverse ''LogTag
+instance Universe (Some LogTag) where
+  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash
@@ -908,3 +917,17 @@ bakerIdentification :: Baker -> (Text, Maybe Text)
 bakerIdentification = aliasedIdentification
   (view $ baker_data . deletableRow_data . bakerData_alias)
   (toPublicKeyHashText . _baker_publicKeyHash)
+
+errorLogNames :: [Name]
+errorLogNames =
+  [ ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogInaccessibleNode
+  , ''ErrorLogMultipleBakersForSameBaker
+  , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
+  ]

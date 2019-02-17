@@ -11,6 +11,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.RequestHandler where
@@ -24,7 +26,6 @@ import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
-import Data.Dependent.Sum (DSum ((:=>)))
 import Data.Some (Some(This))
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
@@ -41,6 +42,7 @@ import Rhyolite.Schema (Email, Id (..), IdData)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
+import Backend.Alerts (resolveAlert)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
@@ -401,32 +403,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert (tag :=> Identity specificLog) -> inDb $ do
-        -- TODO: this is not the only place we encode knowledge of which alert types can be manually resolved
-        elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
-          LogTag_Node nlt -> case nlt of
-            NodeLogTag_InaccessibleNode -> pure Nothing
-            NodeLogTag_NodeWrongChain -> pure Nothing
-            NodeLogTag_BadNodeHead -> pure Nothing
-            NodeLogTag_NodeInvalidPeerCount -> pure Nothing
-          LogTag_Baker blt -> case blt of
-            BakerLogTag_MultipleBakersForSameBaker -> pure Nothing
-            BakerLogTag_BakerDeactivated -> pure Nothing
-            BakerLogTag_BakerDeactivationRisk -> pure Nothing
-            BakerLogTag_BakerMissed -> do
-              let eid = _errorLogBakerMissed_log specificLog
-              n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
-              return $ (,) <$> pure eid <*> n
-          LogTag_BakerNoHeartbeat -> pure Nothing
-          LogTag_NetworkUpdate -> do
-            let eid = _errorLogNetworkUpdate_log specificLog
-            n <- fmap (Notify_ErrorLogNetworkUpdate . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
-            return $ (,) <$> pure eid <*> n
-
-        for_ elid_notifier' $ \(elid, notifier) -> do
-          now <- getTime
-          updateId elid [ErrorLog_stoppedField =. Just now]
-          notify notifier
+      PublicRequest_ResolveAlert elv -> inDb $ resolveAlert elv
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

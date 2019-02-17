@@ -726,15 +726,17 @@ liveErrorsWidget = void $ do
           LogTag_Baker blt -> case blt of
             BakerLogTag_BakerDeactivated -> renderBakerError
               (bakerDeactivatedDescriptions log)
-              (_errorLogBakerDeactivated_publicKeyHash log)
+              pkh
             BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
-              (_errorLogBakerDeactivationRisk_publicKeyHash log)
+              pkh
             BakerLogTag_MultipleBakersForSameBaker -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
-              (unId $ _errorLogBakerMissed_baker log)
+              pkh
+            where
+              pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
           LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
@@ -1382,18 +1384,15 @@ bakersTab =
                ensureHealthyNodes)
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \(lTag :=> Identity log) -> case lTag of
-      -- TODO
-      BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-      BakerLogTag_BakerMissed -> renderBakerError
-        (bakerMissedDescriptions log)
-        (unId $ _errorLogBakerMissed_baker log)
-      BakerLogTag_BakerDeactivated -> renderBakerError
-        (bakerDeactivatedDescriptions log)
-        (_errorLogBakerDeactivated_publicKeyHash log)
-      BakerLogTag_BakerDeactivationRisk -> renderBakerError
-        (bakerDeactivationRiskDescriptions log)
-        (_errorLogBakerDeactivationRisk_publicKeyHash log)
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \errorView@(bTag :=> Identity log) ->
+      let
+        pkh = bakerIdForBakerErrorLogView errorView
+      in case bTag of
+        -- TODO
+        BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+        BakerLogTag_BakerMissed -> renderBakerError (bakerMissedDescriptions log) pkh
+        BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
+        BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
 
       where
         renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
