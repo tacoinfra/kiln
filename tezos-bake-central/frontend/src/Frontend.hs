@@ -952,7 +952,7 @@ publicNodeOptions = do
       ]
     showPublicNode = \case
       PublicNode_Obsidian -> "Obsidian Systems"
-      PublicNode_Blockscale -> "Foundation"
+      PublicNode_Blockscale -> "Tezos Foundation"
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
