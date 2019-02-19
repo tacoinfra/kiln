@@ -417,7 +417,7 @@ cancelableModal = cancelableModalWithClasses []
 
 cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
 cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
-  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon grey" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
 reminderModal :: MonadRhyoliteFrontendWidget app t m
