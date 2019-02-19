@@ -1136,6 +1136,8 @@ h4.dashboard-section-title {
     }
     .explanation > ol {
       margin: 0;
+      padding: 0;
+      list-style-position: inside;
     }
   }
 
