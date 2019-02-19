@@ -461,6 +461,12 @@ stripEndorsement (Operation { _operation_branch = branch, _operation_contents = 
         Just $ Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
       _ -> Nothing
 
+outlineEndorsement :: InlinedEndorsement -> Op 'OpKind_Endorsement
+outlineEndorsement (InlinedEndorsement { _inlinedEndorsement_branch = branch, _inlinedEndorsement_operations = contents, _inlinedEndorsement_signature = sig })
+  = case contents of
+      InlinedEndorsementContents { _inlinedEndorsementContents_level = level } ->
+        Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
+
 instance B.TezosBinary OpContentsEndorsement where
   put = B.puts _opContentsEndorsement_level
   get = OpContentsEndorsement <$> B.get

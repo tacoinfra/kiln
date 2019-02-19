@@ -522,6 +522,28 @@ instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - entity: Accusation
+    autoKey: null
+    constructors:
+      - name: Accusation
+        uniques:
+          - name: Accusation_hash
+            type: primary
+            fields: [_accusation_hash, _accusation_blockHash]
+    keys:
+      - name: Accusation_hash
+        default: true
+  - entity: BlockTodo
+    autoKey: null
+    constructors:
+      - name: BlockTodo
+        uniques:
+          - name: BlockTodo_hash
+            type: primary
+            fields: [_blockTodo_hash]
+    keys:
+      - name: BlockTodo_hash
+        default: true
   - entity: Client
     constructors:
       - name: Client

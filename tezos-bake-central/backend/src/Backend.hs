@@ -74,6 +74,7 @@ import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v1PublicApi)
+import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
@@ -257,6 +258,7 @@ backendImpl cfg serve = do
       addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
+      addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
 
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig

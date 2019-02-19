@@ -8,6 +8,7 @@ import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Binary.Get (isolate)
+import Data.Bits (Bits)
 import Data.ByteString (ByteString)
 import Data.Hashable (Hashable)
 import Data.Time
@@ -44,7 +45,7 @@ data BlockHeader = BlockHeader
 instance NFData BlockHeader
 
 newtype Priority = Priority { unPriority :: Word16 }
-  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable, Enum, Num, Integral, Real, B.TezosBinary)
+  deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable, Enum, Num, Integral, Real, Bits, B.TezosBinary)
 
 instance B.TezosUnsignedBinary BlockHeader where
   putUnsigned = shellHeaderEncoding <** contentsEncoding
