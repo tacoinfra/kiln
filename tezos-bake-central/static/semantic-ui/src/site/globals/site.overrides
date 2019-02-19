@@ -674,6 +674,13 @@ img.credits-obsidian {
   }
 }
 
+.tez {
+  font-family: 'tezos-icons';
+  font-weight: normal;
+  vertical-align: bottom;
+  font-size: 0.9em; // glyphs in this font are slightly too big to look right alongside other text without this
+}
+
 .settings-table {
   margin-top: @15px;
   margin-bottom: @15px;
