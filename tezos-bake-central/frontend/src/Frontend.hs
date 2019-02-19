@@ -66,6 +66,7 @@ import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter(..))
 import Common.Alerts (BakerErrorDescriptions(..))
 import Common.Alerts (badNodeHeadMessage)
+import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
@@ -730,6 +731,9 @@ liveErrorsWidget = void $ do
             BakerLogTag_BakerDeactivationRisk -> renderBakerError
               (bakerDeactivationRiskDescriptions log)
               pkh
+            BakerLogTag_BakerAccused -> renderBakerError
+              (bakerAccusedDescriptions log)
+              pkh
             BakerLogTag_MultipleBakersForSameBaker -> do
               header "Multiple bakers for same baker" -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
@@ -1338,6 +1342,7 @@ bakersTab =
                         RightKind_Endorsing -> "an endorse"
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
+                  BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1393,6 +1398,7 @@ bakersTab =
         BakerLogTag_BakerMissed -> renderBakerError (bakerMissedDescriptions log) pkh
         BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
         BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
+        BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
 
       where
         renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()

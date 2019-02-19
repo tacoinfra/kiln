@@ -378,6 +378,8 @@ data Accusation = Accusation
   , _accusation_occurredLevel :: !RawLevel -- ^ level at which the baker double baked or double endorsed
   , _accusation_isBake :: !Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
   } deriving (Show, Eq, Ord, Typeable, Generic)
+instance HasId Accusation where
+  type IdData Accusation = (OperationHash, BlockHash)
 
 data BlockTodo = BlockTodo
   { _blockTodo_hash :: !BlockHash
@@ -642,6 +644,19 @@ data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
 instance HasId ErrorLogBakerDeactivationRisk where
   type IdData ErrorLogBakerDeactivationRisk = Id ErrorLog
 
+data ErrorLogBakerAccused = ErrorLogBakerAccused
+  { _errorLogBakerAccused_log :: !(Id ErrorLog)
+  , _errorLogBakerAccused_op :: !(Id Accusation)
+  , _errorLogBakerAccused_baker :: !(Id Baker)
+  , _errorLogBakerAccused_cycle :: !Cycle
+  , _errorLogBakerAccused_level :: !RawLevel
+  , _errorLogBakerAccused_accusedCycle :: !Cycle
+  , _errorLogBakerAccused_accusedLevel :: !RawLevel
+  , _errorLogBakerAccused_right :: !RightKind
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerAccused where
+  type IdData ErrorLogBakerAccused = Id ErrorLog
+
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
@@ -769,6 +784,7 @@ data BakerLogTag a where
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
+  BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -797,6 +813,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerNoHeartbeat
@@ -847,6 +864,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerMissed
@@ -945,6 +963,7 @@ bakerIdentification = aliasedIdentification
 errorLogNames :: [Name]
 errorLogNames =
   [ ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerMissed

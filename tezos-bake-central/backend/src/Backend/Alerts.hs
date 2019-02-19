@@ -17,6 +17,7 @@
 
 module Backend.Alerts where
 
+import Prelude hiding (log, cycle)
 import Data.Dependent.Sum
 import Control.Lens ((<&>))
 import Control.Monad.Logger (MonadLogger)
@@ -47,7 +48,6 @@ import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDe
 import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
 import ExtraPrelude
-import Prelude hiding (log)
 
 
 reportNoBakerHeartbeatError
@@ -476,6 +476,50 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       RightKind_Baking -> "bake"
       RightKind_Endorsing -> "endorsement"
 
+-- we care only to inform the baker of each accusation against them, and no other provenance matters.
+accusedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => PublicKeyHash -> OperationHash -> BlockHash -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerAccused)])
+accusedBakeLog pkh opHash blkHash =
+  ([queryQ|
+    SELECT b."publicKeyHash", el.id, elbm.log
+    FROM "Baker" b
+    LEFT OUTER JOIN "ErrorLogBakerAccused" elbm
+      ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+      AND elbm."op#hash" = ?opHash
+      AND elbm."op#blockHash" = ?blkHash
+    LEFT OUTER JOIN "ErrorLog" el
+      ON el.id = elbm.log
+    WHERE NOT b."data#deleted"
+      AND b."publicKeyHash" = ?pkh
+  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerAccused))]) <&> Map.fromList . fmap (\(bid, elid, elbmid) -> (bid, toList $ (,) <$> elid <*> elbmid))
+
+-- there is no corresponding 'clear accusation'.  you cannot become unaccused by branch reorg
+reportAccusation
+  :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
+     , SqlDb (PhantomDb m)
+     , MonadLogger m)
+  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  Nothing -> do
+    (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
+      { _errorLogBakerAccused_log = eid
+      , _errorLogBakerAccused_op = Id (opHash, blkHash)
+      , _errorLogBakerAccused_baker = bid
+      , _errorLogBakerAccused_right = right
+      , _errorLogBakerAccused_level = lvl
+      , _errorLogBakerAccused_cycle = cycle
+      , _errorLogBakerAccused_accusedLevel = aLvl
+      , _errorLogBakerAccused_accusedCycle = aCycle
+      }
+    queueAlert (Just eid) alert
+  Just xs -> for_ xs $ \(_eid, _elbmid) ->
+    pure ()
+  where
+    alert = Alert Unresolved
+      ("Double " <> rightTxt)
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
+    rightTxt = case right of
+      RightKind_Baking -> "baked"
+      RightKind_Endorsing -> "endorsed"
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 clearMissedBake f right pkh lvl = do

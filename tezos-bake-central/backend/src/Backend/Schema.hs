@@ -140,6 +140,8 @@ instance HasDefaultNotify (DSum BakerLogTag Id) where
 
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
+instance HasDefaultNotify (Id ErrorLogBakerAccused) where
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerAccused :=>)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
   mkDefaultNotify = mkDefaultNotify . (NodeLogTag_BadNodeHead :=>)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
@@ -741,6 +743,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogMultipleBakersForSameBakerId
             type: primary
             fields: [_errorLogMultipleBakersForSameBaker_log]
+  - entity: ErrorLogBakerAccused
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerAccusedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerAccused
+        uniques:
+          - name: ErrorLogBakerAccusedId
+            type: primary
+            fields: [_errorLogBakerAccused_log]
   - entity: ErrorLogBakerDeactivated
     autoKey: null
     keys:
@@ -857,6 +870,10 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
 
+instance DefaultKeyId Accusation where
+  toIdData _ (Accusation_hashKey oh bh) = (oh,bh)
+  fromIdData _ = uncurry Accusation_hashKey
+
 instance DefaultKeyId Baker where
   toIdData _ (BakerKeyKey pkh) = pkh
   fromIdData _ = BakerKeyKey
@@ -887,6 +904,9 @@ instance DefaultKeyId ErrorLogInaccessibleNode where
 instance DefaultKeyId ErrorLogMultipleBakersForSameBaker where
   toIdData _ (ErrorLogMultipleBakersForSameBakerIdKey eid) = eid
   fromIdData _ = ErrorLogMultipleBakersForSameBakerIdKey
+instance DefaultKeyId ErrorLogBakerAccused where
+  toIdData _ (ErrorLogBakerAccusedIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerAccusedIdKey
 instance DefaultKeyId ErrorLogBakerDeactivated where
   toIdData _ (ErrorLogBakerDeactivatedIdKey eid) = eid
   fromIdData _ = ErrorLogBakerDeactivatedIdKey
@@ -953,6 +973,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
+  BakerLogTag_BakerAccused -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
 logAssume = \case
@@ -1019,6 +1040,7 @@ bakerLogDep = \case
   BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
+  BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   where
     depBakerAlert' f = Related f $ ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
