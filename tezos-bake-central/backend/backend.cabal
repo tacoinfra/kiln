@@ -96,6 +96,7 @@ library
     , unix
     , universe
     , uri-encode
+    , vector
 
   exposed-modules:
     Backend
