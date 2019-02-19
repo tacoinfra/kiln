@@ -122,9 +122,9 @@ instance Exception NoRightsException
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_BakingRights1   :: BlockHash -> RawLevel -> Priority -> NodeQuery BakingRights
-    -- ^ Baking rights for a specific priority.
+    -- Baking rights for a specific priority.
   NodeQuery_BakingRightsChunk :: BlockHash -> RawLevel -> Priority -> NodeQuery (V.Vector BakingRights)
-    -- ^ Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
+    -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
