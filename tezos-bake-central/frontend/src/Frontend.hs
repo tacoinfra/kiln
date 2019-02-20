@@ -419,7 +419,7 @@ nodesTabOrWelcome
     )
   => m ()
 nodesTabOrWelcome = do
-  _clientAddresses <- watchClientAddresses
+  -- _clientAddresses <- watchClientAddresses
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
@@ -618,7 +618,10 @@ liveErrorsWidget = void $ do
     synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
       \bakers now allNodesDownTime ->
         fromMaybe mempty $ do
-          keys1 <- NEL.nonEmpty $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          let getBaker (k, e) = case e of
+                Left v -> Just (k, v)
+                Right _ -> Nothing
+          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -839,7 +842,7 @@ bakersList = do
         $ \collectiveNodeStatus -> imap $ \pkh b ->
           ( bakerSummaryIdentification (pkh, b)
           , bakerStatus $ b <$ collectiveNodeStatus
-          , False
+          , isRight $ _bakerSummary_baker b -- Is this an internal baker?
           )
   sidebarList "Baker" bakers addBakerModal
 
@@ -1013,7 +1016,7 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
     registerAsDelegate ledger pkh = Workflow $ do
       respondToPrompt ledger "Registering as delegate..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate "ledger_kiln") <$ pb
+      response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate "ledger_kiln" pkh) <$ pb
       let next = \case
             Right () -> setupComplete ledger pkh
             Left e -> handleError (registerAsDelegate ledger pkh) e

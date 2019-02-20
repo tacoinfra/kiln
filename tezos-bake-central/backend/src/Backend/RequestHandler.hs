@@ -65,7 +65,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
       PublicRequest_ClientAuthorizeLedgerToBake alias -> runClientT $ authorizeLedgerToBake alias
-      PublicRequest_ClientRegisterKeyAsDelegate alias -> registerKeyAsDelegate alias >>= \case
+      PublicRequest_ClientRegisterKeyAsDelegate alias pkh -> registerKeyAsDelegate alias >>= \case
         Left e -> pure $ Left e
         Right () -> inDb $ do
           bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
@@ -73,6 +73,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                 [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
                 , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
                 ]
+          update [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
+                 , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
           update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
           pure $ Right ()
       PublicRequest_ClientImportSecretKey alias sk -> runClientT $ do
@@ -165,7 +167,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         let
           updateBakerDaemon = inDb $
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              >>= traverse_ (\(BakerDaemonInternalData _ bPid ePid) -> do
+              >>= traverse_ (\(BakerDaemonInternalData _ _ bPid ePid) -> do
                 update [ProcessData_runningField =. shouldRun]
                   (AutoKeyField `in_` (map fromId [bPid, ePid])))
 

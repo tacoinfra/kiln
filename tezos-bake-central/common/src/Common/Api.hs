@@ -71,6 +71,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       -> PublicRequest Bake (Either ClientError ())
     PublicRequest_ClientRegisterKeyAsDelegate
       :: Text
+      -> PublicKeyHash
       -> PublicRequest Bake (Either ClientError ())
     PublicRequest_AddBaker
       :: PublicKeyHash

@@ -365,6 +365,18 @@ getBakerAddresses nds bid = do
       WHERE NOT b."data#deleted"
         AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
     |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
+  int :: Map.Map PublicKeyHash Int <- [queryQ|
+      SELECT b."data#data#publicKeyHash",
+        ( SELECT COUNT(e.id)
+          FROM "ErrorLog" e
+          JOIN "ErrorLogBakerMissed" elbm
+            ON elbm.log = e.id
+          WHERE e.stopped IS NULL
+            AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
+        )
+      FROM "BakerDaemonInternal" b
+      WHERE NOT b."data#deleted"
+    |] <&> Map.fromList . fmap (\(pkh, alertCount) -> (pkh, alertCount))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -383,7 +395,8 @@ getBakerAddresses nds bid = do
   let
     (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
-    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys rs
+    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
+    bakers = fmap (\(a, c) -> (Left (BakerData a), c)) rs <> fmap (\c -> (Right (), c)) int
     chainId = _nodeDataSource_chain nds
     maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
@@ -412,10 +425,10 @@ getBakerAddresses nds bid = do
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(alias, alertCount) -> Just $ BakerSummary (BakerData alias) alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (\(b, alertCount) -> Just $ BakerSummary b alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
         (const Nothing)
-        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary (BakerData alias) alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
-      ) rs (getMonoidalMap nextBakeRights)
+        (\(b, alertCount) (Max progress, rights) -> Just $ BakerSummary b alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
+      ) bakers (getMonoidalMap nextBakeRights)
 
   return result
 

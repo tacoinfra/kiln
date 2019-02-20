@@ -68,7 +68,7 @@ type Deletable a = First (Maybe a)
 -- data BakerSummary = Baker Baker' AlertCount
 
 data BakerSummary = BakerSummary
-  { _bakerSummary_baker :: BakerData
+  { _bakerSummary_baker :: Either BakerData ()
   , _bakerSummary_alertCount :: Int
   , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
   , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
@@ -87,7 +87,7 @@ instance ToJSON NodeSummary
 
 bakerSummaryIdentification :: (IdData BakerData, BakerSummary) -> (Text, Maybe Text)
 bakerSummaryIdentification = aliasedIdentification
-  (_bakerData_alias . _bakerSummary_baker . snd)
+  ((either _bakerData_alias (const $ Just "Kiln Baker")) . _bakerSummary_baker . snd)
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)

@@ -224,6 +224,7 @@ instance HasId BakerDaemonInternal where
 
 data BakerDaemonInternalData = BakerDaemonInternalData
   { _bakerDaemonInternalData_alias :: !(Text)
+  , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
   , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -831,6 +832,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerDaemonExternalData
   , ''BakerDaemonInfo
   , ''BakerDaemonInfoData
+  , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
   , ''BakerRight
