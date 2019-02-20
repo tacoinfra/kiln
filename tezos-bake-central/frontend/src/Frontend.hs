@@ -1297,10 +1297,10 @@ nodesTab =
 
                   running :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
                   dyn_ $ ffor running $ \case
-                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalNode (Left False) <$)
+                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
                     False -> do
                       start <- tileMenuEntry "Start Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode (Left True)) <$ start
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
                   tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
@@ -1642,10 +1642,10 @@ bakersTab =
                   ("This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time.")
                   ("Stop Baker")
 
-              tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalNode (Right False) <$)
+              tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
             Right False -> do
               start <- tileMenuEntry "Start Baker"
-              void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode (Right True)) <$ start
+              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
           tellModal $ remove $> removeItemModal "baker" mkRemoveReq
 

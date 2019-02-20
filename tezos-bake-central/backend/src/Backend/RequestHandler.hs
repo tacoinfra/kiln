@@ -156,18 +156,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
-      PublicRequest_UpdateInternalNode v -> case v of
-        -- Here we modify only the node, only the baker, or both depending upon the request
-        -- Only start node
-        Left True -> void $ updateNode True
-        -- Only stop baker
-        Right False -> updateBaker False (Nothing :: Maybe (Id ProcessData))
-        -- On stopping node, stop the baker also (if running)
-        Left False -> do
+      PublicRequest_UpdateInternalWorker workerType shouldRun -> case workerType of
+        WorkerType_Node
+          | shouldRun -> void $ updateNode True -- Only start node
+          | otherwise -> do -- On stopping node, stop the baker also (if running)
           updateBaker False (Nothing :: Maybe (Id ProcessData))
           void $ updateNode False
-        -- On starting baker, start the node also (if stopped)
-        Right True -> do
+        WorkerType_Baker
+          | not shouldRun -> updateBaker False (Nothing :: Maybe (Id ProcessData)) -- Only stop baker
+          | otherwise -> do -- On starting baker, start the node also (if stopped)
           updateNode True >>= updateBaker True
         where
           updateBaker shouldRun mPid = if shouldRun
