@@ -1143,6 +1143,8 @@ h4.dashboard-section-title {
     }
     .explanation > ol {
       margin: 0;
+      padding: 0;
+      list-style-position: inside;
     }
   }
 
@@ -1184,6 +1186,9 @@ h4.dashboard-section-title {
     h5.ui.header {
       font-size: @20px;
       line-height: @30px;
+      .ui.loader {
+        margin-right: @14px;
+      }
     }
     h6 {
       font-size: @16px;
