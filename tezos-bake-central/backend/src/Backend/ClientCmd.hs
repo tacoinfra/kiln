@@ -78,14 +78,14 @@ showLedger sk = do
     [_baker, _ledger, _nanoS, _usb, pkht, _publicKey] | Right pkh <- tryReadPublicKeyHashText pkht -> pure pkh
     _ -> Nothing
 
-importSecretKey :: (MonadIO m, MonadLogger m) => Text -> SecretKey -> ExceptT ClientError m ()
-importSecretKey alias sk = do
-  void $ runClientCommand ["import", "secret", "key", T.unpack alias, T.unpack $ toSecretKeyText sk, "--force"] $ \warnings errors -> if
+importSecretKey :: (MonadIO m, MonadLogger m) => SecretKey -> ExceptT ClientError m ()
+importSecretKey sk = do
+  void $ runClientCommand ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     -- This check is never used because of --force, but may be useful to keep around for reference
     | e1 : e2 : _ <- errors
-    , e1 == "The secret_key alias " <> alias <> " already exists."
+    , e1 == "The secret_key alias " <> kilnLedgerAlias <> " already exists."
     , Just skdot <- T.stripPrefix "The current value is " e2
     , Just sk' <- T.stripSuffix "." skdot
       -> if toSecretKeyText sk == sk' then Right "" else Left ClientError_AliasAlreadyUsed
@@ -116,9 +116,9 @@ runClientT m = do
     Nothing -> pure $ Left $ ClientError_Other "Timeout"
     Just a -> pure a
 
-authorizeLedgerToBake :: (MonadIO m, MonadLogger m) => Text -> ExceptT ClientError m ()
-authorizeLedgerToBake alias = do
-  void $ runClientCommand ["authorize", "ledger", "to", "bake", "for", T.unpack alias] $ \warnings errors -> if
+authorizeLedgerToBake :: (MonadIO m, MonadLogger m) => ExceptT ClientError m ()
+authorizeLedgerToBake = do
+  void $ runClientCommand ["authorize", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
@@ -128,10 +128,10 @@ authorizeLedgerToBake alias = do
 -- get up-to-date. We detect that case and just return an error.
 -- Also, if we are already registered as a delegate, the tezos-client command
 -- succeeds without re-registering.
-registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => Text -> m (Either ClientError ())
-registerKeyAsDelegate alias = do
+registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => m (Either ClientError ())
+registerKeyAsDelegate = do
   $(logWarn) "registerKeyAsDelegate requested"
-  let p = (Process.proc clientPath ["register", "key", T.unpack alias, "as", "delegate"])
+  let p = (Process.proc clientPath ["register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
         { Process.std_err = Process.CreatePipe
         , Process.std_out = Process.CreatePipe
         }

@@ -365,8 +365,8 @@ getBakerAddresses nds bid = do
       WHERE NOT b."data#deleted"
         AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
     |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
-  int :: Map.Map PublicKeyHash (Bool, Int) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", p."running",
+  int :: Map.Map PublicKeyHash (Bool, LedgerIdentifier, Int) <- [queryQ|
+      SELECT b."data#data#publicKeyHash", p."running", la."secretKey#ledgerIdentifier",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
           JOIN "ErrorLogBakerMissed" elbm
@@ -375,10 +375,10 @@ getBakerAddresses nds bid = do
             AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
         )
       FROM "BakerDaemonInternal" b
-      JOIN "ProcessData" p
-        ON p.id = b."data#data#bakerProcessData"
+      JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
+      JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, running, alertCount) -> (pkh, (running, alertCount)))
+    |] <&> Map.fromList . fmap (\(pkh, running, sk, alertCount) -> (pkh, (running, sk, alertCount)))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -398,7 +398,7 @@ getBakerAddresses nds bid = do
     (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
-    bakers = fmap (\(a, c) -> (Left (BakerData a), c)) rs <> fmap (\(b, c) -> (Right b, c)) int
+    bakers = fmap (\(a, c) -> (Left (BakerData a), c)) rs <> fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int
     chainId = _nodeDataSource_chain nds
     maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
