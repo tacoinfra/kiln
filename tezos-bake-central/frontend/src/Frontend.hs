@@ -549,7 +549,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary) deriving Eq
+data ErrorLogView' = ErrorLogView' ErrorLogView NodeSummary deriving Eq
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
@@ -603,11 +603,10 @@ liveErrorsWidget = void $ do
     combinedRealErrors
       :: Dynamic t (Map.Map (Id ErrorLog) (ErrorLog, ErrorLogView'))
     combinedRealErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
-      ffor errors $ \(errorLog, errorLogView) -> let
-        mNode = do
+      fforMaybe errors $ \(errorLog, errorLogView) ->
+        (\n -> (errorLog, ErrorLogView' errorLogView n)) <$> do
           nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
           MMap.lookup nodeId nodes
-      in (errorLog, ErrorLogView' errorLogView mNode)
 
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
@@ -689,10 +688,10 @@ liveErrorsWidget = void $ do
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
-    logEntry (ErrorLogView' (logTag :=> Identity log) node') =
+    logEntry (ErrorLogView' (logTag :=> Identity log) n) =
         case logTag of
           LogTag_Node nlt -> case nlt of
-            NodeLogTag_InaccessibleNode -> for_ node' $ \n -> do
+            NodeLogTag_InaccessibleNode ->
               case _nodeSummary_node n of
                 Right _ -> blank
                 Left (NodeExternalData address alias _) -> do
@@ -701,28 +700,25 @@ liveErrorsWidget = void $ do
 
             NodeLogTag_NodeWrongChain -> do
               let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
-              for_ node' $ \n -> do
-                let (primary, _) = nodeSummaryIdentification n
-                header $ "Node on wrong network: " <> primary
-                nodeLabel n
-                el "div" $
-                  text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
+                  (primary, _) = nodeSummaryIdentification n
+              header $ "Node on wrong network: " <> primary
+              nodeLabel n
+              el "div" $
+                text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
 
             NodeLogTag_BadNodeHead -> do
-              for_ node' $ \n -> do
-                let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
-                let (primary, _) = nodeSummaryIdentification n
-                header $ heading <> ": " <> primary
-                nodeLabel n
-                el "div" message
+              let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
+                  (primary, _) = nodeSummaryIdentification n
+              header $ heading <> ": " <> primary
+              nodeLabel n
+              el "div" message
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              for_ node' $ \n -> do
-                header $ "Node has too few peers"
-                nodeLabel n
-                el "div" $ text $
-                  "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+              header $ "Node has too few peers"
+              nodeLabel n
+              el "div" $ text $
+                "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
           LogTag_Baker blt -> case blt of
             BakerLogTag_BakerDeactivated -> renderBakerError
