@@ -156,31 +156,45 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify . Notify_NodeExternal nid . Just)
 
-      PublicRequest_UpdateInternalNode shouldRun -> do
-        mPid <- inDb $
-          (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
-            let pid = _deletableRow_data nodeData
-            update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
-            processData <- getId $ _deletableRow_data nodeData
-            notify $ Notify_NodeInternal nid processData
-            return pid
-        let
-          updateBakerDaemon = inDb $
+      PublicRequest_UpdateInternalNode v -> case v of
+        -- Here we modify only the node, only the baker, or both depending upon the request
+        -- Only start node
+        Left True -> void $ updateNode True
+        -- Only stop baker
+        Right False -> updateBaker False (Nothing :: Maybe (Id ProcessData))
+        -- On stopping node, stop the baker also (if running)
+        Left False -> do
+          updateBaker False (Nothing :: Maybe (Id ProcessData))
+          void $ updateNode False
+        -- On starting baker, start the node also (if stopped)
+        Right True -> do
+          updateNode True >>= updateBaker True
+        where
+          updateBaker shouldRun mPid = if shouldRun
+            then mapM_ waitForNodeToStart mPid
+            else updateBakerDaemon shouldRun
+            where
+              waitForNodeToStart pid =
+                (inDb $ project1 (ProcessData_stateField)
+                  (AutoKeyField ==. fromId pid)) >>= \case
+                Nothing -> return ()
+                Just ProcessState_Failed -> return ()
+                Just ProcessState_Running -> updateBakerDaemon shouldRun
+                _ -> threadDelay' 1 *> waitForNodeToStart pid
+
+          updateBakerDaemon shouldRun = inDb $
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
               >>= traverse_ (\(BakerDaemonInternalData _ _ bPid ePid) -> do
                 update [ProcessData_runningField =. shouldRun]
                   (AutoKeyField `in_` (map fromId [bPid, ePid])))
 
-          waitForNodeToStart pid =
-            (inDb $ project1 (ProcessData_stateField)
-              (AutoKeyField ==. fromId pid)) >>= \case
-            Nothing -> return ()
-            Just ProcessState_Failed -> return ()
-            Just ProcessState_Running -> updateBakerDaemon
-            _ -> threadDelay' 1 *> waitForNodeToStart pid
-        if shouldRun
-          then mapM_ waitForNodeToStart mPid
-          else updateBakerDaemon
+          updateNode shouldRun = inDb $
+            (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
+              let pid = _deletableRow_data nodeData
+              update [ProcessData_runningField =. shouldRun] (AutoKeyField ==. fromId pid)
+              processData <- getId $ _deletableRow_data nodeData
+              notify $ Notify_NodeInternal nid processData
+              return pid
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do

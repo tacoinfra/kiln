@@ -39,7 +39,7 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: Either URI ()
       -> PublicRequest Bake ()
     PublicRequest_UpdateInternalNode
-      :: Bool
+      :: Either Bool Bool -- Left nodeShouldRun, Right bakerShouldRun
       -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: URI -- address of client to subscribe to
