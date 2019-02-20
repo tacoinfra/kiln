@@ -842,7 +842,7 @@ bakersList = do
         $ \collectiveNodeStatus -> imap $ \pkh b ->
           ( bakerSummaryIdentification (pkh, b)
           , bakerStatus $ b <$ collectiveNodeStatus
-          , False
+          , isRight $ _bakerSummary_baker b -- Is this an internal baker?
           )
   sidebarList "Baker" bakers addBakerModal
 
