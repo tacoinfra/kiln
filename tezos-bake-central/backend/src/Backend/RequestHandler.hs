@@ -39,6 +39,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
+import Tezos.Types (SecretKey)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.ClientCmd
@@ -64,8 +65,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_ClientAuthorizeLedgerToBake alias -> runClientT $ authorizeLedgerToBake alias
-      PublicRequest_ClientRegisterKeyAsDelegate alias pkh -> registerKeyAsDelegate alias >>= \case
+      PublicRequest_ClientAuthorizeLedgerToBake -> runClientT authorizeLedgerToBake
+      PublicRequest_ClientRegisterKeyAsDelegate pkh -> registerKeyAsDelegate >>= \case
         Left e -> pure $ Left e
         Right () -> inDb $ do
           bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
@@ -73,16 +74,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                 [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
                 , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
                 ]
-          update [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
+          update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
                  , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
           update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
           pure $ Right ()
-      PublicRequest_ClientImportSecretKey alias sk -> runClientT $ do
+      PublicRequest_ClientImportSecretKey sk pkh -> runClientT $ do
         -- Store secret key first as "consent"
         inDb $ do
-          deleteAll sk -- Assuming SecretKey table should only have one row
-          insert_ sk
-        importSecretKey alias sk
+          insert_ $ LedgerAccount pkh sk
+        importSecretKey sk
 
       PublicRequest_ClientGetConnectedLedger -> getConnectedLedger
       PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do

@@ -222,6 +222,16 @@ data BakerDaemonInternal = BakerDaemonInternal
 instance HasId BakerDaemonInternal where
   type IdData BakerDaemonInternal = Id BakerDaemon
 
+data LedgerAccount = LedgerAccount
+  { _ledgerAccount_publicKeyHash :: !PublicKeyHash
+  , _ledgerAccount_secretKey :: !SecretKey
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- This can be lifted into 'LedgerAccount' if we need to support more than one
+-- baker in the future
+kilnLedgerAlias :: Text
+kilnLedgerAlias = "ledger_kiln"
+
 data BakerDaemonInternalData = BakerDaemonInternalData
   { _bakerDaemonInternalData_alias :: !(Text)
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)

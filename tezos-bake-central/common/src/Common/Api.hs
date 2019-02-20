@@ -64,15 +64,13 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
       :: SecretKey
       -> PublicRequest Bake (Either ClientError (Maybe (SecretKey, PublicKeyHash, Tez)))
     PublicRequest_ClientImportSecretKey
-      :: Text
-      -> SecretKey
+      :: SecretKey
+      -> PublicKeyHash
       -> PublicRequest Bake (Either ClientError ())
     PublicRequest_ClientAuthorizeLedgerToBake
-      :: Text
-      -> PublicRequest Bake (Either ClientError ())
+      :: PublicRequest Bake (Either ClientError ())
     PublicRequest_ClientRegisterKeyAsDelegate
-      :: Text
-      -> PublicKeyHash
+      :: PublicKeyHash
       -> PublicRequest Bake (Either ClientError ())
     PublicRequest_AddBaker
       :: PublicKeyHash

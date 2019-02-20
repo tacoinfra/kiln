@@ -190,7 +190,7 @@ appMain
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
     )
   => m ()
@@ -235,7 +235,7 @@ appSidebar
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -289,7 +289,7 @@ appGutter
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
   => m ()
 appGutter =
@@ -396,6 +396,7 @@ headerBell = do
 appContentArea
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
@@ -415,6 +416,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -827,6 +829,7 @@ bakerStatus = \case
 
 bakersList ::
   ( MonadReader r m, HasTimer t r
+  , MonadReader r (ModalM m)
   , MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , MonadJSM (ModalM m)
@@ -846,19 +849,28 @@ bakersList = do
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)) => Event t () -> m (Dynamic t [Text], Event t ())
-addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+addBakerModal ::
+  ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
+  , MonadReader r m, HasTimer t r
+  )
+  => Event t () -> m (Dynamic t [Text], Event t ())
+addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
-    both = Workflow $ do
+    splash = Workflow $ do
       divClass "ui header" $ text "Add Bakers"
       divClass "ui grid stackable divided" $ do
         start <- startBaking
         close' <- connectBaker
-        node <- flip tag start . current <$> watchInternalNode
-        let next = ffor node $ \case
-              Just _ -> connectDevice -- TODO do we need an interstitial step to check that the node is up to date?
-              Nothing -> launchNode
-        pure (([], close'), next)
+        pb <- getPostBuild
+        ebn :: Behavior t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
+          <- fmap current . watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+        node <- current <$> watchInternalNode
+        let f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f (Just (nid, pd), es) ()
+              -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
+              | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
+              | otherwise = connectDevice
+        pure (([], close'), attachWith f (liftA2 (,) node ebn) start)
 
     startBaking = divClass "start-baking column" $ do
       elClass "h5" "ui header" $ text "Start Baking"
@@ -869,9 +881,9 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
       baker <- watchInternalBaker
       switchHold never <=< dyn $ ffor baker $ \case
         Nothing -> uiButton "primary fluid" "Start Baking"
-        Just running -> do
+        Just bid -> do
           kilnLogo
-          text $ if running
+          text $ if _bakerInternalData_running bid
             then "A Kiln baker is running."
             else "A Kiln baker is configured, but is stopped."
           pure never
@@ -973,55 +985,36 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
         , False <$ updated selection
         ]
       let register = fmapMaybe id $ tag (current selection) submitted
-      pure ((["select-account"], never), leftmost [uncurry (importSecretKey ledger) <$> register, handleError (selectAccount ledger) <$> reqErr])
-
-    handleError recover = \case
-      ClientError_RequestDeclinedByLedger -> requestDeclinedByLedger recover
-      ClientError_LedgerDisconnected -> ledgerDisconnected recover
-      ClientError_NodeNotReady -> nodeNotReady recover
-      e -> Workflow $ do
-        elClass "h5" "ui header" $ text "Something went wrong"
-        liftIO $ print e
-        retry <- uiButton "primary" "Retry"
-        pure ((["ledger-disconnected"], never), recover <$ retry)
-
-    respondToPrompt ledger operation prompt = do
-      elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
-      divClass "ledger-name" $ text $ unLedgerIdentifier ledger
-      elClass "h5" "ui header" $ do
-        divClass "ui active small inline blue loader" blank
-        text "Respond to the prompt on your Ledger Device..."
-      divClass "explanation" $ do
-        text operation
-        el "br" blank
-        text "Your Ledger Device should show the following prompt:"
-      elClass "h6" "ui header" prompt
+      pure ((["select-account"], never), leftmost [uncurry (importSecretKey ledger) <$> register, handleClientErrorWorkflow (selectAccount ledger) <$> reqErr])
 
     importSecretKey ledger sk pkh = Workflow $ do
-      respondToPrompt ledger "Importing secret key..." $ text $ "Provide Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
+      ledgerCheckImg ledger
+      respondToPrompt "Importing secret key..." $ text $ "Provide Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public (PublicRequest_ClientImportSecretKey "ledger_kiln" sk) <$ pb
+      response <- requestingIdentity $ public (PublicRequest_ClientImportSecretKey sk pkh) <$ pb
       let next = \case
             Right () -> authorizeLedgerToBake ledger pkh
-            Left e -> handleError (importSecretKey ledger sk pkh) e
+            Left e -> handleClientErrorWorkflow (importSecretKey ledger sk pkh) e
       pure ((["ledger-prompt"], never), next <$> response)
 
     authorizeLedgerToBake ledger pkh = Workflow $ do
-      respondToPrompt ledger "Authorizing ledger to bake..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      ledgerCheckImg ledger
+      respondToPrompt "Authorizing ledger to bake..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public (PublicRequest_ClientAuthorizeLedgerToBake "ledger_kiln") <$ pb
+      response <- requestingIdentity $ public PublicRequest_ClientAuthorizeLedgerToBake <$ pb
       let next = \case
             Right () -> registerAsDelegate ledger pkh
-            Left e -> handleError (authorizeLedgerToBake ledger pkh) e
+            Left e -> handleClientErrorWorkflow (authorizeLedgerToBake ledger pkh) e
       pure ((["ledger-prompt"], never), next <$> response)
 
     registerAsDelegate ledger pkh = Workflow $ do
-      respondToPrompt ledger "Registering as delegate..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      ledgerCheckImg ledger
+      respondToPrompt "Registering as delegate..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate "ledger_kiln" pkh) <$ pb
+      response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate pkh) <$ pb
       let next = \case
             Right () -> setupComplete ledger pkh
-            Left e -> handleError (registerAsDelegate ledger pkh) e
+            Left e -> handleClientErrorWorkflow (registerAsDelegate ledger pkh) e
       pure ((["ledger-prompt"], never), next <$> response)
 
     setupComplete ledger pkh = Workflow $ do
@@ -1036,6 +1029,65 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
       continue <- uiButton "primary" "Continue"
       pure ((["setup-complete"], continue), never)
 
+    launchNode = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the blockchain before baking."
+      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
+      launch <- uiButton "primary" "Launch Node"
+      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      pure ((["launch-node"], close'), never)
+
+respondToPrompt :: DomBuilder t m => Text -> m () -> m ()
+respondToPrompt operation prompt = do
+  elClass "h5" "ui header" $ do
+    divClass "ui active small inline blue loader" blank
+    text "Respond to the prompt on your Ledger Device..."
+  divClass "explanation" $ do
+    text operation
+    el "br" blank
+    text "Your Ledger Device should show the following prompt:"
+  elClass "h6" "ui header" prompt
+
+authorizeLedgerToBakeModal
+  :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m))
+  => LedgerIdentifier -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
+authorizeLedgerToBakeModal ledger pkh close = ffor (workflow auth) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+  where
+    auth = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ text "Authorize this Ledger Device to bake for the following account?"
+      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      authorize <- uiButton "primary" "Authorize"
+      pure ((["ledger-prompt"], never), waiting <$ authorize)
+    waiting = Workflow $ do
+      ledgerCheckImg ledger
+      respondToPrompt "" $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      pb <- getPostBuild
+      response <- requestingIdentity $ public PublicRequest_ClientAuthorizeLedgerToBake <$ pb
+      let next = \case
+            Right () -> authorized
+            Left e -> handleClientErrorWorkflow waiting e
+      pure ((["ledger-prompt"], never), next <$> response)
+    authorized = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ do
+        elClass "i" "ui blue icon icon-check" blank
+        text "Ledger Device authorized."
+      elClass "h6" "ui header" $ text $ "This Ledger Device is now authorized to bake for the address: " <> toPublicKeyHashText pkh
+      continue <- uiButton "primary" "Continue"
+      pure ((["ledger-prompt"], continue), never)
+
+handleClientErrorWorkflow
+  :: DomBuilder t m
+  => Workflow t m ([Text], Event t a) -> ClientError -> Workflow t m ([Text], Event t a)
+handleClientErrorWorkflow recover = \case
+  ClientError_RequestDeclinedByLedger -> requestDeclinedByLedger recover
+  ClientError_LedgerDisconnected -> ledgerDisconnected recover
+  ClientError_NodeNotReady -> nodeNotReady recover
+  e -> Workflow $ do
+    elClass "h5" "ui header" $ text "Something went wrong"
+    retry <- uiButton "primary" "Retry"
+    pure ((["ledger-disconnected"], never), recover <$ retry)
+  where
     requestDeclinedByLedger tryAgain = Workflow $ do
       elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
       elClass "h5" "ui header" $ do
@@ -1053,16 +1105,16 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
 
     nodeNotReady tryAgain = Workflow $ do
       elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
-      elClass "h5" "ui header" $ text "Node not synced."
-      retry <- uiButton "primary" "Retry"
-      pure ((["ledger-disconnected"], never), tryAgain <$ retry)
+      elClass "h5" "ui header" $ text "Kiln needs to fully sync the node it is running with the blockchain before baking."
+      divClass "explanation" $ text "Try again after the node has fully synced."
+      retry <- uiButton "primary" "Dismiss"
+      pure ((["launch-node"], never), tryAgain <$ retry)
 
-    launchNode = Workflow $ do
-      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the blockchain before baking."
-      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
-      launch <- uiButton "primary" "Launch Node"
-      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
-      pure ((["launch-node"], close'), never)
+
+ledgerCheckImg :: DomBuilder t m => LedgerIdentifier -> m ()
+ledgerCheckImg ledger = do
+  elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger") blank
+  divClass "ledger-name" $ text $ unLedgerIdentifier ledger
 
 nodeStatus :: Maybe ProcessState -> Int -> MonitoredStatus
 nodeStatus mInternalState alertCount = min fromStatus fromAlert
@@ -1486,6 +1538,7 @@ bakersTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     )
   => m ()
 bakersTab =
@@ -1551,6 +1604,7 @@ bakersTab =
 
             tile
               (dynText titleUniq)
+              pkh
               subtitleUniq
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
               -- if you have both a bake and endorse for the same level, you
@@ -1621,6 +1675,7 @@ bakersTab =
 
     tile
       :: m () -- ^ Title
+      -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
       -> (BakerSummary -> Maybe (RightKind, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
@@ -1629,23 +1684,26 @@ bakersTab =
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t (Either CollectiveNodesFailure ())
       -> m ()
-    tile title subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' dCollectiveNodesStatus = do
+    tile title pkh subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
-          dyn $ ffor bakerDyn $ \(BakerSummary b _ _ _) -> case b of
-            Left _ -> blank
-            Right True -> do
-              let
-                stopModal = confirmationModal
-                  ("Stop Baker?")
-                  ("This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time.")
-                  ("Stop Baker")
-
-              tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
-            Right False -> do
-              start <- tileMenuEntry "Start Baker"
-              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
+          dyn $ ffor bakerDyn $ \bs -> case _bakerSummary_baker bs of
+            Left _ -> pure () -- not a kiln baker
+            Right bid -> do
+              authorize <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Authorize Ledger Device"
+              let li = _bakerInternalData_ledgerIdentifier bid
+              tellModal $ cancelableModalWithClasses (authorizeLedgerToBakeModal li pkh) <$ authorize
+              if _bakerInternalData_running bid
+              then do
+                let stopModal = confirmationModal
+                      ("Stop Baker?")
+                      ("This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time.")
+                      ("Stop Baker")
+                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
+              else do
+                start <- tileMenuEntry "Start Baker"
+                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
           tellModal $ remove $> removeItemModal "baker" mkRemoveReq
 

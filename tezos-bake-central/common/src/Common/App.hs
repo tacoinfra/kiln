@@ -74,8 +74,15 @@ data WorkerType
 instance FromJSON WorkerType
 instance ToJSON WorkerType
 
+data BakerInternalData = BakerInternalData
+  { _bakerInternalData_ledgerIdentifier :: LedgerIdentifier
+  , _bakerInternalData_running :: Bool
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON BakerInternalData
+instance ToJSON BakerInternalData
+
 data BakerSummary = BakerSummary
-  { _bakerSummary_baker :: Either BakerData Bool -- Right is-kiln-baker-running
+  { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
   , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
   , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.

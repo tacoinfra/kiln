@@ -483,6 +483,11 @@ instance PrimitivePersistField DerivationPath where
   fromPrimitivePersistValue x v = DerivationPath $ fromPrimitivePersistValue x v
 
 
+instance ToField LedgerIdentifier where
+  toField = toField . unLedgerIdentifier
+instance FromField LedgerIdentifier where
+  fromField f = fmap LedgerIdentifier . fromField f
+
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
 instance FromField PublicKeyHash where
@@ -520,7 +525,15 @@ instance Field2 (a :. b) (a :. b') b b' where
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: SigningCurve
-  - entity: SecretKey
+  - embedded: SecretKey
+  - entity: LedgerAccount
+    autoKey: null
+    constructors:
+      - name: LedgerAccount
+        uniques:
+          - name: LedgerAccountId
+            type: primary
+            fields: [_ledgerAccount_publicKeyHash]
   - embedded: DeletableRow
   - entity: BakerDaemon
     constructors:

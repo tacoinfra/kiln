@@ -56,19 +56,19 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
-watchInternalBaker :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Bool))
+watchInternalBaker :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe BakerInternalData))
 watchInternalBaker = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _bakerSummary_baker) $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerAddresses v')
 
-watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProcessData))
+watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Id Node, ProcessData)))
 watchInternalNode = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
+  return $ ffor theView $ \v' -> listToMaybe $ MMap.toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
