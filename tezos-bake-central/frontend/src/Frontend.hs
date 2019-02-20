@@ -373,9 +373,10 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
   alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
+  let hasAlerts = fmap (> 0) alertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor alertCount $ ((<>) "ui circular label link ") . bool "basic" "red" . (>0))
+      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ((<>) "ui circular label link ") . bool "basic" "red")
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
@@ -383,9 +384,9 @@ headerBell = do
         SemUi.icon "icon-bell"
           (def
             & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
-            & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor alertCount $ bool (Just SemUi.Grey) Nothing . (>0))
+            & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
             & SemUi.iconConfig_link SemUi.|~ True
-            & SemUi.iconConfig_fitted .~ (SemUi.Dyn $ ffor alertCount (>0))
+            & SemUi.iconConfig_fitted .~ (SemUi.Dyn hasAlerts)
             )
   return $ domEvent Click e
 

@@ -307,6 +307,9 @@ body {
         &.basic {
           border-color: transparent;
         }
+        i.icon-bell {
+          margin-right: 0;
+        }
       }
     }
 
