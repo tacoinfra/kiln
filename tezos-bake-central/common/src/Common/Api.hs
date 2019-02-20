@@ -23,7 +23,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, Bake, MailServerView)
+import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
 import Common.Schema (LogTag, ClientError)
 
 instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
@@ -38,8 +38,9 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_RemoveNode
       :: Either URI ()
       -> PublicRequest Bake ()
-    PublicRequest_UpdateInternalNode
-      :: Bool
+    PublicRequest_UpdateInternalWorker
+      :: WorkerType
+      -> Bool -- Desired running state
       -> PublicRequest Bake ()
     PublicRequest_AddClient
       :: URI -- address of client to subscribe to

@@ -866,12 +866,14 @@ addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d i
         text "Bake and endorse on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
         hrefLink "https://www.ledger.com/products/ledger-nano-s" $ text "Ledger Device" -- TODO is the link correct?
         text ". Kiln only supports running a single baker."
-      baker <- maybeDyn =<< watchInternalBaker
+      baker <- watchInternalBaker
       switchHold never <=< dyn $ ffor baker $ \case
         Nothing -> uiButton "primary fluid" "Start Baking"
-        Just _ -> do
+        Just running -> do
           kilnLogo
-          text "A Kiln baker is running."
+          text $ if running
+            then "A Kiln baker is running."
+            else "A Kiln baker is configured, but is stopped."
           pure never
 
     connectBaker = divClass "connect-baker column" $ mdo
@@ -1290,15 +1292,15 @@ nodesTab =
                   let
                     stopModal = confirmationModal
                       ("Stop this node?")
-                      ("You can always restart this node from the tile menu.")
+                      ("This node is run by Kiln. Stopping it may affect any bakers you are running which depend on it.")
                       ("Stop node")
 
                   running :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
                   dyn_ $ ffor running $ \case
-                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalNode False <$)
+                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
                     False -> do
                       start <- tileMenuEntry "Start Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
                   tileMenuEntryModal "Remove Node" $ removeItemModal "node" $ (PublicRequest_RemoveNode (Right ()) <$)
 
@@ -1631,6 +1633,19 @@ bakersTab =
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
+          dyn $ ffor bakerDyn $ \(BakerSummary b _ _ _) -> case b of
+            Left _ -> blank
+            Right True -> do
+              let
+                stopModal = confirmationModal
+                  ("Stop Baker?")
+                  ("This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time.")
+                  ("Stop Baker")
+
+              tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
+            Right False -> do
+              start <- tileMenuEntry "Start Baker"
+              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
           remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
           tellModal $ remove $> removeItemModal "baker" mkRemoveReq
 
