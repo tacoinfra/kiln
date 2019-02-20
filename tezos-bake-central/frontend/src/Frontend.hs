@@ -190,7 +190,7 @@ appMain
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
     )
   => m ()
@@ -235,7 +235,7 @@ appSidebar
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -289,7 +289,7 @@ appGutter
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
   => m ()
 appGutter =
@@ -829,6 +829,7 @@ bakerStatus = \case
 
 bakersList ::
   ( MonadReader r m, HasTimer t r
+  , MonadReader r (ModalM m)
   , MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , MonadJSM (ModalM m)
@@ -848,19 +849,28 @@ bakersList = do
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)) => Event t () -> m (Dynamic t [Text], Event t ())
-addBakerModal close = ffor (workflow both) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+addBakerModal ::
+  ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
+  , MonadReader r m, HasTimer t r
+  )
+  => Event t () -> m (Dynamic t [Text], Event t ())
+addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
-    both = Workflow $ do
+    splash = Workflow $ do
       divClass "ui header" $ text "Add Bakers"
       divClass "ui grid stackable divided" $ do
         start <- startBaking
         close' <- connectBaker
-        node <- flip tag start . current <$> watchInternalNode
-        let next = ffor node $ \case
-              Just _ -> connectDevice -- TODO do we need an interstitial step to check that the node is up to date?
-              Nothing -> launchNode
-        pure (([], close'), next)
+        pb <- getPostBuild
+        ebn :: Behavior t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
+          <- fmap current . watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+        node <- current <$> watchInternalNode
+        let f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f (Just (nid, pd), es) ()
+              -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
+              | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
+              | otherwise = connectDevice
+        pure (([], close'), attachWith f (liftA2 (,) node ebn) start)
 
     startBaking = divClass "start-baking column" $ do
       elClass "h5" "ui header" $ text "Start Baking"
@@ -1095,9 +1105,10 @@ handleClientErrorWorkflow recover = \case
 
     nodeNotReady tryAgain = Workflow $ do
       elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
-      elClass "h5" "ui header" $ text "Node not synced."
-      retry <- uiButton "primary" "Retry"
-      pure ((["ledger-disconnected"], never), tryAgain <$ retry)
+      elClass "h5" "ui header" $ text "Kiln needs to fully sync the node it is running with the blockchain before baking."
+      divClass "explanation" $ text "Try again after the node has fully synced."
+      retry <- uiButton "primary" "Dismiss"
+      pure ((["launch-node"], never), tryAgain <$ retry)
 
 
 ledgerCheckImg :: DomBuilder t m => LedgerIdentifier -> m ()
