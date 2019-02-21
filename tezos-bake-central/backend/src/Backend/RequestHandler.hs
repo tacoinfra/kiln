@@ -90,6 +90,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         balance <- MaybeT $ getBalanceFor account
         pure (secretKey, account, balance)
 
+      PublicRequest_ClientSetHighWaterMark sk bl -> runClientT $ setHighWaterMark sk bl
+
       PublicRequest_AddInternalNode -> inDb $ do
         getInternalNode >>= \case
           Nothing -> do

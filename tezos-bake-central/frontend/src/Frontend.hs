@@ -1039,13 +1039,13 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
 respondToPrompt :: DomBuilder t m => Text -> m () -> m ()
 respondToPrompt operation prompt = do
   elClass "h5" "ui header" $ do
-    divClass "ui active small inline blue loader" blank
+    divClass "ui active tiny inline blue loader" blank
     text "Respond to the prompt on your Ledger Device..."
   divClass "explanation" $ do
     text operation
     el "br" blank
     text "Your Ledger Device should show the following prompt:"
-  elClass "h6" "ui header" prompt
+  elClass "h6" "ui header prompt-text" prompt
 
 authorizeLedgerToBakeModal
   :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m))
@@ -1075,6 +1075,48 @@ authorizeLedgerToBakeModal ledger pkh close = ffor (workflow auth) $ \d -> let (
       elClass "h6" "ui header" $ text $ "This Ledger Device is now authorized to bake for the address: " <> toPublicKeyHashText pkh
       continue <- uiButton "primary" "Continue"
       pure ((["ledger-prompt"], continue), never)
+
+setHighWaterMark
+  :: (MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m))
+  => Dynamic t RawLevel -> SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
+setHighWaterMark latestBlockLevelDyn secretKey pkh close = ffor (workflow set) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+  where
+    ledger = _secretKey_ledgerIdentifier secretKey
+    set = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ text "Set the high-water mark for this account on the connected Ledger Device?"
+      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      el "p" $ do
+        text "The high-water mark (latest recorded block level) will"
+        el "br" blank
+        text "be set to "
+        display $ unRawLevel <$> latestBlockLevelDyn
+        text " for this account."
+      confirm <- uiButton "primary" "Confirm"
+      pure ((["set-high-water-mark"], never), attachWith (\bl () -> waiting bl) (current latestBlockLevelDyn) confirm)
+    waiting latestBlockLevel = Workflow $ do
+      ledgerCheckImg ledger
+      respondToPrompt "" $ do
+        text "Reset HWM"
+        el "br" blank
+        text $ tshow $ unRawLevel latestBlockLevel
+      pb <- getPostBuild
+      response <- requestingIdentity $ public (PublicRequest_ClientSetHighWaterMark secretKey latestBlockLevel) <$ pb
+      let next = \case
+            Right () -> done latestBlockLevel
+            Left e -> handleClientErrorWorkflow (waiting latestBlockLevel) e
+      pure ((["set-high-water-mark-prompt"], never), next <$> response)
+    done latestBlockLevel = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ do
+        elClass "i" "ui blue icon icon-check" blank
+        text "High-water mark has been set."
+      elClass "h6" "ui header prompt-text" $ do
+        text "The high-water mark was set to: "
+        el "br" blank
+        text $ tshow $ unRawLevel latestBlockLevel
+      continue <- uiButton "primary" "Continue"
+      pure ((["set-high-water-mark-set"], continue), never)
 
 handleClientErrorWorkflow
   :: DomBuilder t m
@@ -1691,9 +1733,13 @@ bakersTab =
           dyn $ ffor bakerDyn $ \bs -> case _bakerSummary_baker bs of
             Left _ -> pure () -- not a kiln baker
             Right bid -> do
-              authorize <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Authorize Ledger Device"
-              let li = _bakerInternalData_ledgerIdentifier bid
-              tellModal $ cancelableModalWithClasses (authorizeLedgerToBakeModal li pkh) <$ authorize
+              let sk = _bakerInternalData_secretKey bid
+                  li = _secretKey_ledgerIdentifier sk
+              tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal li pkh
+              latestHead <- maybeDyn =<< watchLatestHead
+              dyn_ $ ffor latestHead $ \case
+                Nothing -> pure () -- no head to set high water mark
+                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
               if _bakerInternalData_running bid
               then do
                 let stopModal = confirmationModal

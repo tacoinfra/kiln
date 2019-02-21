@@ -31,7 +31,7 @@ import Rhyolite.Backend.Logging (runLoggingEnv, LoggingEnv(..))
 import System.Which
 import Tezos.Ledger
 import Tezos.PublicKeyHash
-import Tezos.Tez
+import Tezos.Types (RawLevel(..), Tez(..))
 
 -- TODO fix this
 clientPath :: FilePath
@@ -150,3 +150,10 @@ registerKeyAsDelegate = do
     Left err -> $(logWarn) $ T.pack $ show err
   pure result
 
+setHighWaterMark :: MonadLoggerIO m => SecretKey -> RawLevel -> ExceptT ClientError m ()
+setHighWaterMark sk bl = do
+  void $ runClientCommand ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \warnings errors -> if
+    | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
+    | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
+    | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
+    | otherwise -> Left $ ClientError_Other $ T.unlines errors
