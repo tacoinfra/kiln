@@ -39,7 +39,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
-import Tezos.Types (SecretKey)
+import Tezos.Types (NamedChain, SecretKey)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.ClientCmd
@@ -56,17 +56,18 @@ import ExtraPrelude
 
 requestHandler
   :: forall m. (MonadBaseControl IO m, MonadIO m)
-  => Text
+  => Maybe NamedChain
+  -> Text
   -> Address
   -> NodeDataSource
   -> [DataSource]
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
+requestHandler maybeNamedChain upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_ClientAuthorizeLedgerToBake -> runClientT authorizeLedgerToBake
-      PublicRequest_ClientRegisterKeyAsDelegate pkh -> registerKeyAsDelegate >>= \case
+      PublicRequest_ClientAuthorizeLedgerToBake -> runClientT $ authorizeLedgerToBake maybeNamedChain
+      PublicRequest_ClientRegisterKeyAsDelegate pkh -> registerKeyAsDelegate maybeNamedChain >>= \case
         Left e -> pure $ Left e
         Right () -> inDb $ do
           bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
@@ -82,12 +83,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         -- Store secret key first as "consent"
         inDb $ do
           insert_ $ LedgerAccount pkh sk
-        importSecretKey sk
+        importSecretKey maybeNamedChain sk
 
-      PublicRequest_ClientGetConnectedLedger -> getConnectedLedger
+      PublicRequest_ClientGetConnectedLedger -> getConnectedLedger maybeNamedChain
       PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
-        account <- MaybeT $ showLedger secretKey
-        balance <- MaybeT $ getBalanceFor account
+        account <- MaybeT $ showLedger maybeNamedChain secretKey
+        balance <- MaybeT $ getBalanceFor maybeNamedChain account
         pure (secretKey, account, balance)
 
       PublicRequest_AddInternalNode -> inDb $ do
