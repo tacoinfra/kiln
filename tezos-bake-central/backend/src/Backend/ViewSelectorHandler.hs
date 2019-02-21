@@ -398,7 +398,9 @@ getBakerAddresses nds bid = do
     (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
-    bakers = fmap (\(a, c) -> (Left (BakerData a), c)) rs <> fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int
+    -- Insert pkh from Internal if present
+    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
+      fmap (\(a, c) -> (Left (BakerData a), c)) rs
     chainId = _nodeDataSource_chain nds
     maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
