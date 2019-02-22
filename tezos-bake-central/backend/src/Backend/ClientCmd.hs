@@ -154,9 +154,9 @@ registerKeyAsDelegate chain = do
     Left err -> $(logWarn) $ T.pack $ show err
   pure result
 
-setHighWaterMark :: MonadLoggerIO m => SecretKey -> RawLevel -> ExceptT ClientError m ()
-setHighWaterMark sk bl = do
-  void $ runClientCommand ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \warnings errors -> if
+setHighWaterMark :: MonadLoggerIO m => Maybe NamedChain -> SecretKey -> RawLevel -> ExceptT ClientError m ()
+setHighWaterMark chain sk bl = do
+  void $ runClientCommand chain ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \warnings errors -> if
     | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
