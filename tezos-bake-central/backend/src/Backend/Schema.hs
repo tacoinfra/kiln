@@ -488,6 +488,16 @@ instance ToField LedgerIdentifier where
 instance FromField LedgerIdentifier where
   fromField f = fmap LedgerIdentifier . fromField f
 
+instance ToField DerivationPath where
+  toField = toField . unDerivationPath
+instance FromField DerivationPath where
+  fromField f = fmap DerivationPath . fromField f
+
+instance ToField SigningCurve where
+  toField = toField . show
+instance FromField SigningCurve where
+  fromField f = maybe (fail "Invalid value for SigningCurve") pure . readMaybe <=< fromField f
+
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
 instance FromField PublicKeyHash where

@@ -72,6 +72,10 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
     PublicRequest_ClientRegisterKeyAsDelegate
       :: PublicKeyHash
       -> PublicRequest Bake (Either ClientError ())
+    PublicRequest_ClientSetHighWaterMark
+      :: SecretKey
+      -> RawLevel
+      -> PublicRequest Bake (Either ClientError ())
     PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text

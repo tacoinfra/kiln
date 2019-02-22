@@ -365,8 +365,8 @@ getBakerAddresses nds bid = do
       WHERE NOT b."data#deleted"
         AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
     |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
-  int :: Map.Map PublicKeyHash (Bool, LedgerIdentifier, Int) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", p."running", la."secretKey#ledgerIdentifier",
+  int :: Map.Map PublicKeyHash (Bool, SecretKey, Int) <- [queryQ|
+      SELECT b."data#data#publicKeyHash", p."running", la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
           JOIN "ErrorLogBakerMissed" elbm
@@ -378,7 +378,13 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, running, sk, alertCount) -> (pkh, (running, sk, alertCount)))
+    |] <&> Map.fromList . fmap (\(pkh, running, li, sc, dp, alertCount) ->
+      let sk = SecretKey
+            { _secretKey_ledgerIdentifier = li
+            , _secretKey_signingCurve = sc
+            , _secretKey_derivationPath = dp
+            }
+      in (pkh, (running, sk, alertCount)))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"

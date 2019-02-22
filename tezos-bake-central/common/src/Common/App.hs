@@ -75,7 +75,7 @@ instance FromJSON WorkerType
 instance ToJSON WorkerType
 
 data BakerInternalData = BakerInternalData
-  { _bakerInternalData_ledgerIdentifier :: LedgerIdentifier
+  { _bakerInternalData_secretKey :: SecretKey
   , _bakerInternalData_running :: Bool
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerInternalData

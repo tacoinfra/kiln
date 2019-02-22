@@ -1122,6 +1122,16 @@ h4.dashboard-section-title {
     }
   }
 
+  .prompt-text {
+    font-size: @16px;
+    line-height: @24px;
+    margin: @20px auto;
+  }
+
+  .ui.header > .ui.loader {
+    margin-right: @14px;
+  }
+
   &.connect-device {
     width: unit(611 / @emSize, rem);
     .ui.header {
@@ -1216,6 +1226,25 @@ h4.dashboard-section-title {
 
   &.launch-node {
     width: unit(660 / @emSize, rem);
+  }
+
+  &.set-high-water-mark {
+    width: unit(495 / @emSize, rem);
+    text-align: center;
+    h6.ui.header {
+      font-size: @16px;
+      margin: @20px 0;
+    }
+  }
+
+  &.set-high-water-mark-prompt {
+    width: unit(593 / @emSize, rem);
+    text-align: center;
+  }
+
+  &.set-high-water-mark-set {
+    width: unit(558 / @emSize, rem);
+    text-align: center;
   }
 }
 
