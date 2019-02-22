@@ -1401,17 +1401,33 @@ nodesTab =
                 internalNodeMenu :: m ()
                 internalNodeMenu = do
                   let
-                    stopModal = confirmationModal False
-                      "Stop this node?"
-                      ["This node is run by Kiln. Stopping it may affect any bakers you are running which depend on it."]
-                      "Stop node"
+                    preface = "This node is being run by Kiln."
+                    notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
+                    bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
+                      <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
+                    body = bool notBakingBody bakingBody
+                    epilogue = "All data for this node will be deleted from Kiln."
+                    stopModal running = warningModal "Stop Node?"
+                      [preface, body running "Stopping"]
+                      "Stop Node"
 
-                  running :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
-                  dyn_ $ ffor running $ \case
-                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
-                    False -> do
+                  runningDyn :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
+                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                    <$> watchInternalBaker
+                  dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
+                    (True, bRunning) ->
+                      tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    _ -> do
                       start <- tileMenuEntry "Start Node"
                       void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+
+                  let
+                    removeInternalNodeModal running = warningModal "Remove Node?"
+                      [preface, body running "Removing", epilogue]
+                      "Stop and Remove Node"
+                  dyn_ $ ffor bakerRunning $ \running ->
+                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                      (PublicRequest_RemoveNode (Right ()) <$)
 
                 title :: m ()
                 title = text "Kiln Node"
@@ -1744,8 +1760,11 @@ bakersTab =
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
-          dyn_ $ ffor bakerDyn $ \bs -> case _bakerSummary_baker bs of
-            Left _ -> pure () -- not a kiln baker
+          let
+            removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
+          dyn $ ffor bakerDyn $ \bs -> case _bakerSummary_baker bs of
+            Left _ -> do -- not a kiln baker
+              removeEntry $ removeItemModal "baker"
             Right bid -> do
               let sk = _bakerInternalData_secretKey bid
                   li = _secretKey_ledgerIdentifier sk
@@ -1756,16 +1775,18 @@ bakersTab =
                 Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
               if _bakerInternalData_running bid
               then do
-                let stopModal = confirmationModal False
-                      ("Stop Baker?")
+                let stopModal = warningModal "Stop Baker?"
                       ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]
-                      ("Stop Baker")
+                      "Stop Baker"
                 tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
               else do
                 start <- tileMenuEntry "Start Baker"
                 void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
-          remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
-          tellModal $ remove $> removeItemModal "baker" mkRemoveReq
+              let
+                removeInternalBakerModal = warningModal "Remove Baker?"
+                  ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
+                  "Remove Baker"
+              removeEntry removeInternalBakerModal
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
