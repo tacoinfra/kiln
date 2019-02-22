@@ -640,7 +640,7 @@ levelAncestor hist lvl ctx = ctxBlockHash
   where
     minLevel = _cachedHistory_minLevel hist
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
-    ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
+    ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel + 1) <$> branch
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
