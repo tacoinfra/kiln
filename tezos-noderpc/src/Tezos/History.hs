@@ -147,7 +147,7 @@ accumHistory chainId f blk = do
       -- we will now proceed to restore the missing history.  We ask a node for
       -- enough block-hashes to reach from the new block to "the root" at
       -- minLevel
-      let !levels = view level blk - minLevel
+      let !levels = view level blk - minLevel + 1
       let !branches = _cachedHistory_branches history
       !descendents <- getHistoryIncremental (fmap _cachedHistory_blocks $ readTVarIO historyVar) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
 
