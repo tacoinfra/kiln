@@ -887,14 +887,14 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         text "Bake and endorse on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
         hrefLink "https://www.ledger.com/products/ledger-nano-s" $ text "Ledger Device" -- TODO is the link correct?
         text ". Kiln only supports running a single baker."
-      baker <- watchInternalBaker
+      baker <- maybeDyn =<< watchInternalBaker
       switchHold never <=< dyn $ ffor baker $ \case
         Nothing -> uiButton "primary fluid" "Start Baking"
         Just bid -> do
           kilnLogo
-          text $ if _bakerInternalData_running bid
-            then "A Kiln baker is running."
-            else "A Kiln baker is configured, but is stopped."
+          dynText $ ffor (_bakerInternalData_running <$> bid) $ \case
+            True -> "A Kiln baker is running."
+            False -> "A Kiln baker is configured, but is stopped."
           pure never
 
     connectBaker = divClass "connect-baker column" $ mdo
