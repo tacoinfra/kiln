@@ -29,17 +29,21 @@ import Common.Schema
 import ExtraPrelude
 import Rhyolite.Backend.Logging (runLoggingEnv, LoggingEnv(..))
 import System.Which
+import Tezos.Chain (NamedChain(..))
 import Tezos.Ledger
 import Tezos.PublicKeyHash
 import Tezos.Tez
 
--- TODO fix this
-clientPath :: FilePath
-clientPath = $(staticWhich "zeronet-tezos-client")
+-- TODO XXX OBVIOUSLY BAD
+clientPath :: Maybe NamedChain -> FilePath
+clientPath Nothing = $(staticWhich "mainnet-tezos-client") -- TODO what should we actually do here?
+clientPath (Just NamedChain_Mainnet) = $(staticWhich "mainnet-tezos-client")
+clientPath (Just NamedChain_Alphanet) = $(staticWhich "alphanet-tezos-client")
+clientPath (Just NamedChain_Zeronet) = $(staticWhich "zeronet-tezos-client")
 
-getConnectedLedger :: (MonadIO m, MonadLogger m) => m (Maybe LedgerIdentifier)
-getConnectedLedger = do
-  (exitCode, stdout, stderr) <- liftIO $ readProcessWithExitCode clientPath ["list", "connected", "ledgers", "--for-script", "TSV"] ""
+getConnectedLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> m (Maybe LedgerIdentifier)
+getConnectedLedger chain = do
+  (exitCode, stdout, stderr) <- liftIO $ readProcessWithExitCode (clientPath chain) ["list", "connected", "ledgers", "--for-script", "TSV"] ""
   case exitCode of
     ExitFailure _ -> do
       $(logError) $ T.pack $ "getConnectedLedger: " <> stderr
@@ -56,9 +60,9 @@ getConnectedLedger = do
           [_baker, _version, _usb, kungFu] -> Just $ LedgerIdentifier kungFu
           _ -> Nothing
 
-getBalanceFor :: (MonadIO m, MonadLogger m) => PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
-getBalanceFor pkh = do
-  stdout <- runClientCommand ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
+getBalanceFor :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
+getBalanceFor chain pkh = do
+  stdout <- runClientCommand chain ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
     | "Failed to acquire the protocol version from the node" : _ <- warnings
     , "Unrecognized command." : _ <- errors -> Left ClientError_NodeNotReady
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
@@ -66,9 +70,9 @@ getBalanceFor pkh = do
     Just x | Just micro <- Aeson.decodeStrict (TE.encodeUtf8 x) -> Just $ Tez micro
     _ -> Nothing
 
-showLedger :: (MonadIO m, MonadLogger m) => SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
-showLedger sk = do
-  stdout <- runClientCommand ["show", "ledger", T.unpack $ toSecretKeyText sk, "--for-script", "TSV"] $ \_warnings errors -> if
+showLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
+showLedger chain sk = do
+  stdout <- runClientCommand chain ["show", "ledger", T.unpack $ toSecretKeyText sk, "--for-script", "TSV"] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
@@ -78,9 +82,9 @@ showLedger sk = do
     [_baker, _ledger, _nanoS, _usb, pkht, _publicKey] | Right pkh <- tryReadPublicKeyHashText pkht -> pure pkh
     _ -> Nothing
 
-importSecretKey :: (MonadIO m, MonadLogger m) => SecretKey -> ExceptT ClientError m ()
-importSecretKey sk = do
-  void $ runClientCommand ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \warnings errors -> if
+importSecretKey :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m ()
+importSecretKey chain sk = do
+  void $ runClientCommand chain ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     -- This check is never used because of --force, but may be useful to keep around for reference
@@ -91,10 +95,10 @@ importSecretKey sk = do
       -> if toSecretKeyText sk == sk' then Right "" else Left ClientError_AliasAlreadyUsed
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
 
-runClientCommand :: (MonadLogger m, MonadIO m) => [String] -> ([Text] -> [Text] -> Either ClientError Text) -> ExceptT ClientError m Text
-runClientCommand args handleError = do
+runClientCommand :: (MonadLogger m, MonadIO m) => Maybe NamedChain -> [String] -> ([Text] -> [Text] -> Either ClientError Text) -> ExceptT ClientError m Text
+runClientCommand chain args handleError = do
   $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
-  (exitCode, stdout, stderr) <- liftIO $ readProcessWithExitCode clientPath args ""
+  (exitCode, stdout, stderr) <- liftIO $ readProcessWithExitCode (clientPath chain) args ""
   case exitCode of
     ExitSuccess -> pure $ T.strip $ T.pack stdout
     ExitFailure _ -> do
@@ -116,9 +120,9 @@ runClientT m = do
     Nothing -> pure $ Left $ ClientError_Other "Timeout"
     Just a -> pure a
 
-authorizeLedgerToBake :: (MonadIO m, MonadLogger m) => ExceptT ClientError m ()
-authorizeLedgerToBake = do
-  void $ runClientCommand ["authorize", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
+authorizeLedgerToBake :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m ()
+authorizeLedgerToBake chain = do
+  void $ runClientCommand chain ["authorize", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
@@ -128,10 +132,10 @@ authorizeLedgerToBake = do
 -- get up-to-date. We detect that case and just return an error.
 -- Also, if we are already registered as a delegate, the tezos-client command
 -- succeeds without re-registering.
-registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => m (Either ClientError ())
-registerKeyAsDelegate = do
+registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> m (Either ClientError ())
+registerKeyAsDelegate chain = do
   $(logWarn) "registerKeyAsDelegate requested"
-  let p = (Process.proc clientPath ["register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
+  let p = (Process.proc (clientPath chain) ["register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
         { Process.std_err = Process.CreatePipe
         , Process.std_out = Process.CreatePipe
         }
