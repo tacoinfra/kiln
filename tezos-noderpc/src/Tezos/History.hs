@@ -84,7 +84,9 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
   | otherwise = do
       prefix <- getHistory chainId blk maxBatch mempty
       let
-        prefixLen = length prefix -- (blk) .. [1,2,3,4] not including blk
+        prefixLen = length prefix
+          -- (blk) .. [1,2,3,4] not including blk
+          -- The node RPC includes blk, but getHistory removes it again.
         lastHash = Seq.index prefix (prefixLen - 1) -- 4
       -- TODO: turn some of these comments into logging messages.
       -- liftIO $ print ("getHistory", prefixLen, blk ^. level, (blk ^. level) - numLevels)
@@ -98,11 +100,17 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
               { _veryBlockLike_hash = lastButOneHash
               , _veryBlockLike_predecessor = lastHash
               , _veryBlockLike_level = blk ^. level - RawLevel (fromIntegral prefixLen) + 1
+                -- this is usually maxBatch-2 levels below blk.  Theoretically it could
+                --   run into genesis and be less far, and maybe with the new history
+                --   trimming stuff it could run out at higher levels.  However, if
+                --   that ever happens, we're violating assumptions that accumHistory is
+                --   making.
               , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
               , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
               }
             remainingLevels = numLevels - RawLevel (fromIntegral prefixLen) + 1
-          preflight <- nodeRPC $ rBlock chainId lastButOneHash
+          -- -- Sanity check for debugging
+          -- preflight <- nodeRPC $ rBlock chainId lastButOneHash
           -- if (stepBlock ^. level /= preflight ^.level) || (stepBlock ^. predecessor /= preflight ^. predecessor)
           --   then  do
           --     liftIO $ print ("stepBlock", stepBlock)
@@ -110,7 +118,7 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
           --     error "bad"
           --   else return ()
           remaining <- getHistoryIncremental askHistory maxBatch chainId stepBlock remainingLevels mempty
-          return (prefix <> Seq.drop 1 remaining)
+          return (prefix <> Seq.drop 1 remaining) -- remaining includes lastHash again, so drop that.
 
 -- add a block to cached history.  If there are multipe blocks between the
 -- added block and the deepest allowed root, the summary for those blocks will
