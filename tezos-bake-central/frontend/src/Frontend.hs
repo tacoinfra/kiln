@@ -1012,7 +1012,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       respondToPrompt "Registering as delegate..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
       response <- requestingIdentity $ public (PublicRequest_ClientRegisterKeyAsDelegate pkh) <$ pb
-      _ <- requestingIdentity $ public (PublicRequest_AddBaker pkh $ Just kilnLedgerAlias) <$ pb
+      _ <- requestingIdentity $ public (PublicRequest_AddBaker pkh $ Just "Kiln Baker") <$ pb
       let next = \case
             Right () -> setupComplete ledger pkh
             Left e -> handleClientErrorWorkflow (registerAsDelegate ledger pkh) e
