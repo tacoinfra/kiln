@@ -1372,7 +1372,7 @@ bakersTab =
              divClass "ui active inline loader small blue" blank
              text "Gathering baker data...")
           Nothing
-          (text "Some information will be temporarily unavailable as Kiln gathers baker information from the blockchain. This only needs to be done once for each baker.")
+          (text "Some information will be temporarily unavailable as Kiln gathers information from the blockchain. This can take up to a few hours. Kiln will gather new data about this baker in the background at the beginning of each cycle when new rights are available.")
         BakersBanner_CannotGather -> renderSplashAlert
           (icon "icon-disconnected big red")
           (text "Cannot gather baker data - no nodes online.")
