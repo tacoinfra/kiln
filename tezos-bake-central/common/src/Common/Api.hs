@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 module Common.Api where
 
@@ -83,7 +83,5 @@ instance HasRequest Bake where
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-fmap concat $ sequence
-  [ makeRequestForDataInstance ''PublicRequest ''Bake
-  , makeRequestForDataInstance ''PrivateRequest ''Bake
-  ]
+makeRequestForDataInstance ''PublicRequest ''Bake
+makeRequestForDataInstance ''PrivateRequest ''Bake
