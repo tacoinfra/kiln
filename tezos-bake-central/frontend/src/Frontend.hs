@@ -1800,7 +1800,7 @@ bakersTab =
           nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
             BakerNextRight_GatheringData -> Left $ text "-"
             BakerNextRight_WaitingForRights -> Left $ text "Waiting to receive rights"
-            BakerNextRight_KnownNoRights -> Left $ text "-"
+            BakerNextRight_KnownNoRights -> Left $ text "None"
             BakerNextRight_KnownRights (r,l) -> Right (r,l)
           wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
         isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
