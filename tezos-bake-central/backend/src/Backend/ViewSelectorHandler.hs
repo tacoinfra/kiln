@@ -474,7 +474,7 @@ getBakerAddresses nds bid = do
     getNextRight rights progress = case (minimumByMay (on compare snd <> on compare fst) . Map.toList) rights of
       Just v -> BakerNextRight_KnownRights v
       Nothing -> case subtract progress <$> maxProgress of
-        Just 0 -> BakerNextRight_KnownNoRights
+        Just 0 -> BakerNextRight_WaitingForRights
         Just _ -> BakerNextRight_GatheringData
         Nothing -> BakerNextRight_GatheringData
         -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
