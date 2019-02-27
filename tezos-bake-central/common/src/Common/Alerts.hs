@@ -4,9 +4,12 @@
 
 module Common.Alerts where
 
+import Prelude hiding (cycle)
 import Data.Aeson
 import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
+import Data.String (IsString(..))
+import qualified Data.Text as T
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
@@ -83,12 +86,47 @@ badNodeHeadMessage text blockHashLink l =
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
 
+data ErrorDescription
+  = ErrorDescription_Plain Text
+  | ErrorDescription_Emphasis Text
+  | ErrorDescription_Concat ErrorDescription ErrorDescription
+  deriving (Eq, Ord)
+
+instance IsString ErrorDescription where
+  fromString = ErrorDescription_Plain . T.pack
+
+instance Semigroup ErrorDescription where
+  (<>) = ErrorDescription_Concat
+
+plaintextErrorDescription :: ErrorDescription -> Text
+plaintextErrorDescription = \case
+  ErrorDescription_Plain t -> t
+  ErrorDescription_Emphasis t -> t
+  ErrorDescription_Concat t t' -> ((<>) `on` plaintextErrorDescription) t t'
+
+errorEmphasis :: Text -> ErrorDescription
+errorEmphasis = ErrorDescription_Emphasis
+
+errorPlain :: Text -> ErrorDescription
+errorPlain = ErrorDescription_Plain
+
+data BakerErrorDescriptions = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title :: !Text
+  , _bakerErrorDescriptions_tile :: !Text
+  , _bakerErrorDescriptions_notification :: !Text
+  , _bakerErrorDescriptions_problem :: !ErrorDescription
+  , _bakerErrorDescriptions_warning :: !(Maybe Text)
+  , _bakerErrorDescriptions_fix :: !Text
+  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
+  }
+
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
-  , _bakerErrorDescriptions_problem = "In the past " <> tshow (preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
+  , _bakerErrorDescriptions_problem = "In the past " <> errorEmphasis (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."
   , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
   , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
   , _bakerErrorDescriptions_resolved = \b ->
@@ -106,7 +144,7 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker has been marked as inactive."
   , _bakerErrorDescriptions_tile = "Has been marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for " <> tshow preserved <> " cycles and has been marked as inactive."
-  , _bakerErrorDescriptions_problem = "This baker has not had any activity for " <> tshow preserved <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
+  , _bakerErrorDescriptions_problem = "This baker has not had any activity for " <> errorPlain (tshow preserved) <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Re-register this baker."
   , _bakerErrorDescriptions_resolved = \b ->
@@ -124,7 +162,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight
   , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
-  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorEmphasis (" block level " <> lvl) <> "."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
@@ -135,6 +173,60 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
+
+bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
+bakerAccusedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right <> "."
+  , _bakerErrorDescriptions_tile = "Accused of double" <> right <> "."
+  , _bakerErrorDescriptions_notification =
+      plaintextErrorDescription firstParagraph
+      <> ".\n\nSecurity deposits and rewards may have been confiscated."
+      <> bool "" ("\n\n" <> turnOffShort) accusedInSameCycle
+  , _bakerErrorDescriptions_problem = firstParagraph
+      <> errorEmphasis ("All security deposits and rewards earned in cycle "
+                        <> cycle <> upTo <> " not previously confiscated by "
+                        <> "prior accusations have been confiscated by the "
+                        <> "network.")
+      <> " Half of the security deposits "
+      <> "are delivered to the baker of "
+      <> errorEmphasis ("block level " <> accusedLevel)
+      <> ". The other half, along with any rewards, are burned."
+      <> bool "" (errorEmphasis ("This baker may be re-accused for this "
+                                 <> "offense (and any new deposits and "
+                                 <> "rewards confiscated) for each block or "
+                                 <> "endorsement it signs in the remainder "
+                                 <> "of cycle " <> cycle <> "."))
+                 accusedInSameCycle
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = bool
+      ("Because this accusation was made in a cycle following that in which "
+       <> "the double " <> rightI <> " occurred no further tez can be "
+       <> "confiscated and it is safe to continue running your baker.")
+      turnOffShort
+      accusedInSameCycle
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_Baker BakerLogTag_BakerAccused :=> pure elog
+  }
+  where
+    firstParagraph =
+      "This baker has been accused of double " <> errorPlain right
+      <> " " <> errorEmphasis ("block level " <> lvl)
+      <> " in " <> errorEmphasis ("cycle " <> cycle) <> ". The accusation was baked at "
+      <> errorEmphasis ("block level " <> accusedLevel) <> ".\n\n"
+    turnOffShort = 
+      "\n\nThis baker should be turned off for the remainder of the cycle to "
+      <> "avoid losing deposits and rewards for upcoming rights."
+    cycle = tshow $ unCycle $ _errorLogBakerAccused_cycle elog
+    lvl = tshow $ unRawLevel $ _errorLogBakerAccused_level elog
+    accusedLevel = tshow $ unRawLevel $ _errorLogBakerAccused_accusedLevel elog
+    right = case _errorLogBakerAccused_right elog of
+      RightKind_Baking -> "baking"
+      RightKind_Endorsing -> "endorsement"
+    rightI = case _errorLogBakerAccused_right elog of
+      RightKind_Baking -> "bake"
+      RightKind_Endorsing -> "endorsement"
+    upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
+    accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle $ elog
 
 -- Skip the final sentence as there is no easy way to abstract over doing or not
 -- doing the link.

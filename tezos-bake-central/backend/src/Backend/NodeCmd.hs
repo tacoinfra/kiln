@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoDoAndIfThenElse #-}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -7,9 +8,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.NodeCmd where
 
-import Control.Monad.Catch (MonadMask)
 import Control.Monad.Trans.Control
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
@@ -17,14 +19,13 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.Process (proc, readProcess)
+import System.Process (readProcess, proc)
 import qualified Data.Text as T
 
 import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
-import Tezos.Json
 import Backend.Schema
 import Common.Schema
 
@@ -47,7 +48,7 @@ endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
 -- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
 
-internalNodeWorker :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+internalNodeWorker :: (MonadIO m, MonadBaseControl IO m)
   => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
 internalNodeWorker logger db namedChain = do
   -- Always create a NodeInternal and corresponsing ProcessData
@@ -99,10 +100,10 @@ initNode nodePath nodeConfigPath = do
   return ()
 
 -- Start Baker and Endorser
-bakerDaemonProcess :: (MonadIO m, MonadMask m, MonadBaseControl IO m)
+bakerDaemonProcess :: (MonadIO m, MonadBaseControl IO m)
   => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
 bakerDaemonProcess logger db namedChain = do
-  (nid, BakerDaemonInternalData _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (_nid, BakerDaemonInternalData _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
@@ -128,17 +129,17 @@ bakerDaemonProcess logger db namedChain = do
         return (nid, v)
   bp <- processWorker logger db defaultConfig
     fetchAlias
-    (\alias nodeConfigPath -> proc (bakerPaths namedChain) ["run", "with", "local", "node", "./.tezos-node", alias])
+    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["run", "with", "local", "node", "./.tezos-node", alias])
     bpid
     Nothing
   ep <- processWorker logger db defaultConfig
     fetchAlias
-    (\alias nodeConfigPath -> proc (endorserPaths namedChain) ["run", alias])
+    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["run", alias])
     epid
     Nothing
   return (bp, ep)
 
-fetchAlias :: (forall m'. (Monad m', MonadIO m', PersistBackend m') => FilePath -> m' String)
+fetchAlias :: (forall m'. (MonadIO m', PersistBackend m') => FilePath -> m' String)
 fetchAlias _ = do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"

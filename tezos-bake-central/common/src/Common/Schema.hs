@@ -20,6 +20,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
 -- Needed for nested `deriveArgDict`
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -40,7 +41,7 @@ module Common.Schema
   ) where
 
 import Control.Exception.Safe (Exception, SomeException)
-import Control.Lens
+import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
@@ -50,12 +51,13 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
 import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
 import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
-import Data.Dependent.Sum (DSum)
+import Data.Dependent.Sum.Orphans ()
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
+import Data.Some (Some(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
@@ -66,6 +68,7 @@ import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
+import Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -435,6 +438,28 @@ data Report = Report
   , _report_startTime :: UTCTime
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+data Accusation = Accusation
+  { _accusation_hash :: !OperationHash -- ^ hash of the accusation operation
+  , _accusation_blockHash :: !BlockHash -- ^ hash of the block where the accusation was included
+  , _accusation_chain :: !ChainId -- ^ chainId of the network where the accusation occurred
+  , _accusation_level :: !RawLevel -- ^ level where accusation was incorporated in the blockchain
+  , _accusation_baker :: !PublicKeyHash -- ^ PKH of baker who was accused
+  , _accusation_occurredLevel :: !RawLevel -- ^ level at which the baker double baked or double endorsed
+  , _accusation_isBake :: !Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+instance HasId Accusation where
+  type IdData Accusation = (OperationHash, BlockHash)
+
+data BlockTodo = BlockTodo
+  { _blockTodo_hash :: !BlockHash
+  , _blockTodo_level :: !Int
+  , _blockTodo_chain :: !ChainId
+  , _blockTodo_claimedBy :: !(Maybe Int) -- TODO WIP do backends have IDs?  they probably should if they're going to claim jobs...
+  , _blockTodo_claimedAt :: !(Maybe UTCTime)
+  , _blockTodo_parsedParent :: !Bool
+  , _blockTodo_parsedAccusations :: !Bool
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
 
@@ -688,6 +713,19 @@ data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
 instance HasId ErrorLogBakerDeactivationRisk where
   type IdData ErrorLogBakerDeactivationRisk = Id ErrorLog
 
+data ErrorLogBakerAccused = ErrorLogBakerAccused
+  { _errorLogBakerAccused_log :: !(Id ErrorLog)
+  , _errorLogBakerAccused_op :: !(Id Accusation)
+  , _errorLogBakerAccused_baker :: !(Id Baker)
+  , _errorLogBakerAccused_cycle :: !Cycle
+  , _errorLogBakerAccused_level :: !RawLevel
+  , _errorLogBakerAccused_accusedCycle :: !Cycle
+  , _errorLogBakerAccused_accusedLevel :: !RawLevel
+  , _errorLogBakerAccused_right :: !RightKind
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerAccused where
+  type IdData ErrorLogBakerAccused = Id ErrorLog
+
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
@@ -815,25 +853,15 @@ data BakerLogTag a where
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
+  BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
-data BakerErrorDescriptions = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title :: !Text
-  , _bakerErrorDescriptions_tile :: !Text
-  , _bakerErrorDescriptions_notification :: !Text
-  , _bakerErrorDescriptions_problem :: !Text
-  , _bakerErrorDescriptions_warning :: !(Maybe Text)
-  , _bakerErrorDescriptions_fix :: !Text
-  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
-  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
-  }
-
-
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
-  [ ''BakeEfficiency
+  [ ''Accusation
+  , ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
@@ -848,6 +876,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerRight
   , ''BakerRightsCycleProgress
   , ''BlockBaker
+  , ''BlockTodo
   , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
@@ -858,6 +887,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerNoHeartbeat
@@ -890,7 +920,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpgradeCheckError
   , ''UpstreamVersion
   ] ++ map makeLenses
-  [ 'BakeEfficiency
+  [ 'Accusation
+  , 'BakeEfficiency
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
@@ -904,6 +935,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRight
   , 'BakerRightsCycleProgress
   , 'BlockBaker
+  , 'BlockTodo
   , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent
@@ -911,6 +943,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerMissed
@@ -968,6 +1001,11 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   ]
 
 deriveSomeUniverse ''NodeLogTag
+deriveSomeUniverse ''BakerLogTag
+-- need Cale to fix this
+-- deriveSomeUniverse ''LogTag
+instance Universe (Some LogTag) where
+  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash
@@ -1000,3 +1038,18 @@ bakerIdentification :: Baker -> (Text, Maybe Text)
 bakerIdentification = aliasedIdentification
   (view $ baker_data . deletableRow_data . bakerData_alias)
   (toPublicKeyHashText . _baker_publicKeyHash)
+
+errorLogNames :: [Name]
+errorLogNames =
+  [ ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerAccused
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogInaccessibleNode
+  , ''ErrorLogMultipleBakersForSameBaker
+  , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
+  ]

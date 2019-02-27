@@ -24,6 +24,7 @@ import Data.Fixed (divMod')
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
+import qualified Data.Map as M
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -48,6 +49,7 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp)
 import Common.Api (PublicRequest)
+import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
@@ -114,10 +116,13 @@ fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
   text $ w <> p
   elClass "span" "tez" $ text tz
 
+standardTimeFormat :: String
+standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  text $ T.pack $ Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" $ Time.utcToZonedTime tz t
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz t
 
 localHumanizedTimestamp
   ::
@@ -136,6 +141,21 @@ localHumanizedTimestamp titleDyn tsDyn = do
       dyn_ $ fmap localTimestamp tsDyn
     ) $
     dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+
+-- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
+-- tooltips since they are more lightweight
+localHumanizedTimestampBasic
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasic tsDyn = do
+  tz <- asks (^. timeZone)
+  currentTime <- asks (^. timer)
+  let attrs = ffor tsDyn $ \ts -> M.fromList
+        [ ("data-position", "bottom left")
+        , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
+        ]
+  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
 
 data TooltipPos
   = TooltipPos_TopLeft
@@ -419,19 +439,40 @@ cancelableModalWithClasses f close = mdo
     divClass "content" (f $ leftmost [domEvent Click closeEl, close])
   pure e
 
-confirmationModal :: MonadRhyoliteFrontendWidget app t m
+reminderModal :: MonadRhyoliteFrontendWidget app t m
                   => Text
                   -> Text
                   -> Text
                   -> (Event t () -> Event t (PublicRequest app ()))
                   -> Event t ()
                   -> m (Event t ())
-confirmationModal title msg btn mkReq = cancelableModal $ \close -> do
-  el "h3" $ text title
-  el "p" $ text msg
+reminderModal title msg = confirmationModal False title [msg]
+
+warningModal :: MonadRhyoliteFrontendWidget app t m
+             => Text
+             -> [Text]
+             -> Text
+             -> (Event t () -> Event t (PublicRequest app ()))
+             -> Event t ()
+             -> m (Event t ())
+warningModal = confirmationModal True
+
+confirmationModal :: MonadRhyoliteFrontendWidget app t m
+                  => Bool
+                  -> Text
+                  -> [Text]
+                  -> Text
+                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> Event t ()
+                  -> m (Event t ())
+confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ do
+    when isDangerous $ icon "icon-warning big red"
+    text title
+  for_ msgs $ el "p" . text
   confirm <- divClass "buttons" $ uiButton "primary" btn
   response <- requestingIdentity $ public <$> mkReq confirm
-  pure $ leftmost [response, close]
+  pure (pure ["confirmation"], leftmost [response, close])
 
 data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
   deriving (Eq, Show, Ord)
@@ -556,6 +597,12 @@ ensureHealthyNodes = do
   text "Add a node from the left panel or make sure any nodes you’ve already added are"
   icon "circle healthy-node small green"
   text "healthy."
+
+htmlErrorDescription :: DomBuilder t m => ErrorDescription -> m ()
+htmlErrorDescription = \case
+  ErrorDescription_Plain t -> text t
+  ErrorDescription_Emphasis t -> el "strong" $ text t
+  ErrorDescription_Concat t t' -> ((*>) `on` htmlErrorDescription) t t'
 
 makeLenses ''FrontendContext
 

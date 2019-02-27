@@ -202,11 +202,23 @@ bakerErrorViewOnly = \case
   _ -> Nothing
 
 bakerIdForBakerErrorLogView :: BakerErrorLogView -> PublicKeyHash
-bakerIdForBakerErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
+bakerIdForBakerErrorLogView (tag :=> Identity v) = bakerIdForBakerLogTag tag v
+
+bakerIdForBakerLogTag :: BakerLogTag t -> t -> PublicKeyHash
+bakerIdForBakerLogTag = \case
   BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_publicKeyHash
   BakerLogTag_BakerMissed -> unId . _errorLogBakerMissed_baker
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
+  BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
+
+errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
+errorLogIdForBakerLogTag = \case
+  BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
+  BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
+  BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
+  BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
+  BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
 errorLogIdForNodeLogTag = \case
@@ -218,11 +230,7 @@ errorLogIdForNodeLogTag = \case
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   LogTag_Node nlt -> errorLogIdForNodeLogTag nlt
-  LogTag_Baker blt -> case blt of
-    BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
-    BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
-    BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
-    BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
+  LogTag_Baker blt -> errorLogIdForBakerLogTag blt
   LogTag_BakerNoHeartbeat -> _errorLogBakerNoHeartbeat_log
   LogTag_NetworkUpdate -> _errorLogNetworkUpdate_log
 

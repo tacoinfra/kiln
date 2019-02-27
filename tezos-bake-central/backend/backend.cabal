@@ -96,6 +96,7 @@ library
     , unix
     , universe
     , uri-encode
+    , vector
 
   exposed-modules:
     Backend
@@ -124,7 +125,9 @@ library
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.WebApi
+    Backend.Workers.Accusation
     Backend.Workers.Baker
+    Backend.Workers.Block
     Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Node

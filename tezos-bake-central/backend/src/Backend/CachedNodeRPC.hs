@@ -32,8 +32,11 @@ import Control.Applicative (ZipList (..))
 import Control.Arrow (left)
 import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
                                retry, writeTQueue, writeTVar)
+import Control.Exception (throw)
+import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
-import Control.Lens (TraversableWithIndex)
+import Control.Exception.Safe (toException)
+-- import Control.Lens (TraversableWithIndex)
 import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
@@ -70,12 +73,13 @@ import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (mapMaybe)
+-- import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
+import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Network.HTTP.Client as Http (Manager)
@@ -107,8 +111,20 @@ import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
 
+-- This exception should be impossible, but that depends on the node
+-- working correctly.  The information inside is just the arguments of
+-- the request you would have made to end up with it.
+data NoRightsException = NoRightsException BlockHash RawLevel Priority
+  deriving (Eq, Ord, Show, Typeable)
+
+instance Exception NoRightsException
+
 data NodeQuery a where
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_BakingRights1   :: BlockHash -> RawLevel -> Priority -> NodeQuery BakingRights
+    -- Baking rights for a specific priority.
+  NodeQuery_BakingRightsChunk :: BlockHash -> RawLevel -> Priority -> NodeQuery (V.Vector BakingRights)
+    -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
@@ -476,10 +492,12 @@ blankNodeDataSource db chain protoInfo' mgr logger = do
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
     }
+{-
 
 withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
 withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
 
+-}
 calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
 calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
@@ -564,6 +582,7 @@ dataSourceHead nds = withCache nds Nothing $ \_ -> do
   let branches = _cachedHistory_branches history
   pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
+{-
 -- | extrats the fittest known node from cache
 dataSourceNode
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
@@ -573,6 +592,7 @@ dataSourceNode nds = do
   nodes <- readTVar' $ _nodeDataSource_nodes dsrc
   pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
     maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
+-}
 
 takeWhileJust :: [Maybe a] -> [a]
 takeWhileJust [] = []
@@ -620,17 +640,26 @@ levelAncestor hist lvl ctx = ctxBlockHash
   where
     minLevel = _cachedHistory_minLevel hist
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
-    ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel) <$> branch
+    ctxBlockHash = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel + 1) <$> branch
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
 rightsContext params hist ctx lvl = levelAncestor hist (rightsContextLevel params lvl) ctx
 
+-- | Round the second argument to the next lower multiple of the first
+floorBy :: Integral a => a -> a -> a
+floorBy k n = n - n `mod` k
+
+priorityChunkSize :: Num a => a
+priorityChunkSize = 64
+
 -- Recontextualize a query for maximum cache friendliness, and also return the least block
 getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
 getKey params hist = \case
   NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
+  NodeQuery_BakingRights1 ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRights1 ctx' lvl prio)) <$> rightsContext params hist ctx lvl
+  NodeQuery_BakingRightsChunk ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRightsChunk ctx' lvl (floorBy priorityChunkSize prio))) <$> rightsContext params hist ctx lvl
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
@@ -787,6 +816,10 @@ nodeQueryDataSourceImpl
 nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
+  NodeQuery_BakingRights1 branch targetLevel prio ->
+    ExceptT $ fmap join $ runExceptT $ fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $ self $ NodeQuery_BakingRightsChunk branch targetLevel prio
+  NodeQuery_BakingRightsChunk branch targetLevel prio ->
+    fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull chainId branch (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio)
   NodeQuery_EndorsingRights branch targetLevel ->
     nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_Account branch contractId ->
@@ -807,6 +840,15 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     self :: forall b. NodeQuery b -> ExceptT CacheError IO b
     self = ExceptT . self'
 
+    fillChunk :: BlockHash -> RawLevel -> Priority -> Seq BakingRights -> V.Vector BakingRights
+    fillChunk branch targetLevel prio
+      = (makeBlanks branch targetLevel prio V.//)
+      . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
+      . filter (\x -> _bakingRights_priority x >= prio)
+      . toList
+
+    makeBlanks :: BlockHash -> RawLevel -> Priority -> V.Vector BakingRights
+    makeBlanks branch targetLevel prio = V.generate priorityChunkSize $ \i -> throw $ NoRightsException branch targetLevel $ prio + fromIntegral i
 
 withCache
   :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)
@@ -816,6 +858,7 @@ withCache nds dft action = do
   protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
 
+{-
 calculateBakerStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f
   , MonadReader r m, HasNodeDataSource r
@@ -836,6 +879,7 @@ calculateBakerStats pkhs = do
       return (result, a)
 
 
+-}
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
   ( MonadIO m
@@ -849,6 +893,7 @@ ancestors (RawLevel n) branch = do
     Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
 
+{-
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
@@ -886,6 +931,7 @@ calculateBakeEfficiency branch len baker = do
       | BakingRights _lvl d prio _ <- toList xs
       ]
 
+-}
 tryFetchFromCache
   :: forall m a. MonadNodeQuery m
   => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
