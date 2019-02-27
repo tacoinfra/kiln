@@ -202,22 +202,22 @@ settingsTab = do
                     pure $ leftmost [finish, close]
             pure ()
 
-    _clientsOptions :: m ()
-    _clientsOptions = void $ do
-      divClass "ui medium header" $ text "Clients"
-      elClass "table" "ui celled striped compact table" $ do
-        clients <- watchClientAddresses -- TODO
-        _ <- listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
-          el "td" $ dynText $ Uri.render <$> dName
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
+    -- _clientsOptions :: m ()
+    -- _clientsOptions = void $ do
+    --   divClass "ui medium header" $ text "Clients"
+    --   elClass "table" "ui celled striped compact table" $ do
+    --     clients <- watchClientAddresses -- TODO
+    --     _ <- listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
+    --       el "td" $ dynText $ Uri.render <$> dName
+    --       el "td" $ do
+    --         eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
+    --         requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
 
-        addE <- formWithReset "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." blank never $ do
-          zipFields
-            (formItem' "required" $ uriField "Bake Daemon Address" "http://127.0.0.1:9732/")
-            (formItem $ aliasField "My Bake Daemon")
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
+    --     addE <- formWithReset "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." blank never $ do
+    --       zipFields
+    --         (formItem' "required" $ uriField "Bake Daemon Address" "http://127.0.0.1:9732/")
+    --         (formItem $ aliasField "My Bake Daemon")
+    --     void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
 
     _bakersOptions :: m ()
     _bakersOptions = do
