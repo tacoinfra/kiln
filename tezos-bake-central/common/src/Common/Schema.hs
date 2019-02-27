@@ -755,6 +755,14 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog
 
+data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
+  { _errorLogInsufficientFunds_log :: !(Id ErrorLog)
+  , _errorLogInsufficientFunds_baker :: !(Id Baker)
+  , _errorLogInsufficientFunds_detected :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogInsufficientFunds where
+  type IdData ErrorLogInsufficientFunds = Id ErrorLog
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -855,6 +863,7 @@ data BakerLogTag a where
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
+  BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -891,6 +900,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
@@ -947,6 +957,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
+  , 'ErrorLogInsufficientFunds
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
@@ -1049,6 +1060,7 @@ errorLogNames =
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount

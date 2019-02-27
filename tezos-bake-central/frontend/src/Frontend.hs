@@ -70,6 +70,7 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
+import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
 import Common.Alerts (networkUpdateDescription)
 import Common.Api
@@ -753,6 +754,9 @@ liveErrorsWidget = void $ do
               header "Multiple bakers for same baker" -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
+              pkh
+            BakerLogTag_InsufficientFunds -> renderBakerError
+              (bakerInsufficientFundsDescriptions log)
               pkh
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
@@ -1675,6 +1679,7 @@ bakersTab =
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
+                  BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1731,6 +1736,7 @@ bakersTab =
         BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
         BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
         BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
+        BakerLogTag_InsufficientFunds -> renderBakerError (bakerInsufficientFundsDescriptions log) pkh
 
       where
         renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()

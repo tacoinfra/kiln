@@ -159,6 +159,8 @@ instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
   mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivated :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
   mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivationRisk :=>)
+instance HasDefaultNotify (Id ErrorLogInsufficientFunds) where
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_InsufficientFunds :=>)
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 instance HasDefaultNotify (Id ErrorLogBakerMissed) where
@@ -845,6 +847,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerDeactivationRiskId
             type: primary
             fields: [_errorLogBakerDeactivationRisk_log]
+  - entity: ErrorLogInsufficientFunds
+    autoKey: null
+    keys:
+      - name: ErrorLogInsufficientFundsId
+        default: true
+    constructors:
+      - name: ErrorLogInsufficientFunds
+        uniques:
+          - name: ErrorLogInsufficientFundsId
+            type: primary
+            fields: [_errorLogInsufficientFunds_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -982,6 +995,9 @@ instance DefaultKeyId ErrorLogBakerDeactivated where
 instance DefaultKeyId ErrorLogBakerDeactivationRisk where
   toIdData _ (ErrorLogBakerDeactivationRiskIdKey eid) = eid
   fromIdData _ = ErrorLogBakerDeactivationRiskIdKey
+instance DefaultKeyId ErrorLogInsufficientFunds where
+  toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
+  fromIdData _ = ErrorLogInsufficientFundsIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -1043,6 +1059,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
+  BakerLogTag_InsufficientFunds -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
 logAssume = \case
@@ -1110,6 +1127,7 @@ bakerLogDep = \case
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
+  BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   where
     depBakerAlert' f = Related f $ ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField

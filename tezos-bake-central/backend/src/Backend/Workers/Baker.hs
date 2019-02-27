@@ -385,6 +385,12 @@ getWantedAction protoInfo headBlock baker details = do
               if (1 >= gracePeriod - headCycle)
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
-      pure [deactivationAlerts, updateDetails]
+
+        insufficientFundAlerts :: mCommit ()
+        insufficientFundAlerts = if _cacheDelegateInfo_stakingBalance di < (10000 :: Tez)
+          then reportInsufficientFunds baker
+          else clearInsufficientFunds baker
+
+      pure [deactivationAlerts, insufficientFundAlerts, updateDetails]
 
   return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts
