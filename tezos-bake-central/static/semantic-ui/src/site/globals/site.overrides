@@ -296,6 +296,7 @@ body {
     padding-bottom: @6px;
     padding-right: @20px;
     border-bottom-width: @2px;
+    background-color: #FEFEFE;
 
     .column {
       .ui.circular.label.link {
@@ -305,6 +306,9 @@ body {
         margin-top: 2px;
         &.basic {
           border-color: transparent;
+        }
+        i.icon-bell {
+          margin-right: 0;
         }
       }
     }
