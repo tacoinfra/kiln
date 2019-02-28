@@ -41,24 +41,34 @@ clientPath (Just NamedChain_Mainnet) = $(staticWhich "mainnet-tezos-client")
 clientPath (Just NamedChain_Alphanet) = $(staticWhich "alphanet-tezos-client")
 clientPath (Just NamedChain_Zeronet) = $(staticWhich "zeronet-tezos-client")
 
-getConnectedLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> m (Maybe LedgerIdentifier)
+{- Example output from `list connected ledgers`
+Found a Tezos Baking 1.5.0 (commit v1.4.3-19-g55cc026d) application running on Ledger Nano S at [0003:0007:00].
+
+To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
+ tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/ed25519/0'/0'"
+ tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/secp256k1/0'/0'"
+ tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/P-256/0'/0'"
+-}
+
+getConnectedLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m (Maybe LedgerIdentifier)
 getConnectedLedger chain = do
-  (exitCode, stdout, stderr) <- liftIO $ readProcessWithExitCode (clientPath chain) ["list", "connected", "ledgers", "--for-script", "TSV"] ""
-  case exitCode of
-    ExitFailure _ -> do
-      $(logError) $ T.pack $ "getConnectedLedger: " <> stderr
-      pure Nothing
-    ExitSuccess -> do
-      case T.lines $ T.pack stdout of
-        r : _ -> do
-          let r' = getKungFuName r
-          when (isNothing r') $ $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> r
-          pure r'
-        [] -> pure Nothing
-      where
-        getKungFuName t = case T.splitOn "\t" t of
-          [_baker, _version, _usb, kungFu] -> Just $ LedgerIdentifier kungFu
-          _ -> Nothing
+  stdout <- runClientCommand chain ["list", "connected", "ledgers"] $ \warnings errors -> if
+    | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
+    | otherwise -> Left $ ClientError_Other $ T.unlines errors
+  let kfn = getKungFuName (T.lines stdout)
+  when (isNothing kfn) $ $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> stdout
+  pure kfn
+  where
+    getKungFuName = \case
+      foundApp : _blank : useKeys : keyExample : _
+        | Just version' <- T.stripPrefix "Found a Tezos Baking " foundApp
+        , version <- T.takeWhile (/= ' ') version'
+        , "To use keys at BIP32 path" `T.isPrefixOf` useKeys -- sanity check
+        , Just ledger' <- T.stripPrefix "\"ledger://" (T.dropWhile (/= '"') keyExample)
+        , ledger <- T.takeWhile (/= '/') ledger'
+        , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
+        -> Just $ LedgerIdentifier ledger
+      _ -> Nothing
 
 getBalanceFor :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
 getBalanceFor chain pkh = do
@@ -70,17 +80,30 @@ getBalanceFor chain pkh = do
     Just x | Just micro <- Aeson.decodeStrict (TE.encodeUtf8 x) -> Just $ Tez micro
     _ -> Nothing
 
+{- Example output for `show ledger`
+Found a Tezos Baking 1.5.0 application running on a Ledger Nano S at [0003:0007:00].
+Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
+Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
+-}
+
 showLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
 showLedger chain sk = do
-  stdout <- runClientCommand chain ["show", "ledger", T.unpack $ toSecretKeyText sk, "--for-script", "TSV"] $ \_warnings errors -> if
+  stdout <- runClientCommand chain ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
-  pure $ case T.splitOn "\t" stdout of
-    -- TODO should "Ledger Nano S" have a tab char in the middle?
-    [_baker, _ledger, _nanoS, _usb, pkht, _publicKey] | Right pkh <- tryReadPublicKeyHashText pkht -> pure pkh
-    _ -> Nothing
+  let pkh = getPublicKeyHash (T.lines stdout)
+  when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
+  pure pkh
+  where
+    getPublicKeyHash = \case
+      foundApp : pkh' : _
+        | T.isPrefixOf "Found a Tezos Baking " foundApp
+        , Just pkht <- T.stripPrefix "Tezos address at this path/curve: " pkh'
+        , Right pkh <- tryReadPublicKeyHashText pkht
+        -> Just pkh
+      _ -> Nothing
 
 importSecretKey :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m ()
 importSecretKey chain sk = do
@@ -120,12 +143,16 @@ runClientT m = do
     Nothing -> pure $ Left $ ClientError_Other "Timeout"
     Just a -> pure a
 
-authorizeLedgerToBake :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m ()
-authorizeLedgerToBake chain = do
-  void $ runClientCommand chain ["authorize", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
+setupLedgerToBake :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m ()
+setupLedgerToBake chain = do
+  void $ runClientCommand chain ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
+    | "This command (`setup ledger ...`) is not compatible with this version" : version'' : _ <- errors
+    , Just version' <- T.stripPrefix "of the Ledger Baking app (Tezos Baking " version''
+    , version <- T.takeWhile (/= ' ') version'
+    -> Left $ ClientError_OutdatedLedgerBakingVersion version
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
 
 -- If node isn't synced, this command will block while it waits for the node to

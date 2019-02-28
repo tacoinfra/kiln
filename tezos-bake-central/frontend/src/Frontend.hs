@@ -913,7 +913,8 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       rec
         poll <- delay 5 response
         response <- requestingIdentity $ public PublicRequest_ClientGetConnectedLedger <$ (pb <> void poll)
-      let ledgerChoice = fmapMaybe id response
+      let (reqErr, reqOk) = fanEither response
+          ledgerChoice = fmapMaybe id reqOk
       el "p" $ text "Connect your Ledger Device, enter the PIN and open the Tezos Baking app."
       divClass "explanation" $ do
         text "To install the Tezos Baking app:"
@@ -926,7 +927,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
           el "li" $ text "Go to Manager and search for \"Tezos\""
           el "li" $ text "Install the \"Tezos Baking\" app"
           el "li" $ text "Open the Tezos Baking app on your ledger"
-      pure ((["connect-device"], never), selectAccount <$> ledgerChoice)
+      pure ((["connect-device"], never), leftmost [selectAccount <$> ledgerChoice, handleClientErrorWorkflow connectDevice <$> reqErr])
 
     selectAccount ledger = Workflow $ mdo
       elAttr "img" ("src" =: static @"images/ledger-check.png" <> "class" =: "ledger check") blank
@@ -1007,7 +1008,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       ledgerCheckImg ledger
       respondToPrompt "Authorizing ledger to bake..." $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public PublicRequest_ClientAuthorizeLedgerToBake <$ pb
+      response <- requestingIdentity $ public PublicRequest_ClientSetupLedgerToBake <$ pb
       let next = \case
             Right () -> registerAsDelegate ledger pkh
             Left e -> handleClientErrorWorkflow (authorizeLedgerToBake ledger pkh) e
@@ -1069,7 +1070,7 @@ authorizeLedgerToBakeModal ledger pkh close = ffor (workflow auth) $ \d -> let (
       ledgerCheckImg ledger
       respondToPrompt "" $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
       pb <- getPostBuild
-      response <- requestingIdentity $ public PublicRequest_ClientAuthorizeLedgerToBake <$ pb
+      response <- requestingIdentity $ public PublicRequest_ClientSetupLedgerToBake <$ pb
       let next = \case
             Right () -> authorized
             Left e -> handleClientErrorWorkflow waiting e

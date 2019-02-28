@@ -40,7 +40,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
-import Tezos.Types (NamedChain)
+import Tezos.Types (NamedChain, SecretKey(..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.ClientCmd
@@ -68,7 +68,7 @@ requestHandler maybeNamedChain upgradeBranch emailFromAddr nds publicNodeSources
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_ClientAuthorizeLedgerToBake -> runClientT $ authorizeLedgerToBake maybeNamedChain
+      PublicRequest_ClientSetupLedgerToBake -> runClientT $ setupLedgerToBake maybeNamedChain
       PublicRequest_ClientRegisterKeyAsDelegate pkh -> registerKeyAsDelegate maybeNamedChain >>= \case
         Left e -> pure $ Left e
         Right () -> inDb $ do
@@ -82,12 +82,18 @@ requestHandler maybeNamedChain upgradeBranch emailFromAddr nds publicNodeSources
           update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
           pure $ Right ()
       PublicRequest_ClientImportSecretKey sk pkh -> runClientT $ do
+        let li = _secretKey_ledgerIdentifier sk
+            sc = _secretKey_signingCurve sk
+            dp = _secretKey_derivationPath sk
         -- Store secret key first as "consent"
-        inDb $ do
-          insert_ $ LedgerAccount pkh sk
+        _ <- inDb [executeQ|
+          INSERT INTO "LedgerAccount"
+          VALUES (?pkh, ?li, ?sc, ?dp)
+          ON CONFLICT DO NOTHING
+        |]
         importSecretKey maybeNamedChain sk
 
-      PublicRequest_ClientGetConnectedLedger -> getConnectedLedger maybeNamedChain
+      PublicRequest_ClientGetConnectedLedger -> runClientT $ getConnectedLedger maybeNamedChain
       PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
         account <- MaybeT $ showLedger maybeNamedChain secretKey
         balance <- MaybeT $ getBalanceFor maybeNamedChain account
