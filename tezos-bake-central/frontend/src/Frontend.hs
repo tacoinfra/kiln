@@ -1133,7 +1133,7 @@ handleClientErrorWorkflow recover = \case
   ClientError_LedgerDisconnected -> ledgerDisconnected recover
   ClientError_NodeNotReady -> nodeNotReady recover
   _ -> Workflow $ do
-    elClass "h5" "ui header" $ text "Something went wrong"
+    elClass "h5" "ui center aligned header" $ text "Something went wrong"
     retry <- uiButton "primary" "Retry"
     pure ((["ledger-disconnected"], never), recover <$ retry)
   where
