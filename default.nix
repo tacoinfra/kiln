@@ -44,7 +44,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}"
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" --history-mode archive
         '';
         serviceConfig = {
           User = user;
