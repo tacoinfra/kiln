@@ -470,7 +470,8 @@ networkUpdateAlert elua = do
     Nothing
     (do el "p" $ text $ bodyFirstPara
         el "p" $ do
-          text "Get the new software here  🡒  "
+          text "Get the new software here "
+          elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
     (Just $ LogTag_NetworkUpdate :=> pure elua)
