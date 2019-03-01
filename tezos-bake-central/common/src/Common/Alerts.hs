@@ -160,7 +160,7 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
 bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
 bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
-  , _bakerErrorDescriptions_tile = "Missed " <> aRight
+  , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
   , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
   , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorEmphasis (" block level " <> lvl) <> "."
   , _bakerErrorDescriptions_warning = Nothing
@@ -177,7 +177,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right <> "."
-  , _bakerErrorDescriptions_tile = "Accused of double" <> right <> "."
+  , _bakerErrorDescriptions_tile = "Accused of double " <> right <> "."
   , _bakerErrorDescriptions_notification =
       plaintextErrorDescription firstParagraph
       <> ".\n\nSecurity deposits and rewards may have been confiscated."
