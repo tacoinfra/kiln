@@ -161,7 +161,7 @@ bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
 bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight
-  , _bakerErrorDescriptions_notification = "This baker missed its chance " <> toRight <> " block level " <> lvl <> "."
+  , _bakerErrorDescriptions_notification = "This baker failed " <> toRight <> " a block at level " <> lvl <> "."
   , _bakerErrorDescriptions_problem = "This baker missed its chance " <> errorPlain toRight <> errorEmphasis (" block level " <> lvl) <> "."
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
