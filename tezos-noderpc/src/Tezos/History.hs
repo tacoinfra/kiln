@@ -54,7 +54,7 @@ instance NFData a => NFData (CachedHistory a)
 makeLenses 'CachedHistory
 
 emptyCache :: CachedHistory a
-emptyCache = CachedHistory Map.empty Map.empty 1
+emptyCache = CachedHistory Map.empty Map.empty 2
 
 class HasCachedHistory f s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (f (CachedHistory a)) (f (CachedHistory b))
