@@ -129,6 +129,8 @@ let
     }
   ;
 
+  opsEmail = "elliot.cameron@obsidian.systems";
+
   syslog-ngModule = {...}: {
     services.openssh.extraConfig = ''
       MaxAuthTries 3
@@ -171,7 +173,7 @@ let
           host("mail.obsidian.systems")
           port(2525)
           from("syslog-ng alert service" "noreply@obsidian.systems")
-          to(ops_friendlyname "ops@obsidian.systems")
+          to(ops_friendlyname "${opsEmail}")
           subject("[ALERT] $LEVEL $HOST $PROGRAM $MSG")
           body("$MSG\\n$SDATA\n")
         );
