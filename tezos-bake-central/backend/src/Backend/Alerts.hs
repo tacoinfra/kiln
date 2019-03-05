@@ -252,7 +252,7 @@ reportInsufficientFunds baker = do
     SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogInsufficientFunds" t ON t.log = el.id
-      JOIN "Baker" b ON b.publicKeyHash = t."publicKeyHash"
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
@@ -277,7 +277,7 @@ clearInsufficientFunds baker = do
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInsufficientFunds" t
       WHERE t.log = el.id
-      AND t."publicKeyHash" = ?pkh
+      AND t."baker#publicKeyHash" = ?pkh
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
