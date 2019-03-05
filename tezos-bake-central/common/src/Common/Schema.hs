@@ -87,6 +87,7 @@ data ClientError
   | ClientError_LedgerDisconnected
   | ClientError_AliasAlreadyUsed
   | ClientError_ProcessError
+  | ClientError_OutdatedLedgerBakingVersion Text -- app version
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError

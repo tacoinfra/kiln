@@ -58,7 +58,7 @@ instance HasRequest Bake where
       :: Email
       -> PublicRequest Bake ()
     PublicRequest_ClientGetConnectedLedger
-      :: PublicRequest Bake (Maybe LedgerIdentifier)
+      :: PublicRequest Bake (Either ClientError (Maybe LedgerIdentifier))
     PublicRequest_ClientShowLedger
       :: SecretKey
       -> PublicRequest Bake (Either ClientError (Maybe (SecretKey, PublicKeyHash, Tez)))
@@ -66,7 +66,7 @@ instance HasRequest Bake where
       :: SecretKey
       -> PublicKeyHash
       -> PublicRequest Bake (Either ClientError ())
-    PublicRequest_ClientAuthorizeLedgerToBake
+    PublicRequest_ClientSetupLedgerToBake
       :: PublicRequest Bake (Either ClientError ())
     PublicRequest_ClientRegisterKeyAsDelegate
       :: PublicKeyHash
