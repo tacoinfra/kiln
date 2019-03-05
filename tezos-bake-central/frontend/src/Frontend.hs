@@ -1822,30 +1822,28 @@ bakersTab =
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
 
-        (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
-        dyn_ $ ffor details'' $ \case
-          Nothing -> blank
-          Just details -> elClass "table" "baker-balance" $ do
-            let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "tr" $ do
-              el "td" (text "Available Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
-                text p
-                elClass "span" "tez" $ text tz
+        let
+          dmDelegateInfo = (fmap unJson) . join . (fmap _bakerDetails_delegateInfo) <$> details'
+        elClass "table" "baker-balance" $ do
+          el "tr" $ do
+            el "td" (text "Available Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
+              text p
+              elClass "span" "tez" $ text tz
 
-            el "tr" $ do
-              el "td" (text "Staking Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text p
-                elClass "span" "tez" $ text tz
+          el "tr" $ do
+            el "td" (text "Staking Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text p
+              elClass "span" "tez" $ text tz
 
         dyn_ $ ffor isGatheringData $ \case
           False -> blank
