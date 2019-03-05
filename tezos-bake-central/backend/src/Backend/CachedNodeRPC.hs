@@ -465,11 +465,8 @@ lookupBlock
 lookupBlock nds x = do
   let dsrc = nds ^. nodeDataSource
   history <- readTVar' $ _nodeDataSource_history dsrc
-  let
-    xPath = Map.lookup x $ _cachedHistory_blocks history
-    f :: LCA.Path BlockHash () -> VeryBlockLike
-    f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
-  return $ fmap f xPath
+  let xPath = Map.lookup x $ _cachedHistory_blocks history
+  return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
 blankNodeDataSource db chain protoInfo' mgr logger = do
@@ -522,7 +519,7 @@ waitForNewHead nds = do
 histToBlockLike :: RawLevel -> (BlockHash, (), LCA.Path BlockHash ()) -> VeryBlockLike
 histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixEpoch
   where
-    blkLevel = minLevel + fromIntegral (length path) + 1
+    blkLevel = minLevel + fromIntegral (length path)
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
 updateNodeDataSource
