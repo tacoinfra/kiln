@@ -12,7 +12,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
-    staticFilesImpure = toString ./result-static;
+    # staticFilesImpure = toString ./result-static;
     packages = {
       backend-db = ./backend-db;
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
