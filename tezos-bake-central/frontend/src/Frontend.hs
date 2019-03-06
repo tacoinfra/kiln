@@ -1156,7 +1156,6 @@ handleClientErrorWorkflow recover = \case
       pure ((["ledger-disconnected"], never), tryAgain <$ restart) -- TODO restart should go back to start?
 
     nodeNotReady tryAgain = Workflow $ do
-      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
       elClass "h5" "ui header" $ text "Kiln needs to fully sync the node it is running with the blockchain before baking."
       divClass "explanation" $ text "Try again after the node has fully synced."
       retry <- uiButton "primary" "Dismiss"
