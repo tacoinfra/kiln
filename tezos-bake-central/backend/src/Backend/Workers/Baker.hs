@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 {-# OPTIONS_GHC -Wno-unused-imports #-}
@@ -246,15 +247,18 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     db = _nodeDataSource_pool nds
 
   res <- runExceptT $ for_ headM $ \headBlock -> flip runReaderT nds $ do
-    currentState :: [(Baker, Maybe BakerDetails)] <- runDb (Identity db) $ do
+    (bakerInt, currentState :: [(Baker, Maybe BakerDetails)]) <- runDb (Identity db) $ do
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
+      bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+          (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
         (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
-      return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
+      return $ (bakerInt,) $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
-      res <- runExceptT $ getWantedAction protoInfo headBlock baker details
+      let isInternal = maybe False (== _baker_publicKeyHash baker) bakerInt
+      res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
       case res of
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
@@ -283,8 +287,8 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> mPrepare (mCommit ())
-getWantedAction protoInfo headBlock baker details = do
+  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
+getWantedAction protoInfo headBlock baker details isInternal = do
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
@@ -391,6 +395,8 @@ getWantedAction protoInfo headBlock baker details = do
           then reportInsufficientFunds baker
           else clearInsufficientFunds baker
 
-      pure [deactivationAlerts, insufficientFundAlerts, updateDetails]
+      pure $ [deactivationAlerts, updateDetails] ++ if isInternal
+        then [insufficientFundAlerts]
+        else []
 
   return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts
