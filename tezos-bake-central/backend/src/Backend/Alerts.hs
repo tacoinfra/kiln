@@ -273,7 +273,7 @@ clearInsufficientFunds
   => Baker -> m ()
 clearInsufficientFunds baker = do
   let pkh = _baker_publicKeyHash baker
-  lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
+  lids :: [Id ErrorLogInsufficientFunds] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInsufficientFunds" t
       WHERE t.log = el.id
