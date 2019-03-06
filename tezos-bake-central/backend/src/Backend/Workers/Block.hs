@@ -81,7 +81,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
     -- leases on work items time out and let other backends just steal them,
     -- rather than making postgres the central arbiter of locking.
 
-    for_ queuedBlockOrNot $ \queuedBlock -> (either ($(logErrorSH)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+    for_ queuedBlockOrNot $ \queuedBlock -> (either ($(logErrorSH) . \e -> ("blockWorker" :: Text,queuedBlock,e)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
       $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
       block <- nodeQueryDataSourceSafe $ NodeQuery_Block $ _blockTodo_hash queuedBlock
       let blockHash = _block_hash block

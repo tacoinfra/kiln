@@ -343,7 +343,7 @@ updateDataSource nds (pn, chain, uri) = do
 
     updatePublicNodeInDb :: m ()
     updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
-      Left e -> $(logErrorSH) e
+      Left e -> $(logErrorSH) ("updatePublicNodeInDb"::Text,(pn,chain,Uri.render uri),e)
       Right b -> do
         haveNewHead nds (Just pn) uri b
         runDb (Identity db) $ do
