@@ -54,8 +54,6 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
   let chainId = _nodeDataSource_chain nds
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
-    $(logDebug) "Scrape blocks cycle."
-
     (params, dsh) <- liftIO $ atomically $
       (,) <$> waitForParams nds <*> dataSourceHead nds
     let headLevelMay = (^. level) <$> dsh
