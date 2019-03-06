@@ -799,8 +799,8 @@ pickNode branch = do
   dsrc <- asks (^. nodeDataSource)
   nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
   fmap (headMay . catMaybes) $ for (Map.toList $ Map.mapMaybe id nodeHeads) $ \(nodeUri, nodeHead) ->
-    containsBranch nodeHead >>= \isCanditate ->
-      pure $ if isCanditate then Just nodeUri else Nothing
+    containsBranch nodeHead >>= \isCandidate ->
+      pure $ if isCandidate then Just nodeUri else Nothing
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
