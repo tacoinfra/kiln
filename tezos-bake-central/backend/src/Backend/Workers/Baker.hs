@@ -390,6 +390,8 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
 
+        -- TODO - Is minStakeForDelegation available from ProtoInfo?
+        minStakeForDelegation = 10000 :: Tez
         insufficientFundAlerts :: mCommit ()
         insufficientFundAlerts = if _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
           then reportInsufficientFunds baker
