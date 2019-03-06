@@ -243,18 +243,22 @@ instance MonadNodeQuery NodeQueryQueued where
     let ioQueue = _nodeDataSource_ioQueue nds
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
-  nodeRPCOrBust protoInfo qBranch q = (NodeQueryQueued . atomicallyWith) (pickNode qBranch) >>= \case
-    Nothing -> nqThrowError CacheError_NoSuitableNode
-    Just anyNode -> do
-      dsrc <- askNodeDataSource
-      let
-        ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+  nodeRPCOrBust protoInfo qBranch q = do
+    dsrc <- askNodeDataSource
+    nodesToTry <- NodeQueryQueued $ atomicallyWith $ pickNode qBranch >>= \case
+      Nothing -> fmap Map.keys $ readTVar' $ _nodeDataSource_nodes dsrc
+      Just anyNode -> pure [anyNode]
+    result <- foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
+      answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
+      Left _ -> \anyNode -> do
+        let
+          ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
 
-        nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-        nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
+          nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+          nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
 
-      result <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
-      nqLiftEither result
+        NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+    nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
 
