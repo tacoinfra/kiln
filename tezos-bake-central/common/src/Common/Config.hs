@@ -13,7 +13,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
-import Text.URI as Uri
 import Text.URI (URI)
 
 import Tezos.Base58Check (HashBase58Error(..))
@@ -21,6 +20,7 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (ChainId, NamedChain (..), PublicKeyHash)
 
 import Common (defaultTezosCompatJsonOptions)
+import Common.URI (mkRootUri)
 import ExtraPrelude
 
 changelogUrl :: Text -> Text
@@ -97,7 +97,7 @@ parseBakerAddr v = do
     okPrefixes = "tz1" :| ["tz2", "tz3"]
 
 parseURIUnsafe :: Text -> URI
-parseURIUnsafe uri = either (\msg -> error $ "Invalid URI '" <> T.unpack uri <> "': " <> show msg) id $ Uri.mkURI uri
+parseURIUnsafe uri = either (\msg -> error $ "Invalid URI '" <> T.unpack uri <> "': " <> show msg) id $ mkRootUri uri
 
 tzscanApiUri :: FilePath
 tzscanApiUri = "tzscan-api-uri"
