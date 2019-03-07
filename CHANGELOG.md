@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1
+*March 7, 2019*
+
+  * Kiln now sends alerts if it sees a double baking or double endorsement accusation for a monitored baker.
+  * Performance improvements
+  * Bug fixes
+
+### Known Issues
+
+  * Some unresolved alerts still show up under **Resolved**.
+
 ## 0.4.0
 *January 25, 2019*
 
