@@ -224,10 +224,10 @@ backendImpl cfg serve = do
         updateNodesAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
-          kept <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
-          ifor_ (Map.restrictKeys names $ Set.fromList kept) $ \address alias -> do
+          kept <- fmap Set.fromList $ project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names kept) $ \address alias -> do
             update [aliasSelector =. alias] $ nameSelector ==. address
-          pure $ Map.withoutKeys names (Set.fromList kept)
+          pure $ Map.withoutKeys names kept
 
         updateBakersAndAlias
           :: Map.Map PublicKeyHash (Maybe Text)
@@ -238,10 +238,10 @@ backendImpl cfg serve = do
         updateBakersAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
-          kept <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
-          ifor_ (Map.restrictKeys names $ Set.fromList kept) $ \address alias -> do
+          kept <- fmap Set.fromList $ project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names kept) $ \address alias -> do
             update [aliasSelector =. alias] $ nameSelector ==. address
-          pure $ Map.withoutKeys names (Set.fromList kept)
+          pure $ Map.withoutKeys names kept
 
       for_ nodes $ \ns -> do
         new <- updateNodesAndAlias ns
