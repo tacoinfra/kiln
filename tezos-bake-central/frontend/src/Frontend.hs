@@ -628,13 +628,14 @@ liveErrorsWidget = void $ do
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Nothing
               }
+    filteredSynthErrors = ffor2 filterDyn synthErrors $ \f errs -> ffilter (passesFilter f . fst) errs
 
     combinedErrors
       :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, Either ErrorLogView' SynthError))
     combinedErrors = fold
       [ fmap (errorsByTime Left . (fmap . fmap) Left) combinedRealErrors
-      , fmap (errorsByTime Right . (fmap . fmap) Right) synthErrors
+      , fmap (errorsByTime Right . (fmap . fmap) Right) filteredSynthErrors
       ]
 
     errorsByTime
