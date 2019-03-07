@@ -14,6 +14,8 @@ module Backend where
 
 import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
+import Control.Lens (set)
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -324,6 +326,9 @@ getConfigFromFile' :: (Text -> Either String a) -> FilePath -> IO (Maybe a)
 getConfigFromFile' parser f = (either error Just . parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
+configPath :: FilePath -> FilePath
+configPath = ("config" </>)
+
 data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
@@ -338,22 +343,26 @@ data Opts = Opts
   , _opts_nodes :: !(Option (Set URI))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   }
+makeLenses ''Opts
 
 instance Semigroup Opts where
   a <> b = Opts -- Right biased
-    { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
-    , _opts_route = _opts_route b <|> _opts_route a
-    , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
-    , _opts_chain = _opts_chain b <|> _opts_chain a
-    , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
-    , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
-    , _opts_serveNodeCache = _opts_serveNodeCache b <|> _opts_serveNodeCache a
-    , _opts_tzscanApiUri = _opts_tzscanApiUri b <|> _opts_tzscanApiUri a
-    , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
-    , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
-    , _opts_nodes = _opts_nodes b <> _opts_nodes a -- Union the sets if there are multiple
-    , _opts_networkGitLabProjectId = _opts_networkGitLabProjectId b <|> _opts_networkGitLabProjectId a
+    { _opts_pgConnectionString = rightBiased (<|>) _opts_pgConnectionString
+    , _opts_route = rightBiased (<|>) _opts_route
+    , _opts_emailFromAddress = rightBiased (<|>) _opts_emailFromAddress
+    , _opts_chain = rightBiased (<|>) _opts_chain
+    , _opts_checkForUpgrade = rightBiased (<|>) _opts_checkForUpgrade
+    , _opts_upgradeBranch = rightBiased (<|>) _opts_upgradeBranch
+    , _opts_serveNodeCache = rightBiased (<|>) _opts_serveNodeCache
+    , _opts_tzscanApiUri = rightBiased (<|>) _opts_tzscanApiUri
+    , _opts_blockscaleApiUri = rightBiased (<|>) _opts_blockscaleApiUri
+    , _opts_obsidianApiUri = rightBiased (<|>) _opts_obsidianApiUri
+    , _opts_nodes = rightBiased (<>) _opts_nodes -- Union the sets if there are multiple
+    , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     }
+    where
+      rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
+      rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
   mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty Nothing
@@ -361,43 +370,46 @@ instance Monoid Opts where
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
-  [ mkReqArg Config.pgConnectionString "CONNSTRING" (\x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
+  [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
-  , mkReqArg Config.route "URL" (\x -> mempty { _opts_route = Just $ mkRootUriOrError $ T.pack x }) $
+
+  , mkReqArg Config.route "URL" (set opts_route . Just . mkRootUriOrError) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
-  , mkReqArg Config.emailFromAddress "EMAIL" (\x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
+
+  , mkReqArg Config.emailFromAddress "EMAIL" (set opts_emailFromAddress . Just) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , mkReqArg Config.checkForUpgrade "BOOL" (\x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
+  , mkReqArg Config.checkForUpgrade "BOOL" (set opts_checkForUpgrade . Just . Config.parseBool) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
 
-  , mkReqArg Config.upgradeBranch "BRANCH" (\x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
+  , mkReqArg Config.upgradeBranch "BRANCH" (set opts_upgradeBranch . Just) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
-  , mkReqArg Config.chain "NETWORK" (\x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+
+  , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
       "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
-  , mkReqArg Config.serveNodeCache "BOOL" (\x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
+
+  , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseURIUnsafe)
       "Custom tzscan API URL.  Default none."
-  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+
+  , mkReqArg Config.blockscaleApiUri "URL" (set opts_blockscaleApiUri . pure . pure . Config.parseURIUnsafe)
       "Custom Blockscale API URL.  Default none."
-  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+
+  , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseURIUnsafe)
       "Custom Obsidian API URL.  Default none."
 
-  , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
+  , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodes)
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
 
-  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (\x -> mempty { _opts_networkGitLabProjectId = Just $ T.pack x })
+  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (set opts_networkGitLabProjectId . Just)
       "The GitLab project id to query for network updates. Defaults to off." -- TODO default
   ]
   where
-    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg f var)
-
-configPath :: FilePath -> FilePath
-configPath = ("config" </>)
+    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
 
 mkRootUriOrError :: Text -> URI
 mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
