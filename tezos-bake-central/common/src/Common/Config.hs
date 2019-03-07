@@ -97,8 +97,8 @@ parseBakerAddr v = do
     okPrefixes :: NE.NonEmpty Text
     okPrefixes = "tz1" :| ["tz2", "tz3"]
 
-parseURIUnsafe :: Text -> URI
-parseURIUnsafe uri = either (\msg -> error $ "Invalid URI '" <> T.unpack uri <> "': " <> show msg) id $ mkRootUri uri
+parseRootURIUnsafe :: Text -> URI
+parseRootURIUnsafe uri = either (\msg -> error $ "Invalid URI '" <> T.unpack uri <> "': " <> show msg) id $ mkRootUri uri
 
 tzscanApiUri :: FilePath
 tzscanApiUri = "tzscan-api-uri"
@@ -120,7 +120,7 @@ parseWithAlias parse txt = case T.breakOn "@" txt of
   (a, T.drop 1 -> b) -> (parse a, if T.null b then Nothing else Just b)
 
 parseNodesUnsafe :: Text -> Map.Map URI (Maybe Text)
-parseNodesUnsafe = Map.fromList . parseCommaList (parseWithAlias parseURIUnsafe)
+parseNodesUnsafe = Map.fromList . parseCommaList (parseWithAlias parseRootURIUnsafe)
 
 parseCommaList :: (Text -> a) -> Text -> [a]
 parseCommaList parse = map parse . filter (not . T.null) . map T.strip . T.splitOn ","

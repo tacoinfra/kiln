@@ -442,13 +442,13 @@ optsArgDescr =
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseURIUnsafe)
+  , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom tzscan API URL.  Default none."
 
-  , mkReqArg Config.blockscaleApiUri "URL" (set opts_blockscaleApiUri . pure . pure . Config.parseURIUnsafe)
+  , mkReqArg Config.blockscaleApiUri "URL" (set opts_blockscaleApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom Blockscale API URL.  Default none."
 
-  , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseURIUnsafe)
+  , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom Obsidian API URL.  Default none."
 
   , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodesUnsafe)
@@ -491,7 +491,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.route)
+        (getConfigFromFile (Just . Config.parseRootURIUnsafe) $ configPath Config.route)
 
       let
         staticHead :: DomBuilder t m => m ()
