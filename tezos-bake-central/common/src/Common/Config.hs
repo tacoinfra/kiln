@@ -11,7 +11,6 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
@@ -121,16 +120,16 @@ parseWithAlias parse txt = case T.breakOn "@" txt of
   (a, T.drop 1 -> b) -> (parse a, if T.null b then Nothing else Just b)
 
 parseNodesUnsafe :: Text -> Map.Map URI (Maybe Text)
-parseNodesUnsafe = Map.fromList . toList . parseCommaList (parseWithAlias parseURIUnsafe)
+parseNodesUnsafe = Map.fromList . parseCommaList (parseWithAlias parseURIUnsafe)
 
-parseCommaList :: Ord a => (Text -> a) -> Text -> Set a
-parseCommaList parse = Set.fromList . map parse . filter (not . T.null) . map T.strip . T.splitOn ","
+parseCommaList :: (Text -> a) -> Text -> [a]
+parseCommaList parse = map parse . filter (not . T.null) . map T.strip . T.splitOn ","
 
 parsePublicKeyHashUnsafe :: Text -> PublicKeyHash
 parsePublicKeyHashUnsafe pkh = either (\msg -> error $ "Invalid public key hash '" <> T.unpack pkh <> "': " <> show msg) id $ parseBakerAddr pkh
 
 parseBakersUnsafe :: Text -> Map.Map PublicKeyHash (Maybe Text)
-parseBakersUnsafe = Map.fromList . toList . parseCommaList (parseWithAlias parsePublicKeyHashUnsafe)
+parseBakersUnsafe = Map.fromList . parseCommaList (parseWithAlias parsePublicKeyHashUnsafe)
 
 networkGitLabProjectId :: FilePath
 networkGitLabProjectId = "network-gitlab-project-id"
