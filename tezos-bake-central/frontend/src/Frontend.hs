@@ -878,7 +878,8 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
               | otherwise = connectDevice
-        pure (([], close'), attachWith f (liftA2 (,) node ebn) start)
+            afterDisclaimer = attachWith f (liftA2 (,) node ebn)
+        pure (([], close'), disclaimer afterDisclaimer <$ start)
 
     startBaking = divClass "start-baking column" $ do
       elClass "h5" "ui header" $ text "Start Baking"
@@ -1046,6 +1047,13 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
       pure ((["launch-node"], close'), never)
 
+    disclaimer next = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
+      divClass "explanation" $ text "Obsidian Systems has taken great care in creating a baking product which is robust and can provide a safe baking service. However, Obsidian cannot make any guarantees in regards to baking success."
+      consent <- fmap SemUi._checkbox_value $ SemUi.checkbox (text "I understand and agree.") def
+      close' <- gate (current consent) <$> uiButton "primary" "Continue"
+      pure ((["disclaimer"], never), next close')
+
 respondToPrompt :: DomBuilder t m => Text -> m () -> m ()
 respondToPrompt operation prompt = do
   elClass "h5" "ui header" $ do
@@ -1156,7 +1164,6 @@ handleClientErrorWorkflow recover = \case
       pure ((["ledger-disconnected"], never), tryAgain <$ restart) -- TODO restart should go back to start?
 
     nodeNotReady tryAgain = Workflow $ do
-      elAttr "img" ("src" =: static @"images/ledger.png" <> "class" =: "ledger") blank
       elClass "h5" "ui header" $ text "Kiln needs to fully sync the node it is running with the blockchain before baking."
       divClass "explanation" $ text "Try again after the node has fully synced."
       retry <- uiButton "primary" "Dismiss"
