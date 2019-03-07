@@ -31,6 +31,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
+import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
@@ -163,7 +164,11 @@ backendImpl cfg serve = do
 
   !(nodes :: Maybe (Set URI)) <- liftA2 (<|>)
     (pure $ getOption $ _opts_nodes cfg)
-    (getConfigFromFile (Just . Config.parseNodes) $ configPath Config.nodes)
+    (getConfigFromFile (Just . Config.parseNodesUnsafe) $ configPath Config.nodes)
+
+  !(bakers :: Maybe (Set PublicKeyHash)) <- liftA2 (<|>)
+    (pure $ getOption $ _opts_bakers cfg)
+    (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
 
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
@@ -203,25 +208,57 @@ backendImpl cfg serve = do
       migrateKiln
 
       -- Set nodes overrides based on configuration
-      for_ nodes $ \ns -> do
-        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] CondEmpty
-        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. False]
-          ((NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector) `in_` toList ns)
-        enabled <- project (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
-          ((NodeExternal_dataField ~> DeletableRow_deletedSelector) ==. False)
+      let
+        mkDeletable data_ = DeletableRow
+          { _deletableRow_data = data_
+          , _deletableRow_deleted = False
+          }
 
-        let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress -> do
+        -- These look the same, but I can't get groundhog to unify 'Field' & 'SubField'
+        disableAllNodesBut
+          :: Set URI
+          -> Field NodeExternal NodeExternalConstructor (DeletableRow NodeExternalData)
+          -> SubField Postgresql NodeExternal NodeExternalConstructor URI
+          -> DbPersist Postgresql (LoggingT IO) (Set URI)
+        disableAllNodesBut names deletable nameSelector = do
+          update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` toList names
+          enabled <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          pure $ names `Set.difference` Set.fromList enabled
+
+        disableAllBakersBut
+          :: Set PublicKeyHash
+          -> Field Baker BakerConstructor (DeletableRow BakerData)
+          -> Field Baker BakerConstructor PublicKeyHash
+          -> DbPersist Postgresql (LoggingT IO) (Set PublicKeyHash)
+        disableAllBakersBut names deletable nameSelector = do
+          update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` toList names
+          enabled <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          pure $ names `Set.difference` Set.fromList enabled
+
+      for_ nodes $ \ns -> do
+        new <- disableAllNodesBut ns NodeExternal_dataField $
+          NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector
+
+        for_ new $ \newAddress -> do
           nid <- insert' Node
           insert $ NodeExternal
             { _nodeExternal_id = nid
-            , _nodeExternal_data = DeletableRow
-              { _deletableRow_data = NodeExternalData
-                { _nodeExternalData_address = newAddress
-                , _nodeExternalData_alias = Nothing
-                , _nodeExternalData_minPeerConnections = Nothing
-                }
-              , _deletableRow_deleted = False
+            , _nodeExternal_data = mkDeletable $ NodeExternalData
+              { _nodeExternalData_address = newAddress
+              , _nodeExternalData_alias = Nothing
+              , _nodeExternalData_minPeerConnections = Nothing
+              }
+            }
+
+      for_ bakers $ \bs -> do
+        new <- disableAllBakersBut bs Baker_dataField Baker_publicKeyHashField
+        for_ new $ \newPkh -> do
+          insert $ Baker
+            { _baker_publicKeyHash = newPkh
+            , _baker_data = mkDeletable $ BakerData
+              { _bakerData_alias = Nothing
               }
             }
 
@@ -341,6 +378,7 @@ data Opts = Opts
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
   , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Set URI))
+  , _opts_bakers :: !(Option (Set PublicKeyHash))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   }
 makeLenses ''Opts
@@ -358,6 +396,7 @@ instance Semigroup Opts where
     , _opts_blockscaleApiUri = rightBiased (<|>) _opts_blockscaleApiUri
     , _opts_obsidianApiUri = rightBiased (<|>) _opts_obsidianApiUri
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Union the sets if there are multiple
+    , _opts_bakers = rightBiased (<>) _opts_bakers -- Union the sets if there are multiple
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     }
     where
@@ -365,7 +404,7 @@ instance Semigroup Opts where
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -402,8 +441,11 @@ optsArgDescr =
   , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseURIUnsafe)
       "Custom Obsidian API URL.  Default none."
 
-  , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodes)
+  , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodesUnsafe)
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
+
+  , mkReqArg Config.bakers "PUBLICKEYHASHES" (set opts_bakers . Option . Just . Config.parseBakersUnsafe)
+      "Force the set of monitored bakers to be exactly the given set of (comma-separated) list of bakers. If given multiple times, the sets will be unioned. Defaults to off."
 
   , mkReqArg Config.networkGitLabProjectId "PROJECTID" (set opts_networkGitLabProjectId . Just)
       "The GitLab project id to query for network updates. Defaults to off." -- TODO default
