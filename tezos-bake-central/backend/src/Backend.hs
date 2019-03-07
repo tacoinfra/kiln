@@ -405,8 +405,8 @@ instance Semigroup Opts where
     , _opts_tzscanApiUri = rightBiased (<|>) _opts_tzscanApiUri
     , _opts_blockscaleApiUri = rightBiased (<|>) _opts_blockscaleApiUri
     , _opts_obsidianApiUri = rightBiased (<|>) _opts_obsidianApiUri
-    , _opts_nodes = rightBiased (<>) _opts_nodes -- Union the sets if there are multiple
-    , _opts_bakers = rightBiased (<>) _opts_bakers -- Union the sets if there are multiple
+    , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
+    , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     }
     where
