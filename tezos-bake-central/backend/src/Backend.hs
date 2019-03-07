@@ -162,11 +162,11 @@ backendImpl cfg serve = do
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
-  !(nodes :: Maybe (Set URI)) <- liftA2 (<|>)
+  !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
     (pure $ getOption $ _opts_nodes cfg)
     (getConfigFromFile (Just . Config.parseNodesUnsafe) $ configPath Config.nodes)
 
-  !(bakers :: Maybe (Set PublicKeyHash)) <- liftA2 (<|>)
+  !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- liftA2 (<|>)
     (pure $ getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
 
@@ -215,50 +215,60 @@ backendImpl cfg serve = do
           }
 
         -- These look the same, but I can't get groundhog to unify 'Field' & 'SubField'
-        disableAllNodesBut
-          :: Set URI
+        updateNodesAndAlias
+          :: Map.Map URI (Maybe Text)
           -> Field NodeExternal NodeExternalConstructor (DeletableRow NodeExternalData)
           -> SubField Postgresql NodeExternal NodeExternalConstructor URI
-          -> DbPersist Postgresql (LoggingT IO) (Set URI)
-        disableAllNodesBut names deletable nameSelector = do
+          -> SubField Postgresql NodeExternal NodeExternalConstructor (Maybe Text)
+          -> DbPersist Postgresql (LoggingT IO) (Map.Map URI (Maybe Text))
+        updateNodesAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
-          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` toList names
-          enabled <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
-          pure $ names `Set.difference` Set.fromList enabled
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
+          kept <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names $ Set.fromList kept) $ \address alias -> do
+            update [aliasSelector =. alias] $ nameSelector ==. address
+          pure $ Map.withoutKeys names (Set.fromList kept)
 
-        disableAllBakersBut
-          :: Set PublicKeyHash
+        updateBakersAndAlias
+          :: Map.Map PublicKeyHash (Maybe Text)
           -> Field Baker BakerConstructor (DeletableRow BakerData)
           -> Field Baker BakerConstructor PublicKeyHash
-          -> DbPersist Postgresql (LoggingT IO) (Set PublicKeyHash)
-        disableAllBakersBut names deletable nameSelector = do
+          -> SubField Postgresql Baker BakerConstructor (Maybe Text)
+          -> DbPersist Postgresql (LoggingT IO) (Map.Map PublicKeyHash (Maybe Text))
+        updateBakersAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
-          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` toList names
-          enabled <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
-          pure $ names `Set.difference` Set.fromList enabled
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
+          kept <- project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names $ Set.fromList kept) $ \address alias -> do
+            update [aliasSelector =. alias] $ nameSelector ==. address
+          pure $ Map.withoutKeys names (Set.fromList kept)
 
       for_ nodes $ \ns -> do
-        new <- disableAllNodesBut ns NodeExternal_dataField $
-          NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector
-
-        for_ new $ \newAddress -> do
+        new <- updateNodesAndAlias ns
+          NodeExternal_dataField
+          (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
+          (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_aliasSelector)
+        ifor_ new $ \newAddress alias -> do
           nid <- insert' Node
           insert $ NodeExternal
             { _nodeExternal_id = nid
             , _nodeExternal_data = mkDeletable $ NodeExternalData
               { _nodeExternalData_address = newAddress
-              , _nodeExternalData_alias = Nothing
+              , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
               }
             }
 
       for_ bakers $ \bs -> do
-        new <- disableAllBakersBut bs Baker_dataField Baker_publicKeyHashField
-        for_ new $ \newPkh -> do
+        new <- updateBakersAndAlias bs
+          Baker_dataField
+          Baker_publicKeyHashField
+          (Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector)
+        ifor new $ \newPkh alias -> do
           insert $ Baker
             { _baker_publicKeyHash = newPkh
             , _baker_data = mkDeletable $ BakerData
-              { _bakerData_alias = Nothing
+              { _bakerData_alias = alias
               }
             }
 
@@ -377,8 +387,8 @@ data Opts = Opts
   , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
   , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
-  , _opts_nodes :: !(Option (Set URI))
-  , _opts_bakers :: !(Option (Set PublicKeyHash))
+  , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
+  , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   }
 makeLenses ''Opts

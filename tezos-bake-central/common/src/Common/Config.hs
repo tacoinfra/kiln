@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Common.Config where
 
@@ -9,6 +10,7 @@ import Control.Lens.TH (makeLenses)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Version (Version)
@@ -108,15 +110,18 @@ blockscaleApiUri = "blockscale-api-uri"
 obsidianApiUri :: FilePath
 obsidianApiUri = "obsidian-api-uri"
 
-
 nodes :: FilePath
 nodes = "nodes"
 
 bakers :: FilePath
 bakers = "bakers"
 
-parseNodesUnsafe :: Text -> Set URI
-parseNodesUnsafe = parseCommaList parseURIUnsafe
+parseWithAlias :: (Text -> a) -> Text -> (a, Maybe Text)
+parseWithAlias parse txt = case T.breakOn "@" txt of
+  (a, T.drop 1 -> b) -> (parse a, if T.null b then Nothing else Just b)
+
+parseNodesUnsafe :: Text -> Map.Map URI (Maybe Text)
+parseNodesUnsafe = Map.fromList . toList . parseCommaList (parseWithAlias parseURIUnsafe)
 
 parseCommaList :: Ord a => (Text -> a) -> Text -> Set a
 parseCommaList parse = Set.fromList . map parse . filter (not . T.null) . map T.strip . T.splitOn ","
@@ -124,8 +129,8 @@ parseCommaList parse = Set.fromList . map parse . filter (not . T.null) . map T.
 parsePublicKeyHashUnsafe :: Text -> PublicKeyHash
 parsePublicKeyHashUnsafe pkh = either (\msg -> error $ "Invalid public key hash '" <> T.unpack pkh <> "': " <> show msg) id $ parseBakerAddr pkh
 
-parseBakersUnsafe :: Text -> Set PublicKeyHash
-parseBakersUnsafe = parseCommaList parsePublicKeyHashUnsafe
+parseBakersUnsafe :: Text -> Map.Map PublicKeyHash (Maybe Text)
+parseBakersUnsafe = Map.fromList . toList . parseCommaList (parseWithAlias parsePublicKeyHashUnsafe)
 
 networkGitLabProjectId :: FilePath
 networkGitLabProjectId = "network-gitlab-project-id"
