@@ -265,58 +265,6 @@ waitForFirstSender httpMgr getTelegramCfg = begin Nothing
         False -> pure $
           fmap ((,) cid) $ minimumByMay (comparing _botMessage_date) allMessages
 
-telegramWorker
-  :: forall m. (MonadIO m)
-  => Http.Manager
-  -> LoggingEnv
-  -> Pool Postgresql
-  -> IO () -- Signal that blocks until the worker should start again.
-  -> m (IO ())
-telegramWorker httpMgr loggingEnv db signal = worker' $ do
-  withAsync waitForSender $ const $ do
-    signal
-
-  where
-    getTelegramCfg = fmap listToMaybe $ runLoggingEnv loggingEnv $ runDb (Identity db) $ do
-      cfgs <- selectIds TelegramConfigConstructor
-        ((TelegramConfig_enabledField ==. True &&. TelegramConfig_validatedField ==. Just True) `limitTo` 1)
-      recipients <- project TelegramRecipient_deletedField $
-        (TelegramRecipient_configField `in_` map fst cfgs &&. TelegramRecipient_deletedField ==. False)
-        `limitTo` 1
-      pure $ if null recipients then cfgs else [] -- Only return this config if it doesn't have any recipients yet.
-
-    waitForSender = runLoggingEnv loggingEnv $ waitForFirstSender httpMgr getTelegramCfg >>= \case
-      Nothing -> $(logDebug) "Didn't find any new Telegram recipients"
-      Just (cid, message) -> runDb (Identity db) $ do
-        rid' <- fmap toId . listToMaybe <$> project AutoKeyField (TelegramRecipient_chatIdField ==. _chat_id (_botMessage_chat message))
-        now <- getTime
-        case rid' of
-          Nothing -> do
-            let
-              recipient = TelegramRecipient
-                { _telegramRecipient_config = cid
-                , _telegramRecipient_userId = _sender_id $ _botMessage_from message
-                , _telegramRecipient_chatId = _chat_id $ _botMessage_chat message
-                , _telegramRecipient_firstName = _sender_firstName $ _botMessage_from message
-                , _telegramRecipient_lastName = _sender_lastName $ _botMessage_from message
-                , _telegramRecipient_username = _sender_username $ _botMessage_from message
-                , _telegramRecipient_created = now
-                , _telegramRecipient_deleted = False
-                }
-            notify . flip Notify_TelegramRecipient (Just recipient) =<< insert' recipient
-          Just rid -> do
-            updateId rid
-              [ TelegramRecipient_configField =. cid
-              , TelegramRecipient_userIdField =. _sender_id (_botMessage_from message)
-              , TelegramRecipient_chatIdField =. _chat_id (_botMessage_chat message)
-              , TelegramRecipient_firstNameField =. _sender_firstName (_botMessage_from message)
-              , TelegramRecipient_lastNameField =. _sender_lastName (_botMessage_from message)
-              , TelegramRecipient_usernameField =. _sender_username (_botMessage_from message)
-              , TelegramRecipient_createdField =. now
-              , TelegramRecipient_deletedField =. False
-              ]
-            notify . Notify_TelegramRecipient rid =<< getId rid
-
 emptyTelegramMessageQueue
   :: Http.Manager
   -> LoggingEnv
