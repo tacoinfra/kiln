@@ -15,7 +15,6 @@ module Backend.Telegram where
 import Control.Concurrent (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Catch (MonadThrow)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, logDebug)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
@@ -40,12 +39,12 @@ import qualified Network.URI.Encode as UriEncode
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Safe (maximumByMay, maximumMay, minimumByMay)
+import Safe (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
-import Backend.Common (threadDelay', workerWithDelay)
+import Backend.Common (workerWithDelay)
 import Backend.Http (HasHttp, runHttpT)
 import qualified Backend.Http as Http
 import Backend.Schema () -- orphan FromField instances
