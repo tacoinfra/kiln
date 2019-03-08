@@ -11,6 +11,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
+import Data.String (IsString)
 import qualified Data.Text as T
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
@@ -98,7 +99,7 @@ parseBakerAddr v = do
     okPrefixes = "tz1" :| ["tz2", "tz3"]
 
 parseRootURIUnsafe :: Text -> URI
-parseRootURIUnsafe uri = either (\msg -> error $ "Invalid URI '" <> T.unpack uri <> "': " <> show msg) id $ mkRootUri uri
+parseRootURIUnsafe = unsafeParse "URI" mkRootUri
 
 tzscanApiUri :: FilePath
 tzscanApiUri = "tzscan-api-uri"
@@ -126,13 +127,27 @@ parseCommaList :: (Text -> a) -> Text -> [a]
 parseCommaList parse = map parse . filter (not . T.null) . map T.strip . T.splitOn ","
 
 parsePublicKeyHashUnsafe :: Text -> PublicKeyHash
-parsePublicKeyHashUnsafe pkh = either (\msg -> error $ "Invalid public key hash '" <> T.unpack pkh <> "': " <> show msg) id $ parseBakerAddr pkh
+parsePublicKeyHashUnsafe = unsafeParse "public key hash" parseBakerAddr
 
 parseBakersUnsafe :: Text -> Map.Map PublicKeyHash (Maybe Text)
 parseBakersUnsafe = Map.fromList . parseCommaList (parseWithAlias parsePublicKeyHashUnsafe)
 
 networkGitLabProjectId :: FilePath
 networkGitLabProjectId = "network-gitlab-project-id"
+
+singleQuoted :: (IsString a, Semigroup a) => a -> a
+singleQuoted s = "'" <> s <> "'"
+
+unsafeParse :: Text -> (Text -> Either Text a) -> Text -> a
+unsafeParse name parse txt = either
+  (\msg -> error $ T.unpack $ T.intercalate " "
+    ["Invalid"
+    , name
+    , singleQuoted txt <> ":"
+    , msg
+    ])
+  id
+  (parse txt)
 
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
