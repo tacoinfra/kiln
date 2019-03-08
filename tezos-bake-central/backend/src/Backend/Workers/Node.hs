@@ -41,7 +41,6 @@ import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
-import qualified Text.URI.QQ as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
@@ -55,7 +54,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), kilnNodeURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -151,7 +150,7 @@ updateNetworkStats
   -> NodeDetailsData
   -> m (Either RpcError ())
 updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address node)) $ do
+  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ do
     connections <- nodeRPC rConnections
     networkStat <- nodeRPC rNetworkStat
     pure $ before
@@ -183,11 +182,9 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
   pure ()
 
 type NodeData = Either NodeInternalData NodeExternalData
-nodeData_address :: NodeData -> URI
-nodeData_address = either (const poorGuessAtKilnURI) _nodeExternalData_address
-  where
-    -- todo: make a better job ad deciding this.
-    poorGuessAtKilnURI = [Uri.uri|http://127.0.0.1:8732|]
+nodeData_address :: AppConfig -> NodeData -> URI
+nodeData_address appConfig = either (const $ kilnNodeURI appConfig) _nodeExternalData_address
+
 nodeData_minPeerConnections :: NodeData -> Int
 nodeData_minPeerConnections = either (const 0) (fromMaybe 0 . _nodeExternalData_minPeerConnections)
 
@@ -252,7 +249,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
+    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address appConfig nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
     -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
     _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes

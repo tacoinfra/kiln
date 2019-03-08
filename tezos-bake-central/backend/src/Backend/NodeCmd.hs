@@ -44,6 +44,7 @@ import Tezos.Chain (NamedChain(..))
 import Tezos.Json
 import Backend.Common (threadDelay')
 import Backend.Common (worker')
+import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Common.Schema
 
@@ -118,8 +119,8 @@ withNodeLock logger db f = do
     WHERE "data#data#backend" = ?pid |]
     >>= liftIO . print
 
-internalNodeWorker :: MonadIO m => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
-internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pid -> runLoggingEnv logger $ do
+internalNodeWorker :: MonadIO m => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
+internalNodeWorker appConfig logger db namedChain = worker' $ withNodeLock logger db $ \pid -> runLoggingEnv logger $ do
   let
     waitUntilShouldRun = do
       shouldRun <- any fromOnly <$> runDb (Identity db) [queryQ|
@@ -130,7 +131,7 @@ internalNodeWorker logger db namedChain = worker' $ withNodeLock logger db $ \pi
         then return ()
         else threadDelay' 5 *> waitUntilShouldRun
   waitUntilShouldRun
-  callNode logger db (nodePaths namedChain) pid
+  callNode appConfig logger db (nodePaths namedChain) pid
   threadDelay' 10
 
 putState :: (MonadBaseControl IO m, MonadIO m) => LoggingEnv -> Pool Postgresql -> Int -> NodeInternalState -> m ()
@@ -151,12 +152,13 @@ putState logger db pid state = void $ runLoggingEnv logger $ runDb (Identity db)
       , _nodeInternalData_backend = backend
       })
 
-callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
-callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+callNode :: (MonadBaseControl IO m, MonadIO m, MonadMask m) => AppConfig -> LoggingEnv -> Pool Postgresql -> FilePath -> Int -> m ()
+callNode appConfig logger db nodePath pid = (putState logger db pid NodeInternalState_Initializing *>) $ withTempFile "." ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
   let nodeConfig = defaultConfig
   let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
+  let nodePort = show $ _appConfig_kilnNodePort appConfig
   liftIO (print nodeConfigPath)
   liftIO (LBS.hPut nodeConfigHandle $ Aeson.encode nodeConfig)
   liftIO (hFlush nodeConfigHandle)
@@ -171,7 +173,7 @@ callNode logger db nodePath pid = (putState logger db pid NodeInternalState_Init
 
   putState logger db pid NodeInternalState_Starting
 
-  liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath]) go0
+  liftIO $ withCreateProcess (proc nodePath ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort]) go0
     where
       go0 _ _ _ ph = runLoggingEnv logger go
         where

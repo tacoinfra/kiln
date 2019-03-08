@@ -9,8 +9,11 @@ import Data.Semigroup ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Traversable (for)
+import Data.Word (Word16)
 import qualified Text.URI as Uri
 import qualified Text.URI.Lens as UriL
+
+type Port = Word16
 
 mkRootUri :: Text -> Either Text Uri.URI
 mkRootUri txt = case Uri.mkURI $ T.strip txt of
