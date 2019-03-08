@@ -13,9 +13,9 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.String (IsString)
 import qualified Data.Text as T
+import Text.Read (readMaybe)
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
-import Safe (readMay)
 import Text.URI (URI)
 
 import Tezos.Base58Check (HashBase58Error(..))
@@ -157,7 +157,7 @@ unsafeParse name parse txt = either
   (parse txt)
 
 parsePortUnsafe :: Text -> Port
-parsePortUnsafe = unsafeParse "port number" $ \a -> case readMay (T.unpack a) of
+parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) of
   Nothing -> Left "Not a port number"
   Just b -> Right b
 

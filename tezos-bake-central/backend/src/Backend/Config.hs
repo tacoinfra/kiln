@@ -16,8 +16,8 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
-import ExtraPrelude
 import Common.URI (Port)
+import ExtraPrelude
 
 data AppConfig = AppConfig
   { _appConfig_emailFromAddress :: Address
