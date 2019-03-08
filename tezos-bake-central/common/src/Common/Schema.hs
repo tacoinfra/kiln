@@ -59,6 +59,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
 import Data.Some (Some(..))
 import Data.Text (Text)
+import Data.Int (Int64)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
@@ -734,7 +735,7 @@ instance HasId TelegramConfig
 data TelegramRecipient = TelegramRecipient
   { _telegramRecipient_config :: !(Id TelegramConfig)
   , _telegramRecipient_userId :: !Word64
-  , _telegramRecipient_chatId :: !Word64
+  , _telegramRecipient_chatId :: !Int64
   , _telegramRecipient_firstName :: !Text
   , _telegramRecipient_lastName :: !(Maybe Text)
   , _telegramRecipient_username :: !(Maybe Text)
