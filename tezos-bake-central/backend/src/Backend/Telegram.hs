@@ -8,10 +8,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.Telegram where
 
 import Control.Concurrent (newEmptyMVar, takeMVar, tryPutMVar)
-import Control.Concurrent.Async (withAsync)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -23,7 +24,6 @@ import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import Data.Int (Int64)
-import Data.Maybe (listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Text (Text)
@@ -32,13 +32,12 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
-import Database.Groundhog.Postgresql (AutoKeyField (..), Postgresql, in_, limitTo, project, (&&.), (=.),
-                                      (==.))
+import Database.Groundhog.Postgresql (Postgresql)
 import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import qualified Network.URI.Encode as UriEncode
-import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Safe (maximumByMay, maximumMay, minimumByMay)
@@ -46,10 +45,10 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
-import Backend.Common (threadDelay', worker', workerWithDelay)
+import Backend.Common (threadDelay', workerWithDelay)
 import Backend.Http (HasHttp, runHttpT)
 import qualified Backend.Http as Http
-import Backend.Schema
+import Backend.Schema () -- orphan FromField instances
 import Common (defaultTezosCompatJsonOptions, nominalDiffTimeToMicroseconds, nominalDiffTimeToSeconds,
                unixEpoch)
 import Common.Schema
