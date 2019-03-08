@@ -15,6 +15,7 @@ import Data.String (IsString)
 import qualified Data.Text as T
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
+import Safe (readMay)
 import Text.URI (URI)
 
 import Tezos.Base58Check (HashBase58Error(..))
@@ -22,7 +23,7 @@ import Tezos.PublicKeyHash (tryReadPublicKeyHashText)
 import Tezos.Types (ChainId, NamedChain (..), PublicKeyHash)
 
 import Common (defaultTezosCompatJsonOptions)
-import Common.URI (mkRootUri)
+import Common.URI (Port, mkRootUri)
 import ExtraPrelude
 
 changelogUrl :: Text -> Text
@@ -135,6 +136,12 @@ parseBakersUnsafe = Map.fromList . parseCommaList (parseWithAlias parsePublicKey
 networkGitLabProjectId :: FilePath
 networkGitLabProjectId = "network-gitlab-project-id"
 
+kilnNodePort :: FilePath
+kilnNodePort = "kiln-node-port"
+
+defaultKilnNodePort :: Port
+defaultKilnNodePort = 8732
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 
@@ -148,6 +155,11 @@ unsafeParse name parse txt = either
     ])
   id
   (parse txt)
+
+parsePortUnsafe :: Text -> Port
+parsePortUnsafe = unsafeParse "port number" $ \a -> case readMay (T.unpack a) of
+  Nothing -> Left "Not a port number"
+  Just b -> Right b
 
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)

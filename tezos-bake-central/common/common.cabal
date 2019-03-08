@@ -45,6 +45,7 @@ library
     , rhyolite-common
     , rhyolite-datastructures
     , rhyolite-frontend
+    , safe
     , safe-exceptions
     , scientific
     , template-haskell

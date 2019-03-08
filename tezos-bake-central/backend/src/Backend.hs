@@ -87,7 +87,7 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
-import Common.URI (mkRootUri)
+import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
 import Backend.NodeCmd
@@ -139,6 +139,10 @@ backendImpl cfg serve = do
   !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
+
+  !(kilnNodePort :: Port) <- fmap (fromMaybe Config.defaultKilnNodePort) $ liftA2 (<|>)
+    (pure $ _opts_kilnNodePort cfg)
+    (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodePort)
 
   let
     maybeNamedChain = either Just (const Nothing) chain
@@ -284,7 +288,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress
+        appConfig = AppConfig emailFromAddress kilnNodePort
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -317,7 +321,7 @@ backendImpl cfg serve = do
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChain $ \namedChain ->
-        addFinalizer =<< internalNodeWorker logger db namedChain
+        addFinalizer =<< internalNodeWorker appConfig logger db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
@@ -390,6 +394,7 @@ data Opts = Opts
   , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
+  , _opts_kilnNodePort :: !(Maybe Port)
   }
 makeLenses ''Opts
 
@@ -408,13 +413,14 @@ instance Semigroup Opts where
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
+    , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -422,7 +428,7 @@ optsArgDescr =
   [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
 
-  , mkReqArg Config.route "URL" (set opts_route . Just . mkRootUriOrError) $
+  , mkReqArg Config.route "URL" (set opts_route . Just . Config.parseRootURIUnsafe) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
 
   , mkReqArg Config.emailFromAddress "EMAIL" (set opts_emailFromAddress . Just) $
@@ -459,12 +465,12 @@ optsArgDescr =
 
   , mkReqArg Config.networkGitLabProjectId "PROJECTID" (set opts_networkGitLabProjectId . Just)
       "The GitLab project id to query for network updates. Defaults to off." -- TODO default
+
+  , mkReqArg Config.kilnNodePort "PORT" (set opts_kilnNodePort . Just . Config.parsePortUnsafe)
+      ("The port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodePort <> ".")
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
-
-mkRootUriOrError :: Text -> URI
-mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
 
 encodeViaJson :: Aeson.ToJSON a => a -> Text
 encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
