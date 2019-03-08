@@ -228,43 +228,6 @@ getBotAndLastSender botApiKey = do
 
   pure $ (,,) <$> Just me <*> (_botMessage_chat <$> firstMessage) <*> (_botMessage_from <$> firstMessage)
 
-
--- | Repeatedly long-polls the Telegram Bot 'getUpdates' until it sees a sender.
--- This ignores senders that sent messages to the bot before the 'TelegramConfig' was created.
-waitForFirstSender
-  :: MonadIO m => (MonadThrow m, MonadLogger m)
-  => Http.Manager
-  -> IO (Maybe (Id TelegramConfig, TelegramConfig))
-  -> m (Maybe (Id TelegramConfig, BotMessage))
-waitForFirstSender httpMgr getTelegramCfg = begin Nothing
-  where
-    begin firstMessageId = liftIO getTelegramCfg >>= \case
-      Nothing -> pure Nothing
-      Just cfg -> runApi cfg firstMessageId
-
-    startOver n = do
-      threadDelay' 1
-      begin ((+1) <$> n) -- Increment the first message ID if we actually have a starting point
-
-    runApi (cid, telegramCfg) firstMessageId = do
-      result <- runHttpT httpMgr $ getUpdates TelegramGetUpdates
-        { _telegramGetUpdates_botApiKey = _telegramConfig_botApiKey telegramCfg
-        , _telegramGetUpdates_offset = firstMessageId
-        , _telegramGetUpdates_timeout = Just 60
-        }
-      let
-        allMessages = _botGetUpdates_message <$> _apiResult_result result
-        candidateMessages = filter
-          (isCandidateMessage $ _telegramConfig_updated telegramCfg)
-          allMessages
-
-      case null candidateMessages of
-        True -> startOver $
-          -- Calculate the maximum update ID that we just saw and use it for our offset next time.
-          fmap fromIntegral $ maximumMay $ map _botGetUpdates_updateId $ _apiResult_result result
-        False -> pure $
-          fmap ((,) cid) $ minimumByMay (comparing _botMessage_date) allMessages
-
 emptyTelegramMessageQueue
   :: Http.Manager
   -> LoggingEnv
