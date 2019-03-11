@@ -15,10 +15,14 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
+-- Needed for nested `deriveArgDict`
+{-# LANGUAGE UndecidableInstances #-}
 
 -- TODO do everywhere
 {-# OPTIONS_GHC -Wall -fno-warn-orphans -Werror #-}
@@ -37,30 +41,34 @@ module Common.Schema
   ) where
 
 import Control.Exception.Safe (Exception, SomeException)
-import Control.Lens
+import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
-import Data.GADT.Show.TH (deriveGShow)
-import Data.Dependent.Sum (DSum)
+import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
+import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
+import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.Dependent.Sum.Orphans ()
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
+import Data.Some (Some(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
+import Data.Universe.TH (deriveSomeUniverse)
 import Data.Version (Version)
 import Data.Word
 import GHC.Generics (Generic)
+import Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -219,7 +227,7 @@ data NodeInternalState
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we *want* the node in;
+  { _nodeInternalData_running :: !Bool -- the state we /want/ the node in;
   , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
   , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
   , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
@@ -361,6 +369,28 @@ data Report = Report
   , _report_startTime :: UTCTime
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
+data Accusation = Accusation
+  { _accusation_hash :: !OperationHash -- ^ hash of the accusation operation
+  , _accusation_blockHash :: !BlockHash -- ^ hash of the block where the accusation was included
+  , _accusation_chain :: !ChainId -- ^ chainId of the network where the accusation occurred
+  , _accusation_level :: !RawLevel -- ^ level where accusation was incorporated in the blockchain
+  , _accusation_baker :: !PublicKeyHash -- ^ PKH of baker who was accused
+  , _accusation_occurredLevel :: !RawLevel -- ^ level at which the baker double baked or double endorsed
+  , _accusation_isBake :: !Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+instance HasId Accusation where
+  type IdData Accusation = (OperationHash, BlockHash)
+
+data BlockTodo = BlockTodo
+  { _blockTodo_hash :: !BlockHash
+  , _blockTodo_level :: !Int
+  , _blockTodo_chain :: !ChainId
+  , _blockTodo_claimedBy :: !(Maybe Int) -- TODO WIP do backends have IDs?  they probably should if they're going to claim jobs...
+  , _blockTodo_claimedAt :: !(Maybe UTCTime)
+  , _blockTodo_parsedParent :: !Bool
+  , _blockTodo_parsedAccusations :: !Bool
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+
 blockLevel :: Event BakedEvent -> Int
 blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
 
@@ -460,7 +490,7 @@ instance Aeson.ToJSONKey RightKind
 
 -- It's an explicit choice not to include either the priority; this reduces the
 -- amount of reduntant data since we only really care about expected returns
--- rather than all possible.  For the same reason we *do* include endorsement
+-- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.
 data BakerRight = BakerRight
   { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
@@ -550,9 +580,6 @@ instance HasId ErrorLogNetworkUpdate where
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
-  -- TODO why is this so denormalized?
-  , _errorLogInaccessibleNode_address :: !URI
-  , _errorLogInaccessibleNode_alias :: !(Maybe Text)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleNode where
   type IdData ErrorLogInaccessibleNode = Id ErrorLog
@@ -560,9 +587,6 @@ instance HasId ErrorLogInaccessibleNode where
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
-  -- TODO why is this so denormalized?
-  , _errorLogNodeWrongChain_address :: !URI
-  , _errorLogNodeWrongChain_alias :: !(Maybe Text)
   , _errorLogNodeWrongChain_expectedChainId :: !ChainId
   , _errorLogNodeWrongChain_actualChainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -620,6 +644,19 @@ data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
 instance HasId ErrorLogBakerDeactivationRisk where
   type IdData ErrorLogBakerDeactivationRisk = Id ErrorLog
 
+data ErrorLogBakerAccused = ErrorLogBakerAccused
+  { _errorLogBakerAccused_log :: !(Id ErrorLog)
+  , _errorLogBakerAccused_op :: !(Id Accusation)
+  , _errorLogBakerAccused_baker :: !(Id Baker)
+  , _errorLogBakerAccused_cycle :: !Cycle
+  , _errorLogBakerAccused_level :: !RawLevel
+  , _errorLogBakerAccused_accusedCycle :: !Cycle
+  , _errorLogBakerAccused_accusedLevel :: !RawLevel
+  , _errorLogBakerAccused_right :: !RightKind
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerAccused where
+  type IdData ErrorLogBakerAccused = Id ErrorLog
+
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
@@ -634,7 +671,7 @@ instance HasId ErrorLogBadNodeHead where
 -- did or didn't take your rights.
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
--- new uncle occurs in which the baker *did* exercise their rights, or the user
+-- new uncle occurs in which the baker /did/ exercise their rights, or the user
 -- manually acknowledges the error.  If the network is branch hopping; its
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
@@ -713,33 +750,49 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+-- Re-ordering these can yield errors
+-- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where
-  LogTag_InaccessibleNode :: LogTag ErrorLogInaccessibleNode
-  LogTag_NodeWrongChain :: LogTag ErrorLogNodeWrongChain
-  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
-  LogTag_BadNodeHead :: LogTag ErrorLogBadNodeHead
-  LogTag_MultipleBakersForSameBaker :: LogTag ErrorLogMultipleBakersForSameBaker
-  LogTag_BakerDeactivated :: LogTag ErrorLogBakerDeactivated
-  LogTag_BakerDeactivationRisk :: LogTag ErrorLogBakerDeactivationRisk
-  LogTag_BakerMissed :: LogTag ErrorLogBakerMissed
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
-  LogTag_NodeInvalidPeerCount :: LogTag ErrorLogNodeInvalidPeerCount
+  LogTag_Node :: NodeLogTag a -> LogTag a
+  LogTag_Baker :: BakerLogTag a -> LogTag a
+  LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
+  --  | Misc baker /daemon/ error.
 
+deriving instance Eq (LogTag a)
+deriving instance Ord (LogTag a)
+deriving instance Show (LogTag a)
 
-data BakerErrorDescriptions = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title :: !Text
-  , _bakerErrorDescriptions_tile :: !Text
-  , _bakerErrorDescriptions_notification :: !Text
-  , _bakerErrorDescriptions_problem :: !Text
-  , _bakerErrorDescriptions_warning :: !(Maybe Text)
-  , _bakerErrorDescriptions_fix :: !Text
-  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
-  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
-  }
+data NodeLogTag a where
+  NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
+  NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
+  NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
+  NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
 
+deriving instance Eq (NodeLogTag a)
+deriving instance Ord (NodeLogTag a)
+deriving instance Show (NodeLogTag a)
+
+-- TODO: we now have a slightly confusing bit of vocabulary.  we have the on
+-- chain entity: Delegates, and the background process tezos-baker both
+-- referred to by the name "Baker".  that's confusing; especially when some
+-- things refer to both;  "MultipleBakersForSameBaker" refer to two instances
+-- of a background process and a delegate. we should really rename one or both
+-- to minimize confusion between these two ideas.
+data BakerLogTag a where
+  BakerLogTag_MultipleBakersForSameBaker :: BakerLogTag ErrorLogMultipleBakersForSameBaker
+  BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
+  BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
+  BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
+  BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
+
+deriving instance Eq (BakerLogTag a)
+deriving instance Ord (BakerLogTag a)
+deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
-  [ ''BakeEfficiency
+  [ ''Accusation
+  , ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
@@ -748,6 +801,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerRight
   , ''BakerRightsCycleProgress
   , ''BlockBaker
+  , ''BlockTodo
   , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
@@ -759,6 +813,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerNoHeartbeat
@@ -791,7 +846,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpgradeCheckError
   , ''UpstreamVersion
   ] ++ map makeLenses
-  [ 'BakeEfficiency
+  [ 'Accusation
+  , 'BakeEfficiency
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
@@ -800,6 +856,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRight
   , 'BakerRightsCycleProgress
   , 'BlockBaker
+  , 'BlockTodo
   , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent
@@ -807,6 +864,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
+  , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerMissed
@@ -840,14 +898,35 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
 
 return []
 
-deriveArgDict ''LogTag
-deriveGCompare ''LogTag
-deriveGEq ''LogTag
-deriveGShow ''LogTag
-deriveJSONGADT ''LogTag
+fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
+-- Do this is second because it is downstream
+fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+  , deriveArgDict t
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  , deriveEqTagIdentity t
+  , deriveOrdTagIdentity t
+  , deriveShowTagIdentity t
+  ]
 
-
+deriveSomeUniverse ''NodeLogTag
+deriveSomeUniverse ''BakerLogTag
+-- need Cale to fix this
+-- deriveSomeUniverse ''LogTag
+instance Universe (Some LogTag) where
+  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
 instance BlockLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash
@@ -880,3 +959,18 @@ bakerIdentification :: Baker -> (Text, Maybe Text)
 bakerIdentification = aliasedIdentification
   (view $ baker_data . deletableRow_data . bakerData_alias)
   (toPublicKeyHashText . _baker_publicKeyHash)
+
+errorLogNames :: [Name]
+errorLogNames =
+  [ ''ErrorLogBadNodeHead
+  , ''ErrorLogBakerAccused
+  , ''ErrorLogBakerDeactivated
+  , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogInaccessibleNode
+  , ''ErrorLogMultipleBakersForSameBaker
+  , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
+  ]

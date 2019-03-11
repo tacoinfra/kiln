@@ -48,10 +48,14 @@ preMigrate =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerMissed") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerNoHeartbeat") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "alias"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogMultipleBakersForSameBaker") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeInvalidPeerCount") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "alias"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
@@ -140,6 +144,7 @@ extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx" Nothing
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
   createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
+  createIndex (QualifiedIdentifier Nothing "BlockTodo") [Right "level"] "_blockTodo_levelWhereNotParsed_idx" (Just "NOT \"parsedParent\" OR NOT \"parsedAccusations\"")
 
 createIndex
   :: (Migrate m)

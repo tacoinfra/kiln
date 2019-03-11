@@ -48,7 +48,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -58,7 +58,6 @@ import Reflex.FunctorMaybe
 import Common.WrappedShow1
 
 -- horray, orphans!
-deriving instance Ord k => Align (MonoidalMap k)
 deriving instance FunctorMaybe Option
 
 
@@ -461,8 +460,8 @@ instance Ord e => ViewSelector (RangeSelector e v) where
 getRangeView :: View (RangeSelector e v) a -> MonoidalMap e v
 getRangeView = _rangeView_points
 
-getRangeView' :: Ord e => View (RangeSelector' e v) a -> MonoidalMap e v
-getRangeView' = MMap.fromAscList . fmapMaybe getBounded . MMap.toAscList . _rangeView_points
+getRangeView' :: View (RangeSelector' e v) a -> MonoidalMap e v
+getRangeView' = MMap.fromDistinctAscList . fmapMaybe getBounded . MMap.toAscList . _rangeView_points
   where
     getBounded :: (WithInfinity e, v) -> Maybe (e, v)
     getBounded (Bounded k, v) = Just (k, v)
@@ -499,7 +498,7 @@ instance Ord e => TraversableWithIndex e (View (RangeSelector e v)) where
 
 -- produce a view that covers a single point, useful for NotifyHandlers
 toRangeView1 :: (Semigroup a, Ord e) => RangeSelector e v a -> e -> Maybe v -> View (RangeSelector e v) a
-toRangeView1 vs e xs = RangeView (IMap.fromList $ toList $ (k,) <$> vs') (MMap.fromList $ toList $ (,) <$> e' <*> xs)
+toRangeView1 vs e xs = RangeView (IMap.fromList $ toList $ (k,) <$> vs') (fromMaybe MMap.empty $ MMap.singleton <$> e' <*> xs)
   where
     k = ClosedInterval e e
     vs' = lookup e vs
@@ -514,7 +513,7 @@ toRangeView sel@(RangeSelector vs) rows = toRangeViewUnsafe sel $
   filter (not . null . IMap.containing vs . fst) rows
 
 toRangeViewUnsafe :: Ord e => RangeSelector e v a -> [(e, v)] -> View (RangeSelector e v) a
-toRangeViewUnsafe (RangeSelector vs) v = RangeView vs $ MMap.fromList v
+toRangeViewUnsafe (RangeSelector vs) v = RangeView vs $ MMap.fromDistinctList v
 
 toMaybeView :: MaybeSelector v a -> Maybe v -> View (MaybeSelector v) a
 toMaybeView (MaybeSelector vs) (Just v) = MaybeView $ fmap (First v,) vs

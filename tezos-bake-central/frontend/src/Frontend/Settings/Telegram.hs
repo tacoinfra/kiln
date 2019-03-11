@@ -112,7 +112,7 @@ editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
         text "We’ve sent a test message and will be sending notifications to "
         el "strong" $ text $ telegramRecipientFullName recipient
         text " from your bot."
-      done <- divClass "buttons" $ uiButton "primary" "Close"
+      done <- divClass "buttons" $ uiButton "primary close" "Close"
       pure (done, never)
 
 telegramRecipientFullName

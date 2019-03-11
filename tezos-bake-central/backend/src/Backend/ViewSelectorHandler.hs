@@ -1,36 +1,72 @@
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall -Werror -Wno-type-defaults #-}
+{-# OPTIONS_GHC -Wall -Werror -Wno-redundant-constraints #-}
 
 module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
 import Control.Monad.Logger
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Trans.State (StateT(..))
+import Control.Monad.Trans.State (evalStateT)
+import Control.Monad.Trans.State (modify)
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
+import Data.Dependent.Sum (DSum (..))
+import Data.List (intersperse)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Pool (Pool)
 import Data.Semigroup (Max(..))
+import Data.Some (Some(..))
+import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
+import Data.Universe (universe)
+import Database.Groundhog.Core (ConstructorMarker)
+import Database.Groundhog.Core (EntityConstr)
+import Database.Groundhog.Core (FieldChain)
+import Database.Groundhog.Core (PersistEntity)
+import Database.Groundhog.Core (PersistValue)
+import Database.Groundhog.Core (Utf8)
+import Database.Groundhog.Core (constrParams)
+import Database.Groundhog.Core (constructors)
+import Database.Groundhog.Core (entityConstrNum)
+import Database.Groundhog.Core (entityDef)
+import Database.Groundhog.Core (fieldChain)
+import Database.Groundhog.Core (fromEntityPersistValues)
+import Database.Groundhog.Core (fromPersistValues)
+import Database.Groundhog.Core (fromUtf8)
+import Database.Groundhog.Core (toPrimitivePersistValue)
+import Database.Groundhog.Generic (mapAllRows)
+import Database.Groundhog.Generic.Sql (RenderConfig(..))
+import Database.Groundhog.Generic.Sql (flatten)
+import Database.Groundhog.Generic.Sql (renderChain)
+import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, query, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Schema (Id)
+import Rhyolite.Backend.Schema.Class (singleConstructor)
+import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
 
 import Tezos.PublicKeyHash
@@ -184,7 +220,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 getErrorLogs
   :: forall m a e.
   ( MonadLogger m
-  , PostgresRaw m
+  , PersistBackend m
   , Semigroup a
   )
   => AlertsFilter
@@ -192,10 +228,28 @@ getErrorLogs
   -> m (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
 getErrorLogs flt (IntervalSelector vs0) = fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ getErrorLogsImpl flt vs0
 
+pg :: Proxy Postgresql
+pg = Proxy @Postgresql
+
+proxify :: proxy x -> Proxy x
+proxify = const Proxy
+
+phantomize :: f x -> x
+phantomize = error "tried to touch a phantom"
+
+renderQualifiedField :: Utf8 -> FieldChain -> [Utf8]
+renderQualifiedField q fld = renderChain (RenderConfig $ \x -> q <> ".\"" <> x <> "\"") fld []
+
+traceQuery :: (MonadLogger f, PersistBackend f) => Utf8 -> ([PersistValue] -> [PersistValue]) -> ([PersistValue] -> f r) -> f [r]
+traceQuery sql params f = do
+  $(logDebugS) "SQL" (tshow sql)
+  $(logDebugS) "SQL" (tshow $ params [])
+  queryRaw False (T.unpack $ decodeUtf8 $ fromUtf8 sql) (params []) $ mapAllRows $ f
+
 getErrorLogsImpl
   :: forall m a.
   ( MonadLogger m
-  , PostgresRaw m
+  , PersistBackend m
   , Semigroup a
   )
   => AlertsFilter
@@ -203,134 +257,100 @@ getErrorLogsImpl
   -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
 getErrorLogsImpl flt intervalMap = do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
-  $(logDebugSH) ("getErrorLogs", void flattenedIntervalMap)
+  $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
 
   fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
   where
-    queryNodeAlert, queryBakerAlert --, queryClientDaemonAlert
-      :: Pg.FromRow row
-      => Pg.Query
-      -> [Pg.Query]
-      -> (Id ErrorLog -> row -> b)
-      -> ClosedInterval (WithInfinity UTCTime)
-      -> m (MonoidalMap (Id ErrorLog) (ErrorLog, b))
-    queryNodeAlert sqlTable sqlFields = (liftA2 . liftA2 . liftA2) (MMap.unionWith const)
-      (queryAlert sqlTable sqlFields (Just ("NodeExternal", "id", "node")))
-      (queryAlert sqlTable sqlFields (Just ("NodeInternal", "id", "node")))
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
-    queryBakerAlert sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "publicKeyHash"))
-    queryBakerAlert' sqlTable sqlFields =
-      queryAlert sqlTable sqlFields (Just ("Baker", "publicKeyHash", "baker#publicKeyHash"))
-
-    traceQuery :: (MonadLogger f, Show q, PostgresRaw f, Pg.ToRow q, Pg.FromRow r) => Pg.Query -> q -> f [r]
-    traceQuery sql params = do
-      $(logDebugS) "SQL" (tshow sql)
-      $(logDebugS) "SQL" (tshow params)
-      query sql params
+    -- TODO: make every bakeralert work with the Id Baker column, probably
 
     {-# INLINE queryAlert #-}
     queryAlert
-      :: (Monad f, PostgresRaw f, Pg.FromRow row, MonadLogger f)
-      => Pg.Query
-      -> [Pg.Query]
-      -> Maybe (Pg.Query, Pg.Query, Pg.Query)
-      -> (Id ErrorLog -> row -> b)
+      :: forall f c b. (Monad f, PersistBackend f, MonadLogger f, PersistEntity b, EntityConstr b c)
+      => c (ConstructorMarker b)
+      -> [Some (Related b c)]
       -> ClosedInterval (WithInfinity UTCTime)
       -> f (MonoidalMap (Id ErrorLog) (ErrorLog, b))
-    queryAlert sqlTable sqlFields related ctor (ClosedInterval lowWithInf highWithInf) = do
-      $(logDebugSH) ("queryAlert" :: Text, flt, sqlTable, sqlFields, related, lowWithInf, highWithInf)
+    queryAlert ctor related window = do
       let
-        build = \rows -> MMap.fromAscList $ flip map rows $ \((elId, elStarted, elStopped, elLastSeen, elNoticeSentAt) Pg.:. t) ->
-          ( elId :: Id ErrorLog
-          , ( ErrorLog
-                { _errorLog_started = elStarted
-                , _errorLog_stopped = elStopped
-                , _errorLog_lastSeen = elLastSeen
-                , _errorLog_noticeSentAt = elNoticeSentAt
-                }
-            , ctor elId t
-            )
-          )
+        build :: [PersistValue] -> f (Id ErrorLog, (ErrorLog, b))
+        build = evalStateT $ do
+          elId :: Id ErrorLog <- StateT fromPersistValues
+          modify (toPrimitivePersistValue pg (0 :: Int):)
+          eLog :: ErrorLog <- StateT fromEntityPersistValues
+          modify (toPrimitivePersistValue pg constrNum:)
+          extras :: b <- StateT fromEntityPersistValues
+          pure $ (elId, (eLog, extras))
+        entityD = entityDef pg (undefined :: b)
+        constrNum = entityConstrNum (Proxy @b) ctor
+        constrD = constructors entityD !! constrNum
+        sqlTable = tableName id entityD constrD
+        sqlFields = foldr (flatten id) [] $ constrParams constrD
+        qCond :: [Utf8]
+        qCond = flip map related $ \case
+          This r@(Related fld fk) ->
+            let ctor2 = singleConstructor $ proxify $ r
+                entityD2 = entityDef pg $ phantomize $ Compose ctor2
+                constrNum2 = entityConstrNum (Compose ctor2) ctor2
+                constrD2 = constructors entityD2 !! constrNum2
+                relatedTbl = tableName id entityD2 constrD2
+                tColumns = renderQualifiedField "t" $ fieldChain pg fld
+                relatedColumns = renderQualifiedField "n" $ case fk of
+                  ForeignKey_AutoId -> fieldChain pg $ (const AutoKeyField :: d (ConstructorMarker r) -> AutoKeyField r d) ctor2
+                  ForeignKey_UniqueId -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
+                  ForeignKey_UniqueIdData -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
+                  ForeignKey_Field fld2 -> fieldChain pg $ fld2
+            in
+              "EXISTS (SELECT 1 FROM \"" <> relatedTbl
+              <> "\" n WHERE " <> (mconcat $ intersperse " AND " $ "NOT n.\"data#deleted\"" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+        qBase :: Utf8
         qBase =
           "SELECT \
-          \    el.id \
+          \     el.id \
           \   , el.started AT TIME ZONE 'UTC' \
           \   , el.stopped AT TIME ZONE 'UTC' \
           \   , el.\"lastSeen\" AT TIME ZONE 'UTC' \
           \   , el.\"noticeSentAt\" AT TIME ZONE 'UTC' \
           \   " <> foldMap (\fld -> ", t.\"" <> fld <> "\"") sqlFields <> " \
           \ FROM \"ErrorLog\" el \
-          \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id "
-          <> maybe "" (\(relatedTbl, relatedColumn, tColumn) ->
-                        " JOIN \"" <> relatedTbl
-                        <> "\" n ON n.\"" <> relatedColumn <> "\" = t.\"" <> tColumn <> "\"") related
-          <> " WHERE "
-          <> bool " TRUE " "   NOT n.\"data#deleted\"" (isJust related)
+          \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
+          \ WHERE ("
+          <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
+          <> ")"
           <> qFlt
         qFlt = case flt of
           AlertsFilter_All -> ""
           AlertsFilter_ResolvedOnly -> " AND el.stopped IS NOT NULL"
           AlertsFilter_UnresolvedOnly -> " AND el.stopped IS NULL"
-      build <$> (traceQuery) (
+        (qWindow, qWindowArgs) = case window of
+          ClosedInterval lowerEnd upperEnd -> let
+            qEndpoint = \case
+              LowerInfinity -> ("'-infinity'", id)
+              Bounded pt -> ("?", (toPrimitivePersistValue pg pt:))
+              UpperInfinity -> ("'infinity'", id)
+            (lowerQ, lowerArgs) = qEndpoint lowerEnd
+            (upperQ, upperArgs) = qEndpoint upperEnd
+            in ("tsrange(" <> lowerQ <> ", " <> upperQ <> ", '[]')", lowerArgs . upperArgs)
+          
+      $(logDebugSH) ("queryAlert" :: Text, sqlTable, window)
+      MMap.fromDistinctAscList <$> traceQuery (
         qBase <>
-          " AND tsrange(el.started, el.\"lastSeen\", '[]') && tsrange(?, ?, '[]') \
-          \ ORDER BY el.id ASC") -- this ORDER BY abides the 'MMap.fromAscList' above.
-        (lowWithInf, highWithInf)
+          " AND tsrange(el.started, el.\"lastSeen\", '[]') && " <> qWindow <> " \
+          \ ORDER BY el.id ASC") -- this ORDER BY justifies the 'MMap.fromDistinctAscList' above.
+        (qWindowArgs) build
 
+    runQuery :: LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQuery lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
+      logAssume lTag (queryAlert (singleConstructor $ proxify $ lTag) (logDep lTag) window)
+        
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
-      leftBiasedUnions <$> sequenceA
-        [ queryNodeAlert "ErrorLogInaccessibleNode" ["node", "address", "alias"]
-            (\elId (tNode, tAddress, tAlias) -> ErrorLogView_NodeError $ NodeErrorLogView_InaccessibleNode $ ErrorLogInaccessibleNode elId tNode tAddress tAlias)
-            window
-
-        , queryNodeAlert "ErrorLogNodeWrongChain" ["node", "address", "alias", "expectedChainId", "actualChainId"]
-            (\elId (tNode, tAddress, tAlias, tExpectedChainId, tActualChainId) ->
-                ErrorLogView_NodeError $ NodeErrorLogView_NodeWrongChain $ ErrorLogNodeWrongChain elId tNode tAddress tAlias tExpectedChainId tActualChainId)
-            window
-
-        , queryNodeAlert "ErrorLogNodeInvalidPeerCount" ["node", "minPeerCount", "actualPeerCount"]
-            (\elId (tNode, tMinPeerCount, tActualPeerCount) ->
-                ErrorLogView_NodeError $ NodeErrorLogView_NodeInvalidPeerCount $ ErrorLogNodeInvalidPeerCount elId tNode tMinPeerCount tActualPeerCount)
-            window
+      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- runQuery lTag window; $(logDebugSH) x; pure x }) universe
 
         --, queryClientDaemonAlert "ErrorLogBakerNoHeartbeat" ["lastLevel", "lastBlockHash", "client"]
-        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> ErrorLogView_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
+        --  (\elId (tLastLevel, tLastBlockHash, tClient) -> LogTag_BakerNoHeartbeat $ ErrorLogBakerNoHeartbeat elId tLastLevel tLastBlockHash tClient)
         --    window
-
-        , queryNodeAlert "ErrorLogBadNodeHead" ["node", "lca", "nodeHead", "latestHead"]
-          (\elId (tNode, tLca, tNodeHead, tLatestHead) -> ErrorLogView_NodeError $ NodeErrorLogView_BadNodeHead
-                  ErrorLogBadNodeHead
-                    { _errorLogBadNodeHead_log = elId
-                    , _errorLogBadNodeHead_node = tNode
-                    , _errorLogBadNodeHead_lca = tLca
-                    , _errorLogBadNodeHead_nodeHead =tNodeHead
-                    , _errorLogBadNodeHead_latestHead = tLatestHead
-                    }) window
-        , queryBakerAlert "ErrorLogMultipleBakersForSameBaker" ["publicKeyHash", "client", "worker"]
-          (\elId (tPublicKeyHash, tClient, tWorker) -> ErrorLogView_BakerError $ BakerErrorLogView_MultipleBakersForSameBaker $
-                  ErrorLogMultipleBakersForSameBaker elId tPublicKeyHash tClient tWorker)
-          window
-        , queryAlert "ErrorLogNetworkUpdate" ["namedChain", "commit", "gitLabProjectId"] Nothing
-          (\elId (tNamedChain, tCommit, tProjectId) -> ErrorLogView_NetworkUpdate $ ErrorLogNetworkUpdate elId tNamedChain tCommit tProjectId)
-            window
-
-        , queryBakerAlert "ErrorLogBakerDeactivated" ["publicKeyHash", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivated $
-                  ErrorLogBakerDeactivated elId tPublicKeyHash tPreservedCycles tFitness)
-          window
-
-        , queryBakerAlert "ErrorLogBakerDeactivationRisk" ["publicKeyHash", "gracePeriod", "latestCycle", "preservedCycles", "fitness"]
-          (\elId (tPublicKeyHash, tGracePeriod, tLatestCycle, tPreservedCycles, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerDeactivationRisk $
-                  ErrorLogBakerDeactivationRisk elId tPublicKeyHash tGracePeriod tLatestCycle tPreservedCycles tFitness)
-          window
-        , queryBakerAlert' "ErrorLogBakerMissed" ["baker#publicKeyHash", "right", "level", "fitness"]
-          (\elId (tPublicKeyHash, tRight, tLevel, tFitness) -> ErrorLogView_BakerError $ BakerErrorLogView_BakerMissed $
-                   ErrorLogBakerMissed elId tPublicKeyHash tRight tLevel tFitness)
-          window
-        ]
 
     leftBiasedUnions = MMap.unionsWith const
 
@@ -345,24 +365,45 @@ getAlertCount =
     WHERE el.stopped IS NULL|]
 
 getBakerAddresses
-  :: forall m. (PostgresRaw m, MonadIO m)
+  :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)
   => NodeDataSource
   -> Maybe (PublicKeyHash)
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
-  rs :: Map.Map PublicKeyHash (Maybe Text, Int) <- [queryQ|
-      SELECT b."publicKeyHash", b."data#data#alias",
-        ( SELECT COUNT(e.id)
-          FROM "ErrorLog" e
-          JOIN "ErrorLogBakerMissed" elbm
-            ON elbm.log = e.id
-          WHERE e.stopped IS NULL
-            AND elbm."baker#publicKeyHash" = b."publicKeyHash"
-        )
-      FROM "Baker" b
-      WHERE NOT b."data#deleted"
-        AND CASE WHEN ?bid is NULL THEN true ELSE b."publicKeyHash" = ?bid END
-    |] <&> Map.fromList . fmap (\(pkh, alias, alertCount) -> (pkh, (alias, alertCount)))
+  let qCount :: [Utf8]
+      qCount = flip map universe $ \(This bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
+        r@(Related fld fk) ->
+          let ctor = singleConstructor $ proxify $ bTag
+              entityD = entityDef pg $ phantomize $ Compose ctor
+              constrNum = entityConstrNum (Compose ctor) ctor
+              constrD = constructors entityD !! constrNum
+              extraTbl = tableName id entityD constrD
+              ctor2 = singleConstructor $ proxify $ r
+              tColumns = renderQualifiedField "elbm" $ fieldChain pg fld
+              relatedColumns = renderQualifiedField "b" $ case fk of
+                ForeignKey_UniqueId -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
+                ForeignKey_UniqueIdData -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
+                ForeignKey_Field fld2 -> fieldChain pg $ fld2
+          in
+            "(SELECT COUNT(e.id) FROM \"" <> extraTbl
+            <> "\" elbm JOIN \"ErrorLog\" e on e.id = elbm.log WHERE " <> (mconcat $ intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+      qFull = "\
+        \ SELECT b.\"publicKeyHash\", b.\"data#data#alias\", "
+        <> (mconcat $ intersperse " + " $ qCount) <> " \
+        \ FROM \"Baker\" b \
+        \ WHERE NOT b.\"data#deleted\" \
+        \   AND COALESCE(?,b.\"publicKeyHash\") = b.\"publicKeyHash\" \
+        \ ORDER BY b.\"publicKeyHash\""
+      buildRs :: (Monad f, PersistBackend f) => [PersistValue] -> f (PublicKeyHash, (Maybe Text, Int))
+      buildRs = evalStateT $ do
+        pkh :: PublicKeyHash <- StateT fromPersistValues
+        alias :: Maybe Text <- StateT fromPersistValues
+        errorCount :: Int <- StateT fromPersistValues
+        pure $ (pkh, (alias, errorCount))
+  rs <- Map.fromAscList <$> traceQuery
+      qFull
+      (toPrimitivePersistValue pg bid :)
+      buildRs
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -418,7 +459,7 @@ getBakerAddresses nds bid = do
   return result
 
 getNodeAddresses
-  :: forall m. (Monad m, PostgresRaw m)
+  :: forall m. (Monad m, PostgresRaw m, MonadLogger m, PersistBackend m)
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
@@ -445,35 +486,40 @@ getNodeAddresses nid = do
       , _nodeInternalData_stateUpdated = stateUpdated
       , _nodeInternalData_backend = backend
       }))
-  counts :: Map.Map (WithInfinity (Id Node)) Int <- [queryQ|
-      SELECT n.id,
-        (SELECT COUNT(ein.log)
-         FROM "ErrorLogInaccessibleNode" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-        + (SELECT COUNT(ein.log)
-         FROM "ErrorLogBadNodeHead" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-        + (SELECT COUNT(ein.log)
-         FROM "ErrorLogNodeWrongChain" ein
-         JOIN "ErrorLog" e
-          ON e.id = ein.log
-         WHERE e.stopped IS NULL
-           AND ein.node = n.id)
-      FROM (
-        SELECT n1.id FROM "NodeExternal" n1
-        WHERE NOT n1."data#deleted"
-          AND CASE WHEN ?nid is NULL THEN true ELSE n1.id = ?nid END
-        UNION
-        SELECT n2.id FROM "NodeInternal" n2
-        WHERE NOT n2."data#deleted"
-          AND CASE WHEN ?nid is NULL THEN true ELSE n2.id = ?nid END) n
-    |] <&> Map.fromList . (fmap $ first Bounded)
+  let qCount :: [Utf8]
+      qCount = flip map universe $ \(This nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
+        r@(Related fld fk) ->
+          let ctor = singleConstructor $ proxify $ nTag
+              entityD = entityDef pg $ phantomize $ Compose ctor
+              constrNum = entityConstrNum (Compose ctor) ctor
+              constrD = constructors entityD !! constrNum
+              extraTbl = tableName id entityD constrD
+              ctor2 = singleConstructor $ proxify $ r
+              tColumns = renderQualifiedField "ein" $ fieldChain pg fld
+              relatedColumns = renderQualifiedField "n" $ case fk of
+                ForeignKey_AutoId -> fieldChain pg $ (const AutoKeyField :: d (ConstructorMarker r) -> AutoKeyField r d) ctor2
+                ForeignKey_Field fld2 -> fieldChain pg $ fld2
+          in
+            "(SELECT COUNT(ein.log) FROM \"" <> extraTbl
+            <> "\" ein JOIN \"ErrorLog\" e on e.id = ein.log WHERE " <> (mconcat $ intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+      qCounts = "SELECT n.id, " <> (mconcat $ intersperse " + " $ qCount) <> " \
+        \ FROM ( \
+        \   SELECT n1.id FROM \"NodeExternal\" n1 \
+        \   WHERE NOT n1.\"data#deleted\" \
+        \   UNION \
+        \   SELECT n2.id FROM \"NodeInternal\" n2 \
+        \   WHERE NOT n2.\"data#deleted\") n \
+        \ WHERE COALESCE(?,n.id) = n.id \
+        \ ORDER BY n.id"
+      buildCounts :: (Monad f, PersistBackend f) => [PersistValue] -> f (WithInfinity (Id Node), Int)
+      buildCounts = evalStateT $ do
+        nodeId :: Id Node <- StateT fromPersistValues
+        errorCount :: Int <- StateT fromPersistValues
+        pure $ (Bounded nodeId, errorCount)
+  counts <- Map.fromAscList <$> traceQuery
+      qCounts
+      (toPrimitivePersistValue pg nid :)
+      buildCounts
   let
     intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData NodeInternalData)
     intExt = fmap Left ext `Map.union` fmap Right int

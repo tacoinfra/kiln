@@ -86,6 +86,17 @@ data Op (a :: OpKind) = Op
   }
   deriving (Eq, Ord, Show, Typeable)
 
+data EmptyMetadata = EmptyMetadata
+  deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON EmptyMetadata where
+  parseJSON = withObject "EmptyMetadata" $ const $ pure EmptyMetadata
+
+instance ToJSON EmptyMetadata where
+  toJSON _ = Object $ mempty
+  toEncoding _ = pairs mempty
+
+
 --
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
@@ -235,7 +246,7 @@ data ActivateMetadata = ActivateMetadata
 
 -- | "kind": { "type": "string", "enum": [ "proposals" ] },
 data OperationContentsProposals = OperationContentsProposals
-  { _operationContentsProposals_metadata :: !() --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
+  { _operationContentsProposals_metadata :: !EmptyMetadata --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
   , _operationContentsProposals_source :: !PublicKeyHash --  "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
   , _operationContentsProposals_period :: !RawLevel --  "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   , _operationContentsProposals_proposals :: !(Seq ProtocolHash) --  "proposals": { "type": "array", "items": { "$ref": "#/definitions/Protocol_hash" } },
@@ -251,7 +262,7 @@ data Ballot
 
 -- | "kind": { "type": "string", "enum": [ "ballot" ] },
 data OperationContentsBallot = OperationContentsBallot
-  { _operationContentsBallot_metadata :: !() --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
+  { _operationContentsBallot_metadata :: !EmptyMetadata --  "metadata": { "type": "object", "properties": {}, "additionalProperties": false }
   , _operationContentsBallot_source :: !PublicKeyHash --  "source": { "$ref": "#/definitions/Signature.Public_key_hash" },
   , _operationContentsBallot_period :: !RawLevel --  "period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   , _operationContentsBallot_proposal :: !ProtocolHash --  "proposal": { "$ref": "#/definitions/Protocol_hash" },
@@ -460,6 +471,12 @@ stripEndorsement (Operation { _operation_branch = branch, _operation_contents = 
       OperationContents_Endorsement (OperationContentsEndorsement { _operationContentsEndorsement_level = level }) ->
         Just $ Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
       _ -> Nothing
+
+outlineEndorsement :: InlinedEndorsement -> Op 'OpKind_Endorsement
+outlineEndorsement (InlinedEndorsement { _inlinedEndorsement_branch = branch, _inlinedEndorsement_operations = contents, _inlinedEndorsement_signature = sig })
+  = case contents of
+      InlinedEndorsementContents { _inlinedEndorsementContents_level = level } ->
+        Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
 
 instance B.TezosBinary OpContentsEndorsement where
   put = B.puts _opContentsEndorsement_level

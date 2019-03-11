@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -16,6 +17,8 @@
 
 module Backend.Alerts where
 
+import Prelude hiding (log, cycle)
+import Data.Dependent.Sum
 import Control.Lens ((<&>))
 import Control.Monad.Logger (MonadLogger)
 import Data.Map (Map())
@@ -28,7 +31,7 @@ import Database.Groundhog
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
 import Database.PostgreSQL.Simple.Types (Identifier(..))
-import Rhyolite.Backend.DB (getTime, selectSingle)
+import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
 import Rhyolite.Backend.Schema (fromId)
@@ -40,10 +43,11 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
+import Common.Alerts (BakerErrorDescriptions(..), plaintextErrorDescription)
 import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
 import ExtraPrelude
-import Prelude hiding (log)
 
 
 reportNoBakerHeartbeatError
@@ -116,7 +120,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
 
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
-  [ Just $ _bakerErrorDescriptions_problem dsc
+  [ Just $ plaintextErrorDescription $ _bakerErrorDescriptions_problem dsc
   , _bakerErrorDescriptions_warning dsc
   ]
 
@@ -241,7 +245,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
     Nothing -> do
       node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
       for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node)
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogInaccessibleNode logId nodeId
         queueAlert (Just logId) $ Alert Unresolved "Unable to connect to node" $
           "Unable to connect to node, " <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
@@ -283,13 +287,12 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   case existingLog of
-    Nothing -> do
-      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-      for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId (_nodeExternalData_address node) (_nodeExternalData_alias node) expectedChainId actualChainId
-        queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
+    Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+      (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeWrongChain logId nodeId expectedChainId actualChainId
+      queueAlert (Just logId) $ Alert Unresolved "Node on wrong network" $
+        nodeName <> " is on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeWrongChainError
@@ -305,10 +308,10 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  when (not $ null lids) $ for_ node' $ \node -> do
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
+  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " is on correct network"
+      nodeName <> " is on correct network"
 
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
@@ -326,14 +329,13 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   case existingLog of
-    Nothing -> do
-      node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-      for_ node' $ \node -> do
-        (logId, _) <- insertErrorLog $ \logId ->
-          ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
-        queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
-          "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+    Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+      (logId, _) <- insertErrorLog $ \logId ->
+        ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
+      queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
+        nodeName <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
 
 clearNodeInvalidPeerCountError
@@ -348,10 +350,10 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-  when (not $ null lids) $ for_ node' $ \node -> do
+  let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
+  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
-       "Node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node) <> " now meets or exceeds the required minimum number of connected peers."
+      nodeName <> " now meets or exceeds the required minimum number of connected peers."
 
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
@@ -401,11 +403,11 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
-        for_ node $ \n -> do
-          let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+            formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
+        (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
           queueAlert (Just logId) $ Alert Unresolved heading $
-            heading <> ": " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> "\n\n" <> message
+            heading <> ": " <> nodeName <> "\n\n" <> message
 
 clearBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m
@@ -419,13 +421,13 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
   for_ lids $ notify . mkDefaultNotify
-  node <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
-  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $ for_ node $ \n -> do
-    queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
-        "Resolved: " <> maybe "" (\x -> "Node " <> x <> " at ") (_nodeExternalData_alias n) <> Uri.render (_nodeExternalData_address n) <> " is now in sync."
-
+  let formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
+  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $
+    (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+      queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
+        "Resolved: " <> nodeName <> " is now in sync."
 
 missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
 missedBakeLog right pkh lvl =
@@ -474,6 +476,50 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       RightKind_Baking -> "bake"
       RightKind_Endorsing -> "endorsement"
 
+-- we care only to inform the baker of each accusation against them, and no other provenance matters.
+accusedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => PublicKeyHash -> OperationHash -> BlockHash -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerAccused)])
+accusedBakeLog pkh opHash blkHash =
+  ([queryQ|
+    SELECT b."publicKeyHash", el.id, elbm.log
+    FROM "Baker" b
+    LEFT OUTER JOIN "ErrorLogBakerAccused" elbm
+      ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+      AND elbm."op#hash" = ?opHash
+      AND elbm."op#blockHash" = ?blkHash
+    LEFT OUTER JOIN "ErrorLog" el
+      ON el.id = elbm.log
+    WHERE NOT b."data#deleted"
+      AND b."publicKeyHash" = ?pkh
+  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerAccused))]) <&> Map.fromList . fmap (\(bid, elid, elbmid) -> (bid, toList $ (,) <$> elid <*> elbmid))
+
+-- there is no corresponding 'clear accusation'.  you cannot become unaccused by branch reorg
+reportAccusation
+  :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
+     , SqlDb (PhantomDb m)
+     , MonadLogger m)
+  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  Nothing -> do
+    (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
+      { _errorLogBakerAccused_log = eid
+      , _errorLogBakerAccused_op = Id (opHash, blkHash)
+      , _errorLogBakerAccused_baker = bid
+      , _errorLogBakerAccused_right = right
+      , _errorLogBakerAccused_level = lvl
+      , _errorLogBakerAccused_cycle = cycle
+      , _errorLogBakerAccused_accusedLevel = aLvl
+      , _errorLogBakerAccused_accusedCycle = aCycle
+      }
+    queueAlert (Just eid) alert
+  Just xs -> for_ xs $ \(_eid, _elbmid) ->
+    pure ()
+  where
+    alert = Alert Unresolved
+      ("Double " <> rightTxt)
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
+    rightTxt = case right of
+      RightKind_Baking -> "baked"
+      RightKind_Endorsing -> "endorsed"
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 clearMissedBake f right pkh lvl = do
@@ -499,6 +545,18 @@ clearMissedBake f right pkh lvl = do
       rightTxt = case right of
         RightKind_Baking -> "bake"
         RightKind_Endorsing -> "endorsement"
+
+getNodeName
+  :: (PersistBackend m, SqlDb (PhantomDb m))
+  => Id Node
+  -> (Maybe Text -> Text -> Text)
+  -> m (Maybe Text)
+getNodeName nodeId formatExtNodeName = do
+  project1 (NodeExternal_dataField ~> DeletableRow_dataSelector) (NodeExternal_idField `in_` [nodeId]) >>= \case
+    Just n -> return $ Just $ formatExtNodeName (_nodeExternalData_alias n) (Uri.render (_nodeExternalData_address n))
+    Nothing -> project1 NodeInternal_idField (NodeInternal_idField `in_` [nodeId]) >>= \case
+      Nothing -> return Nothing
+      Just _ -> return $ Just "Kiln Node"
 
 nodeNotDeleted :: (PersistBackend m, SqlDb (PhantomDb m)) => Id Node -> m Bool
 nodeNotDeleted nodeId = fmap (all not)
@@ -572,3 +630,13 @@ returnUpdateErrorLogLastSeen logId = do
   getId logId >>= \case
     Nothing -> fail $ "returnUpdateErrorLogLastSeen called on nonexistent record " <> show logId
     Just l -> return l
+
+resolveAlert :: PersistBackend m => DSum LogTag Identity -> m ()
+resolveAlert elv@(tag :=> _) = logAssume tag $ do
+  let eid = mkId tag (errorLogIdForErrorLogView elv)
+  now <- getTime
+  updateId (unId eid) [ErrorLog_stoppedField =. Just now]
+  notify $ mkDefaultNotify eid
+  where
+    mkId :: proxy e -> IdData e -> Id e
+    mkId _ = Id

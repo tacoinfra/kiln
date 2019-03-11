@@ -11,11 +11,13 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Control.Monad.Logger (MonadLogger)
 import Control.Monad.Logger (logWarn)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
 import Data.Aeson (fromJSON)
 import qualified Data.Aeson as Aeson
+import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, get, select, (&&.), (==.), Cond(..))
 import Rhyolite.Backend.DB (runDb, selectMap')
@@ -23,6 +25,7 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (NotifyMessage (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
@@ -34,9 +37,11 @@ import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
                    NodeSummary (..), BakerSummary (..),
-                   ErrorLogView (..), NodeErrorLogView (..), BakerErrorLogView (..),
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
                    mailServerConfigToView, Deletable, BakerSummary)
+import Common.App (bakerErrorViewOnly)
+import Common.App (bakerIdForBakerErrorLogView)
+import Common.App (errorLogIdForErrorLogView)
 import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
@@ -59,34 +64,8 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_Baker bid mBaker -> handleBaker bid mBaker
       Notify_BakerDetails bakerDetails -> handleBakerDetails bakerDetails
       Notify_BakerRightsProgress _x y _z -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
-      Notify_ErrorLogBakerMissed eid -> handleErrorLog'
-        (handleBakerAddress . unId . _errorLogBakerMissed_baker)
-        _errorLogBakerMissed_log
-        (ErrorLogView_BakerError . BakerErrorLogView_BakerMissed)
-        eid
-      Notify_ErrorLogBadNodeHead eid -> handleErrorLog _errorLogBadNodeHead_log
-        (ErrorLogView_NodeError . NodeErrorLogView_BadNodeHead)
-        eid
-      Notify_ErrorLogInaccessibleNode eid -> handleErrorLog _errorLogInaccessibleNode_log
-        (ErrorLogView_NodeError . NodeErrorLogView_InaccessibleNode)
-        eid
-      Notify_ErrorLogNodeWrongChain eid -> handleErrorLog _errorLogNodeWrongChain_log
-        (ErrorLogView_NodeError . NodeErrorLogView_NodeWrongChain)
-        eid
-      Notify_ErrorLogNodeInvalidPeerCount eid -> handleErrorLog _errorLogNodeInvalidPeerCount_log
-        (ErrorLogView_NodeError . NodeErrorLogView_NodeInvalidPeerCount)
-        eid
-      Notify_ErrorLogMultipleBakersForSameBaker eid -> handleErrorLog _errorLogMultipleBakersForSameBaker_log
-        (ErrorLogView_BakerError . BakerErrorLogView_MultipleBakersForSameBaker)
-        eid
-      Notify_ErrorLogBakerDeactivated eid -> handleErrorLog _errorLogBakerDeactivated_log
-        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivated)
-        eid
-      Notify_ErrorLogBakerDeactivationRisk eid -> handleErrorLog _errorLogBakerDeactivationRisk_log
-        (ErrorLogView_BakerError . BakerErrorLogView_BakerDeactivationRisk)
-        eid
-      Notify_ErrorLogBakerNoHeartbeat eid -> handleErrorLog _errorLogBakerNoHeartbeat_log ErrorLogView_BakerNoHeartbeat eid
-      Notify_ErrorLogNetworkUpdate eid -> handleErrorLog _errorLogNetworkUpdate_log ErrorLogView_NetworkUpdate eid
+      Notify_ErrorLog (tag :=> eid) ->
+        logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
       Notify_MailServerConfig _eid cfg -> handleMailServer cfg
       Notify_NodeExternal eid ent -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
       Notify_NodeInternal eid ent -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
@@ -140,7 +119,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     {-# INLINE handleNodeExternal #-}
     handleNodeExternal
-      :: (Monad m', PostgresRaw m')
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
       => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
     handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeExternalV <- case mNodeExternalData of
@@ -150,7 +129,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
 
     {-# INLINE handleNodeInternal #-}
     handleNodeInternal
-      :: (Monad m', PostgresRaw m')
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
       => Id Node -> Maybe NodeInternalData -> m' (BakeView a)
     handleNodeInternal nid mNodeInternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeInternalV <- case mNodeInternalData of
@@ -218,15 +197,21 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
         }
 
     handleErrorLog
-      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2)
-      => (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
+      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      => (e -> Id ErrorLog) -> LogTag e -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
-      :: forall e u m2. (EntityWithIdBy u e, PersistBackend m2, PostgresRaw m2) -- (EntityWithId e, PersistBackend m2, PostgresRaw m2)
-      => (e -> m2 (BakeView a)) -> (e -> Id ErrorLog) -> (e -> ErrorLogView) -> Id e -> m2 (BakeView a)
-    handleErrorLog' k getLogId toView specificLogId = do
+      :: forall e m2
+      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      => (e -> m2 (BakeView a))
+      -> (e -> Id ErrorLog)
+      -> LogTag e
+      -> Id e
+      -> m2 (BakeView a)
+    handleErrorLog' k getLogId tag specificLogId = do
+      let toView logBody = tag :=> Identity logBody
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
       -- message body so that we can avoid doing some of the work if it
       -- won't be observed
@@ -236,6 +221,12 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
           newNodeCounts <- getNodeAddresses $ Just logNodeId
           pure mempty
             { _bakeView_nodeAddresses = toRangeView nodeAddressesVS newNodeCounts
+            }
+      logBakerSummary <- for (fmap bakerIdForBakerErrorLogView . bakerErrorViewOnly . toView =<< specificLog') $ \logBakerId -> do
+        whenM (viewSelects (Bounded logBakerId) bakerAddressesVS) $ do
+          newBakerCounts <- getBakerAddresses nds $ Just logBakerId
+          pure mempty
+            { _bakeView_bakerAddresses = toRangeView bakerAddressesVS newBakerCounts
             }
       newCount <- whenM (viewSelects () alertCountVS) $ do
         alertCount <- getAlertCount
@@ -260,7 +251,7 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
               }
             else mempty
       userSupplied <- maybe (pure mempty) k specificLog'
-      return $ newCount <> newErrors <> fold logNodeSummary <> userSupplied
+      return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> userSupplied
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
     handlePublicNodeConfig pnc =

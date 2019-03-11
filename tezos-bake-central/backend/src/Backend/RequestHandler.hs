@@ -11,21 +11,24 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
-import Data.Dependent.Sum (DSum ((:=>)))
-import Database.Groundhog.Core (Field)
+import Data.Some (Some(This))
+import Data.Universe
+import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
@@ -35,10 +38,11 @@ import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Email, Id (..))
+import Rhyolite.Schema (Email, Id (..), IdData)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
+import Backend.Alerts (resolveAlert)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
@@ -147,22 +151,28 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               notify $ Notify_NodeInternal nid Nothing
         where
           clearErrors nid = do
-            elin <- select (ErrorLogInaccessibleNode_nodeField ==. nid)
-            elnwc <- select (ErrorLogNodeWrongChain_nodeField ==. nid)
-            elbnh <- select (ErrorLogBadNodeHead_nodeField ==. nid)
-
-            now <- getTime
             let
-              logIds :: [Id ErrorLog] = mconcat
-                [ _errorLogInaccessibleNode_log <$> elin
-                , _errorLogNodeWrongChain_log <$> elnwc
-                , _errorLogBadNodeHead_log <$> elbnh
-                ]
-            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId logIds)
+              deleteLogs :: forall cstr m' t.
+                            ( Monad m', PersistBackend m'
+                            , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr)
+                         => NodeLogTag t
+                         -> Field t cstr (Id Node)
+                         -> m' [Id ErrorLog]
+              deleteLogs tag field = do
+                ids <- errorLogIdForNodeLogTag tag <$$> select (field ==. nid)
+                for_ ids $ notify . mkDefaultNotify . (Id @t)
+                pure ids
 
-            for_ elin $ notify . mkDefaultNotify  . (Id @ErrorLogInaccessibleNode) . _errorLogInaccessibleNode_log
-            for_ elnwc $ notify . mkDefaultNotify . (Id @ErrorLogNodeWrongChain) . _errorLogNodeWrongChain_log
-            for_ elbnh $ notify . mkDefaultNotify . (Id @ErrorLogBadNodeHead) . _errorLogBadNodeHead_log
+              onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
+              onTag (This tag) = case tag of
+                NodeLogTag_InaccessibleNode -> deleteLogs tag ErrorLogInaccessibleNode_nodeField
+                NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
+                NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
+                NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField
+
+            ids <- fmap concat $ for universe onTag
+            now <- getTime
+            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
       PublicRequest_AddClient addr alias -> inDb $ do
         existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
@@ -393,30 +403,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           AlertNotificationMethod_Telegram ->
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
-      PublicRequest_ResolveAlert (tag :=> (Identity specificLog)) -> inDb $ do
-        -- TODO: this is not the only place we encode knowledge of which alert types can be manually resolved
-        elid_notifier' :: Maybe (Id ErrorLog, Notify) <- case tag of
-          LogTag_InaccessibleNode -> pure Nothing
-          LogTag_NodeWrongChain -> pure Nothing
-          LogTag_BakerNoHeartbeat -> pure Nothing
-          LogTag_BadNodeHead -> pure Nothing
-          LogTag_NodeInvalidPeerCount -> pure Nothing
-          LogTag_MultipleBakersForSameBaker -> pure Nothing
-          LogTag_NetworkUpdate -> do
-            let eid = _errorLogNetworkUpdate_log specificLog
-            n <- fmap (Notify_ErrorLogNetworkUpdate . Id) . listToMaybe <$> project ErrorLogNetworkUpdate_logField (ErrorLogNetworkUpdate_logField `in_` [eid])
-            return $ (,) <$> pure eid <*> n
-          LogTag_BakerDeactivated -> pure Nothing
-          LogTag_BakerDeactivationRisk -> pure Nothing
-          LogTag_BakerMissed -> do
-            let eid = _errorLogBakerMissed_log specificLog
-            n <- fmap (Notify_ErrorLogBakerMissed . Id) . listToMaybe <$> project ErrorLogBakerMissed_logField (ErrorLogBakerMissed_logField `in_` [eid])
-            return $ (,) <$> pure eid <*> n
-
-        for_ elid_notifier' $ \(elid, notifier) -> do
-          now <- getTime
-          updateId elid [ErrorLog_stoppedField =. Just now]
-          notify notifier
+      PublicRequest_ResolveAlert elv -> inDb $ resolveAlert elv
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

@@ -24,6 +24,7 @@ import Data.Fixed (divMod')
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
+import qualified Data.Map as M
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -48,6 +49,7 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp)
 import Common.Api (PublicRequest)
+import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
@@ -85,21 +87,27 @@ hrefLink :: DomBuilder t m => Text -> m a -> m a
 hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
 tez :: Tez -> Text
-tez (Tez n) = T.pack wholes' <> parts' <> "ꜩ"
+tez t = let (w, p, tz) = tez' t
+         in w <> p <> tz
+
+tez' :: Tez -> (Text, Text, Text)
+tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
   where (wholes :: Integer, parts) = n `divMod'` 1
         wholes' = reverse $ f $ reverse $ show wholes
         parts' = T.dropWhileEnd (== '.')
                  $ T.dropAround (== '0')
                  $ tshow parts
         f = \case
-          (a0 : a1 : a2 : as) -> a0 : a1 : a2 : ',' : f as
+          (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
 
-localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r, PostBuild t m) => Dynamic t Time.UTCTime -> m ()
+standardTimeFormat :: String
+standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
+
+localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
-  dynText $ T.pack . Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %Z" .
-    Time.utcToZonedTime tz <$> t
+  text $ T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz t
 
 localHumanizedTimestamp
   ::
@@ -109,16 +117,30 @@ localHumanizedTimestamp
   => Dynamic t (Maybe Text)
   -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestamp titleDyn tDyn = do
+localHumanizedTimestamp titleDyn tsDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
-  let ltDyn = T.pack . Time.formatTime Time.defaultTimeLocale "%A, %b %-d, %Y @ %-l:%M%P %Z" . Time.utcToZonedTime tz <$> tDyn
   tooltipped TooltipPos_BottomLeft
     (do
       whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
-      dynText ltDyn
+      dyn_ $ fmap localTimestamp tsDyn
     ) $
-    dynText <=< holdUniqDyn $ ffor2 currentTime tDyn $ humanizeTimestamp tz
+    dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+
+-- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
+-- tooltips since they are more lightweight
+localHumanizedTimestampBasic
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasic tsDyn = do
+  tz <- asks (^. timeZone)
+  currentTime <- asks (^. timer)
+  let attrs = ffor tsDyn $ \ts -> M.fromList
+        [ ("data-position", "bottom left")
+        , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
+        ]
+  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
 
 data TooltipPos
   = TooltipPos_TopLeft
@@ -395,19 +417,40 @@ cancelableModal = cancelableModalWithClasses []
 
 cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
 cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
-  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon grey" blank
   divClass "content" (f $ leftmost [domEvent Click closeEl, close])
 
-confirmationModal :: MonadRhyoliteFrontendWidget app t m
+reminderModal :: MonadRhyoliteFrontendWidget app t m
                   => Text
                   -> Text
                   -> Text
                   -> (Event t () -> Event t (PublicRequest app ()))
                   -> Event t ()
                   -> m (Event t ())
-confirmationModal title msg btn mkReq = cancelableModal $ \close -> do
-  el "h3" $ text title
-  el "p" $ text msg
+reminderModal title msg = confirmationModal False title [msg]
+
+warningModal :: MonadRhyoliteFrontendWidget app t m
+             => Text
+             -> [Text]
+             -> Text
+             -> (Event t () -> Event t (PublicRequest app ()))
+             -> Event t ()
+             -> m (Event t ())
+warningModal = confirmationModal True
+
+confirmationModal :: MonadRhyoliteFrontendWidget app t m
+                  => Bool
+                  -> Text
+                  -> [Text]
+                  -> Text
+                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> Event t ()
+                  -> m (Event t ())
+confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses ["confirmation"] $ \close -> do
+  divClass "ui header" $ do
+    when isDangerous $ icon "icon-warning big red"
+    text title
+  for_ msgs $ el "p" . text
   confirm <- divClass "buttons" $ uiButton "primary" btn
   response <- requestingIdentity $ public <$> mkReq confirm
   pure $ leftmost [response, close]
@@ -529,6 +572,18 @@ nodeLabel = uncurry errorLabel . nodeSummaryIdentification
 
 bakerSummaryLabel :: DomBuilder t m => PublicKeyHash -> BakerSummary -> m ()
 bakerSummaryLabel = curry $ uncurry errorLabel . bakerSummaryIdentification
+
+ensureHealthyNodes :: DomBuilder t m => m ()
+ensureHealthyNodes = do
+  text "Add a node from the left panel or make sure any nodes you’ve already added are"
+  icon "circle healthy-node small green"
+  text "healthy."
+
+htmlErrorDescription :: DomBuilder t m => ErrorDescription -> m ()
+htmlErrorDescription = \case
+  ErrorDescription_Plain t -> text t
+  ErrorDescription_Emphasis t -> el "strong" $ text t
+  ErrorDescription_Concat t t' -> ((*>) `on` htmlErrorDescription) t t'
 
 makeLenses ''FrontendContext
 

@@ -11,6 +11,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
@@ -33,6 +35,7 @@ import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Schema (Id (..))
@@ -105,6 +108,14 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
     now <- getTime
+    let newHash = headBlockInfo ^. hash
+        newLevel = headBlockInfo ^. level
+        chainId = _nodeDataSource_chain nds
+     in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+          insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
+          values (?newHash, ?newLevel, ?chainId, null, null, false, false)
+          on conflict do nothing
+          |]
     let p = (NodeDetails_dataField ~>)
     project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
       [] -> insert $ NodeDetails
@@ -332,10 +343,17 @@ updateDataSource nds (pn, chain, uri) = do
 
     updatePublicNodeInDb :: m ()
     updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
-      Left e -> $(logErrorSH) e
+      Left e -> $(logErrorSH) ("updatePublicNodeInDb"::Text,(pn,chain,Uri.render uri),e)
       Right b -> do
         haveNewHead nds (Just pn) uri b
         runDb (Identity db) $ do
+          let newHash = b ^. hash
+              newLevel = b ^. level
+           in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+                insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
+                values (?newHash, ?newLevel, ?chainId, null, null, false, false)
+                on conflict do nothing
+                |]
           let chainField = NamedChainOrChainId chain
           now <- getTime
           eid' :: Maybe (Id PublicNodeHead) <-

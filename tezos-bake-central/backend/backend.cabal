@@ -1,5 +1,5 @@
 name: backend
-version: 0.4.0
+version: 0.4.1
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -92,8 +92,11 @@ library
     , these
     , time
     , transformers
+    , transformers-base
     , unix
+    , universe
     , uri-encode
+    , vector
 
   exposed-modules:
     Backend
@@ -120,6 +123,8 @@ library
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.WebApi
+    Backend.Workers.Accusation
+    Backend.Workers.Block
     Backend.Workers.Cache
     Backend.Workers.Client
     Backend.Workers.Baker

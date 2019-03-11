@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 module Common.Api where
 
@@ -15,7 +15,6 @@ import Data.Dependent.Sum (DSum)
 import Data.Functor.Identity (Identity)
 import Data.Text (Text)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
-import Rhyolite.Request.Class (Request)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email)
 import Text.URI (URI)
@@ -26,7 +25,7 @@ import Tezos.Types
 import Common.App (AlertNotificationMethod, Bake, MailServerView)
 import Common.Schema (LogTag)
 
-instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasRequest Bake where
+instance HasRequest Bake where
   data PublicRequest Bake a where
     PublicRequest_AddExternalNode
       :: URI
@@ -84,7 +83,5 @@ instance (Request (PublicRequest Bake), Request (PrivateRequest Bake)) => HasReq
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()
 
-fmap concat $ sequence
-  [ makeRequestForDataInstance ''PublicRequest ''Bake
-  , makeRequestForDataInstance ''PrivateRequest ''Bake
-  ]
+makeRequestForDataInstance ''PublicRequest ''Bake
+makeRequestForDataInstance ''PrivateRequest ''Bake

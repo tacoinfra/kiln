@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -17,6 +18,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-} -- for {Eq, Ord, Show} Notify
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -38,10 +40,18 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
+import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Sum (EqTag)
+import Data.Dependent.Sum (OrdTag)
+import Data.Dependent.Sum (ShowTag)
+import Data.Dependent.Sum (compareTagged)
+import Data.Dependent.Sum (eqTagged)
+import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
 import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
+import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
@@ -56,16 +66,27 @@ import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, execute
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
-import Database.PostgreSQL.Simple.FromField hiding (Binary)
+import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
+import Language.Haskell.TH (conE)
+import Language.Haskell.TH (conT)
+import Language.Haskell.TH (mkName)
+import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
+import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
+import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
+import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
+import Rhyolite.Backend.Schema.Class (HasSingleConstructor)
+import Rhyolite.Backend.Schema.Class (SingleConstructor)
+import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
 import Rhyolite.Schema (Id, Json (..), SchemaName (..))
+import Rhyolite.Schema (IdData)
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -88,16 +109,7 @@ data Notify
   | Notify_Baker !(Id Baker) !(Maybe BakerData)
   | Notify_BakerDetails !BakerDetails
   | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
-  | Notify_ErrorLogBadNodeHead !(Id ErrorLogBadNodeHead)
-  | Notify_ErrorLogBakerNoHeartbeat !(Id ErrorLogBakerNoHeartbeat)
-  | Notify_ErrorLogInaccessibleNode !(Id ErrorLogInaccessibleNode)
-  | Notify_ErrorLogMultipleBakersForSameBaker !(Id ErrorLogMultipleBakersForSameBaker)
-  | Notify_ErrorLogNodeWrongChain !(Id ErrorLogNodeWrongChain)
-  | Notify_ErrorLogNodeInvalidPeerCount !(Id ErrorLogNodeInvalidPeerCount)
-  | Notify_ErrorLogNetworkUpdate !(Id ErrorLogNetworkUpdate)
-  | Notify_ErrorLogBakerMissed !(Id ErrorLogBakerMissed)
-  | Notify_ErrorLogBakerDeactivated !(Id ErrorLogBakerDeactivated)
-  | Notify_ErrorLogBakerDeactivationRisk !(Id ErrorLogBakerDeactivationRisk)
+  | Notify_ErrorLog !(DSum LogTag Id)
   | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
   | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
   | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
@@ -109,37 +121,49 @@ data Notify
   | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
   | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
-  deriving (Eq, Ord, Typeable, Generic, Show)
+  deriving (Typeable, Generic)
+deriving instance EqTag NodeLogTag Id => Eq Notify
+deriving instance OrdTag NodeLogTag Id => Ord Notify
+deriving instance ShowTag NodeLogTag Id => Show Notify
 instance ToJSON Notify
 instance FromJSON Notify
 
 class HasDefaultNotify f where
   mkDefaultNotify :: f -> Notify
 
+instance HasDefaultNotify (DSum LogTag Id) where
+  mkDefaultNotify = Notify_ErrorLog
+instance HasDefaultNotify (DSum NodeLogTag Id) where
+  mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Node t :=> v
+instance HasDefaultNotify (DSum BakerLogTag Id) where
+  mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
+
 instance HasDefaultNotify (Id Client) where
   mkDefaultNotify = Notify_Client
+instance HasDefaultNotify (Id ErrorLogBakerAccused) where
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerAccused :=>)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
-  mkDefaultNotify = Notify_ErrorLogBadNodeHead
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_BadNodeHead :=>)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
-  mkDefaultNotify = Notify_ErrorLogBakerNoHeartbeat
+  mkDefaultNotify = mkDefaultNotify . (LogTag_BakerNoHeartbeat :=>)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
-  mkDefaultNotify = Notify_ErrorLogInaccessibleNode
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_InaccessibleNode :=>)
 instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
-  mkDefaultNotify = Notify_ErrorLogMultipleBakersForSameBaker
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_MultipleBakersForSameBaker :=>)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
-  mkDefaultNotify = Notify_ErrorLogNodeWrongChain
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeWrongChain :=>)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
-  mkDefaultNotify = Notify_ErrorLogNodeInvalidPeerCount
+  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeInvalidPeerCount :=>)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
-  mkDefaultNotify = Notify_ErrorLogNetworkUpdate
+  mkDefaultNotify = mkDefaultNotify . (LogTag_NetworkUpdate :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
-  mkDefaultNotify = Notify_ErrorLogBakerDeactivated
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivated :=>)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
-  mkDefaultNotify = Notify_ErrorLogBakerDeactivationRisk
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivationRisk :=>)
 instance HasDefaultNotify (Id Notificatee) where
   mkDefaultNotify = Notify_Notificatee
 instance HasDefaultNotify (Id ErrorLogBakerMissed) where
-  mkDefaultNotify = Notify_ErrorLogBakerMissed
+  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerMissed :=>)
 instance HasDefaultNotify BakerDetails where
   mkDefaultNotify = Notify_BakerDetails
 
@@ -500,6 +524,28 @@ instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - entity: Accusation
+    autoKey: null
+    constructors:
+      - name: Accusation
+        uniques:
+          - name: Accusation_hash
+            type: primary
+            fields: [_accusation_hash, _accusation_blockHash]
+    keys:
+      - name: Accusation_hash
+        default: true
+  - entity: BlockTodo
+    autoKey: null
+    constructors:
+      - name: BlockTodo
+        uniques:
+          - name: BlockTodo_hash
+            type: primary
+            fields: [_blockTodo_hash]
+    keys:
+      - name: BlockTodo_hash
+        default: true
   - entity: Client
     constructors:
       - name: Client
@@ -697,6 +743,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogMultipleBakersForSameBakerId
             type: primary
             fields: [_errorLogMultipleBakersForSameBaker_log]
+  - entity: ErrorLogBakerAccused
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerAccusedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerAccused
+        uniques:
+          - name: ErrorLogBakerAccusedId
+            type: primary
+            fields: [_errorLogBakerAccused_log]
   - entity: ErrorLogBakerDeactivated
     autoKey: null
     keys:
@@ -813,6 +870,10 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
 
+instance DefaultKeyId Accusation where
+  toIdData _ (Accusation_hashKey oh bh) = (oh,bh)
+  fromIdData _ = uncurry Accusation_hashKey
+
 instance DefaultKeyId Baker where
   toIdData _ (BakerKeyKey pkh) = pkh
   fromIdData _ = BakerKeyKey
@@ -820,6 +881,13 @@ instance DefaultKeyId Baker where
 instance DefaultKeyId BakerDetails where
   toIdData _ (BakerDetailsKeyKey pkh) = pkh
   fromIdData _ = BakerDetailsKeyKey
+
+instance DefaultKeyId NodeExternal where
+  toIdData _ (NodeExternalIdKey nid) = nid
+  fromIdData _ = NodeExternalIdKey
+instance DefaultKeyId NodeInternal where
+  toIdData _ (NodeInternalIdKey nid) = nid
+  fromIdData _ = NodeInternalIdKey
 
 instance DefaultKeyId ErrorLogBakerMissed where
   toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
@@ -836,6 +904,9 @@ instance DefaultKeyId ErrorLogInaccessibleNode where
 instance DefaultKeyId ErrorLogMultipleBakersForSameBaker where
   toIdData _ (ErrorLogMultipleBakersForSameBakerIdKey eid) = eid
   fromIdData _ = ErrorLogMultipleBakersForSameBakerIdKey
+instance DefaultKeyId ErrorLogBakerAccused where
+  toIdData _ (ErrorLogBakerAccusedIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerAccusedIdKey
 instance DefaultKeyId ErrorLogBakerDeactivated where
   toIdData _ (ErrorLogBakerDeactivatedIdKey eid) = eid
   fromIdData _ = ErrorLogBakerDeactivatedIdKey
@@ -851,3 +922,125 @@ instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
 instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
+
+fmap concat $ traverse (\n ->
+  let u = mkName (nameBase n <> "Id") in
+  [d| instance DefaultKeyIsUnique $(conT n) where
+        type DefaultKeyUnique $(conT n) = $(conT u)
+        defaultKeyToKey = id
+      |])
+  $
+  [ ''NodeExternal
+  , ''NodeInternal
+  ] ++ errorLogNames
+
+fmap concat $ traverse (\n ->
+  let c = mkName (nameBase n <> "Constructor") in
+  [d| instance HasSingleConstructor $(conT n) where
+        type SingleConstructor $(conT n) = $(conT c)
+        singleConstructor _ = $(conE c)
+      |])
+  $
+  [ ''Baker
+  , ''Node
+  , ''NodeExternal
+  , ''NodeInternal
+  ] ++ errorLogNames
+
+type LogTagConstraints e =
+  ( Eq (IdData e)
+  , Ord (IdData e)
+  , Show (IdData e)
+  , DefaultKey e ~ Key e (Unique (DefaultKeyUnique e))
+  , DefaultKeyId e
+  , HasDefaultNotify (Id e)
+  , HasSingleConstructor e
+  , IdData e ~ Id ErrorLog
+  , IsUniqueKey (Key e (Unique (DefaultKeyUnique e)))
+  , PersistEntity e
+  )
+
+nodeLogAssume :: NodeLogTag e -> (LogTagConstraints e => x) -> x
+nodeLogAssume = \case
+  NodeLogTag_InaccessibleNode -> id
+  NodeLogTag_NodeWrongChain -> id
+  NodeLogTag_NodeInvalidPeerCount -> id
+  NodeLogTag_BadNodeHead -> id
+
+bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
+bakerLogAssume = \case
+  BakerLogTag_MultipleBakersForSameBaker -> id
+  BakerLogTag_BakerMissed -> id
+  BakerLogTag_BakerDeactivated -> id
+  BakerLogTag_BakerDeactivationRisk -> id
+  BakerLogTag_BakerAccused -> id
+
+logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
+logAssume = \case
+  LogTag_NetworkUpdate -> id
+  LogTag_Node nTag -> nodeLogAssume nTag
+  LogTag_Baker bTag -> bakerLogAssume bTag
+  LogTag_BakerNoHeartbeat -> id
+
+instance EqTag LogTag Id where
+  eqTagged t _ = logAssume t (==)
+instance OrdTag LogTag Id where
+  compareTagged t _ = logAssume t compare
+instance ShowTag LogTag Id where
+  showTaggedPrec t = logAssume t showsPrec
+
+instance EqTag NodeLogTag Id where
+  eqTagged t _ = nodeLogAssume t (==)
+instance OrdTag NodeLogTag Id where
+  compareTagged t _ = nodeLogAssume t compare
+instance ShowTag NodeLogTag Id where
+  showTaggedPrec t = nodeLogAssume t showsPrec
+
+instance EqTag BakerLogTag Id where
+  eqTagged t _ = bakerLogAssume t (==)
+instance OrdTag BakerLogTag Id where
+  compareTagged t _ = bakerLogAssume t compare
+instance ShowTag BakerLogTag Id where
+  showTaggedPrec t = bakerLogAssume t showsPrec
+
+data Related b c r where
+  Related :: (HasSingleConstructor r, PersistEntity r, PersistField x) => Field b c x -> ForeignKey r x -> Related b c r
+
+data ForeignKey r x where
+  ForeignKey_AutoId :: forall r. EntityWithId r => ForeignKey r (Id r)
+  ForeignKey_UniqueId :: forall r u. EntityWithIdBy u r => ForeignKey r (Id r)
+  ForeignKey_UniqueIdData :: forall r u. EntityWithIdBy u r => ForeignKey r (IdData r)
+  ForeignKey_Field :: forall r x. Field r (SingleConstructor r) x -> ForeignKey r x
+
+logDep :: LogTag e -> [Some (Related e (SingleConstructor e))]
+logDep = \case
+  LogTag_NetworkUpdate -> []
+  LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
+  LogTag_Baker bTag -> pure $ This $ bakerLogDep bTag
+  LogTag_BakerNoHeartbeat -> []
+  where
+    bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
+    bothNodes = \case
+      Related fld fk -> case fk of
+        ForeignKey_AutoId -> [This (Related fld $ ForeignKey_UniqueIdData @NodeExternal), This (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
+        ForeignKey_Field fld2 -> case fld2 of {}
+
+nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
+nodeLogDep = \case
+  NodeLogTag_InaccessibleNode -> depNodeAlert ErrorLogInaccessibleNode_nodeField
+  NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
+  NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
+  NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
+  where
+    depNodeAlert f = Related f ForeignKey_AutoId
+
+bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
+bakerLogDep = \case
+  BakerLogTag_MultipleBakersForSameBaker -> depBakerAlert ErrorLogMultipleBakersForSameBaker_publicKeyHashField
+  BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
+  BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
+  BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
+  BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
+  where
+    depBakerAlert' f = Related f $ ForeignKey_UniqueId
+    depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
