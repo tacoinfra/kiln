@@ -26,6 +26,7 @@ import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
+import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Common.Schema
 
@@ -49,8 +50,8 @@ endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
 -- TODO: use postgres for "process-id's"
 
 internalNodeWorker :: (MonadIO m, MonadBaseControl IO m)
-  => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
-internalNodeWorker logger db namedChain = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
+internalNodeWorker appConfig logger db namedChain = do
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -76,10 +77,11 @@ internalNodeWorker logger db namedChain = do
 
   let
     nodePath = nodePaths namedChain
+    nodePort = show $ _appConfig_kilnNodePort appConfig
   processWorker logger db
     defaultConfig
     (initNode nodePath)
-    (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath])
+    (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort])
     pid
     (Just (Notify_NodeInternal nid))
 

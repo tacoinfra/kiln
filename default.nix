@@ -44,7 +44,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}"
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" --history-mode archive
         '';
         serviceConfig = {
           User = user;
@@ -131,14 +131,14 @@ let
 
   opsEmail = "elliot.cameron@obsidian.systems";
 
-  syslog-ngModule = {...}: {
+  syslog-ngModule = { opsEmail ? null }: {...}: {
     services.openssh.extraConfig = ''
       MaxAuthTries 3
     '';
 
     services.journald.rateLimitBurst = 0;
 
-    services.syslog-ng.enable = true;
+    services.syslog-ng.enable = opsEmail != null && opsEmail != "";
     services.syslog-ng.extraConfig = ''
       source s_journald {
         systemd-journal(prefix(".SDATA.journald."));
@@ -280,7 +280,9 @@ in obApp // {
               version = version;
             })
           )
-          syslog-ngModule
+          (syslog-ngModule {
+            opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
+          })
           usersModule
         ];
 

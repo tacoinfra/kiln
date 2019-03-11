@@ -14,6 +14,8 @@ module Backend where
 
 import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
+import Control.Lens (set)
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -29,6 +31,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
+import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
@@ -84,7 +87,7 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
-import Common.URI (mkRootUri)
+import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
 import Backend.NodeCmd
@@ -137,6 +140,10 @@ backendImpl cfg serve = do
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
+  !(kilnNodePort :: Port) <- fmap (fromMaybe Config.defaultKilnNodePort) $ liftA2 (<|>)
+    (pure $ _opts_kilnNodePort cfg)
+    (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodePort)
+
   let
     maybeNamedChain = either Just (const Nothing) chain
 
@@ -159,9 +166,13 @@ backendImpl cfg serve = do
     , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
     ]
 
-  !(nodes :: Maybe (Set URI)) <- liftA2 (<|>)
+  !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
     (pure $ getOption $ _opts_nodes cfg)
-    (getConfigFromFile (Just . Config.parseNodes) $ configPath Config.nodes)
+    (getConfigFromFile (Just . Config.parseNodesUnsafe) $ configPath Config.nodes)
+
+  !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- liftA2 (<|>)
+    (pure $ getOption $ _opts_bakers cfg)
+    (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
 
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
@@ -201,25 +212,67 @@ backendImpl cfg serve = do
       migrateKiln
 
       -- Set nodes overrides based on configuration
-      for_ nodes $ \ns -> do
-        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] CondEmpty
-        update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. False]
-          ((NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector) `in_` toList ns)
-        enabled <- project (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
-          ((NodeExternal_dataField ~> DeletableRow_deletedSelector) ==. False)
+      let
+        mkDeletable data_ = DeletableRow
+          { _deletableRow_data = data_
+          , _deletableRow_deleted = False
+          }
 
-        let needToAdd = ns `Set.difference` Set.fromList enabled
-        for_ needToAdd $ \newAddress -> do
+        -- These look the same, but I can't get groundhog to unify 'Field' & 'SubField'
+        updateNodesAndAlias
+          :: Map.Map URI (Maybe Text)
+          -> Field NodeExternal NodeExternalConstructor (DeletableRow NodeExternalData)
+          -> SubField Postgresql NodeExternal NodeExternalConstructor URI
+          -> SubField Postgresql NodeExternal NodeExternalConstructor (Maybe Text)
+          -> DbPersist Postgresql (LoggingT IO) (Map.Map URI (Maybe Text))
+        updateNodesAndAlias names deletable nameSelector aliasSelector = do
+          update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
+          kept <- fmap Set.fromList $ project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names kept) $ \address alias -> do
+            update [aliasSelector =. alias] $ nameSelector ==. address
+          pure $ Map.withoutKeys names kept
+
+        updateBakersAndAlias
+          :: Map.Map PublicKeyHash (Maybe Text)
+          -> Field Baker BakerConstructor (DeletableRow BakerData)
+          -> Field Baker BakerConstructor PublicKeyHash
+          -> SubField Postgresql Baker BakerConstructor (Maybe Text)
+          -> DbPersist Postgresql (LoggingT IO) (Map.Map PublicKeyHash (Maybe Text))
+        updateBakersAndAlias names deletable nameSelector aliasSelector = do
+          update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
+          update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
+          kept <- fmap Set.fromList $ project nameSelector $ (deletable ~> DeletableRow_deletedSelector) ==. False
+          ifor_ (Map.restrictKeys names kept) $ \address alias -> do
+            update [aliasSelector =. alias] $ nameSelector ==. address
+          pure $ Map.withoutKeys names kept
+
+      for_ nodes $ \ns -> do
+        new <- updateNodesAndAlias ns
+          NodeExternal_dataField
+          (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector)
+          (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_aliasSelector)
+        ifor_ new $ \newAddress alias -> do
           nid <- insert' Node
           insert $ NodeExternal
             { _nodeExternal_id = nid
-            , _nodeExternal_data = DeletableRow
-              { _deletableRow_data = NodeExternalData
-                { _nodeExternalData_address = newAddress
-                , _nodeExternalData_alias = Nothing
-                , _nodeExternalData_minPeerConnections = Nothing
-                }
-              , _deletableRow_deleted = False
+            , _nodeExternal_data = mkDeletable $ NodeExternalData
+              { _nodeExternalData_address = newAddress
+              , _nodeExternalData_alias = alias
+              , _nodeExternalData_minPeerConnections = Nothing
+              }
+            }
+
+      for_ bakers $ \bs -> do
+        new <- updateBakersAndAlias bs
+          Baker_dataField
+          Baker_publicKeyHashField
+          (Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector)
+        ifor new $ \newPkh alias -> do
+          insert $ Baker
+            { _baker_publicKeyHash = newPkh
+            , _baker_data = mkDeletable $ BakerData
+              { _bakerData_alias = alias
               }
             }
 
@@ -235,7 +288,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress
+        appConfig = AppConfig emailFromAddress kilnNodePort
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -268,7 +321,7 @@ backendImpl cfg serve = do
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< internalNodeWorker logger db namedChain
+        addFinalizer =<< internalNodeWorker appConfig logger db namedChain
         (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess logger db namedChain
 
       liftIO $ serve $ \case
@@ -325,6 +378,9 @@ getConfigFromFile' :: (Text -> Either String a) -> FilePath -> IO (Maybe a)
 getConfigFromFile' parser f = (either error Just . parser . T.strip <$> T.readFile f)
   `catch` \e -> if isDoesNotExistError e then pure Nothing else throwIO e
 
+configPath :: FilePath -> FilePath
+configPath = ("config" </>)
+
 data Opts = Opts
   { _opts_pgConnectionString :: !(Maybe Text)
   , _opts_route :: !(Maybe URI)
@@ -336,72 +392,86 @@ data Opts = Opts
   , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
   , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
-  , _opts_nodes :: !(Option (Set URI))
+  , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
+  , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
+  , _opts_kilnNodePort :: !(Maybe Port)
   }
+makeLenses ''Opts
 
 instance Semigroup Opts where
   a <> b = Opts -- Right biased
-    { _opts_pgConnectionString = _opts_pgConnectionString b <|> _opts_pgConnectionString a
-    , _opts_route = _opts_route b <|> _opts_route a
-    , _opts_emailFromAddress = _opts_emailFromAddress b <|> _opts_emailFromAddress a
-    , _opts_chain = _opts_chain b <|> _opts_chain a
-    , _opts_checkForUpgrade = _opts_checkForUpgrade b <|> _opts_checkForUpgrade a
-    , _opts_upgradeBranch = _opts_upgradeBranch b <|> _opts_upgradeBranch a
-    , _opts_serveNodeCache = _opts_serveNodeCache b <|> _opts_serveNodeCache a
-    , _opts_tzscanApiUri = _opts_tzscanApiUri b <|> _opts_tzscanApiUri a
-    , _opts_blockscaleApiUri = _opts_blockscaleApiUri b <|> _opts_blockscaleApiUri a
-    , _opts_obsidianApiUri = _opts_obsidianApiUri b <|> _opts_obsidianApiUri a
-    , _opts_nodes = _opts_nodes b <> _opts_nodes a -- Union the sets if there are multiple
-    , _opts_networkGitLabProjectId = _opts_networkGitLabProjectId b <|> _opts_networkGitLabProjectId a
+    { _opts_pgConnectionString = rightBiased (<|>) _opts_pgConnectionString
+    , _opts_route = rightBiased (<|>) _opts_route
+    , _opts_emailFromAddress = rightBiased (<|>) _opts_emailFromAddress
+    , _opts_chain = rightBiased (<|>) _opts_chain
+    , _opts_checkForUpgrade = rightBiased (<|>) _opts_checkForUpgrade
+    , _opts_upgradeBranch = rightBiased (<|>) _opts_upgradeBranch
+    , _opts_serveNodeCache = rightBiased (<|>) _opts_serveNodeCache
+    , _opts_tzscanApiUri = rightBiased (<|>) _opts_tzscanApiUri
+    , _opts_blockscaleApiUri = rightBiased (<|>) _opts_blockscaleApiUri
+    , _opts_obsidianApiUri = rightBiased (<|>) _opts_obsidianApiUri
+    , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
+    , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
+    , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
+    , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
     }
+    where
+      rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
+      rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
-  [ mkReqArg Config.pgConnectionString "CONNSTRING" (\x -> mempty { _opts_pgConnectionString = Just $ T.pack x }) $
+  [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
       "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
-  , mkReqArg Config.route "URL" (\x -> mempty { _opts_route = Just $ mkRootUriOrError $ T.pack x }) $
+
+  , mkReqArg Config.route "URL" (set opts_route . Just . Config.parseRootURIUnsafe) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
-  , mkReqArg Config.emailFromAddress "EMAIL" (\x -> mempty { _opts_emailFromAddress = Just $ T.pack x }) $
+
+  , mkReqArg Config.emailFromAddress "EMAIL" (set opts_emailFromAddress . Just) $
       "Email address to use for 'From' field in email notifications. If blank, use contents of '" <> configPath Config.emailFromAddress <> "'."
-  , mkReqArg Config.checkForUpgrade "BOOL" (\x -> mempty { _opts_checkForUpgrade = Just $ Config.parseBool $ T.pack x }) $
+  , mkReqArg Config.checkForUpgrade "BOOL" (set opts_checkForUpgrade . Just . Config.parseBool) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
 
-  , mkReqArg Config.upgradeBranch "BRANCH" (\x -> mempty { _opts_upgradeBranch = Just $ T.pack x }) $
+  , mkReqArg Config.upgradeBranch "BRANCH" (set opts_upgradeBranch . Just) $
       "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
-  , mkReqArg Config.chain "NETWORK" (\x -> mempty { _opts_chain = Just $ parseChainOrError $ T.pack x }) $
+
+  , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
       "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
-  , mkReqArg Config.serveNodeCache "BOOL" (\x -> mempty { _opts_serveNodeCache = Just $ Config.parseBool $ T.pack x })
+
+  , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.tzscanApiUri "URL" (\x -> mempty { _opts_tzscanApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+  , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom tzscan API URL.  Default none."
-  , mkReqArg Config.blockscaleApiUri "URL" (\x -> mempty { _opts_blockscaleApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+
+  , mkReqArg Config.blockscaleApiUri "URL" (set opts_blockscaleApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom Blockscale API URL.  Default none."
-  , mkReqArg Config.obsidianApiUri "URL" (\x -> mempty { _opts_obsidianApiUri = pure $ pure $ Config.parseURIUnsafe $ T.pack x })
+
+  , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom Obsidian API URL.  Default none."
 
-  , mkReqArg Config.nodes "URIS" (\x -> mempty { _opts_nodes = Option $ Just $ Config.parseNodes $ T.pack x })
+  , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodesUnsafe)
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."
 
-  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (\x -> mempty { _opts_networkGitLabProjectId = Just $ T.pack x })
+  , mkReqArg Config.bakers "PUBLICKEYHASHES" (set opts_bakers . Option . Just . Config.parseBakersUnsafe)
+      "Force the set of monitored bakers to be exactly the given set of (comma-separated) list of bakers. If given multiple times, the sets will be unioned. Defaults to off."
+
+  , mkReqArg Config.networkGitLabProjectId "PROJECTID" (set opts_networkGitLabProjectId . Just)
       "The GitLab project id to query for network updates. Defaults to off." -- TODO default
+
+  , mkReqArg Config.kilnNodePort "PORT" (set opts_kilnNodePort . Just . Config.parsePortUnsafe)
+      ("The port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodePort <> ".")
   ]
   where
-    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg f var)
-
-configPath :: FilePath -> FilePath
-configPath = ("config" </>)
-
-mkRootUriOrError :: Text -> URI
-mkRootUriOrError x = either (\e -> error $ T.unpack $ e <> ": " <> x) id $ mkRootUri x
+    mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
 
 encodeViaJson :: Aeson.ToJSON a => a -> Text
 encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
@@ -428,7 +498,7 @@ backendMain k = do
 
       !(route :: Maybe URI) <- liftA2 (<|>)
         (pure $ _opts_route cfg)
-        (getConfigFromFile (Just . Config.parseURIUnsafe) $ configPath Config.route)
+        (getConfigFromFile (Just . Config.parseRootURIUnsafe) $ configPath Config.route)
 
       let
         staticHead :: DomBuilder t m => m ()

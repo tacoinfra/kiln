@@ -11,23 +11,22 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Frontend.Settings where
 
 import Control.Monad (guard)
 import Data.Function (on)
 import Data.Functor.Infix
 import Data.List (intersperse)
-import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
 import GHCJS.DOM.Types (MonadJSM)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
-import qualified Text.URI as Uri
 
 import Common.Api
 import Common.App
@@ -202,23 +201,6 @@ settingsTab = do
                     pure $ leftmost [finish, close]
             pure ()
 
-    _clientsOptions :: m ()
-    _clientsOptions = void $ do
-      divClass "ui medium header" $ text "Clients"
-      elClass "table" "ui celled striped compact table" $ do
-        clients <- watchClientAddresses -- TODO
-        _ <- listWithKey (coerce <$> clients) $ \_ dName -> el "tr" $ do
-          el "td" $ dynText $ Uri.render <$> dName
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this client. It will continue running."
-            requestingIdentity $ public . PublicRequest_RemoveClient <$> tag (current dName) eRemove
-
-        addE <- formWithReset "Add Bake Daemon" "Begin monitoring the bake daemon at the address entered." blank never $ do
-          zipFields
-            (formItem' "required" $ uriField "Bake Daemon Address" "http://127.0.0.1:9732/")
-            (formItem $ aliasField "My Bake Daemon")
-        void $ requestingIdentity $ ffor addE $ \(addr,alias) -> public (PublicRequest_AddClient addr alias)
-
     -- _bakersOptions :: m ()
     -- _bakersOptions = do
     --   divClass "ui medium header" $ text "Bakers"
@@ -226,7 +208,7 @@ settingsTab = do
     --     bakers <- watchBakerAddresses
     --     _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
     --       el "td" $ publicKeyHashLink pkh
-    --         el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
+    --       el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
     --       el "td" $ do
     --         eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
     --         requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
