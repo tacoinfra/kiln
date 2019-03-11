@@ -8,16 +8,17 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.ClientCmd where
 
 -- import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Control.Monad (when)
 import Control.Monad.Except
 import Control.Monad.IO.Class ()
-import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logWarn, logError, LoggingT, askLoggerIO)
-import Data.Maybe (mapMaybe)
+import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logWarn, LoggingT, askLoggerIO)
 import System.Exit (ExitCode(..))
-import System.Process (readProcess, readProcessWithExitCode)
+import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
@@ -52,7 +53,7 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
 
 getConnectedLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m (Maybe LedgerIdentifier)
 getConnectedLedger chain = do
-  stdout <- runClientCommand chain ["list", "connected", "ledgers"] $ \warnings errors -> if
+  stdout <- runClientCommand chain ["list", "connected", "ledgers"] $ \_{-warnings-} errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
   let kfn = getKungFuName (T.lines stdout)
@@ -62,7 +63,7 @@ getConnectedLedger chain = do
     getKungFuName = \case
       foundApp : _blank : useKeys : keyExample : _
         | Just version' <- T.stripPrefix "Found a Tezos Baking " foundApp
-        , version <- T.takeWhile (/= ' ') version'
+        , _{-version-} <- T.takeWhile (/= ' ') version'
         , "To use keys at BIP32 path" `T.isPrefixOf` useKeys -- sanity check
         , Just ledger' <- T.stripPrefix "\"ledger://" (T.dropWhile (/= '"') keyExample)
         , ledger <- T.takeWhile (/= '/') ledger'
@@ -88,7 +89,7 @@ Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3
 
 showLedger :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
 showLedger chain sk = do
-  stdout <- runClientCommand chain ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
+  stdout <- runClientCommand chain ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_{-warnings-} errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
@@ -107,7 +108,7 @@ showLedger chain sk = do
 
 importSecretKey :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> SecretKey -> ExceptT ClientError m ()
 importSecretKey chain sk = do
-  void $ runClientCommand chain ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \warnings errors -> if
+  void $ runClientCommand chain ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_{-warnings-} errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     -- This check is never used because of --force, but may be useful to keep around for reference
@@ -145,7 +146,7 @@ runClientT m = do
 
 setupLedgerToBake :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> ExceptT ClientError m ()
 setupLedgerToBake chain = do
-  void $ runClientCommand chain ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
+  void $ runClientCommand chain ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_{-warnings-} errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
@@ -183,7 +184,7 @@ registerKeyAsDelegate chain = do
 
 setHighWaterMark :: MonadLoggerIO m => Maybe NamedChain -> SecretKey -> RawLevel -> ExceptT ClientError m ()
 setHighWaterMark chain sk bl = do
-  void $ runClientCommand chain ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \warnings errors -> if
+  void $ runClientCommand chain ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_{-warnings-} errors -> if
     | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left ClientError_RequestDeclinedByLedger
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left ClientError_LedgerDisconnected
