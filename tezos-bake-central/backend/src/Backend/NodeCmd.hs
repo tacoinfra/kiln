@@ -2,7 +2,6 @@
 {-# LANGUAGE NoDoAndIfThenElse #-}
 {-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
