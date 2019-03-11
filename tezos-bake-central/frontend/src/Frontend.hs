@@ -1041,7 +1041,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       pure ((["setup-complete"], continue), never)
 
     launchNode = Workflow $ do
-      elClass "h5" "ui header" $ text "Kiln must launch a local node which must be fully synced with the blockchain before baking."
+      elClass "h5" "ui header" $ text "Kiln needs to launch a Tezos node which must be fully synced with the blockchain before baking."
       divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
       launch <- uiButton "primary" "Launch Node"
       close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
