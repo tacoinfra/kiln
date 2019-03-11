@@ -10,25 +10,26 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Monad (when, unless, forever)
-import Control.Monad.Catch (MonadMask, bracket)
+import Control.Monad (when, unless)
+import Control.Monad.Catch (bracket)
 import Control.Monad.Logger (MonadLogger, logWarnSH, logDebugSH, logWarn, logInfoSH)
 import Control.Monad.Trans.Control
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, fromOnly)
+import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
-import System.IO (hGetContents, hFlush, Handle)
+import System.IO (hFlush)
 import System.IO.Temp (withTempFile)
-import System.FilePath (combine)
 
-import Data.Time (UTCTime, getCurrentTime, addUTCTime)
+import Data.Time (getCurrentTime, addUTCTime)
 import Data.Word
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
@@ -39,7 +40,6 @@ import Backend.Schema
 import Common.Schema
 import ExtraPrelude
 
-import Tezos.Types
 import Tezos.Json
 
 -- Daemon Process Management Worker
@@ -95,7 +95,7 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
         [queryQ| SELECT nextval('"ProcessLockUniqueId"') |] <&> fromOnly . head
-      $(logDebugSH) ("Obtaining lock for process:" :: Text, pid, ", LockId:", lockId)
+      $(logDebugSH) ("Obtaining lock for process:" :: Text, pid, ", LockId:" :: Text, lockId)
       let
         state = ProcessState_Stopped
         {-# INLINE claim #-}
@@ -137,7 +137,7 @@ processWorker logger db config initialize process pid makeNotify = worker' $ do
               updateState ProcessState_Running
               unless shouldRun $ liftIO $ terminateProcess ph
               (threadDelay' 1) *> go
-            Just e -> if shouldRun
+            Just _ -> if shouldRun
               then do
                 updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
