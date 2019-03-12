@@ -2,6 +2,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Common.Alerts where
 
 import Prelude hiding (cycle)
