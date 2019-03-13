@@ -243,18 +243,22 @@ instance MonadNodeQuery NodeQueryQueued where
     let ioQueue = _nodeDataSource_ioQueue nds
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
-  nodeRPCOrBust protoInfo qBranch q = (NodeQueryQueued . atomicallyWith) (pickNode qBranch) >>= \case
-    Nothing -> nqThrowError CacheError_NoSuitableNode
-    Just anyNode -> do
-      dsrc <- askNodeDataSource
-      let
-        ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+  nodeRPCOrBust protoInfo qBranch q = do
+    dsrc <- askNodeDataSource
+    nodesToTry <- NodeQueryQueued $ atomicallyWith $ pickNode qBranch >>= \case
+      Nothing -> fmap Map.keys $ readTVar' $ _nodeDataSource_nodes dsrc
+      Just anyNode -> pure [anyNode]
+    result <- foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
+      answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
+      Left _ -> \anyNode -> do
+        let
+          ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
 
-        nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-        nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
+          nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+          nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
 
-      result <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
-      nqLiftEither result
+        NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+    nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
 
@@ -287,17 +291,19 @@ data NodeQueryTResult a where
 
 deriving instance Functor NodeQueryTResult
 
-newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: m (NodeQueryTResult a) }
+newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (NodeQueryTResult a) }
 
 instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
   newtype AnswerM (NodeQueryT m) a = NodeQueryTAnswerM { unNodeQueryTAnswerM :: a }
   asksNodeDataSource = lift . views nodeDataSource
   nqThrowError e = lift $ throwError $ e ^. re asCacheError
-  nqCatchError action handler = NodeQueryT $ catching asCacheError (unNodeQueryT action) (unNodeQueryT . handler)
+  nqCatchError action handler = NodeQueryT $ \bad -> catching asCacheError (unNodeQueryT action bad) (flip unNodeQueryT bad . handler)
   nqInDB = id
   answerImmediate getResult = return $ fmap NodeQueryTAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
-  nodeRPCOrBust _ h q = NodeQueryT $ pure $ NodeQueryTResult_Query h q
+  nodeRPCOrBust _ h q = NodeQueryT $ \bad -> case DMap.lookup q bad >>= pure . getConst >>= Map.lookup h of
+    Just e -> throwError $ e ^. re asCacheError
+    Nothing -> pure $ NodeQueryTResult_Query h q
 
 instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m) where
   monadLoggerLog a b c d = do
@@ -305,9 +311,9 @@ instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m
     runLoggingEnv logger $ monadLoggerLog a b c d
 
 instance Monad m => Monad (NodeQueryT m) where
-  return = NodeQueryT . return . NodeQueryTResult_Done
-  (NodeQueryT x) >>= f = NodeQueryT $ x >>= \case
-    NodeQueryTResult_Done v -> unNodeQueryT $ f v
+  return = NodeQueryT . const . return . NodeQueryTResult_Done
+  (NodeQueryT x) >>= f = NodeQueryT $ \bad -> x bad >>= \case
+    NodeQueryTResult_Done v -> unNodeQueryT (f v) bad
     NodeQueryTResult_Query h q -> pure $ NodeQueryTResult_Query h q
 
 instance Monad m => Applicative (NodeQueryT m) where
@@ -317,7 +323,7 @@ instance Monad m => Applicative (NodeQueryT m) where
 deriving instance Functor m => Functor (NodeQueryT m)
 
 instance MonadTrans NodeQueryT where
-  lift = NodeQueryT . fmap NodeQueryTResult_Done
+  lift = NodeQueryT . const . fmap NodeQueryTResult_Done
 
 instance MonadIO m => MonadIO (NodeQueryT m) where
   liftIO = lift . liftIO
@@ -329,33 +335,33 @@ instance MonadReader r m => MonadReader r (NodeQueryT m) where
 
 instance MonadError e m => MonadError e (NodeQueryT m) where
   throwError = lift . throwError
-  catchError (NodeQueryT m) h = NodeQueryT $ catchError m (unNodeQueryT . h)
+  catchError (NodeQueryT m) h = NodeQueryT $ \bad -> catchError (m bad) (flip unNodeQueryT bad . h)
 
 instance MonadThrow m => MonadThrow (NodeQueryT m) where
   throwM = lift . throwM
 
 instance MonadCatch m => MonadCatch (NodeQueryT m) where
-  catch (NodeQueryT m) h = NodeQueryT $ catch m (unNodeQueryT . h)
+  catch (NodeQueryT m) h = NodeQueryT $ \bad -> catch (m bad) (flip unNodeQueryT bad . h)
 
 -- mostly copied from the MonadMask instances for EitherT, ExceptT, and MaybeT
 instance MonadMask m => MonadMask (NodeQueryT m) where
-  mask f = NodeQueryT $ mask $ \u -> unNodeQueryT $ f $ \(NodeQueryT b) -> NodeQueryT $ u b
-  uninterruptibleMask f = NodeQueryT $ uninterruptibleMask $ \u -> unNodeQueryT $ f $ \(NodeQueryT b) -> NodeQueryT $ u b
-  generalBracket acquire release use = NodeQueryT $ do
+  mask f = NodeQueryT $ \bad -> mask $ \u -> flip unNodeQueryT bad $ f $ \(NodeQueryT b) -> NodeQueryT $ u . b
+  uninterruptibleMask f = NodeQueryT $ \bad -> uninterruptibleMask $ \u -> flip unNodeQueryT bad $ f $ \(NodeQueryT b) -> NodeQueryT $ u . b
+  generalBracket acquire release use = NodeQueryT $ \bad -> do
     (ranswer, rreleased) <- generalBracket
-      (unNodeQueryT acquire)
+      (unNodeQueryT acquire bad)
       (\case
         NodeQueryTResult_Query h q -> const $ return $ NodeQueryTResult_Query h q -- query during acquire, nothing to release
         NodeQueryTResult_Done resource -> \case
-          ExitCaseSuccess (NodeQueryTResult_Done answer) -> unNodeQueryT $ release resource $ ExitCaseSuccess answer
-          ExitCaseSuccess (NodeQueryTResult_Query _ _) -> unNodeQueryT $ release resource ExitCaseAbort
+          ExitCaseSuccess (NodeQueryTResult_Done answer) -> flip unNodeQueryT bad $ release resource $ ExitCaseSuccess answer
+          ExitCaseSuccess (NodeQueryTResult_Query _ _) -> flip unNodeQueryT bad $ release resource ExitCaseAbort
             -- because things need to actually happen in the release handler.  The query will still get passed through
             -- on another channel.
-          ExitCaseException e -> unNodeQueryT $ release resource $ ExitCaseException e
-          ExitCaseAbort -> unNodeQueryT $ release resource ExitCaseAbort)
+          ExitCaseException e -> flip unNodeQueryT bad $ release resource $ ExitCaseException e
+          ExitCaseAbort -> flip unNodeQueryT bad $ release resource ExitCaseAbort)
       (\case
         NodeQueryTResult_Query h q -> return $ NodeQueryTResult_Query h q
-        NodeQueryTResult_Done resource -> unNodeQueryT $ use resource)
+        NodeQueryTResult_Done resource -> flip unNodeQueryT bad $ use resource)
     return $ case ranswer of
       NodeQueryTResult_Query h q -> NodeQueryTResult_Query h q
         -- let the query from 'use' win even if both are queries, both
@@ -371,7 +377,7 @@ instance (Monad m, PostgresRaw m) => PostgresRaw (NodeQueryT m)
 --
 -- * @'unNodeQueryT' ('mapNodeQueryT' f m) = f ('unNodeQueryT' m)@
 mapNodeQueryT :: (m (NodeQueryTResult a) -> n (NodeQueryTResult b)) -> NodeQueryT m a -> NodeQueryT n b
-mapNodeQueryT f m = NodeQueryT $ f (unNodeQueryT m)
+mapNodeQueryT f m = NodeQueryT $ f . unNodeQueryT m
 
 {- | Run a database transaction using information from the node RPC.
      If information is needed from the node and it is not already
@@ -389,18 +395,22 @@ runNodeQueryT
     , MonadLogger m
     )
   => NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m a
-runNodeQueryT f = go 0
+runNodeQueryT f = go 0 DMap.empty
   where
-    go n = do
+    go n bad = do
       $(logDebugSH) ("RPC monad attempt number" :: Text, n :: Int, "starting" :: Text)
-      tryNodeQueryT f >>= \case
+      tryNodeQueryT bad f >>= \case
         NodeQueryTResult_Done v -> do
           $(logDebugSH) ("RPC monad attempt number" :: Text, n, "succeeded" :: Text)
           return v
-        NodeQueryTResult_Query _ q -> do
+        NodeQueryTResult_Query h q -> do
           $(logDebugSH) ("RPC monad attempt number" :: Text, n, "retry for query" :: Text, q)
-          _ <- nodeQueryDataSource q -- just get this into cache
-          go $ n + 1
+          -- just get it into cache
+          unliftEither (nodeQueryDataSource q) >>= \case
+            Right _ -> go (n + 1) bad
+            Left e -> case (preview asCacheError e) of
+              Just e' -> go (n + 1) (bad <> DMap.singleton q (Const $ Map.singleton h e'))
+              Nothing -> throwError e
 
 tryNodeQueryT
   :: forall a s m.
@@ -408,11 +418,11 @@ tryNodeQueryT
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
-  => NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m (NodeQueryTResult a)
-tryNodeQueryT f = do
+  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m (NodeQueryTResult a)
+tryNodeQueryT bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
-  runDb (Identity db) $ runReaderT (unNodeQueryT f) nds >>= \case
+  runDb (Identity db) $ runReaderT (unNodeQueryT f bad) nds >>= \case
     v@(NodeQueryTResult_Done _) -> return v
     q@(NodeQueryTResult_Query _ _) -> q <$ (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
 
@@ -465,11 +475,8 @@ lookupBlock
 lookupBlock nds x = do
   let dsrc = nds ^. nodeDataSource
   history <- readTVar' $ _nodeDataSource_history dsrc
-  let
-    xPath = Map.lookup x $ _cachedHistory_blocks history
-    f :: LCA.Path BlockHash () -> VeryBlockLike
-    f p = histToBlockLike (_cachedHistory_minLevel history) (x, LCA.measure p, p)
-  return $ fmap f xPath
+  let xPath = Map.lookup x $ _cachedHistory_blocks history
+  return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
 blankNodeDataSource db chain protoInfo' mgr logger = do
@@ -522,7 +529,7 @@ waitForNewHead nds = do
 histToBlockLike :: RawLevel -> (BlockHash, (), LCA.Path BlockHash ()) -> VeryBlockLike
 histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixEpoch
   where
-    blkLevel = minLevel + fromIntegral (length path) + 1
+    blkLevel = minLevel + fromIntegral (length path)
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
 updateNodeDataSource
@@ -798,8 +805,8 @@ pickNode branch = do
   dsrc <- asks (^. nodeDataSource)
   nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
   fmap (headMay . catMaybes) $ for (Map.toList $ Map.mapMaybe id nodeHeads) $ \(nodeUri, nodeHead) ->
-    containsBranch nodeHead >>= \isCanditate ->
-      pure $ if isCanditate then Just nodeUri else Nothing
+    containsBranch nodeHead >>= \isCandidate ->
+      pure $ if isCandidate then Just nodeUri else Nothing
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 

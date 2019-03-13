@@ -117,7 +117,7 @@ frontendBody = void $ do
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
     Nothing ->
-      Config.parseURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
+      Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
 
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
@@ -560,7 +560,7 @@ radioLabels k0 ks = divClass "ui buttons" $ mdo
 
   pure selectedDyn
 
-data ErrorLogView' = ErrorLogView' ErrorLogView NodeSummary deriving Eq
+data ErrorLogView' = ErrorLogView' ErrorLogView (Maybe NodeSummary) deriving Eq
 
 -- | Different constructor name because presumably more would be added
 newtype SynthError
@@ -615,9 +615,12 @@ liveErrorsWidget = void $ do
       :: Dynamic t (Map.Map (Id ErrorLog) (ErrorLog, ErrorLogView'))
     combinedRealErrors = ffor2 filteredErrors nodesDyn $ \errors nodes ->
       fforMaybe errors $ \(errorLog, errorLogView) ->
-        (\n -> (errorLog, ErrorLogView' errorLogView n)) <$> do
-          nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
-          MMap.lookup nodeId nodes
+        let nodeSummary = do
+              nodeId <- nodeIdForNodeErrorLogView <$> nodeErrorViewOnly errorLogView
+              MMap.lookup nodeId nodes
+        in case errorLogView of
+          LogTag_Node _ :=> _ -> nodeSummary $> (errorLog, ErrorLogView' errorLogView nodeSummary)
+          _ -> Just (errorLog, ErrorLogView' errorLogView Nothing)
 
     -- There is no `Id SynthError` so just use whole thing.
     synthErrors
@@ -638,13 +641,14 @@ liveErrorsWidget = void $ do
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Nothing
               }
+    filteredSynthErrors = ffor2 filterDyn synthErrors $ \f errs -> ffilter (passesFilter f . fst) errs
 
     combinedErrors
       :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, Either ErrorLogView' SynthError))
     combinedErrors = fold
       [ fmap (errorsByTime Left . (fmap . fmap) Left) combinedRealErrors
-      , fmap (errorsByTime Right . (fmap . fmap) Right) synthErrors
+      , fmap (errorsByTime Right . (fmap . fmap) Right) filteredSynthErrors
       ]
 
     errorsByTime
@@ -702,9 +706,11 @@ liveErrorsWidget = void $ do
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
     logEntry :: ErrorLogView' -> m ()
-    logEntry (ErrorLogView' (logTag :=> Identity log) n) =
-        case logTag of
-          LogTag_Node nlt -> case nlt of
+    logEntry (ErrorLogView' (logTag :=> Identity log) n') =
+      case logTag of
+        LogTag_Node nlt -> case n' of
+          Nothing -> blank
+          Just n -> case nlt of
             NodeLogTag_InaccessibleNode ->
               case _nodeSummary_node n of
                 Right _ -> blank
@@ -734,7 +740,7 @@ liveErrorsWidget = void $ do
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
-          LogTag_Baker blt -> case blt of
+        LogTag_Baker blt -> case blt of
             BakerLogTag_BakerDeactivated -> renderBakerError
               (bakerDeactivatedDescriptions log)
               pkh
@@ -752,14 +758,14 @@ liveErrorsWidget = void $ do
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
-          LogTag_BakerNoHeartbeat -> do
+        LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
             header "Baker lagging behind" -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
-          LogTag_NetworkUpdate -> do
+        LogTag_NetworkUpdate -> do
             let
               ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
               chainText = "'" <> showNamedChain namedChain <> "'"

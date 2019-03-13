@@ -8,13 +8,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend.Telegram where
 
 import Control.Concurrent (newEmptyMVar, takeMVar, tryPutMVar)
-import Control.Concurrent.Async (withAsync)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Catch (MonadThrow)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, logDebug)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
@@ -23,7 +23,6 @@ import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.Functor.Identity (Identity (..))
 import Data.Int (Int64)
-import Data.Maybe (listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Text (Text)
@@ -32,24 +31,23 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
-import Database.Groundhog.Postgresql (AutoKeyField (..), Postgresql, in_, limitTo, project, (&&.), (=.),
-                                      (==.))
+import Database.Groundhog.Postgresql (Postgresql)
 import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import qualified Network.URI.Encode as UriEncode
-import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Safe (maximumByMay, maximumMay, minimumByMay)
+import Safe (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
-import Backend.Common (threadDelay', worker', workerWithDelay)
+import Backend.Common (workerWithDelay)
 import Backend.Http (HasHttp, runHttpT)
 import qualified Backend.Http as Http
-import Backend.Schema
+import Backend.Schema () -- orphan FromField instances
 import Common (defaultTezosCompatJsonOptions, nominalDiffTimeToMicroseconds, nominalDiffTimeToSeconds,
                unixEpoch)
 import Common.Schema
@@ -227,95 +225,6 @@ getBotAndLastSender botApiKey = do
     firstMessage = maximumByMay (comparing _botMessage_date) candidateMessages
 
   pure $ (,,) <$> Just me <*> (_botMessage_chat <$> firstMessage) <*> (_botMessage_from <$> firstMessage)
-
-
--- | Repeatedly long-polls the Telegram Bot 'getUpdates' until it sees a sender.
--- This ignores senders that sent messages to the bot before the 'TelegramConfig' was created.
-waitForFirstSender
-  :: MonadIO m => (MonadThrow m, MonadLogger m)
-  => Http.Manager
-  -> IO (Maybe (Id TelegramConfig, TelegramConfig))
-  -> m (Maybe (Id TelegramConfig, BotMessage))
-waitForFirstSender httpMgr getTelegramCfg = begin Nothing
-  where
-    begin firstMessageId = liftIO getTelegramCfg >>= \case
-      Nothing -> pure Nothing
-      Just cfg -> runApi cfg firstMessageId
-
-    startOver n = do
-      threadDelay' 1
-      begin ((+1) <$> n) -- Increment the first message ID if we actually have a starting point
-
-    runApi (cid, telegramCfg) firstMessageId = do
-      result <- runHttpT httpMgr $ getUpdates TelegramGetUpdates
-        { _telegramGetUpdates_botApiKey = _telegramConfig_botApiKey telegramCfg
-        , _telegramGetUpdates_offset = firstMessageId
-        , _telegramGetUpdates_timeout = Just 60
-        }
-      let
-        allMessages = _botGetUpdates_message <$> _apiResult_result result
-        candidateMessages = filter
-          (isCandidateMessage $ _telegramConfig_updated telegramCfg)
-          allMessages
-
-      case null candidateMessages of
-        True -> startOver $
-          -- Calculate the maximum update ID that we just saw and use it for our offset next time.
-          fmap fromIntegral $ maximumMay $ map _botGetUpdates_updateId $ _apiResult_result result
-        False -> pure $
-          fmap ((,) cid) $ minimumByMay (comparing _botMessage_date) allMessages
-
-telegramWorker
-  :: forall m. (MonadIO m)
-  => Http.Manager
-  -> LoggingEnv
-  -> Pool Postgresql
-  -> IO () -- Signal that blocks until the worker should start again.
-  -> m (IO ())
-telegramWorker httpMgr loggingEnv db signal = worker' $ do
-  withAsync waitForSender $ const $ do
-    signal
-
-  where
-    getTelegramCfg = fmap listToMaybe $ runLoggingEnv loggingEnv $ runDb (Identity db) $ do
-      cfgs <- selectIds TelegramConfigConstructor
-        ((TelegramConfig_enabledField ==. True &&. TelegramConfig_validatedField ==. Just True) `limitTo` 1)
-      recipients <- project TelegramRecipient_deletedField $
-        (TelegramRecipient_configField `in_` map fst cfgs &&. TelegramRecipient_deletedField ==. False)
-        `limitTo` 1
-      pure $ if null recipients then cfgs else [] -- Only return this config if it doesn't have any recipients yet.
-
-    waitForSender = runLoggingEnv loggingEnv $ waitForFirstSender httpMgr getTelegramCfg >>= \case
-      Nothing -> $(logDebug) "Didn't find any new Telegram recipients"
-      Just (cid, message) -> runDb (Identity db) $ do
-        rid' <- fmap toId . listToMaybe <$> project AutoKeyField (TelegramRecipient_chatIdField ==. _chat_id (_botMessage_chat message))
-        now <- getTime
-        case rid' of
-          Nothing -> do
-            let
-              recipient = TelegramRecipient
-                { _telegramRecipient_config = cid
-                , _telegramRecipient_userId = _sender_id $ _botMessage_from message
-                , _telegramRecipient_chatId = _chat_id $ _botMessage_chat message
-                , _telegramRecipient_firstName = _sender_firstName $ _botMessage_from message
-                , _telegramRecipient_lastName = _sender_lastName $ _botMessage_from message
-                , _telegramRecipient_username = _sender_username $ _botMessage_from message
-                , _telegramRecipient_created = now
-                , _telegramRecipient_deleted = False
-                }
-            notify . flip Notify_TelegramRecipient (Just recipient) =<< insert' recipient
-          Just rid -> do
-            updateId rid
-              [ TelegramRecipient_configField =. cid
-              , TelegramRecipient_userIdField =. _sender_id (_botMessage_from message)
-              , TelegramRecipient_chatIdField =. _chat_id (_botMessage_chat message)
-              , TelegramRecipient_firstNameField =. _sender_firstName (_botMessage_from message)
-              , TelegramRecipient_lastNameField =. _sender_lastName (_botMessage_from message)
-              , TelegramRecipient_usernameField =. _sender_username (_botMessage_from message)
-              , TelegramRecipient_createdField =. now
-              , TelegramRecipient_deletedField =. False
-              ]
-            notify . Notify_TelegramRecipient rid =<< getId rid
 
 emptyTelegramMessageQueue
   :: Http.Manager
