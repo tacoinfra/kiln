@@ -32,7 +32,6 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
-import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
@@ -81,11 +80,19 @@ data BakerInternalData = BakerInternalData
 instance FromJSON BakerInternalData
 instance ToJSON BakerInternalData
 
+data BakerNextRight
+  = BakerNextRight_GatheringData
+  | BakerNextRight_WaitingForRights
+  | BakerNextRight_KnownRights (RightKind, RawLevel)
+  | BakerNextRight_KnownNoRights
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON BakerNextRight
+instance ToJSON BakerNextRight
+
 data BakerSummary = BakerSummary
   { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
-  , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
-  , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
+  , _bakerSummary_nextRight :: !BakerNextRight
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary

@@ -55,7 +55,6 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
 import Rhyolite.WebSocket (WebSocketUrl (..))
-import Safe (minimumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -839,7 +838,7 @@ bakerStatus = \case
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
-    | _bakerSummary_nextRightFetchRemaining bakerSummary > 0 -> MonitoredStatus_Unknown
+    | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
@@ -1407,7 +1406,7 @@ nodesTab =
                 internalNodeMenu :: m ()
                 internalNodeMenu = do
                   let
-                    preface = "This node is being run by Kiln."
+                    preface = "This node is run by Kiln. "
                     notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
                     bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
                       <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
@@ -1691,7 +1690,6 @@ bakersTab =
               -- must *first* bake the block at that level, then you may
               -- immediately endorse that block.  the times are the same,
               -- baking happens first.
-              (minimumByMay (on compare snd <> on compare fst) . Map.toList . _bakerSummary_nextRight)
               (Just errorMessages)
               vDyn
               details
@@ -1756,13 +1754,12 @@ bakersTab =
       -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
-      -> (BakerSummary -> Maybe (RightKind, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t (Either CollectiveNodesFailure ())
       -> m ()
-    tile title pkh subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' dCollectiveNodesStatus = do
+    tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
@@ -1805,61 +1802,59 @@ bakersTab =
         for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-        let dWantToGatherData = (/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn
-        isGathering <- holdUniqDyn $ (&&) <$> dWantToGatherData <*> connected
-        dyn_ $ ffor isGathering $ \case
-          True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
-          False -> blank
+        let
+          nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
+            BakerNextRight_GatheringData -> Left $ text "-"
+            BakerNextRight_WaitingForRights -> Left $ text "Waiting to receive rights"
+            BakerNextRight_KnownNoRights -> Left $ text "None"
+            BakerNextRight_KnownRights (r,l) -> Right (r,l)
+          wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
+        isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
 
-        (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
-        dyn_ $ ffor details'' $ \case
-          Nothing -> blank
-          Just details -> elClass "table" "baker-balance" $ do
-            let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "tr" $ do
-              el "td" (text "Available Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
-                text p
-                elClass "span" "tez" $ text tz
-
-            el "tr" $ do
-              el "td" (text "Staking Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text p
-                elClass "span" "tez" $ text tz
-
-            --el "div" $ do
-            --  el "dt" (text "Bake Success:")
-            --  el "dd" $
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-            --el "div" $ do
-            --  el "dt" (text "Endorsement Success:")
-            --  el "dd" $ do
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-        nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
-        dyn_ $ ffor nextEventDyn $ \case
-          Nothing -> blank
-          Just eventDyn -> el "dl" $ do
-            latestHead <- watchLatestHead
-            dparameters <- watchProtoInfo
-            el "div" $ do
-              el "dt" (text "Next")
-              el "dd" $ do
-                (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
-                (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+        el "dl" $ do
+          latestHead <- watchLatestHead
+          dparameters <- watchProtoInfo
+          el "div" $ do
+            el "dt" (text "Next")
+            el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
+              Left t -> t
+              Right (r,l) -> do
+                text $ case r of
+                  RightKind_Baking -> "Bake block "
+                  RightKind_Endorsing -> "Endorse block "
+                text $ tshow $ unRawLevel l
+                let eventDyn = constDyn (r, l)
                 etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
+
+        let
+          dmDelegateInfo = (fmap unJson) . join . (fmap _bakerDetails_delegateInfo) <$> details'
+        elClass "table" "baker-balance" $ do
+          el "tr" $ do
+            el "td" (text "Available Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
+              text p
+              elClass "span" "tez" $ text tz
+
+          el "tr" $ do
+            el "td" (text "Staking Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text p
+              elClass "span" "tez" $ text tz
+
+        dyn_ $ ffor isGatheringData $ \case
+          False -> blank
+          True -> divClass "ui active inline loader mini blue" blank
+              *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon

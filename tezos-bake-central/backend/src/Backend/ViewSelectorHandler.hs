@@ -68,6 +68,7 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
+import Safe (minimumByMay)
 
 import Tezos.PublicKeyHash
 import Tezos.Types
@@ -469,13 +470,21 @@ getBakerAddresses nds bid = do
       |]
 
   let
+
+    getNextRight rights progress = case (minimumByMay (on compare snd <> on compare fst) . Map.toList) rights of
+      Just v -> BakerNextRight_KnownRights v
+      Nothing -> case subtract progress <$> maxProgress of
+        Just 0 -> BakerNextRight_WaitingForRights
+        Just _ -> BakerNextRight_GatheringData
+        Nothing -> BakerNextRight_GatheringData
+        -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(b, alertCount) -> Just $ BakerSummary b alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (\(b, alertCount) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)
-        (\(b, alertCount) (Max progress, rights) -> Just $ BakerSummary b alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
+        (\(b, alertCount) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRight rights progress))
       ) bakers (getMonoidalMap nextBakeRights)
 
   return result
