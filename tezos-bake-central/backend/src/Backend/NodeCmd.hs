@@ -103,8 +103,8 @@ initNode nodePath nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseControl IO m)
-  => LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
-bakerDaemonProcess logger db namedChain = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
+bakerDaemonProcess appConfig logger db namedChain = do
   (_nid, BakerDaemonInternalData _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -129,14 +129,15 @@ bakerDaemonProcess logger db namedChain = do
             }
           }
         return (nid, v)
+  let nodePort = show $ _appConfig_kilnNodePort appConfig
   bp <- processWorker logger db defaultConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["run", "with", "local", "node", "./.tezos-node", alias])
+    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "run", "with", "local", "node", "./.tezos-node", alias])
     bpid
     Nothing
   ep <- processWorker logger db defaultConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["run", alias])
+    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "run", alias])
     epid
     Nothing
   return (bp, ep)

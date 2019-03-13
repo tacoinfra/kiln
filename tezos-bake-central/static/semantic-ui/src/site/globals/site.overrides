@@ -378,6 +378,10 @@ body {
     flex-direction: column;
     justify-content: center;
     text-align: center;
+    .welcome-description {
+      margin: @30px auto 0;
+      width: unit(474 / @emSize, rem);
+    }
   }
 
   h4 {
@@ -452,9 +456,8 @@ body {
 }
 
 .ui.block.list {
-  > a.link.item {
-    color: @black;
-    text-decoration: none;
+  > .link.item {
+    cursor: pointer;
   }
   > .item {
     background-color: @offWhite;
@@ -465,7 +468,7 @@ body {
     border-radius: unit(3 / @emSize, rem);
     font-size: unit(14 / @emSize, rem);
 
-    &:hover {
+    &.link:hover {
       background-color: #f3f4f6;
     }
 
@@ -1085,6 +1088,132 @@ h4.dashboard-section-title {
   }
 }
 
+.modal-box.add-baker.ledger-setup-steps {
+  width: unit(949 / @emSize, rem);
+  > .content { display: flex; }
+  .workflow {
+    flex-grow: 1;
+    .ui.header {
+      text-align: center;
+      &:first-child { margin-top: 0; }
+    }
+    .explanation { margin-bottom: @14px; }
+    .select-address {
+      .fancy-tez { float: right; }
+      .ui.block.list {
+        margin: @20px 0;
+        .loader { margin-right: @10px; }
+        .item { margin: @5px 0; }
+      }
+    }
+    .rejected {
+      font-size: @16px;
+      font-weight: bold;
+      padding: @20px;
+      border: 1px solid @lightGrey;
+      white-space: nowrap;
+      .icon-x {
+        font-size: inherit;
+        margin-right: @12px;
+      }
+    }
+    .start-baking-message {
+      &.centered {
+        text-align: center;
+        padding: @20px;
+        .icon { margin-right: @20px; }
+        .header:only-child {
+          margin-bottom: 0;
+        }
+      }
+      margin: @20px 0 @25px;
+      text-align: left;
+      border: @1px solid @lightGrey;
+      border-radius: @3px;
+      padding: @18px @20px @8px unit(61 / @emSize, rem);
+      position: relative;
+      .header {
+        font-size: @16px;
+        font-weight: bold;
+        margin-bottom: @9px;
+      }
+      a { word-break: break-word; }
+      .icon-warning {
+        position: absolute;
+        top: @20px;
+        left: @20px;
+      }
+    }
+    .tx-fee-input {
+      margin: @4px auto @30px;
+      width: unit(170 / @emSize, rem);
+    }
+    .central {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+    }
+    .explanation {
+      text-align: left;
+      &.centered { text-align: center; }
+      > ol {
+        list-style-position: inside;
+        padding-left: 0;
+      }
+    }
+  }
+
+  .progress {
+    flex-shrink: 0;
+    width: unit(237 / @emSize, rem);
+    height: unit(520 / @emSize, rem);
+    margin-right: @50px;
+    border-right: @1px solid @lightGrey;
+    > h4.ui.header {
+      font-size: @16px;
+      line-height: @24px;
+    }
+    > ol {
+      font-size: @14px;
+      > li {
+        position: relative;
+        list-style-position: inside;
+        margin: @20px 0;
+        color: @grey;
+        font-weight: bold;
+        &.current, &.done {
+          color: @black;
+        }
+        &.done:before {
+          width: @10px;
+          height: @10px;
+          color: @blue;
+          font-family: tezos-icons;
+          font-size: @10px;
+          content: "\e905";
+          position: absolute;
+          left: -@20px;
+        }
+        > .extra {
+          > img {
+            display: block;
+            width: unit(83 / @emSize, rem);
+          }
+          color: @grey;
+          font-weight: normal;
+          font-size: @12px;
+          line-height: @16px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+    }
+  }
+}
+
 .modal-box.add-baker {
   width: unit(766 / @emSize, rem);
   max-width: 95%;
@@ -1109,17 +1238,32 @@ h4.dashboard-section-title {
     display: block;
   }
 
-  img.ledger {
-    display: block;
+  .ledger {
     width: unit(100 / @emSize, rem);
+    position: relative;
     margin: @15px auto;
+    > .icon {
+      position: absolute;
+      top: -@10px;
+      right: -@10px;
+      border-radius: 50%;
+      background-color: @white;
+      height: @20px;
+      width: @20px;
+      line-height: @20px;
+      font-size: @9px;
+    }
+    > img {
+      display: block;
+      width: 100%;
+    }
   }
 
   .ledger-name {
     text-align: center;
     color: @grey;
     font-size: @12px;
-    margin-top: -@20px;
+    margin-top: -@16px;
     margin-bottom: @10px;
   }
 
@@ -1141,94 +1285,6 @@ h4.dashboard-section-title {
     margin-right: @14px;
   }
 
-  &.connect-device {
-    width: unit(611 / @emSize, rem);
-    .ui.header {
-      display: block;
-      font-size: @20px;
-      text-align: center;
-      .ui.loader {
-        margin-right: @14px;
-      }
-    }
-    .ui.header+p {
-      width: unit(280 / @emSize, rem);
-      margin: @20px auto @30px auto;
-      text-align: center;
-      font-size: @14px;
-    }
-    .explanation {
-      line-height: @16px;
-    }
-    .explanation > ol {
-      margin: 0;
-      padding: 0;
-      list-style-position: inside;
-    }
-  }
-
-  &.select-account {
-    width: unit(660 / @emSize, rem);
-    .ui.header {
-      text-align: center;
-    }
-    .explanation {
-      margin-bottom: @11px;
-    }
-    .fancy-tez {
-      float: right;
-    }
-    .ui.block.list {
-      margin: @20px 0;
-    }
-    .ledger-accounts-loader {
-      text-align: center;
-      margin: @50px 0;
-      .ui.loader {
-        margin-right: @14px;
-      }
-    }
-    .ledger-pkh-loader {
-      margin: @20px 0 @30px 0;
-      .ui.loader {
-        margin-right: @14px;
-      }
-    }
-    p {
-      text-align: center;
-    }
-  }
-
-  &.ledger-prompt {
-    width: unit(593 / @emSize, rem);
-    text-align: center;
-    h5.ui.header {
-      font-size: @20px;
-      line-height: @30px;
-      .ui.loader {
-        margin-right: @14px;
-      }
-    }
-    h6 {
-      font-size: @16px;
-      margin: @20px auto 0 auto;
-    }
-  }
-
-  &.setup-complete {
-    width: unit(532 / @emSize, rem);
-    text-align: center;
-    h6.ui.header {
-      font-size: @16px;
-      margin: @20px 0;
-    }
-  }
-
-  &.ledger-declined {
-    width: unit(590 / @emSize, rem);
-    text-align: center;
-  }
-
   &.ledger-disconnected {
     width: unit(422 / @emSize, rem);
   }
@@ -1246,6 +1302,22 @@ h4.dashboard-section-title {
       .checkbox {
         margin-top: @20px;
       }
+    }
+  }
+
+  &.ledger-prompt {
+    width: unit(593 / @emSize, rem);
+    text-align: center;
+    h5.ui.header {
+      font-size: @20px;
+      line-height: @30px;
+      .ui.loader {
+        margin-right: @14px;
+      }
+    }
+    h6 {
+      font-size: @16px;
+      margin: @20px auto 0 auto;
     }
   }
 

@@ -108,7 +108,6 @@ library
     Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
-    Backend.ClientCmd
     Backend.Common
     Backend.Config
     --Backend.Graphs
@@ -132,6 +131,7 @@ library
     Backend.Workers.Client
     Backend.Workers.Node
     Backend.Workers.Process
+    Backend.Workers.TezosClient
     System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

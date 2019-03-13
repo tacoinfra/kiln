@@ -21,7 +21,6 @@ import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Control.Monad.Trans.Maybe (runMaybeT, MaybeT(..))
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
@@ -34,16 +33,14 @@ import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
-import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap')
+import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
-import Tezos.Types (NamedChain, SecretKey(..))
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
-import Backend.ClientCmd
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert)
 import Backend.Schema
@@ -58,48 +55,44 @@ import ExtraPrelude
 
 requestHandler
   :: forall m. (MonadBaseControl IO m, MonadIO m)
-  => Maybe NamedChain
-  -> Text
+  => Text
   -> Address
   -> NodeDataSource
   -> [DataSource]
   -> RequestHandler Bake m
-requestHandler maybeNamedChain upgradeBranch emailFromAddr nds publicNodeSources =
+requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_ClientSetupLedgerToBake -> runClientT $ setupLedgerToBake maybeNamedChain
-      PublicRequest_ClientRegisterKeyAsDelegate pkh -> registerKeyAsDelegate maybeNamedChain >>= \case
-        Left e -> pure $ Left e
-        Right () -> inDb $ do
-          bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
-          let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
-                [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-                , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-                ]
-          update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
-                 , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
-          update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
-          pure $ Right ()
-      PublicRequest_ClientImportSecretKey sk pkh -> runClientT $ do
-        let li = _secretKey_ledgerIdentifier sk
-            sc = _secretKey_signingCurve sk
-            dp = _secretKey_derivationPath sk
-        -- Store secret key first as "consent"
-        _ <- inDb [executeQ|
-          INSERT INTO "LedgerAccount"
-          VALUES (?pkh, ?li, ?sc, ?dp)
-          ON CONFLICT DO NOTHING
-        |]
-        importSecretKey maybeNamedChain sk
-
-      PublicRequest_ClientGetConnectedLedger -> runClientT $ getConnectedLedger maybeNamedChain
-      PublicRequest_ClientShowLedger secretKey -> runClientT $ runMaybeT $ do
-        account <- MaybeT $ showLedger maybeNamedChain secretKey
-        balance <- MaybeT $ getBalanceFor maybeNamedChain account
-        pure (secretKey, account, balance)
-
-      PublicRequest_ClientSetHighWaterMark sk bl -> runClientT $ setHighWaterMark maybeNamedChain sk bl
+      PublicRequest_PollLedgerDevice -> inDb $ do
+        deleteAll (undefined :: ConnectedLedger)
+        -- Deliberately don't notify here: let the worker pick it up and notify
+        -- as required
+        insert $ ConnectedLedger
+          { _connectedLedger_bakingAppVersion = Nothing
+          , _connectedLedger_ledgerIdentifier = Nothing
+          , _connectedLedger_updated = Nothing
+          }
+      PublicRequest_ShowLedger sk -> inDb $ do
+        existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+        when (isNothing existing) $ insert $ LedgerAccount
+          { _ledgerAccount_secretKey = sk
+          , _ledgerAccount_publicKeyHash = Nothing
+          , _ledgerAccount_balance = Nothing
+          , _ledgerAccount_shouldImport = False
+          , _ledgerAccount_imported = False
+          , _ledgerAccount_shouldSetupToBake = False
+          , _ledgerAccount_shouldRegisterFee = Nothing
+          , _ledgerAccount_shouldSetHWM = Nothing
+          }
+      PublicRequest_ImportSecretKey sk -> inDb $ do
+        update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_SetupLedgerToBake sk -> inDb $ do
+        update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
+        update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_SetHWM sk bl -> inDb $ do
+        update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
       PublicRequest_AddInternalNode -> inDb $ do
         getInternalNode >>= \case
