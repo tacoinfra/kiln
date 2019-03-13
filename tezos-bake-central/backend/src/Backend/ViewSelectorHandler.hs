@@ -38,6 +38,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
+import Data.Tuple (swap)
 import Data.Universe (universe)
 import Database.Groundhog.Core (ConstructorMarker)
 import Database.Groundhog.Core (EntityConstr)
@@ -471,7 +472,7 @@ getBakerAddresses nds bid = do
 
   let
 
-    getNextRight rights progress = case (minimumByMay (on compare snd <> on compare fst) . Map.toList) rights of
+    getNextRight rights progress = case minimumByMay (on compare swap) $ Map.toList rights of
       Just v -> BakerNextRight_KnownRights v
       Nothing -> case subtract progress <$> maxProgress of
         Just 0 -> BakerNextRight_WaitingForRights

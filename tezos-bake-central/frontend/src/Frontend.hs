@@ -18,7 +18,7 @@
 
 module Frontend where
 
-import Control.Lens ((<>~), imap)
+import Control.Lens ((<>~), imap, to)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
@@ -1829,7 +1829,7 @@ bakersTab =
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
 
         let
-          dmDelegateInfo = (fmap unJson) . join . (fmap _bakerDetails_delegateInfo) <$> details'
+          dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
         elClass "table" "baker-balance" $ do
           el "tr" $ do
             el "td" (text "Available Balance")
