@@ -1816,8 +1816,8 @@ bakersTab =
                 text $ case r of
                   RightKind_Baking -> "Bake block "
                   RightKind_Endorsing -> "Endorse block "
-                (text $ tshow $ unRawLevel l)
-                let eventDyn = constDyn $ (r,l)
+                text $ tshow $ unRawLevel l
+                let eventDyn = constDyn (r, l)
                 etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
@@ -1847,8 +1847,8 @@ bakersTab =
 
         dyn_ $ ffor isGatheringData $ \case
           False -> blank
-          True -> (divClass "ui active inline loader mini blue" blank
-              *> text "Gathering baker data.")
+          True -> divClass "ui active inline loader mini blue" blank
+              *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
