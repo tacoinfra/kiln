@@ -391,7 +391,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                 else clearBakerDeactivationRisk delegatePkh headFitness
 
         insufficientFundAlerts :: mCommit ()
-        insufficientFundAlerts = if _cacheDelegateInfo_stakingBalance di < (10000 :: Tez)
+        insufficientFundAlerts = if _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
           then reportInsufficientFunds baker
           else clearInsufficientFunds baker
 
