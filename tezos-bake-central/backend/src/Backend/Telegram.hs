@@ -156,7 +156,7 @@ data BotMessage = BotMessage
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data Sender = Sender
-  { _sender_id :: !Word64
+  { _sender_id :: !Int64
   , _sender_isBot :: !Bool
   , _sender_firstName :: !Text
   , _sender_lastName :: !(Maybe Text)

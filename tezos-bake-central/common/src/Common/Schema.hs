@@ -734,7 +734,7 @@ instance HasId TelegramConfig
 
 data TelegramRecipient = TelegramRecipient
   { _telegramRecipient_config :: !(Id TelegramConfig)
-  , _telegramRecipient_userId :: !Word64
+  , _telegramRecipient_userId :: !Int64
   , _telegramRecipient_chatId :: !Int64
   , _telegramRecipient_firstName :: !Text
   , _telegramRecipient_lastName :: !(Maybe Text)
