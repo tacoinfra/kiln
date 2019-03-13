@@ -24,6 +24,7 @@ import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Prelude hiding (log)
 import Reflex.Dom.Core
+import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
@@ -32,8 +33,10 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema hiding (Event)
 import Common.Vassal
@@ -291,6 +294,28 @@ watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
+
+watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedger = do
+  -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
+  poll <- tickLossyFromPostBuildTime 5
+  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
+  (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_connectedLedger = viewJust 1
+    }
+
+watchLedgerAccounts :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
+watchLedgerAccounts dkeys =
+  (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
+    { _bakeViewSelector_showLedger = RangeSelector $ AppendIMap.fromList $ ffor keys $ \k -> (ClosedInterval k k, 1)
+    }
+
+watchPrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynamic t (Maybe SetupState))
+watchPrompting sk = do
+  (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_prompting) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
+    }
+
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =

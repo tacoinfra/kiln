@@ -99,6 +99,7 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
+import Common.App (SetupState)
 import Common.Schema
 import ExtraPrelude
 
@@ -122,6 +123,9 @@ data Notify
   | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
   | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
   | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
+  | Notify_ConnectedLedger !(Maybe ConnectedLedger)
+  | Notify_ShowLedger !SecretKey !(Maybe (PublicKeyHash, Tez))
+  | Notify_Prompting !SecretKey !(Maybe SetupState)
   deriving (Typeable, Generic)
 deriving instance EqTag NodeLogTag Id => Eq Notify
 deriving instance OrdTag NodeLogTag Id => Ord Notify
@@ -340,6 +344,7 @@ instance NeverNull (Json BakedEvent)
 instance NeverNull (Json CacheDelegateInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
+instance NeverNull LedgerIdentifier
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
@@ -557,16 +562,22 @@ instance Field1 (a :. b) (a' :. b) a a' where
 instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
+--        - name: LedgerAccount_secretKey
+--          type: primary
+--          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
+
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: SigningCurve
+  - entity: ConnectedLedger
+    autoKey: null
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
     constructors:
       - name: LedgerAccount
         uniques:
-          - name: LedgerAccountId
-            type: primary
+          - name: LedgerAccount_publicKeyHash
+            type: constraint
             fields: [_ledgerAccount_publicKeyHash]
   - entity: Accusation
     autoKey: null
@@ -1113,3 +1124,12 @@ bakerLogDep = \case
   where
     depBakerAlert' f = Related f $ ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
+
+embeddedSecretKeyEquals
+  :: (ProjectionDb r db, ProjectionRestriction r (RestrictionHolder v c), FieldLike r SecretKey, EntityConstr v c, DbDescriptor db)
+  => r -> SecretKey -> Cond db (RestrictionHolder v c)
+embeddedSecretKeyEquals f sk =
+         f ~> SecretKey_ledgerIdentifierSelector ==. _secretKey_ledgerIdentifier sk
+  GH.&&. f ~> SecretKey_signingCurveSelector ==. _secretKey_signingCurve sk
+  GH.&&. f ~> SecretKey_derivationPathSelector ==. _secretKey_derivationPath sk
+

@@ -85,13 +85,14 @@ data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger
   | ClientError_LedgerDisconnected
-  | ClientError_AliasAlreadyUsed
-  | ClientError_ProcessError
-  | ClientError_OutdatedLedgerBakingVersion Text -- app version
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError
 instance Aeson.FromJSON ClientError
+
+-- | Required Tezos Baking app version
+requiredTezosBakingAppVersion :: Text
+requiredTezosBakingAppVersion = "2.0.0"
 
 data CacheError
   = CacheError_RpcError !RpcError
@@ -226,9 +227,23 @@ data BakerDaemonInternal = BakerDaemonInternal
 instance HasId BakerDaemonInternal where
   type IdData BakerDaemonInternal = Id BakerDaemon
 
+data ConnectedLedger = ConnectedLedger
+  { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
+  , _connectedLedger_bakingAppVersion :: !(Maybe Text)
+  , _connectedLedger_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance Aeson.ToJSON ConnectedLedger
+instance Aeson.FromJSON ConnectedLedger
+
 data LedgerAccount = LedgerAccount
-  { _ledgerAccount_publicKeyHash :: !PublicKeyHash
+  { _ledgerAccount_publicKeyHash :: !(Maybe PublicKeyHash)
   , _ledgerAccount_secretKey :: !SecretKey
+  , _ledgerAccount_balance :: !(Maybe Tez)
+  , _ledgerAccount_shouldImport :: !Bool
+  , _ledgerAccount_imported :: !Bool
+  , _ledgerAccount_shouldSetupToBake :: !Bool
+  , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
+  , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one

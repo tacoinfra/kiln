@@ -77,10 +77,34 @@ notifyHandler nds notifyMessage aggVS = runLoggingEnv (_nodeDataSource_logger nd
       Notify_TelegramConfig _eid ent -> handleTelegramConfig ent
       Notify_TelegramRecipient eid ent -> handleTelegramRecipient eid ent
       Notify_UpstreamVersion _eid ent -> handleUpstreamVersion ent
+      Notify_ConnectedLedger mli -> handleConnectedLedger mli
+      Notify_ShowLedger sk mpkh -> handleShowLedger sk mpkh
+      Notify_Prompting sk step -> handlePrompting sk step
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
     latestHeadVS = _bakeViewSelector_latestHead aggVS
+
+    connectedLedgerVS = _bakeViewSelector_connectedLedger aggVS
+    handleConnectedLedger mli
+      | viewSelects () connectedLedgerVS = pure $ mempty
+        { _bakeView_connectedLedger = toMaybeView connectedLedgerVS (Just mli)
+        }
+      | otherwise = pure mempty
+
+    showLedgerVS = _bakeViewSelector_showLedger aggVS
+    handleShowLedger sk mpkh
+      | viewSelects sk showLedgerVS = pure $ mempty
+        { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ Just $ First mpkh
+        }
+      | otherwise = pure mempty
+
+    promptingVS = _bakeViewSelector_prompting aggVS
+    handlePrompting sk step
+      | viewSelects sk promptingVS = pure $ mempty
+        { _bakeView_prompting = toRangeView1 promptingVS sk $ Just $ First step
+        }
+      | otherwise = pure mempty
 
     summaryVS = _bakeViewSelector_summary aggVS
     handleClient cid client = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do

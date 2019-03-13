@@ -193,6 +193,28 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
+
+  let showLedgerVS = _bakeViewSelector_showLedger vs
+  showLedger <- whenM (not $ null showLedgerVS) $ do
+    las <- select CondEmpty -- Expect very few records here, so just select them all
+    let rangeView = toRangeView showLedgerVS $ flip fmap las $ \la ->
+          ( _ledgerAccount_secretKey la
+          , First $ (,) <$> _ledgerAccount_publicKeyHash la <*> _ledgerAccount_balance la
+          )
+    pure rangeView
+
+  let promptingVS = _bakeViewSelector_prompting vs
+  prompting <- whenM (not $ null promptingVS) $ do
+    las <- select CondEmpty
+    let rangeView = toRangeView promptingVS $ flip fmap las $ \la ->
+          ( _ledgerAccount_secretKey la
+          , First $ Just $ mempty
+            { _setupState_import = if _ledgerAccount_imported la then Just (First ImportSecretKeyStep_Done) else Nothing
+            }
+          )
+    pure rangeView
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_clients = mempty -- clients
@@ -215,6 +237,9 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
     , _bakeView_alertCount = alertCount
+    , _bakeView_connectedLedger = connectedLedger
+    , _bakeView_showLedger = showLedger
+    , _bakeView_prompting = prompting
     }
 
 getErrorLogs
@@ -332,7 +357,7 @@ getErrorLogsImpl flt intervalMap = do
             (lowerQ, lowerArgs) = qEndpoint lowerEnd
             (upperQ, upperArgs) = qEndpoint upperEnd
             in ("tsrange(" <> lowerQ <> ", " <> upperQ <> ", '[]')", lowerArgs . upperArgs)
-          
+
       $(logDebugSH) ("queryAlert" :: Text, sqlTable, window)
       MMap.fromDistinctAscList <$> traceQuery (
         qBase <>
@@ -343,7 +368,7 @@ getErrorLogsImpl flt intervalMap = do
     runQuery :: LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQuery lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
       logAssume lTag (queryAlert (singleConstructor $ proxify $ lTag) (logDep lTag) window)
-        
+
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
       leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- runQuery lTag window; $(logDebugSH) x; pure x }) universe

@@ -6,7 +6,7 @@ module Tezos.Ledger where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
-import Data.Aeson (ToJSON, FromJSON)
+import Data.Aeson (ToJSON, FromJSON, ToJSONKey, FromJSONKey)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -25,6 +25,8 @@ data SecretKey = SecretKey
   , _secretKey_signingCurve :: !SigningCurve
   , _secretKey_derivationPath :: !DerivationPath
   } deriving (Show, Read, Eq, Ord, Generic, Typeable)
+instance ToJSONKey SecretKey
+instance FromJSONKey SecretKey
 
 toSecretKeyText :: SecretKey -> Text
 toSecretKeyText sk = "ledger://" <> T.intercalate "/"

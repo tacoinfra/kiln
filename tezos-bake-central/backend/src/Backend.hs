@@ -10,6 +10,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend where
 
 import Control.Concurrent.STM (atomically, readTQueue)
@@ -83,6 +85,7 @@ import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
+import Backend.Workers.TezosClient
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
@@ -299,7 +302,7 @@ backendImpl cfg serve = do
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler maybeNamedChain upgradeBranch emailFromAddress dataSrc publicDataSources)
+        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
@@ -322,7 +325,8 @@ backendImpl cfg serve = do
 
       for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< internalNodeWorker appConfig logger db namedChain
-        (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess logger db namedChain
+        (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess appConfig logger db namedChain
+        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
