@@ -6,6 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 module Backend.Upgrade where
 
@@ -36,7 +37,7 @@ import Backend.Config (AppConfig)
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
-import Common.Schema (Id, UpgradeCheckError (..), UpstreamVersion (..), ErrorLog(..), ErrorLogNetworkUpdate(..))
+import Common.Schema
 import Rhyolite.Schema (Id(..))
 import Common.Alerts
 import ExtraPrelude
@@ -91,7 +92,7 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
           , _errorLogNetworkUpdate_commit = commitId
           , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
           }
-        notify $ mkDefaultNotify (Id eid :: Id ErrorLogNetworkUpdate)
+        notifyDefault (Id eid :: Id ErrorLogNetworkUpdate)
         -- Only send an email when we get a new value, not when we initially
         -- populate the cache.
         when (mLastCommit /= Nothing) $ do
@@ -139,14 +140,14 @@ setUpstreamVersion v = do
           , _upstreamVersion_version = preview _Right v
           , _upstreamVersion_updated = now
           }
-      notify . flip Notify_UpstreamVersion new =<< insert' new
+      notify NotifyTag_UpstreamVersion . (, new) =<< insert' new
     Just existingId -> do
       updateId existingId
         [ UpstreamVersion_errorField =. preview _Left v
         , UpstreamVersion_versionField =. preview _Right v
         , UpstreamVersion_updatedField =. now
         ]
-      getId existingId >>= traverse_ (notify . Notify_UpstreamVersion existingId)
+      getId existingId >>= traverse_ (notify NotifyTag_UpstreamVersion . (existingId,))
 
 getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Text -> m (Either Text Text)
 getTezosBranch httpMgr projectId branch = do

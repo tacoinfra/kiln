@@ -111,7 +111,7 @@ clearNoBakerHeartbeatError cid = do -- TODO: Only on non-deleted bakers
       AND NOT c.deleted
       AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   -- Use a simple "get" primitive with Beam
   client :: Maybe BakerDaemonExternalData <- do
     cs <- project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector) $ (BakerDaemonExternal_idField `in_` [cid]) `limitTo` 1
@@ -133,7 +133,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
     AND el.stopped IS NULL
     RETURNING elnu.log
     |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
 
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
@@ -187,7 +187,7 @@ clearBakerDeactivated pkh newFit = do
       AND el.stopped IS NULL
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ getBy . fromId
@@ -234,7 +234,7 @@ clearBakerDeactivationRisk pkh newFit = do
       AND el.stopped IS NULL
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ getBy . fromId
@@ -280,7 +280,7 @@ clearInsufficientFunds baker = do
       AND t."baker#publicKeyHash" = ?pkh
       AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
 
 reportInaccessibleNodeError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
@@ -319,7 +319,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
       FROM "ErrorLogInaccessibleNode" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
   when (not $ null lids) $ for_ node' $ \node -> do
@@ -365,7 +365,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
@@ -407,7 +407,7 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
       AND t.node = ?nodeId
       AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
   when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
@@ -478,7 +478,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
       FROM "ErrorLogBadNodeHead" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
   let formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
@@ -594,7 +594,7 @@ clearMissedBake f right pkh lvl = do
         AND b."publicKeyHash" = ?pkh
         AND elbm.level = ?lvl
       RETURNING elbm.log |]
-  for_ lids $ notify . mkDefaultNotify
+  for_ lids notifyDefault
   when (not $ null lids) $ queueAlert Nothing $
     Alert Resolved
       ("Resolved: Missed " <> rightTxt <> " opportunity")
@@ -632,13 +632,13 @@ insertErrorLog mkErrorLog = do
     }
   let errLog = mkErrorLog logId
   insert_ errLog
-  notify $ mkDefaultNotify (Id logId :: Id a)
+  notifyDefault (Id logId :: Id a)
   pure (logId, errLog)
 
 updateErrorLog :: (HasDefaultNotify (Id a), PersistBackend m) => Id ErrorLog -> Id a -> m ()
 updateErrorLog logId specificLogId = do
   updateErrorLogLastSeen logId
-  notify $ mkDefaultNotify specificLogId
+  notifyDefault specificLogId
 
 updateErrorLogBy
   :: forall a ctor m.
@@ -655,7 +655,7 @@ updateErrorLogBy
 updateErrorLogBy logId idField updates = do
   updateErrorLogLastSeen logId
   update updates (idField ==. logId)
-  notify $ mkDefaultNotify (Id logId :: Id a)
+  notifyDefault (Id logId :: Id a)
 
 returnUpdateErrorLogBy
   :: forall a u m ctor.
@@ -672,7 +672,7 @@ returnUpdateErrorLogBy
 returnUpdateErrorLogBy logId idField updates = do
   g <- returnUpdateErrorLogLastSeen logId
   update updates (idField ==. logId)
-  notify $ mkDefaultNotify (Id logId :: Id a)
+  notifyDefault (Id logId :: Id a)
   getIdBy (Id logId :: Id a) >>= \case
     Nothing -> fail $ "returnUpdateErrorLogBy called on nonexistent specific record " <> show logId
     Just l -> return (g,l)
@@ -694,7 +694,7 @@ resolveAlert elv@(tag :=> _) = logAssume tag $ do
   let eid = mkId tag (errorLogIdForErrorLogView elv)
   now <- getTime
   updateId (unId eid) [ErrorLog_stoppedField =. Just now]
-  notify $ mkDefaultNotify eid
+  notifyDefault (tag :=> eid)
   where
     mkId :: proxy e -> IdData e -> Id e
     mkId _ = Id

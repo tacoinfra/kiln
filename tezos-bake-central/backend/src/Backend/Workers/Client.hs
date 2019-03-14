@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Backend.Workers.Client where
@@ -116,7 +117,7 @@ clientWorker appCfg nds =
             (BakerDaemonExternal_idField ==. cid)
           project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector)
                   (BakerDaemonExternal_idField ==. cid)
-            >>= traverse_ (notify . Notify_BakerDaemonExternal cid . Just)
+            >>= traverse_ (notify NotifyTag_BakerDaemonExternal . (cid,) . Just)
 
 
           -- TODO: Add back errors reported by client RPC

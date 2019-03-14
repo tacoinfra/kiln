@@ -67,23 +67,23 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
           -- import secret keys
           inDb (selectSingle $ LedgerAccount_shouldImportField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
-            inDb $ notify $ Notify_Prompting sk $ Just $ mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting }
+            inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
             importSecretKey appConfig (Just chain) sk >>= \i -> inDb $ do
               update [LedgerAccount_importedField =. False] (LedgerAccount_importedField ==. True)
               update
                 [LedgerAccount_importedField =. (i == ImportSecretKeyStep_Done), LedgerAccount_shouldImportField =. False]
                 (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-              notify $ Notify_Prompting sk $ Just $ mempty { _setupState_import = Just $ First i }
+              notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_import = Just $ First i })
 
           -- setup to bake
           inDb (selectSingle $ LedgerAccount_shouldSetupToBakeField ==. True &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
-            inDb $ notify $ Notify_Prompting sk $ Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting }
+            inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
             setupLedgerToBake appConfig (Just chain) >>= \i -> inDb $ do
               update
                 [LedgerAccount_shouldSetupToBakeField =. False]
                 (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-              notify $ Notify_Prompting sk $ Just $ mempty { _setupState_setup = Just $ First i }
+              notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First i })
 
           -- register
           inDb (selectSingle $
@@ -93,12 +93,12 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             Nothing -> pure () -- shouldn't happen due to WHERE clause
             Just (fee, pkh) -> do
               let sk = _ledgerAccount_secretKey la
-              inDb $ notify $ Notify_Prompting sk $ Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting }
+              inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
               registerKeyAsDelegate (Just chain) fee >>= \result -> inDb $ do
                 update
                   [LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                notify $ Notify_Prompting sk $ Just $ mempty { _setupState_register = Just $ First result }
+                notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First result })
                 when (result == RegisterStep_Registered) $ do
                   bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
                   let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
@@ -124,13 +124,13 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
               Left err -> $(logError) (T.pack (show err))
               Right mPkh -> do
                 case mPkh of
-                  Nothing -> inDb $ notify $ Notify_ShowLedger sk Nothing
+                  Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
                   Just pkh -> runClientT (getBalanceFor appConfig (Just chain) pkh) >>= \case
                     Left err -> $(logError) (T.pack (show err))
                     Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                     Right (Just tez) -> inDb $ do
                       update [LedgerAccount_balanceField =. Just tez] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                      notify $ Notify_ShowLedger sk (Just (pkh, tez))
+                      notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
                 inDb $ (maybe delete (\pkh -> update [LedgerAccount_publicKeyHashField =. Just pkh]) mPkh)
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
@@ -142,7 +142,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
             Right (Just tez) -> inDb $ do
               update [LedgerAccount_balanceField =. Just tez] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-              notify $ Notify_ShowLedger sk (Just (pkh, tez))
+              notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
 
           -- set high water mark
           inDb (selectSingle $ LedgerAccount_shouldSetHWMField /=. (Nothing :: Maybe RawLevel)) >>= \mla ->
@@ -150,10 +150,10 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
               Nothing -> pure () -- shouldn't happen
               Just hwm -> do
                 let sk = _ledgerAccount_secretKey la
-                inDb $ notify $ Notify_Prompting sk $ Just $ mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting }
+                inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting })
                 setHighWaterMark appConfig (Just chain) sk hwm >>= \i -> inDb $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                  notify $ Notify_Prompting sk $ Just $ mempty { _setupState_setHWM = Just $ First i }
+                  notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
@@ -171,7 +171,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   }
             deleteAll connectedLedger
             insert connectedLedger
-            notify $ Notify_ConnectedLedger $ Just connectedLedger
+            notify NotifyTag_ConnectedLedger $ Just connectedLedger
       _ -> pure ()
   where
     inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a

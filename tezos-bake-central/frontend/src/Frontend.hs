@@ -56,7 +56,6 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
-import Rhyolite.WebSocket (WebSocketUrl (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -103,14 +102,13 @@ type RouteConstraints t r m =
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
-  , _frontend_body = prerender blank frontendBody
+  , _frontend_body = prerender_ blank frontendBody
   }
 
 frontendBody
   :: forall m t x.
     ( MonadWidget t m
     , HasJS x m
-    , MonadFix (Performable m)
     , PrimMonad m
     , RouteConstraints t AppRoute m
     )
@@ -124,6 +122,7 @@ frontendBody = void $ do
 
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
+    host = Uri.unRText . Uri.authHost <$> routeAuthority
     renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
     routeAuthority = Uri.uriAuthority route ^? _Right
     wsPort = (Uri.authPort =<< routeAuthority)
@@ -133,14 +132,14 @@ frontendBody = void $ do
         _ -> 80)
     listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
 
-    wsUrl = WebSocketUrl
-      <$> (T.replace "http" "ws" <$> routeScheme)
-      <*> (Uri.unRText . Uri.authHost <$> routeAuthority)
-      <*> pure (fromIntegral $ fromMaybe 80 wsPort)
-      <*> pure (renderPathPieces [listenPath])
-
+    wsUrl = ffor2 routeScheme host $ \s h -> mconcat
+      [ T.replace "http" "ws" s
+      , "://", h
+      , ":", tshow (fromMaybe 80 wsPort)
+      , "/", renderPathPieces [listenPath]
+      ]
   rec
-    (socketState, _) <- runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
       withFrontendContext $
         withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
