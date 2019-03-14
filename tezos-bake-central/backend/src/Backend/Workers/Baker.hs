@@ -390,13 +390,21 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
 
+        isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
+
         insufficientFundAlerts :: mCommit ()
-        insufficientFundAlerts = if _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
+        insufficientFundAlerts = if isInsufficientFunds
           then reportInsufficientFunds baker
           else clearInsufficientFunds baker
 
+        updateBakerDataInternal :: mCommit ()
+        updateBakerDataInternal = update
+          [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~>
+           BakerDaemonInternalData_insufficientFundsSelector =. isInsufficientFunds]
+          CondEmpty
+
       pure $ [deactivationAlerts, updateDetails] ++ if isInternal
-        then [insufficientFundAlerts]
+        then [insufficientFundAlerts, updateBakerDataInternal]
         else []
 
   return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts

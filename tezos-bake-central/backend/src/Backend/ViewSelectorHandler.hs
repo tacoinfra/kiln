@@ -430,8 +430,9 @@ getBakerAddresses nds bid = do
       qFull
       (toPrimitivePersistValue pg bid :)
       buildRs
-  int :: Map.Map PublicKeyHash (Bool, SecretKey, Int) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", p."running", la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
+  int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
+      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."running",
+        la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
           JOIN "ErrorLogBakerMissed" elbm
@@ -443,13 +444,13 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, running, li, sc, dp, alertCount) ->
+    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, running, li, sc, dp, alertCount) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (running, sk, alertCount)))
+      in (pkh, (running, sk, (alertCount, insufficientFunds))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -471,7 +472,7 @@ getBakerAddresses nds bid = do
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
-      fmap (\(a, c) -> (Left (BakerData a), c)) rs
+      fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
     chainId = _nodeDataSource_chain nds
     maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
@@ -497,20 +498,22 @@ getBakerAddresses nds bid = do
 
   let
 
-    getNextRight rights progress = case minimumByMay (on compare swap) $ Map.toList rights of
+    getNextRight rights progress insufficientFunds = case minimumByMay (on compare swap) $ Map.toList rights of
       Just v -> BakerNextRight_KnownRights v
-      Nothing -> case subtract progress <$> maxProgress of
-        Just 0 -> BakerNextRight_WaitingForRights
-        Just _ -> BakerNextRight_GatheringData
-        Nothing -> BakerNextRight_GatheringData
+      Nothing -> if insufficientFunds
+        then BakerNextRight_KnownNoRights
+        else case subtract progress <$> maxProgress of
+          Just 0 -> BakerNextRight_WaitingForRights
+          Just _ -> BakerNextRight_GatheringData
+          Nothing -> BakerNextRight_GatheringData
         -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(b, alertCount) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
+        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)
-        (\(b, alertCount) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRight rights progress))
+        (\(b, (alertCount, insufficientFunds)) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRight rights progress insufficientFunds))
       ) bakers (getMonoidalMap nextBakeRights)
 
   return result

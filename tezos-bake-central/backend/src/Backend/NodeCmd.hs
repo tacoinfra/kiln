@@ -105,7 +105,7 @@ initNode nodePath nodeConfigPath = do
 bakerDaemonProcess :: (MonadIO m, MonadBaseControl IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
 bakerDaemonProcess appConfig logger db namedChain = do
-  (_nid, BakerDaemonInternalData _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (_nid, BakerDaemonInternalData _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
@@ -120,7 +120,7 @@ bakerDaemonProcess appConfig logger db namedChain = do
         bpid <- insert' processData
         epid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing bpid epid
+        let v = BakerDaemonInternalData "ledger_kiln" Nothing False bpid epid
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
@@ -146,4 +146,4 @@ fetchAlias :: (forall m'. (MonadIO m', PersistBackend m') => FilePath -> m' Stri
 fetchAlias _ = do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
-    (Just (BakerDaemonInternalData alias _ _ _)) -> return $ T.unpack alias
+    (Just (BakerDaemonInternalData alias _ _ _ _)) -> return $ T.unpack alias
