@@ -78,10 +78,11 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
+    useArchiveMode = namedChain == NamedChain_Zeronet
   processWorker logger db
     defaultConfig
     (initNode nodePath)
-    (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort])
+    (\_ nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
     pid
     (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
