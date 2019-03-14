@@ -151,7 +151,6 @@ data BotMessage = BotMessage
   , _botMessage_from :: !Sender -- This is optional in the spec, but we will require it
   , _botMessage_chat :: !Chat
   , _botMessage_text :: !(Maybe Text)
-  , _botMessage_new_chat_member :: !(Maybe BotGetMe)
   , _botMessage_date :: !UnixTimestamp
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
@@ -206,16 +205,10 @@ getUpdates cfg = do
     setTimeout timeout req = req { Http.responseTimeout = Http.responseTimeoutMicro $
       fromIntegral $ nominalDiffTimeToMicroseconds $ timeout + 1 }
 
-isFromRecipientMessage :: UTCTime -> BotMessage -> Bool
-isFromRecipientMessage oldestMessage msg =
+isCandidateMessage :: UTCTime -> BotMessage -> Bool
+isCandidateMessage oldestMessage msg =
   unUnixTimestamp (_botMessage_date msg) >= oldestMessage &&
   not (_sender_isBot (_botMessage_from msg))  -- Message cannot come from a bot
-
-isAddToGroupMessage :: BotGetMe -> UTCTime -> BotMessage -> Bool
-isAddToGroupMessage me oldestMessage msg =
-  unUnixTimestamp (_botMessage_date msg) >= oldestMessage &&
-  not (_sender_isBot (_botMessage_from msg))  -- Message cannot come from a bot
-  && (_botMessage_new_chat_member msg == Just me)
 
 -- | One-shot function for getting a bot and its first sender.
 getBotAndLastSender
@@ -229,7 +222,7 @@ getBotAndLastSender botApiKey = do
     , _telegramGetUpdates_timeout = Nothing
     }
   let
-    candidateMessages = filter (\m -> isAddToGroupMessage me unixEpoch m || isFromRecipientMessage unixEpoch m)
+    candidateMessages = filter (isCandidateMessage unixEpoch)
       $ _botGetUpdates_message <$> _apiResult_result result
     firstMessage = maximumByMay (comparing _botMessage_date) candidateMessages
 
