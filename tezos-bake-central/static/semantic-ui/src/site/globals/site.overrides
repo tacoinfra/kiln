@@ -1305,6 +1305,14 @@ h4.dashboard-section-title {
     }
   }
 
+  &.disclaimer .content {
+    .explanation ul {
+      text-align: left;
+      display: inline-block;
+    }
+    .ui.error.message { margin-bottom: -@20px; }
+  }
+
   &.ledger-prompt {
     width: unit(593 / @emSize, rem);
     text-align: center;
