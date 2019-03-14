@@ -21,7 +21,7 @@
 
 module Frontend where
 
-import Control.Lens ((<>~), imap)
+import Control.Lens ((<>~), imap, to)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
@@ -72,6 +72,7 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
+import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
 import Common.Alerts (networkUpdateDescription)
 import Common.Api
@@ -752,6 +753,9 @@ liveErrorsWidget = void $ do
               header "Multiple bakers for same baker" -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
+              pkh
+            BakerLogTag_InsufficientFunds -> renderBakerError
+              (bakerInsufficientFundsDescriptions log)
               pkh
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
@@ -1558,6 +1562,7 @@ bakersTab =
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
+                  BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1614,6 +1619,7 @@ bakersTab =
         BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
         BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
         BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
+        BakerLogTag_InsufficientFunds -> renderBakerError (bakerInsufficientFundsDescriptions log) pkh
 
       where
         renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
@@ -1711,7 +1717,7 @@ bakersTab =
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
 
         let
-          dmDelegateInfo = (fmap unJson) . join . (fmap _bakerDetails_delegateInfo) <$> details'
+          dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
         elClass "table" "baker-balance" $ do
           el "tr" $ do
             el "td" (text "Available Balance")

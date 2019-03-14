@@ -241,6 +241,47 @@ clearBakerDeactivationRisk pkh newFit = do
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
+reportInsufficientFunds
+  :: ( Monad m, MonadIO m
+     , PersistBackend m, PostgresLargeObject m
+     )
+  => Baker -> m ()
+reportInsufficientFunds baker = do
+  let pkh = _baker_publicKeyHash baker
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogInsufficientFunds" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  now <- getTime
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogInsufficientFunds_logField
+      [ ErrorLogInsufficientFunds_detectedField =. now ]
+    Nothing -> do
+      void $ insertErrorLog $ \logId ->
+        ErrorLogInsufficientFunds logId (Id pkh) now
+
+clearInsufficientFunds
+  :: ( Monad m, MonadIO m
+     , PersistBackend m, PostgresLargeObject m
+     )
+  => Baker -> m ()
+clearInsufficientFunds baker = do
+  let pkh = _baker_publicKeyHash baker
+  lids :: [Id ErrorLogInsufficientFunds] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogInsufficientFunds" t
+      WHERE t.log = el.id
+      AND t."baker#publicKeyHash" = ?pkh
+      AND el.stopped IS NULL
+    RETURNING t.log |]
+  for_ lids $ notify . mkDefaultNotify
+
 reportInaccessibleNodeError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , HasAppConfig a, MonadReader a m, SqlDb (PhantomDb m)

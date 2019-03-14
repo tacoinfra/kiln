@@ -289,6 +289,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
+  BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
@@ -297,6 +298,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
+  BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
 errorLogIdForNodeLogTag = \case
