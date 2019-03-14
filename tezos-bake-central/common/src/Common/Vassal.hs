@@ -19,7 +19,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- {-# OPTIONS_GHC -Wall -Werror -Wno-orphans -Wno-unused-imports -Wno-deprecations #-}
+-- {-# OPTIONS_GHC -Wall -Werror -Wno-unused-imports -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- {-# OPTIONS_GHC -ddump-splices #-}
 
@@ -56,10 +56,6 @@ import Data.These (These (..))
 import Reflex.FunctorMaybe
 
 import Common.WrappedShow1
-
--- horray, orphans!
-deriving instance FunctorMaybe Option
-
 
 -- we have the general problem of needing to send "incremental" updates to a
 -- (view of) a shared data set.  The general idea is to have an initial query

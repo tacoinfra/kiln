@@ -221,7 +221,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
             maybeNotify :: forall m' . PersistBackend m' => Id BakerRightsCycleProgress -> BakerRightsCycleProgress -> [BakerRight] -> m' ()
             maybeNotify x y z = when (_bakerRightsCycleProgress_progress y `mod` 128 == 0
                                       || _bakerRightsCycleProgress_progress y == bakerMaxBound) $
-              notify (Notify_BakerRightsProgress x y z)
+              notify NotifyTag_BakerRightsProgress (x,y,z)
             {-# INLINE maybeNotify #-}
           sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
           return ()
@@ -376,7 +376,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                 , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
                 ]
                 ( BakerDetails_publicKeyHashField ==. brid)
-          notify $ mkDefaultNotify newVal
+          notifyDefault newVal
 
         -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
         -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.

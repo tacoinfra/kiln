@@ -576,7 +576,7 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
               { _parameters_protoInfo = params
               , _parameters_chain = chainId
               }
-          notify . flip Notify_Parameters entry =<< insert' entry
+          notify NotifyTag_Parameters . (, entry) =<< insert' entry
 
 
 -- | extrats the fittest known branch from cache

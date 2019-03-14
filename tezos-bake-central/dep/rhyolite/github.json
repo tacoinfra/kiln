@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "rhyolite",
-  "branch": "develop",
-  "rev": "cf91a392dec6c497fe121942a3de899dbb05c014",
-  "sha256": "07l44mk7hdf2467ar99kwadsc9cbv6yb5rhpajb2xbbyl12hf5xi"
+  "branch": "bump-constraints-extras",
+  "rev": "c6e890513e3b2b97f3fbc6bc155724ce95f712f6",
+  "sha256": "0vxbw650yrq3wk1g3rkmahlm94r3s4j609lkx4wi0za6cqxfhdbi"
 }

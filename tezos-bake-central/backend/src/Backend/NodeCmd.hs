@@ -83,7 +83,7 @@ internalNodeWorker appConfig logger db namedChain = do
     (initNode nodePath)
     (\_ nodeConfigPath -> proc nodePath ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort])
     pid
-    (Just (Notify_NodeInternal nid))
+    (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
 initNode :: (MonadIO m) => FilePath -> FilePath -> m ()
 initNode nodePath nodeConfigPath = do

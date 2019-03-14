@@ -617,6 +617,7 @@ data Notificatee = Notificatee
   { _notificatee_email :: Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
+instance Aeson.ToJSON Notificatee
 
 data AlertNotificationMethod
   = AlertNotificationMethod_Email

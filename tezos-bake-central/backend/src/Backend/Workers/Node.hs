@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -138,7 +139,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
         ]
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-    traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
+    traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
 updateNetworkStats
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
@@ -178,7 +179,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
       ]
       (NodeDetails_idField ==. nid)
-    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
+    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
   pure ()
 
 type NodeData = Either (Id ProcessData) NodeExternalData
@@ -364,13 +365,13 @@ updateDataSource nds (pn, chain, uri) = do
                   , _publicNodeHead_headBlock = b
                   , _publicNodeHead_updated = now
                   }
-              notify . flip Notify_PublicNodeHead (Just pnh) =<< insert' pnh
+              notify NotifyTag_PublicNodeHead . (, Just pnh) =<< insert' pnh
             Just eid -> do
               updateId eid
                 [ PublicNodeHead_headBlockField =. b
                 , PublicNodeHead_updatedField =. now
                 ]
-              notify . Notify_PublicNodeHead eid =<< getId eid
+              notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid
 
 {- Send a 'bad branch' alert if either:
  - 1) last common ancestor is at least 3 levels old (on either branch)
