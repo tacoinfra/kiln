@@ -1305,10 +1305,13 @@ h4.dashboard-section-title {
     }
   }
 
-  &.disclaimer .content {
-    .explanation ul {
+  &.disclaimer {
+    width: unit(660 / @emSize, rem);
+    .explanation {
+      font-size: @14px;
+      line-height: @22px;
+      color: @black;
       text-align: left;
-      display: inline-block;
     }
     .ui.error.message { margin-bottom: -@20px; }
   }
