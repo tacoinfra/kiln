@@ -1462,10 +1462,10 @@ bakersTab =
             el "tr" $ do
               el "td" (text "Available Balance")
               elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t
+                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
                 text w
               elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t
+                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
                 text p
                 elClass "span" "tez" $ text tz
 
