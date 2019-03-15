@@ -28,6 +28,7 @@ import Database.Groundhog.Postgresql (Postgresql, in_)
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
+import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO.Error (isEOFError)
 import System.Timeout (timeout)
@@ -42,7 +43,7 @@ import qualified System.Process as Process
 import Tezos.Types
 
 import Backend.Common (workerWithDelay)
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), tezosClientDataDir)
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..))
 import Common.Schema
@@ -58,6 +59,7 @@ tezosClientWorker
 tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logDebug) "Tezos client worker"
+    liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     case mConnectedLedger of
       Just cl
@@ -94,7 +96,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             Just (fee, pkh) -> do
               let sk = _ledgerAccount_secretKey la
               inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
-              registerKeyAsDelegate (Just chain) fee >>= \result -> inDb $ do
+              registerKeyAsDelegate appConfig (Just chain) fee >>= \result -> inDb $ do
                 update
                   [LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -261,7 +263,7 @@ runClientCommand
   => AppConfig -> Maybe NamedChain -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
 runClientCommand appConfig chain args handleError = do
   $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodePort appConfig)] ++ args) ""
+  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodePort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
   case exitCode of
     ExitSuccess -> pure $ T.strip $ T.pack stdout
     ExitFailure _ -> do
@@ -300,11 +302,11 @@ setupLedgerToBake appConfig chain = do
 -- get up-to-date. We detect that case and just return an error.
 -- Also, if we are already registered as a delegate, the tezos-client command
 -- succeeds without re-registering.
-registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => Maybe NamedChain -> Tez -> m RegisterStep
-registerKeyAsDelegate chain fee
+registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> Tez -> m RegisterStep
+registerKeyAsDelegate appConfig chain fee
   | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
   | otherwise = do
-  let p = (Process.proc (clientPath chain) ["register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
+  let p = (Process.proc (clientPath chain) ["--port", show (_appConfig_kilnNodePort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
         { Process.std_err = Process.CreatePipe
         , Process.std_out = Process.CreatePipe
         }
