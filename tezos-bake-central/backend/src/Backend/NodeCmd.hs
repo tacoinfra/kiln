@@ -26,7 +26,7 @@ import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Schema
 import Common.Schema
 
@@ -46,7 +46,6 @@ endorserPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-endorser-003-Psd
 endorserPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
 endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
 
--- TODO: configurable data-dir with CLI
 -- TODO: use postgres for "process-id's"
 
 internalNodeWorker :: (MonadIO m, MonadBaseControl IO m)
@@ -79,28 +78,26 @@ internalNodeWorker appConfig logger db namedChain = do
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
     useArchiveMode = namedChain == NamedChain_Zeronet
-  processWorker logger db
-    defaultConfig
-    (initNode nodePath)
-    (\_ nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
+  processWorker logger db appConfig
+    (initNode appConfig nodePath)
+    (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
     pid
     (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-initNode :: (MonadIO m) => FilePath -> FilePath -> m ()
-initNode nodePath nodeConfigPath = do
-  let nodeConfig = defaultConfig
-  let dataDir = fromMaybe (error "specify data-dir") $ _nodeConfigFile_dataDir nodeConfig
+initNode :: (MonadIO m) => AppConfig -> FilePath -> FilePath -> m FilePath
+initNode appConfig nodePath nodeConfigPath = do
+  let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
   -- liftIO . putStrLn =<< liftIO (readProcess "cat" [nodeConfigPath] "")
   haveVersionFile <- liftIO $ doesFileExist versionFile
   when (not haveVersionFile) $
-    liftIO . putStrLn =<< liftIO (readProcess nodePath ["config", "show", "--config-file", nodeConfigPath] "")
+    liftIO . putStrLn =<< liftIO (readProcess nodePath ["config", "show", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $
-    liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath] "")
-  return ()
+    liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
+  return dataDir
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseControl IO m)
@@ -131,12 +128,12 @@ bakerDaemonProcess appConfig logger db namedChain = do
           }
         return (nid, v)
   let nodePort = show $ _appConfig_kilnNodePort appConfig
-  bp <- processWorker logger db defaultConfig
+  bp <- processWorker logger db appConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "run", "with", "local", "node", "./.tezos-node", alias])
+    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "run", "with", "local", "node", nodeDataDir appConfig, alias])
     bpid
     Nothing
-  ep <- processWorker logger db defaultConfig
+  ep <- processWorker logger db appConfig
     fetchAlias
     (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "run", alias])
     epid

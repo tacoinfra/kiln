@@ -67,7 +67,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), defaultNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -146,6 +146,10 @@ backendImpl cfg serve = do
   !(kilnNodePort :: Port) <- fmap (fromMaybe Config.defaultKilnNodePort) $ liftA2 (<|>)
     (pure $ _opts_kilnNodePort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodePort)
+
+  !(kilnDataDir :: FilePath) <- fmap (fromMaybe Config.defaultKilnDataDir) $ liftA2 (<|>)
+    (pure $ _opts_kilnDataDir cfg)
+    (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
   let
     maybeNamedChain = either Just (const Nothing) chain
@@ -291,7 +295,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort
+        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -400,6 +404,7 @@ data Opts = Opts
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   , _opts_kilnNodePort :: !(Maybe Port)
+  , _opts_kilnDataDir :: !(Maybe FilePath)
   }
 makeLenses ''Opts
 
@@ -419,13 +424,14 @@ instance Semigroup Opts where
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
+    , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -473,6 +479,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnNodePort "PORT" (set opts_kilnNodePort . Just . Config.parsePortUnsafe)
       ("The port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodePort <> ".")
+
+  , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
+      ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
