@@ -21,11 +21,13 @@ import System.FilePath ((</>))
 import Text.URI (URI)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
+import qualified Data.Text as T
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
 import Common.URI (Port)
 import ExtraPrelude
+import Tezos.Base58Check (toBase58Text, ChainId)
 import Tezos.Json
 
 data AppConfig = AppConfig
@@ -33,6 +35,7 @@ data AppConfig = AppConfig
   , _appConfig_kilnNodePort :: Port
   , _appConfig_kilnDataDir :: FilePath
   , _appConfig_kilnNodeConfig :: NodeConfigFile
+  , _appConfig_chainId :: ChainId
   }
 
 class HasAppConfig a where
@@ -51,6 +54,7 @@ kilnNodeURI appConfig = fromRight [Uri.uri|http://127.0.0.1:8732|] $
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
   </> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir $ _appConfig_kilnNodeConfig appConfig)
+  </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"
