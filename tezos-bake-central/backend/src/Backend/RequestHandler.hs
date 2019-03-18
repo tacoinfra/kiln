@@ -292,9 +292,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [Baker_dataField ~> DeletableRow_deletedSelector =. True]
             (BakerKey ==. fromId bId)
+          let data' = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+          selectSingle (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh) >>= \m -> for_ m $ \bdi -> do
+            let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
+                bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
+                endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
+            update [ProcessData_runningField =. False] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
-            (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
+            (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
           notify NotifyTag_Baker (Id pkh, Nothing)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
