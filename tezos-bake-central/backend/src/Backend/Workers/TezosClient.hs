@@ -126,7 +126,11 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
                   , ConnectedLedger_updatedField =. Just now
                   ] CondEmpty
-              Left err -> $(logError) (T.pack (show err))
+              Left err -> do
+                inDb $ do
+                  delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                  notify NotifyTag_ShowLedger (sk, Nothing)
+                $(logError) (T.pack (show err))
               Right mPkh -> do
                 case mPkh of
                   Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
