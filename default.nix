@@ -259,6 +259,43 @@ let
     };
   };
 
+  debianPackage = { pkgName, version, maintainer, description, service, exe }: let
+    control = pkgs.writeTextFile { name = "control"; text = ''
+      Package: ${pkgName}
+      Version: ${version}
+      Architecture: amd64
+      Maintainer: ${maintainer}
+      Depends: 
+      Description: ${description}
+    ''; };
+
+  in pkgs.stdenv.mkDerivation {
+      name = "${pkgName}-${version}-debian-pkg";
+      src = ./.;
+      buildInputs = [ pkgs.dpkg ];
+      builder = pkgs.writeScript "builder.sh" ''
+        source "$stdenv/setup"
+        mkdir -p $out
+
+        export DEBDIR=$TMPDIR/${pkgName}_${version}-1
+
+        # make debian file structure
+        mkdir -p $DEBDIR/DEBIAN
+        mkdir -p $DEBDIR/usr/bin
+        mkdir -p $DEBDIR/lib/systemd/system/
+
+        #
+        cp ${control} $DEBDIR/DEBIAN/control
+        cp ${exe}/bin/* $DEBDIR/usr/bin/
+
+        # mkdir -p $DEBDIR/lib/systemd/system/${pkgName}.service
+        # chown root:root -R $DEBDIR/*
+        chmod 0755 $DEBDIR/usr/bin/*
+
+        ${pkgs.dpkg}/bin/dpkg-deb --build $DEBDIR $out
+      '';
+    };
+
 in obApp // {
   inherit pkgs dockerExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
@@ -292,4 +329,15 @@ in obApp // {
         '';
       };
     };
+  testDebianPackage = debianPackage {
+    pkgName = "test-debian-package";
+    version = "1.0";
+    maintainer = "d@s.com";
+    description = "a test deb package";
+    service = true;
+    exe = pkgs.writeScriptBin "run-test-deb-package" ''
+      echo "Hello from test deb package";
+    '';
+    };
+
 }
