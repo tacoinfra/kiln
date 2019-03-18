@@ -83,7 +83,7 @@ editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
           let submitResult = tagPromptlyDyn validatedRecipient gotResponse
           widgetHold_ blank $ ffor (isJust <$> submitResult) $ \isValid -> if isValid then blank else elClass "p" "error" $ do
             icon "red icon-warning-circle"
-            text " No conversations found. Make sure your bot token is correct and you've recently sent a message to your bot before trying again."
+            text "No conversations found. Make sure you've started a conversation with your bot before trying again."
 
           let submit = filterRight $ tag (current botApiKey) $ gate (not <$> current isLoading) submitClick
           (isLoading, gotResponse) <- formIsLoading
@@ -128,16 +128,16 @@ settingsForm cfg = holdUniqDyn =<< do
   botApiKey <- holdUniqDyn $ (^? _Just . telegramConfig_botApiKey) <$> cfg
   botApiKeyEvent <- updatedWithInit botApiKey
 
+  let st t = el "strong" $ text t
   el "ol" $ do
     el "li" $ do
-      text "Send \"/newbot\" to the Telegram BotFather bot and create a bot that will be used to send you notifications regarding your Kiln systems. If you've already made a bot, skip to the next step."
+      text "Send " *> st "‘/newbot’" *> text " to the Telegram BotFather bot and follow the instructions to create a bot that Kiln will use to send notifications. If you've already made a bot, skip to the next step."
       el "p" $
         elAttr "a" ("href"=:"https://telegram.me/BotFather" <> "target"=:"_blank") $ do
           text "Start BotFather conversation " *> icon "icon-pop-out"
 
-    el "li" $ text "Send \"/start\" to your new bot, or if you've already started your bot, just send any random message. This allows us to look up your recent conversation ID and use it to send you alerts."
-    el "li" $ do
-      text "After creating your bot enter your bot token here:"
+    v <- el "li" $ do
+      text "After creating your bot, copy the " *> st "HTTP API Token" *> text " from the BotFather and paste it here:"
       divClass "field"
         $ validatedInput Validator.validateText
         $ def
@@ -145,6 +145,13 @@ settingsForm cfg = holdUniqDyn =<< do
           & Txt.setFluid
           & Txt.setChangeEvent (fromMaybe "" <$> botApiKeyEvent)
 
+    el "li" $ text "Click the link to your bot that the BotFather gives you and send " *> st "‘/start’" *> text " to your bot."
+
+    el "li" $ text "If you’d like alerts sent to a group chat add the bot to that group. Now send a message containing anything  (e.g. " *> st "‘Kiln is amazing’" *> text ")  to the bot or the group chat you’re using. This lets us lookup the bot’s recent conversation ID and use it to send messages."
+
+    el "li" $ text "You’re done! Click " *> st "‘Connect Telegram'" *> text " to finish!"
+
+    return v
 watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
 watchTelegramRecipients =
   (fmap . fmap) (getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_telegramRecipients) $
