@@ -292,6 +292,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [Baker_dataField ~> DeletableRow_deletedSelector =. True]
             (BakerKey ==. fromId bId)
+          update
+            [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
+            (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
           notify NotifyTag_Baker (Id pkh, Nothing)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
