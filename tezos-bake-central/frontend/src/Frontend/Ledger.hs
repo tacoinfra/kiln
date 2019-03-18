@@ -280,8 +280,6 @@ selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]
       derivs = [DerivationPath "0'/0'", DerivationPath ""]
       secretKeys = SecretKey ledger <$> curves <*> derivs
-      wantedAccounts = pure secretKeys
-  accounts <- watchLedgerAccounts wantedAccounts
   elClass "h5" "ui header" $ text "Select an account to bake with."
   let submitted = domEvent Submit formEl
 
@@ -304,6 +302,8 @@ selectAddress ledger = divClass "select-address" $ mdo
                 fancyTez tz
           let f mpkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) mpkh
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
+
+    accounts <- watchLedgerAccounts $ (: secretKeys) <$> manualSk
 
     chosen <- divClass "ui block list" $ fmap leftmost $ for secretKeys $ \sk -> accountItem sk $ MMap.lookup sk <$> accounts
     divClass "explanation" $ text "Don't see your account? Enter a specific signing curve and derivation path."

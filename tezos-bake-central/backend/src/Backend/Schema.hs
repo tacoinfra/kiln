@@ -623,12 +623,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
-    constructors:
-      - name: LedgerAccount
-        uniques:
-          - name: LedgerAccount_publicKeyHash
-            type: constraint
-            fields: [_ledgerAccount_publicKeyHash]
   - entity: Accusation
     autoKey: null
     constructors:
