@@ -286,7 +286,7 @@ getHistory chain blk levels branches = asks (view (publicNodeContext . publicNod
         else do
           lca <- nodeRPC $ obsidianLCA chain blk branches
           pure $ min levels $ (blk ^. level) - (lca ^. level) + 1
-    nodeRPC $ obsidianAncestors chain blkHash levels'
+    nodeRPC $ Seq.drop 1 <$> obsidianAncestors chain blkHash levels'
 
   where
     blkHash = blk ^. hash
