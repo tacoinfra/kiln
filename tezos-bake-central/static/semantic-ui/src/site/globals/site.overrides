@@ -762,6 +762,8 @@ img.credits-obsidian {
   }
 }
 
+.ui.active.inline.loader { z-index: auto; }
+
 .ui.loader.blue {
   &:after {
     border-top-color: @blue;
