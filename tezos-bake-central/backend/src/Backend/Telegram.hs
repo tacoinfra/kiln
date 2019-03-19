@@ -101,7 +101,7 @@ telegramApiGetUpdatesUri cfg =
     )
 
 data SendMessageRequest = SendMessageRequest
-  { _sendMessageRequest_chatId :: !Word64
+  { _sendMessageRequest_chatId :: !Int64
   , _sendMessageRequest_text :: !Text
   , _sendMessageRequest_parseMode :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Typeable, Generic)
@@ -153,7 +153,7 @@ data BotMessage = BotMessage
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data Sender = Sender
-  { _sender_id :: !Word64
+  { _sender_id :: !Int64
   , _sender_isBot :: !Bool
   , _sender_firstName :: !Text
   , _sender_lastName :: !(Maybe Text)
@@ -161,7 +161,7 @@ data Sender = Sender
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data Chat = Chat
-  { _chat_id :: !Word64
+  { _chat_id :: !Int64
   , _chat_type :: !Text
   , _chat_title :: !(Maybe Text)
   , _chat_firstName :: !(Maybe Text)

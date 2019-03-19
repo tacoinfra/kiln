@@ -762,6 +762,8 @@ img.credits-obsidian {
   }
 }
 
+.ui.active.inline.loader { z-index: auto; }
+
 .ui.loader.blue {
   &:after {
     border-top-color: @blue;
@@ -850,7 +852,7 @@ img.credits-obsidian {
   }
 
   > .ui.card.baker-tile {
-    width: unit(280 / @emSize, rem);
+    width: unit(430 / @emSize, rem);
 
     .ui.loader {
       margin-right: @6px;

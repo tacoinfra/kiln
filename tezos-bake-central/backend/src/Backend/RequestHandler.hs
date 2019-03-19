@@ -48,6 +48,7 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
+import Backend.Workers.TezosClient (addBakerImpl)
 import Backend.Common
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -282,25 +283,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           notify NotifyTag_BakerDaemonExternal (nid, Nothing)
 
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
-      PublicRequest_AddBaker pkh alias -> inDb $ do
-        existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-        let newVal = BakerData
-              { _bakerData_alias = alias
-              }
-        case nonEmpty existingIds of
-          Nothing -> void $ insert $ Baker
-            { _baker_publicKeyHash = pkh
-            , _baker_data = DeletableRow
-              { _deletableRow_data = newVal
-              , _deletableRow_deleted = False
-              }
-            }
-          Just bIds -> for_ bIds $ \bId ->
-            update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
-                   , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
-                   ]
-                   (BakerKey ==. fromId bId)
-        notify NotifyTag_Baker (Id pkh, Just newVal)
+      PublicRequest_AddBaker pkh alias -> inDb $ addBakerImpl pkh alias
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
         bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
@@ -309,6 +292,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [Baker_dataField ~> DeletableRow_deletedSelector =. True]
             (BakerKey ==. fromId bId)
+          let data' = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+          selectSingle (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh) >>= \m -> for_ m $ \bdi -> do
+            let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
+                bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
+                endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
+            update [ProcessData_runningField =. False] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+          update
+            [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
+            (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
           notify NotifyTag_Baker (Id pkh, Nothing)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail

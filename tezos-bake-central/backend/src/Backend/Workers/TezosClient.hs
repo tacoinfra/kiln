@@ -21,6 +21,7 @@ import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
 import Data.Maybe (mapMaybe)
+import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog
@@ -28,6 +29,7 @@ import Database.Groundhog.Postgresql (Postgresql, in_)
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
+import Rhyolite.Schema (Id (..))
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO.Error (isEOFError)
@@ -102,6 +104,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                 notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First result })
                 when (result == RegisterStep_Registered) $ do
+                  addBakerImpl pkh (Just "Kiln Baker")
                   bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
                   let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
                         [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
@@ -123,7 +126,11 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
                   , ConnectedLedger_updatedField =. Just now
                   ] CondEmpty
-              Left err -> $(logError) (T.pack (show err))
+              Left err -> do
+                inDb $ do
+                  delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                  notify NotifyTag_ShowLedger (sk, Nothing)
+                $(logError) (T.pack (show err))
               Right mPkh -> do
                 case mPkh of
                   Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
@@ -349,3 +356,25 @@ setHighWaterMark appConfig chain sk bl = do
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
     | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
   pure $ either id (const SetHWMStep_Done) e
+
+-- This is moved from RequestHandler to here. But perhaps this should belong to a common module
+addBakerImpl :: (Monad m, PersistBackend m) => PublicKeyHash -> Maybe Text -> m ()
+addBakerImpl pkh alias = do
+  existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
+  let newVal = BakerData
+        { _bakerData_alias = alias
+        }
+  case nonEmpty existingIds of
+    Nothing -> void $ insert $ Baker
+      { _baker_publicKeyHash = pkh
+      , _baker_data = DeletableRow
+        { _deletableRow_data = newVal
+        , _deletableRow_deleted = False
+        }
+      }
+    Just bIds -> for_ bIds $ \bId ->
+      update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
+             , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
+             ]
+             (BakerKey ==. fromId bId)
+  notify NotifyTag_Baker (Id pkh, Just newVal)
