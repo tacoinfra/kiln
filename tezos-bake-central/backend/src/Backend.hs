@@ -19,7 +19,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, logWarn, runStderrLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -44,7 +44,7 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, runDb)
+import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
@@ -52,6 +52,7 @@ import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLo
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
+import System.Directory (doesDirectoryExist, renameDirectory)
 import System.Environment (getArgs, getProgName, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
@@ -67,7 +68,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..), defaultNodeConfigFile)
+import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -302,6 +303,20 @@ backendImpl cfg serve = do
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
           }
+
+      -- migrate old kiln storage
+      runLoggingEnv logger $ do
+        let oldDir = "./.tezos-node"
+            newDir = nodeDataDir appConfig
+        mNode <- runDb (Identity db) $ selectSingle $ NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False
+        for_ mNode $ \_ni -> liftIO (doesDirectoryExist newDir) >>= \case
+          True -> $(logInfo) $ "Node data already exists at " <> T.pack newDir
+          False -> do
+            liftIO (doesDirectoryExist oldDir) >>= \case
+              False -> $(logInfo) $ "No node data to migrate..."
+              True -> do
+                $(logWarn) $ "Migrating node data from " <> T.pack oldDir <> " to " <> T.pack newDir
+                liftIO $ renameDirectory oldDir newDir
 
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
