@@ -288,6 +288,7 @@ let
           mkdir -p $DEBDIR/lib/systemd/system/
           mkdir -p $DEBDIR/var/lib/${pkgName}/root-dir/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
           mkdir -p $DEBDIR/var/lib/${pkgName}/{exe-dir,data-dir}
+          ln -s ${obApp.exe}/* $DEBDIR/var/lib/${pkgName}/exe-dir/
 
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${exe}/bin/* $DEBDIR/usr/bin/
@@ -324,21 +325,20 @@ let
       # Not using writeScriptBin here, as we want to use /bin/bash
       run-backend = pkgs.writeTextFile { name = "run-backend"; executable = true; text = ''
         #!/bin/bash
-        ln -s ${obApp.exe}/* ${root-dir}/
         cd /var/lib/kiln/exe-dir
         ./backend --kiln-data-dir=${data-dir} $@
       ''; };
 
       do-mount = pkgs.writeTextFile { name = "do-mount"; executable = true; text = ''
         #!/bin/bash
-        ln -s ${nix-store-root}/nix ${root-dir}/nix
+        mount --rbind --make-unbindable /usr/share/kiln/nix   ${root-dir}/nix
         mount --rbind --make-unbindable /dev   ${root-dir}/dev
         mount --rbind --make-unbindable /proc  ${root-dir}/proc
         mount --rbind --make-unbindable /sys   ${root-dir}/sys
         mount --rbind --make-unbindable /etc   ${root-dir}/etc
         mount --rbind --make-unbindable /run   ${root-dir}/run
         mount --rbind --make-unbindable /usr   ${root-dir}/usr
-        #mount --rbind --make-unbindable /var   ${root-dir}/var
+        mount --rbind --make-unbindable /var   ${root-dir}/var
         mount --rbind --make-unbindable /bin   ${root-dir}/bin
         mount --rbind --make-unbindable /lib   ${root-dir}/lib
         mount --rbind --make-unbindable /lib64 ${root-dir}/lib64
