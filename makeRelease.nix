@@ -13,10 +13,31 @@
 # debian/changelog
 
 # debian/copyright
-{ pkgs, obApp
+{ pkgs
+, obApp
+, pkgName
+, version
 }:
 let
-  debianPackage = { pkgName, version, maintainer, description, service, exe }:
+  maintainer = "Obsidian Systems <tezos@obsidian.systems>";
+  description = "Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring.";
+
+
+  var-prefix = "/var/lib/${pkgName}";
+
+  # Here the chroot will be done
+  root-dir = "${var-prefix}/root-dir";
+
+  # This will have the links to "backend, frontend.assets, etc"
+  exe-dir = "${var-prefix}/exe-dir";
+
+  # This is kiln-data-dir
+  data-dir = "${var-prefix}/data-dir";
+
+  # Path where "/nix" is copied
+  nix-store-root = "/usr/share/${pkgName}";
+
+  kiln-debian =
     let
       control = pkgs.writeTextFile { name = "control"; text = ''
         Package: ${pkgName}
@@ -32,7 +53,7 @@ let
         src = ./.;
         buildInputs = [ pkgs.dpkg pkgs.perl ];
         exportReferencesGraph =
-          [ "closure" exe ];
+          [ "closure" run-kiln-exe ];
         builder = pkgs.writeScript "builder.sh" ''
           source "$stdenv/setup"
           mkdir -p $out
@@ -43,17 +64,18 @@ let
           mkdir -p $DEBDIR/DEBIAN
           mkdir -p $DEBDIR/usr/bin
           mkdir -p $DEBDIR/lib/systemd/system/
-          mkdir -p $DEBDIR/var/lib/${pkgName}/root-dir/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
-          mkdir -p $DEBDIR/var/lib/${pkgName}/{exe-dir,data-dir}
-          ln -s ${obApp.exe}/* $DEBDIR/var/lib/${pkgName}/exe-dir/
+
+          mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
+          mkdir -p $DEBDIR/${exe-dir}
+          ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
           cp ${control} $DEBDIR/DEBIAN/control
-          cp ${exe}/bin/* $DEBDIR/usr/bin/
+          cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
 
           # copy nix closure
           storePaths=$(perl ${pkgs.pathsFromGraph} closure)
-          mkdir -p $DEBDIR/usr/share/${pkgName}/nix/store
-          cp -prd $storePaths $DEBDIR/usr/share/${pkgName}/nix/store/
+          mkdir -p $DEBDIR/${nix-store-root}/nix/store
+          cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
           # mkdir -p $DEBDIR/lib/systemd/system/${pkgName}.service
           # chown root:root -R $DEBDIR/*
@@ -65,21 +87,16 @@ let
 
   run-kiln-exe =
     let
-      var-prefix = "/var/lib/kiln";
-      root-dir = pkgs.lib.concatStringsSep "/" [ var-prefix "root-dir" ];
-      data-dir = pkgs.lib.concatStringsSep "/" [ var-prefix "data-dir" ];
-      nix-store-root = "/usr/share/kiln";
-
       # Not using writeScriptBin here, as we want to use /bin/bash
       run-backend = pkgs.writeTextFile { name = "run-backend"; executable = true; text = ''
         #!/bin/bash
-        cd /var/lib/kiln/exe-dir
+        cd ${exe-dir}
         ./backend --kiln-data-dir=${data-dir} $@
       ''; };
 
       do-mount = pkgs.writeTextFile { name = "do-mount"; executable = true; text = ''
         #!/bin/bash
-        mount --rbind --make-unbindable /usr/share/kiln/nix   ${root-dir}/nix
+        mount --rbind --make-unbindable ${nix-store-root}/nix   ${root-dir}/nix
         mount --rbind --make-unbindable /dev   ${root-dir}/dev
         mount --rbind --make-unbindable /proc  ${root-dir}/proc
         mount --rbind --make-unbindable /sys   ${root-dir}/sys
@@ -94,6 +111,7 @@ let
         exec chroot ${root-dir} ${nix-store-root}/${run-backend} $@
       ''; };
 
+      # not putting #!/bin/bash here as it gets replaced by /nix/store during nix-build
       mainScript = pkgs.writeTextFile { name = "run-kiln-mainScript"; executable = true; text = ''
         exec unshare --mount --map-root-user --user ${nix-store-root}/${do-mount} $@
       ''; };
@@ -109,12 +127,5 @@ let
     };
 
 in {
-  kiln-debian = debianPackage {
-    pkgName = "kiln";
-    version = "0.4.1";
-    maintainer = "e@mail.com";
-    description = "d";
-    service = true;
-    exe = run-kiln-exe;
-  };
+  inherit kiln-debian;
 }
