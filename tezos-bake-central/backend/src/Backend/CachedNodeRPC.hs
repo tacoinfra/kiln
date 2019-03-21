@@ -234,7 +234,8 @@ instance MonadNodeQuery NodeQueryQueued where
   nqCatchError action handler = NodeQueryQueued $ catchError (unNodeQueryQueued action) (unNodeQueryQueued . handler)
   nqInDB action = do
     db <- asksNodeDataSource _nodeDataSource_pool
-    runDb (Identity db) $ action
+    logger <- asksNodeDataSource _nodeDataSource_logger
+    NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) $ action
   answerImmediate = return . return . NodeQueryQueuedAnswerM
   withFinishWith nds cb = do
     -- A separate TVar for keeping the actual API result (outside the cache structure)
