@@ -21,6 +21,7 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
@@ -163,7 +164,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
 
   -- We will rely on the block monitor to clear any inaccessible endpoint errors
   -- for this node.m
-  when (before /= after) $ inDb $ do
+  when (before /= after) $ lift $ inDb $ do
     let
       minPeerCount = nodeData_minPeerConnections node
     for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
