@@ -127,6 +127,7 @@ data NodeQuery a where
     -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
+  NodeQuery_Ballot          :: BlockHash -> NodeQuery Ballot
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -670,6 +671,7 @@ getKey params hist = \case
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
+  NodeQuery_Ballot ctx -> pure (ctx, NodeQuery_Ballot ctx)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
@@ -831,6 +833,7 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract chainId branch contractId
+  NodeQuery_Ballot branch -> nodeRPC' $ rBallot chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
