@@ -67,10 +67,12 @@ let
 
           mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
           mkdir -p $DEBDIR/${exe-dir}
-          ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
+
+          ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
           cp ${control} $DEBDIR/DEBIAN/control
-          cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
+          cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
+          sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
 
           # copy nix closure
           storePaths=$(perl ${pkgs.pathsFromGraph} closure)
