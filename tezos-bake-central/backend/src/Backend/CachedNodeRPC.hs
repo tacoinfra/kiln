@@ -824,21 +824,21 @@ nodeQueryDataSourceImpl
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
+    nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_BakingRights1 branch targetLevel prio ->
     ExceptT $ fmap join $ runExceptT $ fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $ self $ NodeQuery_BakingRightsChunk branch targetLevel prio
   NodeQuery_BakingRightsChunk branch targetLevel prio ->
-    fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull chainId branch (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio)
+    fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio) chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
+    nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
-    nodeRPC' $ rContract chainId branch contractId
+    nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballot branch -> nodeRPC' $ rBallot chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
-    managerkeyResp <- nodeRPC' $ rManagerKey chainId qBranch contractId
+    managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKey_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure $ pk

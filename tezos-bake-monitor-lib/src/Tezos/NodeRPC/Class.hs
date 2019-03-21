@@ -24,6 +24,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 
+import Tezos.Base58Check (HashedValue, IsBase58Hash)
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Types
 
@@ -38,23 +39,23 @@ class QueryBlock repr where
 
 class QueryHistory repr where -- blockscale
   rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
-  rBlockPred :: ChainId -> BlockHash -> RawLevel -> repr (BlockType repr)
+  rBlockPred :: RawLevel -> ChainId -> BlockHash -> repr (BlockType repr)
 
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
   rAnyConstants :: ChainId -> repr ProtoInfo
-  rContract :: ChainId -> BlockHash -> ContractId -> repr Account
+  rContract :: ContractId -> ChainId -> BlockHash -> repr Account
 
   rBallot :: ChainId -> BlockHash -> repr Ballot
 
-  rManagerKey :: ChainId -> BlockHash -> ContractId -> repr ManagerKey
+  rManagerKey :: ContractId -> ChainId -> BlockHash -> repr ManagerKey
 
   -- This only produces results when the cycles requested are between within
   -- PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
-  rBakingRights :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> repr (Seq BakingRights)
-  rBakingRightsFull :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> Int -> repr (Seq BakingRights)
-  rEndorsingRights :: ChainId -> BlockHash -> Set (Either RawLevel Cycle) -> repr (Seq EndorsingRights)
+  rBakingRights :: Set (Either RawLevel Cycle) -> ChainId -> BlockHash -> repr (Seq BakingRights)
+  rBakingRightsFull :: Set (Either RawLevel Cycle) -> Int -> ChainId -> BlockHash -> repr (Seq BakingRights)
+  rEndorsingRights :: Set (Either RawLevel Cycle) -> ChainId -> BlockHash -> repr (Seq EndorsingRights)
 
-  rDelegateInfo :: ChainId -> BlockHash -> PublicKeyHash -> repr DelegateInfo
+  rDelegateInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr DelegateInfo
 
 class QueryNode repr where -- my node
   rConnections :: repr Word64 -- just a count for now, but there's more data there we may someday be interested in
@@ -81,29 +82,35 @@ instance QueryChain RpcQuery where
 instance QueryBlock RpcQuery where
   type BlockType RpcQuery = Block
   --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  rHead chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head"
-  rBlock chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash
+  rHead = chainAPI "/blocks/head"
+  rBlock = blockAPI ""
 
 instance QueryHistory RpcQuery where
-  rBlockPred chainId blockHash (RawLevel levelsBack) = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "~" <> T.pack (show levelsBack)
-  rBlocks chainId (RawLevel len) heads = byHead <$> plainNodeRequest Http.methodGet ("/chains/" <> toBase58Text chainId <> "/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads)
+  rBlockPred (RawLevel levelsBack) = blockAPI $ "~" <> T.pack (show levelsBack)
+  rBlocks chainId (RawLevel len) heads = byHead <$> chainAPI ("/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads) chainId
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
       byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
       blk2param :: BlockHash -> Text
       blk2param blkHash = "&head=" <> toBase58Text blkHash
-  rProtoConstants chainId blockHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/constants"
-  rAnyConstants chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> "/blocks/head/context/constants"
-  rContract chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId)
-  rBallot chainId blockHash = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/votes/ballots/")
-  rManagerKey chainId blockHash contractId = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> "/context/contracts/" <> toContractIdText contractId <> "/manager_key")
-  rBakingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights"
+  rProtoConstants = blockAPI "/context/constants"
+  rAnyConstants = chainAPI "/blocks/head/context/constants"
+  rContract contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId)
+  rBallot = blockAPI "/votes/ballots/"
+  rManagerKey contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId <> "/manager_key")
+  rBakingRights params = blockAPI $ "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
-  rBakingRightsFull chainId blockHash levelishes prio = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/baking_rights?all&"
+  rBakingRightsFull levelishes prio = blockAPI $ "/helpers/baking_rights?all&"
       <> T.intercalate "&" (("max_priority=" <> T.pack (show prio)) : (dynamicParamRightsRangeToQueryArg <$> toList levelishes))
-  rEndorsingRights chainId blockHash params = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/helpers/endorsing_rights"
+  rEndorsingRights params = blockAPI $ "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
-  rDelegateInfo chainId blockHash publicKeyHash = plainNodeRequest Http.methodGet $ chainBlockUrl chainId blockHash <> "/context/delegates/" <> toPublicKeyHashText publicKeyHash
+  rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
+
+chainAPI :: (FromJSON a, IsBase58Hash t) => Text -> HashedValue t -> RpcQuery a
+chainAPI path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> path
+
+blockAPI :: FromJSON a => Text -> ChainId -> BlockHash -> RpcQuery a
+blockAPI path chainId blockHash = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> path)
 
 instance QueryNode RpcQuery where
   rConnections = decoder <$> plainNodeRequest Http.methodGet "/network/connections"
