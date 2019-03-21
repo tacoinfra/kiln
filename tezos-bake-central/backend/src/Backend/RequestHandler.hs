@@ -349,7 +349,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                   ]
                 pure cid
 
-          updateRecipient cid chat sender = inDb $ do
+          updateRecipient cid chat sender = do
             rid' :: Maybe (Id TelegramRecipient) <-
               fmap toId . listToMaybe <$> project AutoKeyField
                 (TelegramRecipient_deletedField ==. False)

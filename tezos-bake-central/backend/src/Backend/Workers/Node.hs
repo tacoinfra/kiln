@@ -111,7 +111,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     let newHash = headBlockInfo ^. hash
         newLevel = headBlockInfo ^. level
         chainId = _nodeDataSource_chain nds
-     in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+     in void $ [executeQ|
           insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
           values (?newHash, ?newLevel, ?chainId, null, null, false, false)
           on conflict do nothing
@@ -347,7 +347,7 @@ updateDataSource nds (pn, chain, uri) = do
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
-           in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+           in void $ [executeQ|
                 insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
                 values (?newHash, ?newLevel, ?chainId, null, null, false, false)
                 on conflict do nothing
