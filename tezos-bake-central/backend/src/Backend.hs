@@ -20,7 +20,6 @@ import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, logWarn, runStderrLoggingT)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
@@ -44,6 +43,7 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
@@ -367,7 +367,7 @@ clearMailQueueWithDynamicEmailEnv
   :: forall m f.
   ( RunDb f
   , MonadIO m
-  , MonadBaseControl IO m
+  , MonadBaseNoPureAborts IO m
   , MonadLogger m
   )
   => f (Pool Postgresql)

@@ -21,7 +21,6 @@ module Backend.RequestHandler where
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
@@ -34,6 +33,7 @@ import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
@@ -57,7 +57,7 @@ import Common.Schema
 import ExtraPrelude
 
 requestHandler
-  :: forall m. (MonadBaseControl IO m, MonadIO m)
+  :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
   => Text
   -> Address
   -> NodeDataSource
@@ -493,7 +493,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseControl IO m') => DbPersist Postgresql m' a -> m' a
+    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => DbPersist Postgresql m' a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))

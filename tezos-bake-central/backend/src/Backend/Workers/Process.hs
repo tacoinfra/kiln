@@ -18,9 +18,9 @@ module Backend.Workers.Process where
 import Control.Monad (when, unless)
 import Control.Monad.Catch (bracket)
 import Control.Monad.Logger (MonadLogger, logWarnSH, logDebugSH, logWarn, logInfoSH)
-import Control.Monad.Trans.Control
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -125,7 +125,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
       runLoggingEnv logger $ go
       where
         {-# INLINE go #-}
-        go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseControl IO m1) => m1 ()
+        go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
         go = do
           shouldRun <- runDb (Identity db)
             (or <$> project running_ (AutoKeyField ==. (fromId pid)))
@@ -142,7 +142,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
                 updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully:" :: Text, pid)
 
-    updateState :: (MonadIO m, MonadBaseControl IO m) => ProcessState -> m ()
+    updateState :: (MonadIO m, MonadBaseNoPureAborts IO m) => ProcessState -> m ()
     updateState state = runLoggingEnv logger $ runDb (Identity db) $ do
       $(logDebugSH) ("putState:" :: Text, pid, state)
       get (fromId pid) >>= \case

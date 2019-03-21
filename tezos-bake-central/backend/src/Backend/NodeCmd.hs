@@ -12,9 +12,9 @@
 
 module Backend.NodeCmd where
 
-import Control.Monad.Trans.Control
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Directory (doesFileExist)
@@ -48,7 +48,7 @@ endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
 
 -- TODO: use postgres for "process-id's"
 
-internalNodeWorker :: (MonadIO m, MonadBaseControl IO m)
+internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
 internalNodeWorker appConfig logger db namedChain = do
   -- Always create a NodeInternal and corresponsing ProcessData
@@ -100,7 +100,7 @@ initNode appConfig nodePath nodeConfigPath = do
   return dataDir
 
 -- Start Baker and Endorser
-bakerDaemonProcess :: (MonadIO m, MonadBaseControl IO m)
+bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
 bakerDaemonProcess appConfig logger db namedChain = do
   (_nid, BakerDaemonInternalData _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
