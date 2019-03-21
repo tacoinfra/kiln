@@ -63,6 +63,7 @@ let
           # make debian file structure
           mkdir -p $DEBDIR/DEBIAN
           mkdir -p $DEBDIR/usr/bin
+          mkdir -p $DEBDIR/etc/${pkgName}
           mkdir -p $DEBDIR/lib/systemd/system/
 
           mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
@@ -74,6 +75,7 @@ let
           cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
           sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
+          echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
           # copy nix closure
           storePaths=$(perl ${pkgs.pathsFromGraph} closure)
@@ -129,7 +131,6 @@ let
       '';
     };
 
-
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
     [Unit]
     Description=Kiln
@@ -137,7 +138,8 @@ let
 
     [Service]
     Type=simple
-    ExecStart=/usr/bin/run-kiln
+    EnvironmentFile=/etc/${pkgName}/args
+    ExecStart=/usr/bin/run-kiln $KILNARGS
     Restart=always
 
     [Install]
