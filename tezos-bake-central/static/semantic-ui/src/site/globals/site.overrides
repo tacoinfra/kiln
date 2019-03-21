@@ -891,7 +891,9 @@ img.credits-obsidian {
 
         .ui.popup {
           top: @15px;
-          right: -@32px;
+          right: unit(-71 / @emSize, rem); // Value determined experimentally
+          width: unit(200 / @emSize, rem);
+          text-align: left;
 
           > .link.list .item {
             ._link-like();
