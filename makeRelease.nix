@@ -73,6 +73,7 @@ let
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
           sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
+          cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
 
           # copy nix closure
           storePaths=$(perl ${pkgs.pathsFromGraph} closure)
@@ -128,6 +129,20 @@ let
       '';
     };
 
+
+  serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
+    [Unit]
+    Description=Kiln
+    After=postgres.service
+
+    [Service]
+    Type=simple
+    ExecStart=/usr/bin/run-kiln
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+  ''; };
 in {
   inherit kiln-debian;
 }
