@@ -392,40 +392,41 @@ runNodeQueryT
   :: forall a s e m.
     ( MonadIO m, MonadBaseControl IO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
     , MonadLogger m
     )
-  => NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m a
-runNodeQueryT f = go 0 DMap.empty
+  => NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> ExceptT e m a
+runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
   where
+    go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
     go n bad = do
       $(logDebugSH) ("RPC monad attempt number" :: Text, n :: Int, "starting" :: Text)
       tryNodeQueryT bad f >>= \case
-        NodeQueryTResult_Done v -> do
+        Left e -> return $ Left e
+        Right (NodeQueryTResult_Done v) -> do
           $(logDebugSH) ("RPC monad attempt number" :: Text, n, "succeeded" :: Text)
-          return v
-        NodeQueryTResult_Query h q -> do
+          return $ Right v
+        Right (NodeQueryTResult_Query h q) -> do
           $(logDebugSH) ("RPC monad attempt number" :: Text, n, "retry for query" :: Text, q)
           -- just get it into cache
-          unliftEither (nodeQueryDataSource q) >>= \case
+          runExceptT (nodeQueryDataSource q) >>= \case
             Right _ -> go (n + 1) bad
-            Left e -> case (preview asCacheError e) of
-              Just e' -> go (n + 1) (bad <> DMap.singleton q (Const $ Map.singleton h e'))
-              Nothing -> throwError e
+            Left e -> go (n + 1) (bad <> DMap.singleton q (Const $ Map.singleton h e))
 
 tryNodeQueryT
-  :: forall a s m.
+  :: forall a s e m.
     ( MonadIO m, MonadBaseControl IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
-  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ReaderT NodeDataSource (DbPersist Postgresql m)) a -> m (NodeQueryTResult a)
+  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> m (Either e (NodeQueryTResult a))
 tryNodeQueryT bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
-  runDb (Identity db) $ runReaderT (unNodeQueryT f bad) nds >>= \case
-    v@(NodeQueryTResult_Done _) -> return v
-    q@(NodeQueryTResult_Query _ _) -> q <$ (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
+      bail = (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
+  runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f bad)) nds >>= \case
+    e@(Left _) -> e <$ bail
+    v@(Right (NodeQueryTResult_Done _)) -> return v
+    q@(Right (NodeQueryTResult_Query _ _)) -> q <$ bail
 
 waitForParams :: (HasNodeDataSource r, MonadSTM m) => r -> m ProtoInfo
 waitForParams r = maybe retry' pure =<< readTVar' (r ^. nodeDataSource . nodeDataSource_parameters)
