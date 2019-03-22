@@ -509,14 +509,15 @@ calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
 calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
---
--- Returns most recently seen head.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
 waitForNewHeadWithTimeout nds = do
   -- TODO: This shouldn't be necessary once we have a way to know the parameters better. Foundation nodes should give us params.
   timeLimit <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   void $ timeout' timeLimit $ waitForNewHead nds
 
+-- | Blocks until a new head is seen.
+--
+-- Returns most recently seen head.
 waitForNewHead :: NodeDataSource -> IO VeryBlockLike
 waitForNewHead nds = do
   oldHead <- readTVarIO (_nodeDataSource_latestHead nds)
