@@ -8,30 +8,25 @@ import Data.Aeson
 import Data.Int
 import Data.Typeable
 import GHC.Generics
+import Tezos.Operation
 
 type VotingPeriod = Int32 -- ^ period: Voting_period_repr.t ;
 
-data Vote
-  = Vote_Yay
-  | Vote_Nay
-  | Vote_Pass
-  deriving (Eq, Ord, Show, Read, Typeable, Generic)
+newtype Ballots = Ballots { unBallots :: Ballot -> Int } deriving (Typeable, Generic)
 
-newtype Ballot = Ballot (Vote -> Int)
-
-instance ToJSON Ballot where
-  toJSON (Ballot f) = object
-    [ "yay"  .= f Vote_Yay
-    , "nay"  .= f Vote_Nay
-    , "pass" .= f Vote_Pass
+instance ToJSON Ballots where
+  toJSON (Ballots f) = object
+    [ "yay"  .= f Ballot_Yay
+    , "nay"  .= f Ballot_Nay
+    , "pass" .= f Ballot_Pass
     ]
 
-instance FromJSON Ballot where
+instance FromJSON Ballots where
   parseJSON = withObject "ballot" $ \o -> do
     yay  <- o .: "yay"
     nay  <- o .: "nay"
     pass <- o .: "pass"
-    pure $ Ballot $ \case
-      Vote_Yay -> yay
-      Vote_Nay -> nay
-      Vote_Pass -> pass
+    pure $ Ballots $ \case
+      Ballot_Yay -> yay
+      Ballot_Nay -> nay
+      Ballot_Pass -> pass
