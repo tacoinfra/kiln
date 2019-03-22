@@ -41,13 +41,6 @@ instance HasRequest Bake where
       :: WorkerType
       -> Bool -- Desired running state
       -> PublicRequest Bake ()
-    PublicRequest_AddClient
-      :: URI -- address of client to subscribe to
-      -> Maybe Text
-      -> PublicRequest Bake () -- TODO: perhaps give an Id Client
-    PublicRequest_RemoveClient
-      :: URI -- address of client to unsubscribe from
-      -> PublicRequest Bake ()
     -- TODO think harder about update versus initial set
     PublicRequest_SetMailServerConfig
       :: MailServerView
