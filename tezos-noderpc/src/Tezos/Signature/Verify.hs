@@ -3,15 +3,12 @@ module Tezos.Signature.Verify where
 import qualified Data.ByteArray as M
 import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
-import qualified Data.Text.Encoding as T
-import Data.Text (Text)
 
 import Crypto.Error (onCryptoFailure)
 import qualified Crypto.MicroECC as U
 import qualified Crypto.PubKey.Ed25519 as Ed25519
 import qualified Crypto.Hash as H
-import qualified Crypto.Hash.Algorithms as H
-  
+
 import Tezos.Base58Check
 import Tezos.PublicKey
 import Tezos.ShortByteString (fromShort)
