@@ -1,17 +1,3 @@
-#  binarypackage.service -x3
-
-#     If this exists, it is installed into lib/systemd/system/binarypackage.service in binarypackage.
-
-#     See dh_systemd_enable(1), dh_systemd_start(1), and dh_installinit(1).
-   
-#  binarypackage.manpages -x2
-
-#     List man pages to be installed.
-
-#     See dh_installman(1).
-
-# debian/changelog
-
 { pkgs
 , obApp
 , pkgName
