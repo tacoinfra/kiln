@@ -114,14 +114,18 @@ let
          adduser --system --quiet --ingroup kiln --no-create-home --home /var/lib/kiln kiln
          chown -R kiln /var/lib/kiln
     esac
-
+    if [ -d /run/systemd/system ]; then
+        deb-systemd-invoke start kiln.service >/dev/null
+    fi
     exit 0
   ''; };
 
   deb-pre-rm = pkgs.writeTextFile { name = "${pkgName}.prerm"; executable = true; text = ''
     #!/bin/sh
     set -e
-
+    if [ -d /run/systemd/system ]; then
+        deb-systemd-invoke stop kiln.service >/dev/null
+    fi
     if [ "$1" = remove ]; then
          # delete only the data-dir, leave db intact
          rm -rf ${data-dir}/*
@@ -133,7 +137,9 @@ let
   deb-post-rm = pkgs.writeTextFile { name = "${pkgName}.postrm"; executable = true; text = ''
     #!/bin/sh
     set -e
-
+    if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
+    fi
     case $1 in
         purge)
         deluser --system --quiet kiln || true
