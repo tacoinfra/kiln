@@ -115,6 +115,7 @@ let
          chown -R kiln /var/lib/kiln
     esac
     if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
         deb-systemd-invoke start kiln.service >/dev/null
     fi
     exit 0
@@ -143,6 +144,7 @@ let
     case $1 in
         purge)
         deluser --system --quiet kiln || true
+        delgroup --system --quiet kiln || true
         rm -rf /var/lib/kiln
     esac
 
