@@ -58,6 +58,7 @@ let
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${deb-copyright} $DEBDIR/DEBIAN/copyright
+          cp $src/CHANGELOG.md $DEBDIR/DEBIAN/changelog
           cp ${deb-pre-install}  $DEBDIR/DEBIAN/preinst
           cp ${deb-post-install}  $DEBDIR/DEBIAN/postinst
           cp ${deb-pre-rm}  $DEBDIR/DEBIAN/prerm
