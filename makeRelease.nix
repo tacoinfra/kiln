@@ -44,7 +44,7 @@ let
         Version: ${version}
         Architecture: amd64
         Maintainer: ${maintainer}
-        Depends: 
+        Depends: util-linux
         Description: ${description}
       ''; };
 
@@ -99,11 +99,18 @@ let
         ./backend --kiln-data-dir=${data-dir} $@
       ''; };
 
-      do-mount = pkgs.writeTextFile { name = "do-mount"; executable = true; text = ''
+      # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
+      # We need to do a nested unshare (after doing mount) to change to a non-root shell
+      # But the second 'unshare --user' (to go from root -> nobody) cannot happen after doing chroot
+      # (see error EPERM, in man 2 unshare)
+      # 
+      # So in order to do a nested unshare we instead do 'pivot_root'
+      do-mount-and-pivot = pkgs.writeTextFile { name = "do-mount-and-pivot"; executable = true; text = ''
         #!/bin/bash
+        mount --bind ${root-dir}  ${root-dir}
+        mount --rbind /proc  ${root-dir}/proc
         mount --rbind --make-unbindable ${nix-store-root}/nix   ${root-dir}/nix
         mount --rbind --make-unbindable /dev   ${root-dir}/dev
-        mount --rbind --make-unbindable /proc  ${root-dir}/proc
         mount --rbind --make-unbindable /sys   ${root-dir}/sys
         mount --rbind --make-unbindable /etc   ${root-dir}/etc
         mount --rbind --make-unbindable /run   ${root-dir}/run
@@ -113,12 +120,22 @@ let
         mount --rbind --make-unbindable /lib   ${root-dir}/lib
         mount --rbind --make-unbindable /lib64 ${root-dir}/lib64
         mount --rbind --make-unbindable /tmp   ${root-dir}/tmp
-        exec chroot ${root-dir} ${nix-store-root}/${run-backend} $@
+        mkdir -p ${root-dir}/oldroot
+        cd ${root-dir}
+        pivot_root . oldroot
+        cd /
+        exec ${do-umount-and-unshare} $@
+      ''; };
+
+      do-umount-and-unshare = pkgs.writeTextFile { name = "do-umount-and-unshare"; executable = true; text = ''
+        #!/bin/bash
+        umount -l oldroot
+        exec unshare --user ${run-backend} $@
       ''; };
 
       # not putting #!/bin/bash here as it gets replaced by /nix/store during nix-build
       mainScript = pkgs.writeTextFile { name = "run-kiln-mainScript"; executable = true; text = ''
-        exec unshare --mount --map-root-user --user ${nix-store-root}/${do-mount} $@
+        exec unshare --mount --map-root-user ${nix-store-root}/${do-mount-and-pivot} $@
       ''; };
 
     in pkgs.stdenv.mkDerivation {
