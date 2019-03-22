@@ -24,7 +24,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 
-import Tezos.Base58Check (HashedValue, IsBase58Hash)
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Types
 
@@ -106,7 +105,7 @@ instance QueryHistory RpcQuery where
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
 
-chainAPI :: (FromJSON a, IsBase58Hash t) => Text -> HashedValue t -> RpcQuery a
+chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a
 chainAPI path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> path
 
 blockAPI :: FromJSON a => Text -> ChainId -> BlockHash -> RpcQuery a
