@@ -30,12 +30,12 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.These
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
-import Rhyolite.Backend.DB (getTime, runDb, selectMap)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
@@ -54,7 +54,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
-import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
+import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
@@ -308,7 +308,22 @@ publicNodesWorker
 publicNodesWorker nds = foldMap workerForSource
   where
     workerForSource :: DataSource -> IO (IO ())
-    workerForSource source = worker' $ updateDataSource nds source *> waitForNewHeadWithTimeout nds
+    workerForSource source = worker' $ do
+      let (pn, chain, _) = source
+      updateDataSource nds source
+      (now, mLastBlock) <- runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $ do
+        now <- getTime
+        mLastBlock <- project1 PublicNodeHead_headBlockField $
+          PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
+        pure (now, mLastBlock)
+      timeBetweenBlocks <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+      let secsSinceLastBlock = maybe 0 (\v -> _veryBlockLike_timestamp v `diffUTCTime` now) mLastBlock
+          secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
+              -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
+            x | x <= 0 -> timeBetweenBlocks / 2
+              | otherwise -> x
+      _ <- timeout' secsTillNextBlock (waitForNewHead nds)
+      threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
 
 updateDataSource
   :: forall m. (MonadIO m, MonadBaseControl IO m)
