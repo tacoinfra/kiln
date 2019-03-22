@@ -50,7 +50,7 @@ accusationWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger 
     params <- liftIO $ atomically $ waitForParams nds
 
     inDb $ do
-      alertsNeeded <- inDb $ do
+      alertsNeeded <-
         [queryQ|
           select a.hash, a."blockHash", a."isBake", a.baker, a."occurredLevel", a.level
           from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker

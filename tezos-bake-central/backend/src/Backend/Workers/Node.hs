@@ -22,6 +22,7 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
@@ -111,7 +112,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     let newHash = headBlockInfo ^. hash
         newLevel = headBlockInfo ^. level
         chainId = _nodeDataSource_chain nds
-     in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+     in void $ [executeQ|
           insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
           values (?newHash, ?newLevel, ?chainId, null, null, false, false)
           on conflict do nothing
@@ -164,7 +165,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
 
   -- We will rely on the block monitor to clear any inaccessible endpoint errors
   -- for this node.m
-  when (before /= after) $ inDb $ do
+  when (before /= after) $ lift $ inDb $ do
     let
       minPeerCount = nodeData_minPeerConnections node
     for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
@@ -362,7 +363,7 @@ updateDataSource nds (pn, chain, uri) = do
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
-           in runDb (Identity $ _nodeDataSource_pool nds) $ void $ [executeQ|
+           in void $ [executeQ|
                 insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
                 values (?newHash, ?newLevel, ?chainId, null, null, false, false)
                 on conflict do nothing
