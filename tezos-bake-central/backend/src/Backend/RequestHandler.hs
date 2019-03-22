@@ -248,43 +248,6 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             now <- getTime
             update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
-      PublicRequest_AddClient addr alias -> inDb $ do
-
-        existingIds :: [Id BakerDaemon] <- project BakerDaemonExternal_idField (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_addressSelector ==. addr)
-        case nonEmpty existingIds of
-          Nothing -> do
-            nid <- insert' BakerDaemon
-            let bakerDaemonData = BakerDaemonExternalData
-                    { _bakerDaemonExternalData_address = addr
-                    , _bakerDaemonExternalData_alias = alias
-                    , _bakerDaemonExternalData_updated = Nothing
-                    }
-                bakerDaemon = BakerDaemonExternal
-                  { _bakerDaemonExternal_id = nid
-                  , _bakerDaemonExternal_data = DeletableRow
-                    { _deletableRow_data = bakerDaemonData
-                    , _deletableRow_deleted = False
-                    }
-                  }
-            insert bakerDaemon
-            notify NotifyTag_BakerDaemonExternal (nid, Just bakerDaemonData)
-          Just nids -> for_ nids $ \nid -> do
-            update
-              [ BakerDaemonExternal_dataField ~> DeletableRow_deletedSelector =. False
-              , BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_aliasSelector =. alias
-              -- Skip updated?
-              ]
-              (BakerDaemonExternal_idField ==. nid)
-            project (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector)
-                    (BakerDaemonExternal_idField ==. nid)
-              >>= traverse_ (notify NotifyTag_BakerDaemonExternal . (nid,) . Just)
-
-      PublicRequest_RemoveClient addr -> inDb $ do
-        nids :: [Id BakerDaemon] <- project BakerDaemonExternal_idField (BakerDaemonExternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonExternalData_addressSelector ==. addr)
-        for_ nids $ \nid -> do
-          update [BakerDaemonExternal_dataField ~> DeletableRow_deletedSelector =. True] (BakerDaemonExternal_idField ==. nid)
-          notify NotifyTag_BakerDaemonExternal (nid, Nothing)
-
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ addBakerImpl pkh alias
 
