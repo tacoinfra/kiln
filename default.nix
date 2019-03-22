@@ -4,6 +4,7 @@
 }:
 let
   obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
+  obAppGargoyle = import ./tezos-bake-central { inherit system; supportGargoyle = true; };
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
@@ -292,7 +293,7 @@ in obApp // {
         '';
       };
     };
-  kiln-debian = (import ./makeRelease.nix {inherit pkgs obApp;
+  kiln-debian = (import ./makeRelease.nix {inherit pkgs; obApp = obAppGargoyle;
     pkgName = "kiln"; version = "0.4.1";
     }).kiln-debian;
 }
