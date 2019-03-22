@@ -286,7 +286,7 @@ appSideHeader =
             & SemUi.menuConfig_fluid SemUi.|~ True
             )
           $ do
-              routeSelector (AppRoute_Nodes :/ ()) SemUi.menuItem' def $ do
+              routeSelector (AppRoute_Index :/ ()) SemUi.menuItem' def $ do
                 icon "icon-tiles"
                 text "Dashboard"
         SemUi.divider def
