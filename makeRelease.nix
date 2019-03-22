@@ -72,8 +72,14 @@ let
 
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
           cp ${control} $DEBDIR/DEBIAN/control
+          cp ${deb-pre-install}  $DEBDIR/DEBIAN/preinst
+          cp ${deb-post-install}  $DEBDIR/DEBIAN/postinst
+          cp ${deb-pre-rm}  $DEBDIR/DEBIAN/prerm
+          cp ${deb-post-rm}  $DEBDIR/DEBIAN/postrm
+
           cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
           sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
+
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
@@ -89,6 +95,53 @@ let
           ${pkgs.dpkg}/bin/dpkg-deb --build $DEBDIR $out
         '';
     };
+
+  deb-pre-install = pkgs.writeTextFile { name = "${pkgName}.preinst"; executable = true; text = ''
+    #!/bin/sh
+    set -e
+    # nothing here
+
+    exit 0
+  ''; };
+
+  deb-post-install = pkgs.writeTextFile { name = "${pkgName}.postinst"; executable = true; text = ''
+    #!/bin/sh
+    set -e
+
+    case $1 in
+        configure)
+         addgroup --system --quiet kiln
+         adduser --system --quiet --ingroup kiln --no-create-home --home /var/lib/kiln kiln
+         chown -R kiln /var/lib/kiln
+    esac
+
+    exit 0
+  ''; };
+
+  deb-pre-rm = pkgs.writeTextFile { name = "${pkgName}.prerm"; executable = true; text = ''
+    #!/bin/sh
+    set -e
+
+    if [ "$1" = remove ]; then
+         # delete only the data-dir, leave db intact
+         rm -rf ${data-dir}/*
+    fi # else it could be 'upgrade', 'failed-upgrade'
+
+    exit 0
+  ''; };
+
+  deb-post-rm = pkgs.writeTextFile { name = "${pkgName}.postrm"; executable = true; text = ''
+    #!/bin/sh
+    set -e
+
+    case $1 in
+        purge)
+        deluser --system --quiet kiln || true
+        rm -rf /var/lib/kiln
+    esac
+
+    exit 0
+  ''; };
 
   run-kiln-exe =
     let
@@ -158,6 +211,7 @@ let
     EnvironmentFile=/etc/${pkgName}/args
     ExecStart=/usr/bin/run-kiln $KILNARGS
     Restart=always
+    User=kiln
 
     [Install]
     WantedBy=multi-user.target
