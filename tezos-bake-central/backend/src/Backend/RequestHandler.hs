@@ -40,6 +40,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
+import Tezos.Types (Tez)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -77,16 +78,18 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           }
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        when (isNothing existing) $ insert $ LedgerAccount
-          { _ledgerAccount_secretKey = sk
-          , _ledgerAccount_publicKeyHash = Nothing
-          , _ledgerAccount_balance = Nothing
-          , _ledgerAccount_shouldImport = False
-          , _ledgerAccount_imported = False
-          , _ledgerAccount_shouldSetupToBake = False
-          , _ledgerAccount_shouldRegisterFee = Nothing
-          , _ledgerAccount_shouldSetHWM = Nothing
-          }
+        case existing of
+          Just _ -> update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+          Nothing -> insert $ LedgerAccount
+            { _ledgerAccount_secretKey = sk
+            , _ledgerAccount_publicKeyHash = Nothing
+            , _ledgerAccount_balance = Nothing
+            , _ledgerAccount_shouldImport = False
+            , _ledgerAccount_imported = False
+            , _ledgerAccount_shouldSetupToBake = False
+            , _ledgerAccount_shouldRegisterFee = Nothing
+            , _ledgerAccount_shouldSetHWM = Nothing
+            }
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_SetupLedgerToBake sk -> inDb $ do
