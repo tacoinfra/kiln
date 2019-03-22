@@ -226,7 +226,6 @@ let
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
     [Unit]
     Description=Kiln
-    After=postgres.service
 
     [Service]
     Type=simple
