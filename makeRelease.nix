@@ -104,7 +104,8 @@ let
          chown -R kiln /var/lib/kiln
     esac
     if [ -d /run/systemd/system ]; then
-        systemctl --system daemon-reload >/dev/null || true
+        systemctl --system daemon-reload >/dev/null
+        systemctl enable kiln.service >/dev/null
         deb-systemd-invoke start kiln.service >/dev/null
     fi
     exit 0
