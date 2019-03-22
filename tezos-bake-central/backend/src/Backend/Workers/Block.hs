@@ -87,6 +87,8 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
           $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+        Left (CacheError_NoSuitableNode) ->
+          $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left e -> nqThrowError e
         Right block -> do
           let blockHash = _block_hash block
