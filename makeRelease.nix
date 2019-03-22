@@ -7,23 +7,25 @@ let
   maintainer = "Obsidian Systems <tezos@obsidian.systems>";
   description = "Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring.";
 
-
   var-prefix = "/var/lib/${pkgName}";
 
-  # Here the chroot will be done
+  # Here the pivot_root will be done
   root-dir = "${var-prefix}/root-dir";
 
-  # This will have the links to "backend, frontend.assets, etc"
+  # This will have the links to "backend, frontend.assets, etc" and "db"
+  # It will be preserved even after uninstall, but purge will remove this
   exe-dir = "${var-prefix}/exe-dir";
 
-  # This is kiln-data-dir
+  # This is '--kiln-data-dir'
+  # This will be cleared when kiln is removed/uninstalled (but preserved when upgrading)
   data-dir = "${var-prefix}/data-dir";
 
-  # Path where "/nix" is copied
+  # Path where "/nix" closure is copied
   nix-store-root = "/usr/share/${pkgName}";
 
   kiln-debian =
     let
+      # util-linux is required for pivot_root
       control = pkgs.writeTextFile { name = "control"; text = ''
         Package: ${pkgName}
         Version: ${version}
@@ -45,17 +47,8 @@ let
 
           export DEBDIR=$TMPDIR/${pkgName}_${version}-1
 
-          # make debian file structure
+          # make debian control file structure
           mkdir -p $DEBDIR/DEBIAN
-          mkdir -p $DEBDIR/usr/bin
-          mkdir -p $DEBDIR/etc/${pkgName}
-          mkdir -p $DEBDIR/lib/systemd/system/
-
-          mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
-          mkdir -p $DEBDIR/${exe-dir}
-
-
-          ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${deb-copyright} $DEBDIR/DEBIAN/copyright
           cp $src/CHANGELOG.md $DEBDIR/DEBIAN/changelog
@@ -64,10 +57,21 @@ let
           cp ${deb-pre-rm}  $DEBDIR/DEBIAN/prerm
           cp ${deb-post-rm}  $DEBDIR/DEBIAN/postrm
 
+          # make install file structure
+          mkdir -p $DEBDIR/usr/bin
+          mkdir -p $DEBDIR/etc/${pkgName}
+          mkdir -p $DEBDIR/lib/systemd/system/
+          mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
+          mkdir -p $DEBDIR/${exe-dir}
+
+          ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
+
           cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
           sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
+
+          # User can modify this to specify optional args like --network, --port
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
           # copy nix closure
@@ -75,8 +79,6 @@ let
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
           cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
-          # mkdir -p $DEBDIR/lib/systemd/system/${pkgName}.service
-          # chown root:root -R $DEBDIR/*
           chmod 0755 $DEBDIR/usr/bin/*
 
           ${pkgs.dpkg}/bin/dpkg-deb --build $DEBDIR $out
