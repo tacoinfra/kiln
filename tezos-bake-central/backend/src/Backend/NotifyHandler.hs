@@ -12,11 +12,11 @@ module Backend.NotifyHandler where
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (MonadLogger)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
 import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..))
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (DbNotification (..))
@@ -45,7 +45,7 @@ import Common.Vassal
 import ExtraPrelude
 
 notifyHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
   => NodeDataSource
   -> DbNotification NotifyTag
   -> BakeViewSelector a

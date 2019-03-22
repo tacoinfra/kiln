@@ -21,7 +21,6 @@ import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, wr
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Functor.Apply
@@ -36,6 +35,7 @@ import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -143,7 +143,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
 updateNetworkStats
-  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> Http.Manager
   -> Pool Postgresql
@@ -198,7 +198,7 @@ nodeData_alias = either (const $ Just "Kiln managed node") _nodeExternalData_ali
 --
 -- TODO do join in database, not Haskell. Also don't get all the data
 getNodes
-  :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
+  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m
      , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
      )
   => Pool Postgresql
@@ -327,7 +327,7 @@ publicNodesWorker nds = foldMap workerForSource
       threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
 
 updateDataSource
-  :: forall m. (MonadIO m, MonadBaseControl IO m)
+  :: forall m. (MonadIO m, MonadBaseNoPureAborts IO m)
   => NodeDataSource -> DataSource -> m ()
 updateDataSource nds (pn, chain, uri) = do
   enabled <- publicNodeEnabled

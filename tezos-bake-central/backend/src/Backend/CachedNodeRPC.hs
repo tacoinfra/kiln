@@ -83,6 +83,7 @@ import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Network.HTTP.Client as Http (Manager)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -390,7 +391,7 @@ mapNodeQueryT f m = NodeQueryT $ f . unNodeQueryT m
 -}
 runNodeQueryT
   :: forall a s e m.
-    ( MonadIO m, MonadBaseControl IO m
+    ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
@@ -414,7 +415,7 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
 
 tryNodeQueryT
   :: forall a s e m.
-    ( MonadIO m, MonadBaseControl IO m
+    ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )

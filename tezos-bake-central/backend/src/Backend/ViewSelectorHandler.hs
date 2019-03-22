@@ -18,7 +18,6 @@ module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
 import Control.Monad.Logger
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
@@ -63,6 +62,7 @@ import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -89,7 +89,7 @@ import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
   => FrontendConfig
   -> Maybe NamedChain
   -> NodeDataSource

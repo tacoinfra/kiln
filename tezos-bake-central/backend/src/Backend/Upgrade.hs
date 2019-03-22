@@ -14,7 +14,6 @@ import Control.Exception.Safe (try)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLogger, logError, logInfo)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import Data.Maybe
@@ -26,6 +25,7 @@ import qualified Data.Version as V
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
@@ -62,7 +62,7 @@ upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db 
     void $ updateUpstreamVersion upgradeBranch httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
-  :: ( MonadIO m, MonadLogger m, Control.Monad.Trans.Control.MonadBaseControl IO m)
+  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => NamedChain
   -> Text
   -> Http.Manager
