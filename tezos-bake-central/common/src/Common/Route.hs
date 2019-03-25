@@ -23,6 +23,9 @@ import Data.Text (Text)
 import Obelisk.Route
 import Obelisk.Route.Frontend
 import Obelisk.Route.TH
+import Rhyolite.Schema
+
+import Common.Schema
 
 -- TODO: Upstream
 instance MonadReader r' m => MonadReader r' (RoutedT t r m) where
@@ -40,13 +43,13 @@ instance (Monad m, RouteToUrl r m) => RouteToUrl r (ReaderT r' m) where
 
 data AppRoute :: * -> * where
   AppRoute_Index :: AppRoute ()
-  AppRoute_Nodes :: AppRoute ()
+  AppRoute_Nodes :: AppRoute (Id Node)
   AppRoute_Options :: AppRoute ()
 
 appRouteSegment :: (Applicative check, MonadError Text parse) => AppRoute a -> SegmentResult check parse a
 appRouteSegment = \case
   AppRoute_Index -> PathEnd $ unitEncoder mempty
-  AppRoute_Nodes -> PathSegment "nodes" $ unitEncoder mempty
+  AppRoute_Nodes -> PathSegment "nodes" idPathSegmentEncoder
   AppRoute_Options -> PathSegment "options" $ unitEncoder mempty
 
 data BackendRoute :: * -> * where
