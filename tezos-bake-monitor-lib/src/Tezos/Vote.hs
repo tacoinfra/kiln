@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -8,6 +9,7 @@ import Data.Aeson
 import Data.Int
 import Data.Typeable
 import GHC.Generics
+import Tezos.Base58Check
 import Tezos.Operation
 
 type VotingPeriod = Int32 -- ^ period: Voting_period_repr.t ;
@@ -30,3 +32,6 @@ instance FromJSON Ballots where
       Ballot_Yea -> yay
       Ballot_Nay -> nay
       Ballot_Pass -> pass
+
+newtype ProposalVotes = ProposalVotes { unProposalVotes :: (ProtocolHash, Int) }
+  deriving (Eq, Ord, Read, Show, Typeable, Generic, FromJSON, ToJSON)
