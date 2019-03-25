@@ -55,7 +55,7 @@ nodeRPC
 nodeRPC                         (RpcQuery decoder method resource)    = nodeRPCImpl' decoder method resource
 
 nodeRPCChunked
-  :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
+  :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
   => PlainNodeStream a -> (a -> IO r) -> m r
 nodeRPCChunked (PlainNodeStream (RpcQuery decoder method resource)) k = nodeRPCChunkedImpl' decoder k method resource
 
@@ -113,7 +113,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
 nodeRPCChunkedImpl :: forall a r s e m.
-  ( MonadIO m, MonadLogger m, FromJSON a
+  ( MonadIO m, FromJSON a
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   , Monoid r
@@ -126,7 +126,7 @@ nodeRPCChunkedImpl = nodeRPCChunkedImpl' Aeson.eitherDecode'
 
 
 nodeRPCChunkedImpl' :: forall a r s e m.
-  ( MonadIO m, MonadLogger m
+  ( MonadIO m
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   , Monoid r
