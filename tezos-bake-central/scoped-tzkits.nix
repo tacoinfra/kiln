@@ -7,7 +7,7 @@
 }: let
   obelisk = import (./.obelisk/impl) {};
   reflex-platform = obelisk.reflex-platform;
-  nodeKit-src = import (reflex-platform.hackGet ../dep/public-nodes/tezos-baking-platform) {};
+  nodeKit-src = import (reflex-platform.hackGet ../dep/tezos-baking-platform) {};
 in {
   kits = nixpkgs.stdenv.mkDerivation {
     name = "scoped-tzkits";
