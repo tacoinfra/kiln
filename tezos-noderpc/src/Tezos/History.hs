@@ -213,5 +213,5 @@ scanBranch ::
 scanBranch branch start stop k = do
   let headLvl = _blockHeader_level $ _block_header branch
   for_ [start .. stop] $ \n -> do
-    blk <- nodeRPC $ rBlockPred (_block_chainId branch) (_block_hash branch) (headLvl - n)
+    blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
     void $ k blk

@@ -305,4 +305,3 @@ getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_a
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
     ("/v1/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
-
