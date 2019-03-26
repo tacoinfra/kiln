@@ -39,7 +39,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
-import Tezos.Types (Tez)
+import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -266,7 +266,50 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
+          clearErrors bId
           notify NotifyTag_Baker (Id pkh, Nothing)
+        where
+          clearErrors bid = do
+            let
+              -- TODO: Unify the types of the baker alert columns so this duplication isn't needed.
+              deleteLogsId
+                :: forall cstr m' t.
+                 ( Monad m', PersistBackend m'
+                 , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr
+                 )
+                => BakerLogTag t
+                -> Field t cstr (Id Baker)
+                -> m' [Id ErrorLog]
+              deleteLogsId tag field = do
+                ids <- errorLogIdForBakerLogTag tag <$$> select (field ==. bid)
+                for_ ids $ notifyDefault . Id @t
+                pure ids
+
+              deleteLogsPkh
+                :: forall cstr m' t.
+                 ( Monad m', PersistBackend m'
+                 , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr
+                 )
+                => BakerLogTag t
+                -> Field t cstr PublicKeyHash
+                -> m' [Id ErrorLog]
+              deleteLogsPkh tag field = do
+                ids <- errorLogIdForBakerLogTag tag <$$> select (field ==. unId bid)
+                for_ ids $ notifyDefault . Id @t
+                pure ids
+
+              onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
+              onTag (This tag) = case tag of
+                BakerLogTag_MultipleBakersForSameBaker -> deleteLogsPkh tag ErrorLogMultipleBakersForSameBaker_publicKeyHashField
+                BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
+                BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
+                BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
+                BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
+                BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
+
+            ids <- fmap concat $ for universe onTag
+            now <- getTime
+            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'
