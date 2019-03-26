@@ -12,6 +12,7 @@
 
 module Backend.NodeCmd where
 
+import Control.Monad.Logger (MonadLogger)
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -84,8 +85,14 @@ internalNodeWorker appConfig logger db namedChain = do
     pid
     (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-initNode :: (MonadIO m) => AppConfig -> FilePath -> FilePath -> m FilePath
-initNode appConfig nodePath nodeConfigPath = do
+initNode :: (MonadIO m)
+  => AppConfig
+  -> FilePath
+  -> Pool Postgresql
+  -> (ProcessState -> m ())
+  -> FilePath
+  -> m FilePath
+initNode appConfig nodePath _ updateState nodeConfigPath = do
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
@@ -95,7 +102,8 @@ initNode appConfig nodePath nodeConfigPath = do
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["config", "show", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
-  when (not haveIdentityFile) $
+  when (not haveIdentityFile) $ do
+    updateState ProcessState_GeneratingIdentity
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
   return dataDir
 
@@ -140,8 +148,9 @@ bakerDaemonProcess appConfig logger db namedChain = do
     Nothing
   return (bp, ep)
 
-fetchAlias :: (forall m'. (MonadIO m', PersistBackend m') => FilePath -> m' String)
-fetchAlias _ = do
+fetchAlias :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  => Pool Postgresql -> a -> b -> m String
+fetchAlias db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
     (Just (BakerDaemonInternalData alias _ _ _ _)) -> return $ T.unpack alias

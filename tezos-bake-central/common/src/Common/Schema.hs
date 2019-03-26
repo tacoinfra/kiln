@@ -307,6 +307,7 @@ instance HasId NodeInternal where
 data ProcessState
    = ProcessState_Stopped
    | ProcessState_Initializing
+   | ProcessState_GeneratingIdentity -- only applicable to Node
    | ProcessState_Starting
    | ProcessState_Running
    | ProcessState_Failed

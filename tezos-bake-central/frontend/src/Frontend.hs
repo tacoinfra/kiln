@@ -1128,6 +1128,7 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
       Just internalState -> case internalState of
         ProcessState_Stopped -> MonitoredStatus_Unknown
         ProcessState_Initializing -> MonitoredStatus_Unknown
+        ProcessState_GeneratingIdentity -> MonitoredStatus_Unknown
         ProcessState_Starting -> MonitoredStatus_Unknown
         ProcessState_Running -> MonitoredStatus_Healthy
         ProcessState_Failed -> MonitoredStatus_Unhealthy
@@ -1385,6 +1386,7 @@ nodesTab =
                     divClass "ui sub header" $ dynText $ ffor state $ \case
                       ProcessState_Stopped -> "Stopped"
                       ProcessState_Initializing -> "Initializing"
+                      ProcessState_GeneratingIdentity -> "Initializing"
                       ProcessState_Starting -> "Starting"
                       ProcessState_Running -> "Running"
                       ProcessState_Failed -> "Failed"
@@ -1417,7 +1419,7 @@ nodesTab =
                     badge :: m ()
                     badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
-            isInitializing <- holdUniqDyn $ (== ProcessState_Initializing) <$> state
+            isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
