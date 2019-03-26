@@ -207,7 +207,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       <> "are delivered to the baker of "
       <> errorEmphasis ("block level " <> accusedLevel)
       <> ". The other half, along with any rewards, are burned."
-      <> bool "" (errorEmphasis ("This baker may be re-accused for this "
+      <> bool "" (errorEmphasis (" This baker may be re-accused for this "
                                  <> "offense (and any new deposits and "
                                  <> "rewards confiscated) for each block or "
                                  <> "endorsement it signs in the remainder "
