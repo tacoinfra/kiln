@@ -26,7 +26,7 @@ import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
-import Backend.Config (AppConfig (..), nodeDataDir)
+import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir)
 import Backend.Schema
 import Common.Schema
 
@@ -130,12 +130,12 @@ bakerDaemonProcess appConfig logger db namedChain = do
   let nodePort = show $ _appConfig_kilnNodePort appConfig
   bp <- processWorker logger db appConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "run", "with", "local", "node", nodeDataDir appConfig, alias])
+    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", "with", "local", "node", nodeDataDir appConfig, alias])
     bpid
     Nothing
   ep <- processWorker logger db appConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "run", alias])
+    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", alias])
     epid
     Nothing
   return (bp, ep)
