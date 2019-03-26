@@ -32,7 +32,6 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
-import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
@@ -67,11 +66,33 @@ type Deletable a = First (Maybe a)
 
 -- data BakerSummary = Baker Baker' AlertCount
 
+data WorkerType
+  = WorkerType_Node
+  | WorkerType_Baker
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON WorkerType
+instance ToJSON WorkerType
+
+data BakerInternalData = BakerInternalData
+  { _bakerInternalData_secretKey :: SecretKey
+  , _bakerInternalData_running :: Bool
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON BakerInternalData
+instance ToJSON BakerInternalData
+
+data BakerNextRight
+  = BakerNextRight_GatheringData
+  | BakerNextRight_WaitingForRights
+  | BakerNextRight_KnownRights (RightKind, RawLevel)
+  | BakerNextRight_KnownNoRights
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON BakerNextRight
+instance ToJSON BakerNextRight
+
 data BakerSummary = BakerSummary
-  { _bakerSummary_baker :: BakerData
+  { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
-  , _bakerSummary_nextRight :: !(Map.Map RightKind RawLevel)
-  , _bakerSummary_nextRightFetchRemaining :: !(RawLevel) -- The difference between the highest determined right and the highest scanned right.  > 0 should mean there's work to do.
+  , _bakerSummary_nextRight :: !BakerNextRight
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary
@@ -79,7 +100,7 @@ instance ToJSON BakerSummary
 -- data NodeSummary = Node Node' AlertCount
 
 data NodeSummary = NodeSummary
-  { _nodeSummary_node :: Either NodeExternalData NodeInternalData
+  { _nodeSummary_node :: Either NodeExternalData ProcessData
   , _nodeSummary_alertCount :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON NodeSummary
@@ -87,13 +108,13 @@ instance ToJSON NodeSummary
 
 bakerSummaryIdentification :: (IdData BakerData, BakerSummary) -> (Text, Maybe Text)
 bakerSummaryIdentification = aliasedIdentification
-  (_bakerData_alias . _bakerSummary_baker . snd)
+  ((either _bakerData_alias (const $ Just "Kiln Baker")) . _bakerSummary_baker . snd)
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
 nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
 
-nodeDataIdentification :: Either NodeExternalData NodeInternalData -> (Text, Maybe Text)
+nodeDataIdentification :: Either NodeExternalData ProcessData -> (Text, Maybe Text)
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
     (_nodeExternalData_alias)
@@ -101,10 +122,75 @@ nodeDataIdentification = \case
     e
   Right _ -> ("Kiln Node", Nothing)
 
+data SetupState = SetupState
+  { _setupState_import :: Maybe (First ImportSecretKeyStep)
+  , _setupState_setup :: Maybe (First SetupLedgerToBakeStep)
+  , _setupState_register :: Maybe (First RegisterStep)
+  , _setupState_setHWM :: Maybe (First SetHWMStep)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON SetupState
+instance ToJSON SetupState
+instance Monoid SetupState where
+  mempty = SetupState Nothing Nothing Nothing Nothing
+instance Semigroup SetupState where
+  ss1 <> ss2 = SetupState
+    { _setupState_import = _setupState_import ss1 <> _setupState_import ss2
+    , _setupState_setup = _setupState_setup ss1 <> _setupState_setup ss2
+    , _setupState_register = _setupState_register ss1 <> _setupState_register ss2
+    , _setupState_setHWM = _setupState_setHWM ss1 <> _setupState_setHWM ss2
+    }
+
+data ImportSecretKeyStep
+  = ImportSecretKeyStep_Prompting
+  | ImportSecretKeyStep_Done
+  | ImportSecretKeyStep_Declined
+  | ImportSecretKeyStep_Disconnected
+  | ImportSecretKeyStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON ImportSecretKeyStep
+instance ToJSON ImportSecretKeyStep
+
+data SetupLedgerToBakeStep
+  = SetupLedgerToBakeStep_Prompting
+  | SetupLedgerToBakeStep_Done
+  | SetupLedgerToBakeStep_Declined
+  | SetupLedgerToBakeStep_Disconnected
+  | SetupLedgerToBakeStep_Failed -- Anything else
+  | SetupLedgerToBakeStep_OutdatedVersion Text
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON SetupLedgerToBakeStep
+instance ToJSON SetupLedgerToBakeStep
+
+data RegisterStep
+  = RegisterStep_Prompting
+  | RegisterStep_WaitingForInclusion
+  | RegisterStep_Registered
+  | RegisterStep_AlreadyRegistered
+  | RegisterStep_Declined
+  | RegisterStep_Disconnected
+  | RegisterStep_NodeNotReady
+  | RegisterStep_Failed
+  | RegisterStep_FeeTooHigh Tez -- holds users desired fee
+  | RegisterStep_FeeTooLow Tez -- holds users desired fee
+  | RegisterStep_NotEnoughFunds Tez -- holds account balance
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON RegisterStep
+instance ToJSON RegisterStep
+
+data SetHWMStep
+  = SetHWMStep_Prompting
+  | SetHWMStep_Done
+  | SetHWMStep_Declined
+  | SetHWMStep_Disconnected
+  | SetHWMStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON SetHWMStep
+instance ToJSON SetHWMStep
+
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
-  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id Client) (Deletable URI) a)
-  , _bakeViewSelector_clients :: !(RangeSelector (Id Client) (Deletable ClientInfo) a)
+  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id BakerDaemon) (Deletable URI) a)
+  , _bakeViewSelector_clients :: !(RangeSelector (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
@@ -122,12 +208,15 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
+  , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
+  , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable (PublicKeyHash, Tez)) a)
+  , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
-  , _bakeView_clientAddresses :: !(RangeView' (Id Client) (Deletable URI) a)
-  , _bakeView_clients :: !(RangeView (Id Client) (Deletable ClientInfo) a)
+  , _bakeView_clientAddresses :: !(RangeView' (Id BakerDaemon) (Deletable URI) a)
+  , _bakeView_clients :: !(RangeView (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
@@ -150,8 +239,11 @@ data BakeView a = BakeView
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
-  -- , _bakeView_graphs       :: !(AppendMap (Id Client) (First (Maybe (Micro, Text)), a))
+  -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
+  , _bakeView_connectedLedger :: !(MaybeView (Maybe ConnectedLedger) a)
+  , _bakeView_showLedger :: !(RangeView SecretKey (Deletable (PublicKeyHash, Tez)) a)
+  , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 
@@ -197,6 +289,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
+  BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
@@ -205,6 +298,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
+  BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
 errorLogIdForNodeLogTag = \case
@@ -251,6 +345,9 @@ cropBakeView vs v = BakeView
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
   , _bakeView_alertCount = cropView (_bakeViewSelector_alertCount vs) (_bakeView_alertCount v)
+  , _bakeView_connectedLedger = cropView (_bakeViewSelector_connectedLedger vs) (_bakeView_connectedLedger v)
+  , _bakeView_showLedger = cropView (_bakeViewSelector_showLedger vs) (_bakeView_showLedger v)
+  , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
   }
 
 instance FunctorMaybe BakeViewSelector where
@@ -274,6 +371,9 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = fmapMaybe f (_bakeViewSelector_telegramRecipients a)
     , _bakeViewSelector_alertCount = fmapMaybe f (_bakeViewSelector_alertCount a)
+    , _bakeViewSelector_connectedLedger = fmapMaybe f (_bakeViewSelector_connectedLedger a)
+    , _bakeViewSelector_showLedger = fmapMaybe f (_bakeViewSelector_showLedger a)
+    , _bakeViewSelector_prompting = fmapMaybe f (_bakeViewSelector_prompting a)
     }
 
 instance Align BakeViewSelector where
@@ -297,6 +397,9 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
     , _bakeViewSelector_alertCount = nil
+    , _bakeViewSelector_connectedLedger = nil
+    , _bakeViewSelector_showLedger = nil
+    , _bakeViewSelector_prompting = nil
     }
 
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
@@ -320,6 +423,9 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
     , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
+    , _bakeViewSelector_connectedLedger = f' _bakeViewSelector_connectedLedger
+    , _bakeViewSelector_showLedger = f' _bakeViewSelector_showLedger
+    , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
     }
     where
       f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
@@ -346,6 +452,9 @@ instance FunctorMaybe BakeView where
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = fmapMaybe f $ _bakeView_telegramRecipients a
     , _bakeView_alertCount = fmapMaybe f $ _bakeView_alertCount a
+    , _bakeView_connectedLedger = fmapMaybe f $ _bakeView_connectedLedger a
+    , _bakeView_showLedger = fmapMaybe f $ _bakeView_showLedger a
+    , _bakeView_prompting = fmapMaybe f $ _bakeView_prompting a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -377,6 +486,9 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
     , _bakeViewSelector_alertCount = (<>) (_bakeViewSelector_alertCount u) (_bakeViewSelector_alertCount v)
+    , _bakeViewSelector_connectedLedger = (<>) (_bakeViewSelector_connectedLedger u) (_bakeViewSelector_connectedLedger v)
+    , _bakeViewSelector_showLedger = (<>) (_bakeViewSelector_showLedger u) (_bakeViewSelector_showLedger v)
+    , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
@@ -400,6 +512,9 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
     , _bakeViewSelector_alertCount = mempty
+    , _bakeViewSelector_connectedLedger = mempty
+    , _bakeViewSelector_showLedger = mempty
+    , _bakeViewSelector_prompting = mempty
     }
   mappend = (<>)
 
@@ -432,6 +547,9 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
     , _bakeView_alertCount = mempty
+    , _bakeView_connectedLedger = mempty
+    , _bakeView_showLedger = mempty
+    , _bakeView_prompting = mempty
     }
   mappend u v = u <> v
 
@@ -458,6 +576,9 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v
     , _bakeView_alertCount = _bakeView_alertCount u <> _bakeView_alertCount v
+    , _bakeView_connectedLedger = _bakeView_connectedLedger u <> _bakeView_connectedLedger v
+    , _bakeView_showLedger = _bakeView_showLedger u <> _bakeView_showLedger v
+    , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

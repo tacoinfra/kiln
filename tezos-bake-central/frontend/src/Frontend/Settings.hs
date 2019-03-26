@@ -19,13 +19,11 @@ import Control.Monad (guard)
 import Data.Function (on)
 import Data.Functor.Infix
 import Data.List (intersperse)
-import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import Data.Version (showVersion)
 import GHCJS.DOM.Types (MonadJSM)
 import Prelude hiding (log)
 import Reflex.Dom.Core
-import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
@@ -203,23 +201,23 @@ settingsTab = do
                     pure $ leftmost [finish, close]
             pure ()
 
-    _bakersOptions :: m ()
-    _bakersOptions = do
-      divClass "ui medium header" $ text "Bakers"
-      elClass "table" "ui celled striped compact table" $ do
-        bakers <- watchBakerAddresses
-        _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
-          el "td" $ publicKeyHashLink pkh
-          el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
-          el "td" $ do
-            eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
-            requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
+    -- _bakersOptions :: m ()
+    -- _bakersOptions = do
+    --   divClass "ui medium header" $ text "Bakers"
+    --   elClass "table" "ui celled striped compact table" $ do
+    --     bakers <- watchBakerAddresses
+    --     _ <- listWithKey (MMap.getMonoidalMap <$> bakers) $ \pkh bs -> el "tr" $ do
+    --       el "td" $ publicKeyHashLink pkh
+    --       el "td" $ dynText $ ffor bs $ fromMaybe "-" . _bakerData_alias . _bakerSummary_baker
+    --       el "td" $ do
+    --         eRemove <- buttonWithInfo "Remove" "Stop monitoring this baker."
+    --         requestingIdentity $ public . PublicRequest_RemoveBaker <$> tag (pure pkh) eRemove
 
-        addE <- formWithReset "Add Baker" "Begin monitoring wallet address entered." blank never $ do
-          zipFields
-            (formItem' "required" $ pkhField "Baker Wallet Address" "tz...")
-            (formItem $ aliasField "My Baker")
-        void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
+    --     addE <- formWithReset "Add Baker" "Begin monitoring wallet address entered." blank never $ do
+    --       zipFields
+    --         (formItem' "required" $ pkhField "Baker Wallet Address" "tz...")
+    --         (formItem $ aliasField "My Baker")
+    --     void $ requestingIdentity $ ffor addE $ \(pkh,alias) -> public (PublicRequest_AddBaker pkh alias)
 
     upgradeOptions = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)

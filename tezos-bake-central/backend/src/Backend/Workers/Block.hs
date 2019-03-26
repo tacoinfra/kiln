@@ -20,13 +20,13 @@ import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH)
 import Control.Monad.Logger (logWarnSH)
 import Control.Monad.Reader (ReaderT)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -87,6 +87,8 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
           $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+        Left (CacheError_NoSuitableNode) ->
+          $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left e -> nqThrowError e
         Right block -> do
           let blockHash = _block_hash block
@@ -143,5 +145,5 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
     return ()
 
   where
-    inDb :: (MonadIO m, MonadBaseControl IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig

@@ -355,7 +355,7 @@ graft trunk branch = concatPaths common leaves
     common = lca trunk branch
     leaves = keep (length branch - length common) branch
 
-concatPaths :: (Monoid a, Eq k) => Path k a -> Path k a -> Path k a
+concatPaths :: Monoid a => Path k a -> Path k a -> Path k a
 concatPaths trunk = foldr (uncurry cons) trunk . toList
 
 -- | Provides a consistent 'View' for peeling off the bottom node of a path.

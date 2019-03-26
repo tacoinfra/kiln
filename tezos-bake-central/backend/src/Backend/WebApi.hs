@@ -44,7 +44,10 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/head",      writeJSON $ const snapHead )
   , ( chainTXT <> "/lca",       writeJSON $ const snapBranchPoint )
   , ( chainTXT <> "/ancestors", writeJSON $ const snapAncestors )
-  , ( chainTXT <> "/block",     writeJSON $ const snapBlock )
+  , ( chainTXT <> "/ballot", writeJSON $ const snapBallots )
+  , ( chainTXT <> "/proposal", writeJSON $ const snapProposals )
+  , ( chainTXT <> "/block",     writeJSON $ const snapVeryBlockLike )
+  , ( chainTXT <> "/block", writeJSON $ const snapBlock )
   , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
   , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
   , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
@@ -81,35 +84,65 @@ asTextExcept x = either (throwError . T.pack . show ) return =<< runExceptT x
 asTextMaybe :: MonadError Text m => Text -> m (Maybe b) -> m b
 asTextMaybe msg x = maybe (throwError msg) return =<< x
 
-requiredParam :: (MonadError Text m, MonadSnap m) => String -> m BS.ByteString
-requiredParam paramName = maybe (throwError $ "missing param:" <> T.pack paramName) return =<< (listToMaybe <=< Map.lookup (fromString paramName)) <$> Snap.liftSnap Snap.getQueryParams
+requiredParam :: (MonadError Text m, MonadSnap m) => Snap.Snap Snap.Params -> String -> m BS.ByteString
+requiredParam getParam paramName = maybe (throwError $ "missing param:" <> T.pack paramName) return =<< (listToMaybe <=< Map.lookup (fromString paramName)) <$> Snap.liftSnap getParam
+
+requiredQueryParam :: (MonadError Text m, MonadSnap m) => String -> m BS.ByteString
+requiredQueryParam = requiredParam Snap.getQueryParams
+
+requiredPathParam :: (MonadError Text m, MonadSnap m) => String -> m BS.ByteString
+requiredPathParam = requiredParam Snap.getParams
 
 params :: (MonadError Text m, MonadSnap m) => BS.ByteString -> m (Maybe [BS.ByteString])
 params paramName = Map.lookup paramName <$> Snap.liftSnap Snap.getQueryParams
 
 snapAncestors :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text [BlockHash])
 snapAncestors = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredParam "branch"
-  levelBS <- requiredParam "level"
+  branchBS <- requiredQueryParam "branch"
+  levelBS <- requiredQueryParam "level"
 
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
 
-snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
-snapBlock = do
+snapVeryBlockLike :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
+snapVeryBlockLike = do
   nds <- asks (^. nodeDataSource)
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-    blockBS <- requiredParam "block"
+    blockBS <- requiredQueryParam "block"
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
     maybe (throwError "block unknown") return =<< liftIO (atomically $ lookupBlock nds block)
 
+snapBallots :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Ballots)
+snapBallots = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "block"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Ballots block
+
+snapProposals :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq ProposalVotes))
+snapProposals = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "block"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Proposals block
+
+snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Block)
+snapBlock = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "hash"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block
+
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
 snapBakingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredParam "branch"
-  levelBS <- requiredParam "level"
+  branchBS <- requiredQueryParam "branch"
+  levelBS <- requiredQueryParam "level"
 
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
@@ -118,8 +151,8 @@ snapBakingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
 
 snapEndorsingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq EndorsingRights))
 snapEndorsingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredParam "branch"
-  levelBS <- requiredParam "level"
+  branchBS <- requiredQueryParam "branch"
+  levelBS <- requiredQueryParam "level"
 
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
@@ -128,8 +161,8 @@ snapEndorsingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
 
 snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
 snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredParam "branch"
-  levelBS <- requiredParam "level"
+  branchBS <- requiredQueryParam "branch"
+  levelBS <- requiredQueryParam "level"
 
   branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
@@ -140,8 +173,8 @@ snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Ei
 snapDelegateInfo = do
   nds <- asks (^. nodeDataSource)
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-    branchBS <- requiredParam "branch"
-    delegateBS <- requiredParam "delegate"
+    branchBS <- requiredQueryParam "branch"
+    delegateBS <- requiredQueryParam "delegate"
 
     branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
     delegate <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash delegateBS

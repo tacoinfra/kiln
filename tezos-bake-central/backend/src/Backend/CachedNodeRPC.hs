@@ -83,6 +83,7 @@ import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Network.HTTP.Client as Http (Manager)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -127,6 +128,8 @@ data NodeQuery a where
     -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
+  NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -390,7 +393,7 @@ mapNodeQueryT f m = NodeQueryT $ f . unNodeQueryT m
 -}
 runNodeQueryT
   :: forall a s e m.
-    ( MonadIO m, MonadBaseControl IO m
+    ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
@@ -414,7 +417,7 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
 
 tryNodeQueryT
   :: forall a s e m.
-    ( MonadIO m, MonadBaseControl IO m
+    ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
@@ -511,14 +514,15 @@ calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
 calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
---
--- Returns most recently seen head.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
 waitForNewHeadWithTimeout nds = do
   -- TODO: This shouldn't be necessary once we have a way to know the parameters better. Foundation nodes should give us params.
   timeLimit <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   void $ timeout' timeLimit $ waitForNewHead nds
 
+-- | Blocks until a new head is seen.
+--
+-- Returns most recently seen head.
 waitForNewHead :: NodeDataSource -> IO VeryBlockLike
 waitForNewHead nds = do
   oldHead <- readTVarIO (_nodeDataSource_latestHead nds)
@@ -578,7 +582,7 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
               { _parameters_protoInfo = params
               , _parameters_chain = chainId
               }
-          notify . flip Notify_Parameters entry =<< insert' entry
+          notify NotifyTag_Parameters . (, entry) =<< insert' entry
 
 
 -- | extrats the fittest known branch from cache
@@ -672,6 +676,8 @@ getKey params hist = \case
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
+  NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
+  NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
@@ -824,20 +830,22 @@ nodeQueryDataSourceImpl
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRights chainId branch $ Set.singleton $ Left targetLevel
+    nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_BakingRights1 branch targetLevel prio ->
     ExceptT $ fmap join $ runExceptT $ fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $ self $ NodeQuery_BakingRightsChunk branch targetLevel prio
   NodeQuery_BakingRightsChunk branch targetLevel prio ->
-    fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull chainId branch (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio)
+    fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio) chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights chainId branch $ Set.singleton $ Left targetLevel
+    nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
-    nodeRPC' $ rContract chainId branch contractId
+    nodeRPC' $ rContract contractId chainId branch
+  NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
+  NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo chainId branch pkh
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
-    managerkeyResp <- nodeRPC' $ rManagerKey chainId qBranch contractId
+    managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKey_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure $ pk

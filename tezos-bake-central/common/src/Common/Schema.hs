@@ -82,6 +82,19 @@ import Tezos.Types
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
 
+data ClientError
+  = ClientError_NodeNotReady
+  | ClientError_RequestDeclinedByLedger
+  | ClientError_LedgerDisconnected
+  | ClientError_Other Text
+  deriving (Eq, Ord, Show, Generic, Typeable)
+instance Aeson.ToJSON ClientError
+instance Aeson.FromJSON ClientError
+
+-- | Required Tezos Baking app version
+requiredTezosBakingAppVersion :: Text
+requiredTezosBakingAppVersion = "2.0.0"
+
 data CacheError
   = CacheError_RpcError !RpcError
   | CacheError_NoSuitableNode
@@ -160,32 +173,104 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_delegate em)
       (_endorsementMetadata_slots em)
 
--- TODO use `DeletableRow` when we add back this feature.
-data Client = Client
-  { _client_address :: !URI
-  , _client_alias :: !(Maybe Text)
-  , _client_updated :: !(Maybe UTCTime)
-  , _client_deleted :: !Bool
+data DeletableRow a = DeletableRow
+  { _deletableRow_data :: !a
+  , _deletableRow_deleted :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Client
 
-data ClientInfo = ClientInfo
-  { _clientInfo_client :: !(Id Client)
-  , _clientInfo_report :: !(Json Report)
-  , _clientInfo_config :: !(Json ClientConfig)
-  -- , _clientInfo_node :: Id Node
+--------------------------------------------------------------------------------
+-- Baker Daemon
+--------------------------------------------------------------------------------
+
+-- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
+data BakerDaemon = BakerDaemon
+  deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemon
+
+-- data BakerDaemonExternal = BakerDaemonExternal (WithId (Id BakerDaemon) (Deletable BakerDaemonExternal'))
+
+data BakerDaemonExternal = BakerDaemonExternal
+  { _bakerDaemonExternal_id :: !(Id BakerDaemon)
+  , _bakerDaemonExternal_data :: !(DeletableRow BakerDaemonExternalData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId ClientInfo
+instance HasId BakerDaemonExternal where
+  -- Should be the same as `IdData BakerDaemonExternalData` always.
+  type IdData BakerDaemonExternal = Id BakerDaemon
+
+data BakerDaemonExternalData = BakerDaemonExternalData
+  { _bakerDaemonExternalData_address :: !URI
+  , _bakerDaemonExternalData_alias :: !(Maybe Text)
+  , _bakerDaemonExternalData_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemonExternalData where
+  type IdData BakerDaemonExternalData = Id BakerDaemon
+
+-- data BakerDaemonDetails = BakerDaemonDetails (WithId (Id BakerDaemon) BakerDaemonDetails')
+
+data BakerDaemonInfo = BakerDaemonInfo
+  { _bakerDaemonInfo_id :: !(Id BakerDaemon)
+  , _bakerDaemonInfo_data :: BakerDaemonInfoData
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+data BakerDaemonInfoData = BakerDaemonInfoData
+  { _bakerDaemonInfoData_report :: !(Json Report)
+  , _bakerDaemonInfoData_config :: !(Json ClientConfig)
+  -- , _bakerDaemonInfo_node :: Id Node
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerDaemonInfoData where
+  type IdData BakerDaemonInfoData = Id BakerDaemon
+
+data BakerDaemonInternal = BakerDaemonInternal
+  { _bakerDaemonInternal_id :: !(Id BakerDaemon)
+  , _bakerDaemonInternal_data :: !(DeletableRow BakerDaemonInternalData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId BakerDaemonInternal where
+  type IdData BakerDaemonInternal = Id BakerDaemon
+
+data ConnectedLedger = ConnectedLedger
+  { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
+  , _connectedLedger_bakingAppVersion :: !(Maybe Text)
+  , _connectedLedger_updated :: !(Maybe UTCTime)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance Aeson.ToJSON ConnectedLedger
+instance Aeson.FromJSON ConnectedLedger
+
+data LedgerAccount = LedgerAccount
+  { _ledgerAccount_publicKeyHash :: !(Maybe PublicKeyHash)
+  , _ledgerAccount_secretKey :: !SecretKey
+  , _ledgerAccount_balance :: !(Maybe Tez)
+  , _ledgerAccount_shouldImport :: !Bool
+  , _ledgerAccount_imported :: !Bool
+  , _ledgerAccount_shouldSetupToBake :: !Bool
+  , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
+  , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+-- This can be lifted into 'LedgerAccount' if we need to support more than one
+-- baker in the future
+kilnLedgerAlias :: Text
+kilnLedgerAlias = "ledger_kiln"
+
+data BakerDaemonInternalData = BakerDaemonInternalData
+  { _bakerDaemonInternalData_alias :: !(Text)
+  , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
+  , _bakerDaemonInternalData_insufficientFunds :: !Bool
+  , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+
+instance HasId BakerDaemonInternalData where
+  type IdData BakerDaemonInternalData = Id BakerDaemon
+
+--------------------------------------------------------------------------------
+-- Node
+--------------------------------------------------------------------------------
 
 -- Just for the surrogate key for now.ils_ = BakerDetails (WithId PublicKeyHash Baker
 data Node = Node
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Node
-
-data DeletableRow a = DeletableRow
-  { _deletableRow_data :: !a
-  , _deletableRow_deleted :: !Bool
-  } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId a => HasId (DeletableRow a) where
   type IdData (DeletableRow a) = IdData a
@@ -213,29 +298,28 @@ instance HasId NodeExternalData where
 
 data NodeInternal = NodeInternal
   { _nodeInternal_id :: !(Id Node)
-  , _nodeInternal_data :: !(DeletableRow NodeInternalData)
+  , _nodeInternal_data :: !(DeletableRow (Id ProcessData))
   } deriving (Eq, Ord, Show, Generic, Typeable)
+
 instance HasId NodeInternal where
-  -- Should be the same as `IdData NodeInternalData` always.
   type IdData NodeInternal = Id Node
 
-data NodeInternalState
-   = NodeInternalState_Stopped
-   | NodeInternalState_Initializing
-   | NodeInternalState_Starting
-   | NodeInternalState_Running
-   | NodeInternalState_Failed
+data ProcessState
+   = ProcessState_Stopped
+   | ProcessState_Initializing
+   | ProcessState_Starting
+   | ProcessState_Running
+   | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
-data NodeInternalData = NodeInternalData
-  { _nodeInternalData_running :: !Bool -- the state we /want/ the node in;
-  , _nodeInternalData_state :: !NodeInternalState -- the state the node is actually in.
-  , _nodeInternalData_stateUpdated :: !(Maybe UTCTime) -- the time the node's state was last set.
-  , _nodeInternalData_backend :: !(Maybe Int) -- a "unique" process id
+data ProcessData = ProcessData
+  { _processData_running :: !Bool -- the state we /want/ the process to be in;
+  , _processData_state :: !ProcessState -- the state the process is actually in.
+  , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
+  , _processData_backend :: !(Maybe Int) -- a "unique" process id
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-instance HasId NodeInternalData where
-  type IdData NodeInternalData = Id Node
+instance HasId ProcessData
 
 -- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
 
@@ -279,6 +363,8 @@ getNodeHeadBlock n = VeryBlockLike
   <*> _nodeDetailsData_fitness n
   <*> _nodeDetailsData_headLevel n
   <*> _nodeDetailsData_headBlockBakedAt n
+
+--------------------------------------------------------------------------------
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
@@ -532,6 +618,7 @@ data Notificatee = Notificatee
   { _notificatee_email :: Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
+instance Aeson.ToJSON Notificatee
 
 data AlertNotificationMethod
   = AlertNotificationMethod_Email
@@ -608,7 +695,7 @@ data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
   , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
   , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
-  , _errorLogBakerNoHeartbeat_client :: !(Id Client)
+  , _errorLogBakerNoHeartbeat_client :: !(Id BakerDaemon)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerNoHeartbeat where
   type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
@@ -619,7 +706,7 @@ data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
 data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
   { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
   , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameBaker_client :: !(Id Client)
+  , _errorLogMultipleBakersForSameBaker_client :: !(Id BakerDaemon)
   , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogMultipleBakersForSameBaker where
@@ -685,6 +772,14 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog
+
+data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
+  { _errorLogInsufficientFunds_log :: !(Id ErrorLog)
+  , _errorLogInsufficientFunds_baker :: !(Id Baker)
+  , _errorLogInsufficientFunds_detected :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogInsufficientFunds where
+  type IdData ErrorLogInsufficientFunds = Id ErrorLog
 
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
@@ -786,6 +881,7 @@ data BakerLogTag a where
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
+  BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -797,6 +893,12 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEvent
   , ''BakedEventOperation
   , ''Baker
+  , ''BakerDaemon
+  , ''BakerDaemonExternal
+  , ''BakerDaemonExternalData
+  , ''BakerDaemonInfo
+  , ''BakerDaemonInfoData
+  , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
   , ''BakerRight
@@ -806,7 +908,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''CacheDelegateInfo
   , ''ClientConfig
   , ''ClientDaemonWorker
-  , ''ClientInfo
   , ''ClientWorker
   , ''DeletableRow
   , ''EndorseEvent
@@ -817,6 +918,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogMultipleBakersForSameBaker
@@ -829,8 +931,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
-  , ''NodeInternalData
-  , ''NodeInternalState
+  , ''ProcessData
+  , ''ProcessState
   , ''NodeDetails
   , ''NodeDetailsData
   , ''Parameters
@@ -852,6 +954,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEvent
   , 'BakedEventOperation
   , 'Baker
+  , 'BakerDaemon
+  , 'BakerDaemonExternal
+  , 'BakerDaemonExternalData
+  , 'BakerDaemonInfo
+  , 'BakerDaemonInfoData
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight
@@ -868,6 +975,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
+  , 'ErrorLogInsufficientFunds
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
@@ -881,7 +989,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'NodeInternalData
+  , 'ProcessData
   , 'NodeDetails
   , 'NodeDetailsData
   , 'Parameters
@@ -970,6 +1078,7 @@ errorLogNames =
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount

@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -20,7 +21,6 @@ import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, wr
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Functor.Apply
@@ -30,12 +30,13 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Pool (Pool)
 import Data.These
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
-import Rhyolite.Backend.DB (getTime, runDb, selectMap)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId)
@@ -54,7 +55,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
-import Backend.Common (unsupervisedWorkerWithDelay, worker', workerWithDelay)
+import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
@@ -139,10 +140,10 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
         ]
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-    traverse_ (notify . Notify_NodeDetails nodeId . Just) newNodeDetails
+    traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
 updateNetworkStats
-  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
+  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> Http.Manager
   -> Pool Postgresql
@@ -179,10 +180,10 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
       ]
       (NodeDetails_idField ==. nid)
-    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify . Notify_NodeDetails nid . Just)
+    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
   pure ()
 
-type NodeData = Either NodeInternalData NodeExternalData
+type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
 nodeData_address appConfig = either (const $ kilnNodeURI appConfig) _nodeExternalData_address
 
@@ -197,7 +198,7 @@ nodeData_alias = either (const $ Just "Kiln managed node") _nodeExternalData_ali
 --
 -- TODO do join in database, not Haskell. Also don't get all the data
 getNodes
-  :: ( MonadIO m, MonadLogger m, MonadBaseControl IO m
+  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m
      , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
      )
   => Pool Postgresql
@@ -206,7 +207,7 @@ getNodes
 getNodes db constraints = do
   (nodeIds, nodeEs, nodeIs, nodeDs) :: ( Map (Id Node) Node
                                , Map (Id Node) NodeExternalData
-                               , Map (Id Node) NodeInternalData
+                               , Map (Id Node) (Id ProcessData)
                                , Map (Id Node) NodeDetailsData
                                )
     <- runDb (Identity db) $ (,,,)
@@ -308,10 +309,25 @@ publicNodesWorker
 publicNodesWorker nds = foldMap workerForSource
   where
     workerForSource :: DataSource -> IO (IO ())
-    workerForSource source = worker' $ updateDataSource nds source *> waitForNewHeadWithTimeout nds
+    workerForSource source = worker' $ do
+      let (pn, chain, _) = source
+      updateDataSource nds source
+      (now, mLastBlock) <- runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $ do
+        now <- getTime
+        mLastBlock <- project1 PublicNodeHead_headBlockField $
+          PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
+        pure (now, mLastBlock)
+      timeBetweenBlocks <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+      let secsSinceLastBlock = maybe 0 (\v -> _veryBlockLike_timestamp v `diffUTCTime` now) mLastBlock
+          secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
+              -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
+            x | x <= 0 -> timeBetweenBlocks / 2
+              | otherwise -> x
+      _ <- timeout' secsTillNextBlock (waitForNewHead nds)
+      threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
 
 updateDataSource
-  :: forall m. (MonadIO m, MonadBaseControl IO m)
+  :: forall m. (MonadIO m, MonadBaseNoPureAborts IO m)
   => NodeDataSource -> DataSource -> m ()
 updateDataSource nds (pn, chain, uri) = do
   enabled <- publicNodeEnabled
@@ -365,13 +381,13 @@ updateDataSource nds (pn, chain, uri) = do
                   , _publicNodeHead_headBlock = b
                   , _publicNodeHead_updated = now
                   }
-              notify . flip Notify_PublicNodeHead (Just pnh) =<< insert' pnh
+              notify NotifyTag_PublicNodeHead . (, Just pnh) =<< insert' pnh
             Just eid -> do
               updateId eid
                 [ PublicNodeHead_headBlockField =. b
                 , PublicNodeHead_updatedField =. now
                 ]
-              notify . Notify_PublicNodeHead eid =<< getId eid
+              notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid
 
 {- Send a 'bad branch' alert if either:
  - 1) last common ancestor is at least 3 levels old (on either branch)

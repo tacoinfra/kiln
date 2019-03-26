@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -27,6 +28,7 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import Data.Typeable
+import GHC.Generics
 import GHC.Word
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
@@ -256,9 +258,9 @@ data OperationContentsProposals = OperationContentsProposals
 -- | "ballot": { "type": "string", "enum": [ "nay", "yay", "pass" ] },
 data Ballot
    = Ballot_Nay
-   | Ballot_Yay
+   | Ballot_Yea
    | Ballot_Pass
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Read, Show, Enum, Bounded, Typeable, Generic)
 
 -- | "kind": { "type": "string", "enum": [ "ballot" ] },
 data OperationContentsBallot = OperationContentsBallot
@@ -589,5 +591,3 @@ instance HasBalanceUpdates Operation where
       mgOpFees :: forall a. Traversal' (ManagerOperationMetadata a) BalanceUpdate
       mgOpFees = managerOperationMetadata_balanceUpdates . traverse
 -- src/proto_002_PsYLVpVv/lib_protocol/src/helpers_services.ml:358:             (dft "proof_of_work_nonce"
-
-

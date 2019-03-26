@@ -10,6 +10,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Backend where
 
 import Control.Concurrent.STM (atomically, readTQueue)
@@ -17,8 +19,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, runStderrLoggingT)
-import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
@@ -42,7 +43,8 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (RunDb, runDb)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
@@ -50,6 +52,7 @@ import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLo
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
+import System.Directory (doesDirectoryExist, renameDirectory)
 import System.Environment (getArgs, getProgName, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
@@ -65,7 +68,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -83,6 +86,7 @@ import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
+import Backend.Workers.TezosClient
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
@@ -143,6 +147,10 @@ backendImpl cfg serve = do
   !(kilnNodePort :: Port) <- fmap (fromMaybe Config.defaultKilnNodePort) $ liftA2 (<|>)
     (pure $ _opts_kilnNodePort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodePort)
+
+  !(kilnDataDir :: FilePath) <- fmap (fromMaybe Config.defaultKilnDataDir) $ liftA2 (<|>)
+    (pure $ _opts_kilnDataDir cfg)
+    (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
   let
     maybeNamedChain = either Just (const Nothing) chain
@@ -288,13 +296,27 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort
+        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
           }
+
+      -- migrate old kiln storage
+      runLoggingEnv logger $ do
+        let oldDir = "./.tezos-node"
+            newDir = nodeDataDir appConfig
+        mNode <- runDb (Identity db) $ selectSingle $ NodeInternal_dataField ~> DeletableRow_deletedSelector ==. False
+        for_ mNode $ \_ni -> liftIO (doesDirectoryExist newDir) >>= \case
+          True -> $(logInfo) $ "Node data already exists at " <> T.pack newDir
+          False -> do
+            liftIO (doesDirectoryExist oldDir) >>= \case
+              False -> $(logInfo) $ "No node data to migrate..."
+              True -> do
+                $(logWarn) $ "Migrating node data from " <> T.pack oldDir <> " to " <> T.pack newDir
+                liftIO $ renameDirectory oldDir newDir
 
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
@@ -320,8 +342,10 @@ backendImpl cfg serve = do
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChain $ \namedChain ->
+      for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< internalNodeWorker appConfig logger db namedChain
+        (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess appConfig logger db namedChain
+        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
@@ -343,7 +367,7 @@ clearMailQueueWithDynamicEmailEnv
   :: forall m f.
   ( RunDb f
   , MonadIO m
-  , MonadBaseControl IO m
+  , MonadBaseNoPureAborts IO m
   , MonadLogger m
   )
   => f (Pool Postgresql)
@@ -395,6 +419,7 @@ data Opts = Opts
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   , _opts_kilnNodePort :: !(Maybe Port)
+  , _opts_kilnDataDir :: !(Maybe FilePath)
   }
 makeLenses ''Opts
 
@@ -414,13 +439,14 @@ instance Semigroup Opts where
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
+    , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -468,6 +494,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnNodePort "PORT" (set opts_kilnNodePort . Just . Config.parsePortUnsafe)
       ("The port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodePort <> ".")
+
+  , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
+      ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

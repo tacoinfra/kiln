@@ -14,7 +14,7 @@ module Tezos.History where
 
 import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTVar)
 import Control.DeepSeq (NFData)
-import Control.Lens (Lens, ifor_, view, (%=), (^.))
+import Control.Lens (Lens, view, (^.))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError)
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -30,7 +30,6 @@ import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
 import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
-import qualified Data.Set as Set
 import qualified Data.Time as Time
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -39,7 +38,6 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Network
-import Tezos.NodeRPC.Sources
 import Tezos.Types
 
 data CachedHistory a = CachedHistory
@@ -169,8 +167,7 @@ accumHistory chainId f blk = do
 
       pure $ do
         modify $ accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
-        let newBranchLength = length blks
-        ifor_ (Seq.zip blks preds) $ \i (blkHash', predhash') -> do
+        for_ (Seq.zip blks preds) $ \(blkHash', predhash') -> do
           modify $ accumHistoryImpl blkHash' predhash' mempty
 
   liftIO $ atomically $ do
@@ -213,5 +210,5 @@ scanBranch ::
 scanBranch branch start stop k = do
   let headLvl = _blockHeader_level $ _block_header branch
   for_ [start .. stop] $ \n -> do
-    blk <- nodeRPC $ rBlockPred (_block_chainId branch) (_block_hash branch) (headLvl - n)
+    blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
     void $ k blk

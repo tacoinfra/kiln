@@ -88,15 +88,30 @@ tez t = let (w, p, tz) = tez' t
          in w <> p <> tz
 
 tez' :: Tez -> (Text, Text, Text)
-tez' (Tez n) = (T.pack wholes', parts', "ꜩ")
+tez' = tez'' False
+
+tezPadded :: Tez -> (Text, Text, Text)
+tezPadded = tez'' True
+
+tez'' :: Bool -> Tez -> (Text, Text, Text)
+tez'' pad (Tez n) = (T.pack wholes', padded, "ꜩ")
   where (wholes :: Integer, parts) = n `divMod'` 1
         wholes' = reverse $ f $ reverse $ show wholes
         parts' = T.dropWhileEnd (== '.')
                  $ T.dropAround (== '0')
                  $ tshow parts
+        padded = T.pack . (T.unpack parts' &) $ if not pad then id else \case
+          [] -> ".00"
+          ['.', a] -> ['.', a, '0']
+          as -> as
         f = \case
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
           as -> as
+
+fancyTez :: DomBuilder t m => Tez -> m ()
+fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
+  text $ w <> p
+  elClass "span" "tez" $ text tz
 
 standardTimeFormat :: String
 standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
@@ -386,13 +401,17 @@ formIsLoading comp state submitted = do
 basicModal :: DomBuilder t m => m a -> m a
 basicModal = elAttr "div" ("class"=:"modal-box") . divClass "content"
 
-cancelableModal :: DomBuilder t m => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModal = cancelableModalWithClasses []
+cancelableModal :: (DomBuilder t m, PostBuild t m, MonadFix m) => (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
+cancelableModal f = cancelableModalWithClasses (fmap (pure [],) . f)
 
-cancelableModalWithClasses :: DomBuilder t m => [Text] -> (Event t () -> m (Event t ())) -> Event t () -> m (Event t ())
-cancelableModalWithClasses classes f close = elAttr "div" ("class"=:T.unwords ("modal-box":classes)) $ do
-  (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon grey" blank
-  divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+cancelableModalWithClasses
+  :: (DomBuilder t m, PostBuild t m, MonadFix m)
+  => (Event t () -> m (Dynamic t [Text], Event t ())) -> Event t () -> m (Event t ())
+cancelableModalWithClasses f close = mdo
+  (classes, e) <- elDynAttr "div" (ffor classes $ \cs -> "class"=:T.unwords ("modal-box":cs)) $ do
+    (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+    divClass "content" (f $ leftmost [domEvent Click closeEl, close])
+  pure e
 
 reminderModal :: MonadRhyoliteFrontendWidget app t m
                   => Text
@@ -420,14 +439,14 @@ confirmationModal :: MonadRhyoliteFrontendWidget app t m
                   -> (Event t () -> Event t (PublicRequest app ()))
                   -> Event t ()
                   -> m (Event t ())
-confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses ["confirmation"] $ \close -> do
+confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses $ \close -> do
   divClass "ui header" $ do
     when isDangerous $ icon "icon-warning big red"
     text title
   for_ msgs $ el "p" . text
   confirm <- divClass "buttons" $ uiButton "primary" btn
   response <- requestingIdentity $ public <$> mkReq confirm
-  pure $ leftmost [response, close]
+  pure (pure ["confirmation"], leftmost [response, close])
 
 data MenuState = MenuState_Closed | MenuState_Opened | MenuState_PendingClose
   deriving (Eq, Show, Ord)

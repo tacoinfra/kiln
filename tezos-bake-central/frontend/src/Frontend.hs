@@ -1,13 +1,17 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,7 +21,7 @@
 
 module Frontend where
 
-import Control.Lens ((<>~), imap)
+import Control.Lens ((<>~), imap, to)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
@@ -52,8 +56,6 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
-import Rhyolite.WebSocket (WebSocketUrl (..))
-import Safe (minimumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -69,6 +71,7 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
+import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
 import Common.Alerts (networkUpdateDescription)
 import Common.Api
@@ -81,6 +84,7 @@ import Common.Route (AppRoute(..))
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
+import Frontend.Ledger
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 import Frontend.Settings
@@ -98,14 +102,13 @@ type RouteConstraints t r m =
 frontend :: Frontend (R AppRoute)
 frontend = Frontend
   { _frontend_head = headTag
-  , _frontend_body = prerender blank frontendBody
+  , _frontend_body = prerender_ blank frontendBody
   }
 
 frontendBody
   :: forall m t x.
     ( MonadWidget t m
     , HasJS x m
-    , MonadFix (Performable m)
     , PrimMonad m
     , RouteConstraints t AppRoute m
     )
@@ -119,6 +122,7 @@ frontendBody = void $ do
 
   let
     routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
+    host = Uri.unRText . Uri.authHost <$> routeAuthority
     renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
     routeAuthority = Uri.uriAuthority route ^? _Right
     wsPort = (Uri.authPort =<< routeAuthority)
@@ -128,14 +132,14 @@ frontendBody = void $ do
         _ -> 80)
     listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
 
-    wsUrl = WebSocketUrl
-      <$> (T.replace "http" "ws" <$> routeScheme)
-      <*> (Uri.unRText . Uri.authHost <$> routeAuthority)
-      <*> pure (fromIntegral $ fromMaybe 80 wsPort)
-      <*> pure (renderPathPieces [listenPath])
-
+    wsUrl = ffor2 routeScheme host $ \s h -> mconcat
+      [ T.replace "http" "ws" s
+      , "://", h
+      , ":", tshow (fromMaybe 80 wsPort)
+      , "/", renderPathPieces [listenPath]
+      ]
   rec
-    (socketState, _) <- runRhyoliteWidget (Left $ fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
       withFrontendContext $
         withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
@@ -189,9 +193,11 @@ appMain
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
+    , MonadJSM (Performable (ModalM m))
+    , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
     )
   => m ()
@@ -234,7 +240,9 @@ appName = "Kiln"
 appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , MonadJSM (ModalM m)
+     , MonadJSM (Performable (ModalM m))
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -278,7 +286,7 @@ appSideHeader =
             & SemUi.menuConfig_fluid SemUi.|~ True
             )
           $ do
-              routeSelector (AppRoute_Nodes :/ ()) SemUi.menuItem' def $ do
+              routeSelector (AppRoute_Index :/ ()) SemUi.menuItem' def $ do
                 icon "icon-tiles"
                 text "Dashboard"
         SemUi.divider def
@@ -286,7 +294,9 @@ appSideHeader =
 appGutter
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
-     , HasModal t m, HasTimer t r, MonadReader r m
+     , MonadJSM (ModalM m)
+     , MonadJSM (Performable (ModalM m))
+     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
   => m ()
 appGutter =
@@ -366,9 +376,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
-      el "p" $ divClass "tooltip-title" $ text "Disconnected from the block chain."
+      el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
-        el "p" $ text "Kiln cannot gather data if no nodes are synced with the blockchain. Data shown is stale."
+        el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" $ ensureHealthyNodes
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
@@ -394,6 +404,7 @@ headerBell = do
 appContentArea
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
@@ -417,7 +428,7 @@ nodesTabOrWelcome
     )
   => m ()
 nodesTabOrWelcome = do
-  _clientAddresses <- watchClientAddresses
+  -- _clientAddresses <- watchClientAddresses
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
@@ -462,7 +473,8 @@ networkUpdateAlert elua = do
     Nothing
     (do el "p" $ text $ bodyFirstPara
         el "p" $ do
-          text "Get the new software here  🡒  "
+          text "Get the new software here "
+          elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
     (Just $ LogTag_NetworkUpdate :=> pure elua)
@@ -475,14 +487,10 @@ welcomeScreen = do
       )
     $ do
         text $ "Welcome to " <> appName <> "."
-  divClass "" $ do
-    text $ appName <> " helps you participate in Tezos by running a node and monitoring"
-    el "br" blank
-    text "Tezos nodes and bakers, with many more features to come."
-    el "br" blank
-    text "\160"
-    el "br" blank
-    text "Click \"Add Node\" on the left to get started."
+  divClass "welcome-description" $ do
+    el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
+    el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+    el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
 
 summaryTab
   :: forall r m t.
@@ -618,7 +626,10 @@ liveErrorsWidget = void $ do
     synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
       \bakers now allNodesDownTime ->
         fromMaybe mempty $ do
-          keys1 <- NEL.nonEmpty $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          let getBaker (k, e) = case e of
+                Left v -> Just (k, v)
+                Right _ -> Nothing
+          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -742,6 +753,9 @@ liveErrorsWidget = void $ do
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
               pkh
+            BakerLogTag_InsufficientFunds -> renderBakerError
+              (bakerInsufficientFundsDescriptions log)
+              pkh
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
@@ -790,7 +804,7 @@ sidebarList :: forall t m k.
   , HasModal t m
   , Ord k
   )
-  => Text -> Dynamic t (MonoidalMap k ((Text, Maybe Text), MonitoredStatus, Bool)) -> (Event t () -> ModalM m (Event t ())) -> m ()
+  => Text -> Dynamic t (MonoidalMap k ((Text, Maybe Text), MonitoredStatus, Bool)) -> (Event t () -> ModalM m (Dynamic t [Text], Event t ())) -> m ()
 sidebarList name nodes' modal = do
   let nodes :: Dynamic t (Map.Map k ((Text, Maybe Text), MonitoredStatus, Bool)) = coerceDynamic nodes'
   divClass "ui sub header" $ text (pluralOf name)
@@ -817,7 +831,7 @@ sidebarList name nodes' modal = do
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name) ("Configure Monitored " <> pluralOf name)
-    tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses ["add-" <> T.toLower name] modal
+    tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses modal
 
 bakerStatus :: Either CollectiveNodesFailure BakerSummary -> MonitoredStatus
 bakerStatus = \case
@@ -826,13 +840,16 @@ bakerStatus = \case
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
-    | _bakerSummary_nextRightFetchRemaining bakerSummary > 0 -> MonitoredStatus_Unknown
+    | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
   ( MonadReader r m, HasTimer t r
+  , MonadReader r (ModalM m)
   , MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  , MonadJSM (ModalM m)
+  , MonadJSM (Performable (ModalM m))
   , HasModal t m
   )
   => m ()
@@ -844,32 +861,235 @@ bakersList = do
         $ \collectiveNodeStatus -> imap $ \pkh b ->
           ( bakerSummaryIdentification (pkh, b)
           , bakerStatus $ b <$ collectiveNodeStatus
-          , False
+          , isRight $ _bakerSummary_baker b -- Is this an internal baker?
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
-addBakerModal close = mdo
-  el "h3" $ text "Add Baker"
-  divClass "basic small segment" $ text
-    "Enter a Baker address to begin monitoring."
-  addE <- formWithReset "Add Baker" "Begin monitoring the baker at the address entered." blank added $ do
-    zipFields
-      (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
-      (formItem $ aliasField "My Baker")
-  added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
-  pure $ leftmost [added, close]
+addBakerModal :: forall t m r.
+  ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
+  , MonadReader r m, HasTimer t r
+  )
+  => Event t () -> m (Dynamic t [Text], Event t ())
+addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+  where
+    splash = Workflow $ do
+      divClass "ui header" $ text "Add Bakers"
+      divClass "ui grid stackable divided" $ do
+        start <- startBaking
+        close' <- connectBaker
+        ebn :: Behavior t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
+          <- fmap current . watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+        node <- current <$> watchInternalNode
+        let f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f (Just (nid, pd), es) ()
+              -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
+              | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
+              | otherwise = Workflow $ do
+                result <- ledgerSetupSteps
+                let (err, done) = fanEither result
+                pure ((["ledger-setup-steps"], close <> done), handleClientErrorWorkflow splash <$> err)
+            afterDisclaimer = attachWith f (liftA2 (,) node ebn)
+        pure (([], close'), disclaimer afterDisclaimer <$ start)
 
-nodeStatus :: Maybe NodeInternalState -> Int -> MonitoredStatus
+    startBaking = divClass "start-baking column" $ do
+      elClass "h5" "ui header" $ text "Start Baking"
+      divClass "explanation" $ do
+        text "Bake and endorse on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
+        hrefLink "https://www.ledger.com/products/ledger-nano-s" $ text "Ledger Device" -- TODO is the link correct?
+        text ". Kiln only supports running a single baker."
+      baker <- maybeDyn =<< watchInternalBaker
+      switchHold never <=< dyn $ ffor baker $ \case
+        Nothing -> uiButton "primary fluid" "Start Baking"
+        Just bid -> do
+          kilnLogo
+          dynText $ ffor (_bakerInternalData_running <$> bid) $ \case
+            True -> "A Kiln baker is running."
+            False -> "A Kiln baker is configured, but is stopped."
+          pure never
+
+    connectBaker = divClass "connect-baker column" $ mdo
+      elClass "h5" "ui header" $ text "Monitor via Address"
+      divClass "explanation" $ text "Monitor a local or remote baker via public key hash (PKH)."
+      addE <- formWithReset "Add Baker" "Monitor a local or remote baker via public key hash (PKH)." blank added $ do
+        zipFields
+          (formItem' "required" $ pkhField "Baker Wallet Address" "tz1bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5")
+          (formItem $ aliasField "My Baker")
+      added <- requestingIdentity $ fmap (\(addr,alias) -> public (PublicRequest_AddBaker addr alias)) addE
+      pure added
+
+    launchNode = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln needs to launch a Tezos node which must be fully synced with the blockchain before baking."
+      divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
+      launch <- uiButton "primary" "Launch Node"
+      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      pure ((["launch-node"], close'), never)
+
+    disclaimer next = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
+      divClass "explanation" $ do
+        el "p" $ text "Obsidian Systems LLC has taken great care to create a baking product which is robust and effective. However, Obsidian Systems cannot make any guarantees in regards to baking success."
+
+        el "p" $ text "To the maximum extent permitted by applicable law, we are not liable to any extent for any loss, damage, liability, expense or claim you suffer as a result of, but not limited to:"
+        el "ul" $ traverse_ (el "li" . text)
+          [ "missed rewards due to missed baking or endorsement opportunities"
+          , "missed rewards due to failure to reveal a nonce"
+          , "loss of funds due to double baking or double endorsing"
+          , "blockchain reorganizations"
+          , "general Tezos network issues"
+          , "any other use of this software"
+          ]
+      consent <- fmap SemUi._checkbox_value $ SemUi.checkbox (text "I understand and agree.") def
+      rec
+        _ <- runWithReplace blank $ ffor hasError $ \() -> divClass "ui error message" $ text "You must accept to continue."
+        attempt <- uiButton "primary" "Continue"
+        let (hasError, continue) = fanEither $ attachWith (\c () -> if c then Right () else Left ()) (current consent) attempt
+      pure ((["disclaimer"], never), next continue)
+
+respondToPrompt :: DomBuilder t m => m () -> m ()
+respondToPrompt prompt = do
+  elClass "h5" "ui header" $ do
+    divClass "ui active tiny inline blue loader" blank
+    text "Respond to the prompt on your Ledger Device..."
+  divClass "centered explanation" $ text "Your Ledger Device should show the following prompt:"
+  elClass "h6" "ui header prompt-text" prompt
+
+authorizeLedgerToBakeModal
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
+authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+  where
+    ledger = _secretKey_ledgerIdentifier sk
+    auth = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ text "Authorize this Ledger Device to bake for the following account?"
+      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      authorize <- uiButton "primary" "Authorize"
+      pure ((["ledger-prompt"], never), waiting <$ authorize)
+    waiting = Workflow $ do
+      ledgerCheckImg ledger
+      respondToPrompt $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      pb <- getPostBuild
+      _ <- requestingIdentity $ public (PublicRequest_SetupLedgerToBake sk) <$ pb
+      promptStep <- watchPrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First setupStep) <- _setupState_setup ss -> case setupStep of
+              SetupLedgerToBakeStep_Done -> Just authorized
+              SetupLedgerToBakeStep_Disconnected -> Just $ handleClientErrorWorkflow waiting ClientError_LedgerDisconnected
+              SetupLedgerToBakeStep_Declined -> Just $ handleClientErrorWorkflow waiting ClientError_RequestDeclinedByLedger
+              SetupLedgerToBakeStep_Failed -> Just $ handleClientErrorWorkflow waiting $ ClientError_Other "unknown"
+              SetupLedgerToBakeStep_Prompting -> Nothing
+              SetupLedgerToBakeStep_OutdatedVersion _v -> Just $ handleClientErrorWorkflow waiting ClientError_LedgerDisconnected
+            _ -> Nothing
+      pure ((["ledger-prompt"], never), next)
+    authorized = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ do
+        icon "blue icon-check"
+        text "Ledger Device authorized."
+      elClass "h6" "ui header" $ text $ "This Ledger Device is now authorized to bake for the address: " <> toPublicKeyHashText pkh
+      continue <- uiButton "primary" "Continue"
+      pure ((["ledger-prompt"], continue), never)
+
+setHighWaterMark
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t RawLevel -> SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
+setHighWaterMark latestBlockLevelDyn secretKey pkh close = ffor (workflow set) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
+  where
+    ledger = _secretKey_ledgerIdentifier secretKey
+    set = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ text "Set the high-water mark for this account on the connected Ledger Device?"
+      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      el "p" $ do
+        text "The high-water mark (latest recorded block level) will"
+        el "br" blank
+        text "be set to "
+        display $ unRawLevel <$> latestBlockLevelDyn
+        text " for this account."
+      confirm <- uiButton "primary" "Confirm"
+      pure ((["set-high-water-mark"], never), attachWith (\bl () -> waiting bl) (current latestBlockLevelDyn) confirm)
+    waiting latestBlockLevel = Workflow $ do
+      ledgerCheckImg ledger
+      respondToPrompt $ do
+        text "Reset HWM"
+        el "br" blank
+        text $ tshow $ unRawLevel latestBlockLevel
+      pb <- getPostBuild
+      _ <- requestingIdentity $ public (PublicRequest_SetHWM secretKey latestBlockLevel) <$ pb
+      promptStep <- watchPrompting secretKey
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First hwmStep) <- _setupState_setHWM ss -> case hwmStep of
+              SetHWMStep_Done -> Just $ done latestBlockLevel
+              SetHWMStep_Disconnected -> Just $ handleClientErrorWorkflow (waiting latestBlockLevel) ClientError_LedgerDisconnected
+              SetHWMStep_Declined -> Just $ handleClientErrorWorkflow (waiting latestBlockLevel) ClientError_RequestDeclinedByLedger
+              SetHWMStep_Failed e -> Just $ handleClientErrorWorkflow (waiting latestBlockLevel) $ ClientError_Other e
+              SetHWMStep_Prompting -> Nothing
+            _ -> Nothing
+      pure ((["set-high-water-mark-prompt"], never), next)
+    done latestBlockLevel = Workflow $ do
+      ledgerCheckImg ledger
+      elClass "h5" "ui header" $ do
+        icon "blue icon-check"
+        text "High-water mark has been set."
+      elClass "h6" "ui header prompt-text" $ do
+        text "The high-water mark was set to: "
+        el "br" blank
+        text $ tshow $ unRawLevel latestBlockLevel
+      continue <- uiButton "primary" "Continue"
+      pure ((["set-high-water-mark-set"], continue), never)
+
+handleClientErrorWorkflow
+  :: DomBuilder t m
+  => Workflow t m ([Text], Event t a) -> ClientError -> Workflow t m ([Text], Event t a)
+handleClientErrorWorkflow recover = \case
+  ClientError_RequestDeclinedByLedger -> requestDeclinedByLedger recover
+  ClientError_LedgerDisconnected -> ledgerDisconnected recover
+  ClientError_NodeNotReady -> nodeNotReady recover
+  _ -> Workflow $ do
+    elClass "h5" "ui center aligned header" $ text "Something went wrong"
+    retry <- uiButton "primary" "Retry"
+    pure ((["ledger-disconnected"], never), recover <$ retry)
+  where
+    requestDeclinedByLedger tryAgain = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ do
+        icon "red icon-x"
+        text "The request was declined by the Ledger Device."
+      divClass "explanation" $ text $ "If you did not intend to reject the prompt on the Ledger Device you may click retry."
+      retry <- uiButton "primary" "Retry"
+      pure ((["ledger-declined"], never), tryAgain <$ retry)
+
+    ledgerDisconnected tryAgain = Workflow $ do
+      elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+      elClass "h5" "ui header" $ text "Ledger Device was disconnected."
+      restart <- uiButton "primary" "Restart"
+      pure ((["ledger-disconnected"], never), tryAgain <$ restart) -- TODO restart should go back to start?
+
+    nodeNotReady tryAgain = Workflow $ do
+      elClass "h5" "ui header" $ text "Kiln needs to fully sync the node it is running with the blockchain before baking."
+      divClass "explanation" $ text "Try again after the node has fully synced."
+      retry <- uiButton "primary" "Dismiss"
+      pure ((["launch-node"], never), tryAgain <$ retry)
+
+ledgerCheckImg :: DomBuilder t m => LedgerIdentifier -> m ()
+ledgerCheckImg ledger = do
+  divClass "ledger" $ do
+    elAttr "img" ("src" =: static @"images/ledger.svg") blank
+    icon "blue icon-check"
+  divClass "ledger-name" $ text $ unLedgerIdentifier ledger
+
+nodeStatus :: Maybe ProcessState -> Int -> MonitoredStatus
 nodeStatus mInternalState alertCount = min fromStatus fromAlert
   where
     fromStatus = case mInternalState of
       Just internalState -> case internalState of
-        NodeInternalState_Stopped -> MonitoredStatus_Unknown
-        NodeInternalState_Initializing -> MonitoredStatus_Unknown
-        NodeInternalState_Starting -> MonitoredStatus_Unknown
-        NodeInternalState_Running -> MonitoredStatus_Healthy
-        NodeInternalState_Failed -> MonitoredStatus_Unhealthy
+        ProcessState_Stopped -> MonitoredStatus_Unknown
+        ProcessState_Initializing -> MonitoredStatus_Unknown
+        ProcessState_Starting -> MonitoredStatus_Unknown
+        ProcessState_Running -> MonitoredStatus_Healthy
+        ProcessState_Failed -> MonitoredStatus_Unhealthy
       Nothing -> MonitoredStatus_Healthy
     fromAlert = case alertCount of
       0 -> MonitoredStatus_Healthy
@@ -893,11 +1113,12 @@ nodesList = do
       )
   sidebarList "Node" nodes addNodeModal
 
-addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Event t ())
+addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Dynamic t [Text], Event t ())
 addNodeModal close = do
   divClass "ui header" $ text "Add Nodes"
-  divClass "ui grid stackable divided" $ do
+  e <- divClass "ui grid stackable divided" $ do
     addInternal *> addExternal <* addPublic
+  pure (pure ["add-node"], e)
 
   where
     section header explanation = do
@@ -933,8 +1154,8 @@ addNodeModal close = do
              text "Node added!"
 
        section
-         "Connect via address"
-         "Via RPC monitor nodes running locally or remotely."
+         "Monitor via Address"
+         "Monitor nodes running locally or remotely via RPC."
 
        addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
          zipFields
@@ -1080,30 +1301,38 @@ nodesTab =
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
-            state <- holdUniqDyn $ _nodeInternalData_state <$> nodeData
+            state <- holdUniqDyn $ _processData_state <$> nodeData
             let
                 internalNodeMenu :: m ()
                 internalNodeMenu = do
                   let
-                    stopModal = warningModal
-                      "Stop Node?"
-                      [ "This node is run by Kiln. Stopping it may affect any bakers you are running which depend on it." ]
+                    preface = "This node is run by Kiln. "
+                    notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
+                    bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
+                      <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
+                    body = bool notBakingBody bakingBody
+                    epilogue = "All data for this node will be deleted from Kiln."
+                    stopModal running = warningModal "Stop Node?"
+                      [preface, body running "Stopping"]
                       "Stop Node"
-                    removeModal = warningModal
-                      "Remove Node?"
-                      [ "This node is run by Kiln. Removing it may affect any bakers you are running which depend on it."
-                      , "All data for this node will be deleted from Kiln."
-                      ]
-                      "Stop and Remove Node"
 
-                  running :: Dynamic t Bool <- holdUniqDyn $ _nodeInternalData_running <$> nodeData
-                  dyn_ $ ffor running $ \case
-                    True -> tileMenuEntryModal "Stop Node" $ stopModal (PublicRequest_UpdateInternalNode False <$)
-                    False -> do
+                  runningDyn :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
+                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                    <$> watchInternalBaker
+                  dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
+                    (True, bRunning) ->
+                      tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    _ -> do
                       start <- tileMenuEntry "Start Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalNode True) <$ start
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
-                  tileMenuEntryModal "Remove Node" $ removeModal $ (PublicRequest_RemoveNode (Right ()) <$)
+                  let
+                    removeInternalNodeModal running = warningModal "Remove Node?"
+                      [preface, body running "Removing", epilogue]
+                      "Stop and Remove Node"
+                  dyn_ $ ffor bakerRunning $ \running ->
+                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                      (PublicRequest_RemoveNode (Right ()) <$)
 
                 title :: m ()
                 title = text "Kiln Node"
@@ -1113,22 +1342,22 @@ nodesTab =
                   divClass "internal-node-subtitle" $ do
                     kilnLogo
                     divClass "ui sub header" $ dynText $ ffor state $ \case
-                      NodeInternalState_Stopped -> "Stopped"
-                      NodeInternalState_Initializing -> "Initializing"
-                      NodeInternalState_Starting -> "Starting"
-                      NodeInternalState_Running -> "Running"
-                      NodeInternalState_Failed -> "Failed"
+                      ProcessState_Stopped -> "Stopped"
+                      ProcessState_Initializing -> "Initializing"
+                      ProcessState_Starting -> "Starting"
+                      ProcessState_Running -> "Running"
+                      ProcessState_Failed -> "Failed"
 
                 workingTile :: m ()
                 workingTile = do
                   nodeDetails <- watchNodeDetails nodeId
-                  standardNodeTile @(NodeInternalData, Maybe NodeDetailsData)
+                  standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                     title
                     subtitle
                     internalNodeMenu
                     ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
-                    (Just $ _nodeInternalData_state . fst)
+                    (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                     (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
                     ((,) <$> nodeData <*> nodeDetails)
@@ -1147,7 +1376,7 @@ nodesTab =
                     badge :: m ()
                     badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
-            isInitializing <- holdUniqDyn $ (== NodeInternalState_Initializing) <$> state
+            isInitializing <- holdUniqDyn $ (== ProcessState_Initializing) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
@@ -1195,7 +1424,7 @@ nodesTab =
 
     tileBadgeImpliedByErrors
       :: Maybe (Dynamic t [a])
-      -> Maybe (Dynamic t NodeInternalState)
+      -> Maybe (Dynamic t ProcessState)
       -> m ()
     tileBadgeImpliedByErrors mErrors mInternalState = do
       let color = fmap statusColor $ nodeStatus
@@ -1259,7 +1488,7 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
-      -> Maybe (a -> NodeInternalState) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
@@ -1346,6 +1575,7 @@ bakersTab =
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
+                  BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
 
             let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
             titleUniq <- holdUniqDyn title
@@ -1354,13 +1584,13 @@ bakersTab =
 
             tile
               (dynText titleUniq)
+              pkh
               subtitleUniq
               (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
               -- if you have both a bake and endorse for the same level, you
               -- must *first* bake the block at that level, then you may
               -- immediately endorse that block.  the times are the same,
               -- baking happens first.
-              (minimumByMay (on compare snd <> on compare fst) . Map.toList . _bakerSummary_nextRight)
               (Just errorMessages)
               vDyn
               details
@@ -1402,6 +1632,7 @@ bakersTab =
         BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
         BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
         BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
+        BakerLogTag_InsufficientFunds -> renderBakerError (bakerInsufficientFundsDescriptions log) pkh
 
       where
         renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
@@ -1422,20 +1653,44 @@ bakersTab =
 
     tile
       :: m () -- ^ Title
+      -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
-      -> (BakerSummary -> Maybe (RightKind, RawLevel)) -- ^ (Optional) Function to get the next event of the baker
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t (Either CollectiveNodesFailure ())
       -> m ()
-    tile title subtitle mkRemoveReq getNextEvent' errors' bakerDyn details' dCollectiveNodesStatus = do
+    tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
-          remove <- fmap (domEvent Click . fst) $ SemUi.listItem' def $ text "Remove Baker"
-          tellModal $ remove $> removeItemModal "baker" mkRemoveReq
+          let
+            removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
+          dyn $ ffor bakerDyn $ \bs -> case _bakerSummary_baker bs of
+            Left _ -> do -- not a kiln baker
+              removeEntry $ removeItemModal "baker"
+            Right bid -> do
+              let sk = _bakerInternalData_secretKey bid
+              tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
+              latestHead <- maybeDyn =<< watchLatestHead
+              dyn_ $ ffor latestHead $ \case
+                Nothing -> pure () -- no head to set high water mark
+                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
+              if _bakerInternalData_running bid
+              then do
+                let stopModal = warningModal "Stop Baker?"
+                      ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]
+                      "Stop Baker"
+                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
+              else do
+                start <- tileMenuEntry "Start Baker"
+                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
+              let
+                removeInternalBakerModal = warningModal "Remove Baker?"
+                  ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
+                  "Remove Baker"
+              removeEntry removeInternalBakerModal
 
         divClass "title" $ do
           for_ errors' $ \errors -> do
@@ -1448,61 +1703,59 @@ bakersTab =
         for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
 
-        let dWantToGatherData = (/= 0) . _bakerSummary_nextRightFetchRemaining <$> bakerDyn
-        isGathering <- holdUniqDyn $ (&&) <$> dWantToGatherData <*> connected
-        dyn_ $ ffor isGathering $ \case
-          True -> divClass "ui active inline loader mini blue" blank *> text "Gathering baker data."
-          False -> blank
+        let
+          nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
+            BakerNextRight_GatheringData -> Left $ text "-"
+            BakerNextRight_WaitingForRights -> Left $ text "Waiting to receive rights"
+            BakerNextRight_KnownNoRights -> Left $ text "None"
+            BakerNextRight_KnownRights (r,l) -> Right (r,l)
+          wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
+        isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
 
-        (details'' :: Dynamic t (Maybe (Dynamic t BakerDetails))) <- maybeDyn details'
-        dyn_ $ ffor details'' $ \case
-          Nothing -> blank
-          Just details -> elClass "table" "baker-balance" $ do
-            let dmDelegateInfo = unJson <$$> (_bakerDetails_delegateInfo <$> details)
-            el "tr" $ do
-              el "td" (text "Available Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
-                text p
-                elClass "span" "tez" $ text tz
-
-            el "tr" $ do
-              el "td" (text "Staking Balance")
-              elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text w
-              elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
-                let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
-                text p
-                elClass "span" "tez" $ text tz
-
-            --el "div" $ do
-            --  el "dt" (text "Bake Success:")
-            --  el "dd" $
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-            --el "div" $ do
-            --  el "dt" (text "Endorsement Success:")
-            --  el "dd" $ do
-            --    withPlaceholder $ ffor details $ fmap (text . (<> "%") . T.pack . ($[]) . showFFloat (Just 0) . (100*)) . (const Nothing)
-
-        nextEventDyn <- maybeDyn $ getNextEvent' <$> bakerDyn
-        dyn_ $ ffor nextEventDyn $ \case
-          Nothing -> blank
-          Just eventDyn -> el "dl" $ do
-            latestHead <- watchLatestHead
-            dparameters <- watchProtoInfo
-            el "div" $ do
-              el "dt" (text "Next")
-              el "dd" $ do
-                (dynText $ eventDyn <&> \case {RightKind_Baking -> "Bake block "; RightKind_Endorsing -> "Endorse block "} . fst)
-                (dynText $ tshow . unRawLevel . snd <$> eventDyn)
+        el "dl" $ do
+          latestHead <- watchLatestHead
+          dparameters <- watchProtoInfo
+          el "div" $ do
+            el "dt" (text "Next")
+            el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
+              Left t -> t
+              Right (r,l) -> do
+                text $ case r of
+                  RightKind_Baking -> "Bake block "
+                  RightKind_Endorsing -> "Endorse block "
+                text $ tshow $ unRawLevel l
+                let eventDyn = constDyn (r, l)
                 etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
+
+        let
+          dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
+        elClass "table" "baker-balance" $ do
+          el "tr" $ do
+            el "td" (text "Available Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
+              text p
+              elClass "span" "tez" $ text tz
+
+          el "tr" $ do
+            el "td" (text "Staking Balance")
+            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text w
+            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+              let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
+              text p
+              elClass "span" "tez" $ text tz
+
+        dyn_ $ ffor isGatheringData $ \case
+          False -> blank
+          True -> divClass "ui active inline loader mini blue" blank
+              *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
@@ -1549,7 +1802,7 @@ removeItemModal :: MonadRhyoliteFrontendWidget app t m
                 -> m (Event t ())
 removeItemModal name = reminderModal
   ("Remove this " <> name <> "?")
-  ("You can always add this " <> name <> " again from the \"Add " <> T.toTitle name <> "\" button.")
+  ("You can always add this " <> name <> " again from the \"Add " <> pluralOf (T.toTitle name) <> "\" button.")
   ("Remove " <> T.toTitle name)
 
 tileMenu :: (DomBuilder t m, TriggerEvent t m, MonadIO (Performable m), PerformEvent t m, PostBuild t m, MonadHold t m, MonadFix m) => m b -> m ()
@@ -1624,21 +1877,21 @@ clientTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r
     )
-  => Id Client -> URI -> m ()
+  => Id BakerDaemon -> URI -> m ()
 clientTab cid addr = do
   clients <- watchClient (pure cid)
   dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
     Nothing -> waitingForResponse
     Just clientInfo -> divClass "ui grid" $ do
       dparameters <- watchProtoInfo
-      let report = unJson (_clientInfo_report clientInfo)
+      let report = unJson (_bakerDaemonInfoData_report clientInfo)
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
       divClass "eight wide column" $ do
         elClass "h3" "ui medium header" $ text $ Uri.render addr
         _ <- divClass "bakers" $ do
           text "ID: "
-          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _clientInfo_config clientInfo)
+          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _bakerDaemonInfoData_config clientInfo)
 
         elClass "p" "counts" $ do
           tooltip "This counts the number of errors that this baker has encountered since it began running." $

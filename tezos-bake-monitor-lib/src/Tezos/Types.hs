@@ -15,9 +15,11 @@ import Tezos.Chain as X
 import Tezos.Contract as X
 import Tezos.Fitness as X
 import Tezos.Json as X (TezosWord64 (..))
+import Tezos.Ledger as X
 import Tezos.Level as X
 import Tezos.Operation as X (Operation)
 import Tezos.PeriodSequence as X
 import Tezos.ProtocolConstants as X
 import Tezos.PublicKeyHash as X
 import Tezos.Tez as X
+import Tezos.Vote as X

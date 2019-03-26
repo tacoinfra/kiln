@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE QuasiQuotes #-}
 
@@ -221,7 +222,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
             maybeNotify :: forall m' . PersistBackend m' => Id BakerRightsCycleProgress -> BakerRightsCycleProgress -> [BakerRight] -> m' ()
             maybeNotify x y z = when (_bakerRightsCycleProgress_progress y `mod` 128 == 0
                                       || _bakerRightsCycleProgress_progress y == bakerMaxBound) $
-              notify (Notify_BakerRightsProgress x y z)
+              notify NotifyTag_BakerRightsProgress (x,y,z)
             {-# INLINE maybeNotify #-}
           sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
           return ()
@@ -247,15 +248,18 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     db = _nodeDataSource_pool nds
 
   res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
-    currentState :: [(Baker, Maybe BakerDetails)] <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
+    (bakerInt, currentState :: [(Baker, Maybe BakerDetails)]) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
+      bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+          (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
         (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
-      return $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
+      return $ (bakerInt,) $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
-      res <- runExceptT $ getWantedAction protoInfo headBlock baker details
+      let isInternal = maybe False (== _baker_publicKeyHash baker) bakerInt
+      res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
       case res of
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
@@ -284,8 +288,8 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> mPrepare (mCommit ())
-getWantedAction protoInfo headBlock baker details = do
+  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
+getWantedAction protoInfo headBlock baker details isInternal = do
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
@@ -373,7 +377,7 @@ getWantedAction protoInfo headBlock baker details = do
                 , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
                 ]
                 ( BakerDetails_publicKeyHashField ==. brid)
-          notify $ mkDefaultNotify newVal
+          notifyDefault newVal
 
         -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
         -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
@@ -386,6 +390,22 @@ getWantedAction protoInfo headBlock baker details = do
               if (1 >= gracePeriod - headCycle)
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
-      pure [deactivationAlerts, updateDetails]
+
+        isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
+
+        insufficientFundAlerts :: mCommit ()
+        insufficientFundAlerts = if isInsufficientFunds
+          then reportInsufficientFunds baker
+          else clearInsufficientFunds baker
+
+        updateBakerDataInternal :: mCommit ()
+        updateBakerDataInternal = update
+          [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~>
+           BakerDaemonInternalData_insufficientFundsSelector =. isInsufficientFunds]
+          CondEmpty
+
+      pure $ [deactivationAlerts, updateDetails] ++ if isInternal
+        then [insufficientFundAlerts, updateBakerDataInternal]
+        else []
 
   return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts

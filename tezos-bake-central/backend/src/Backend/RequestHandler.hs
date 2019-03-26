@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -20,7 +21,6 @@ module Backend.RequestHandler where
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
@@ -33,12 +33,14 @@ import Database.Groundhog.Postgresql
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
-import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap')
-import Rhyolite.Backend.DB.PsqlSimple (In (..), executeQ)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
+import Tezos.Types (Tez)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -47,13 +49,15 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
+import Backend.Workers.TezosClient (addBakerImpl)
+import Backend.Common
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
 import ExtraPrelude
 
 requestHandler
-  :: forall m. (MonadBaseControl IO m, MonadIO m)
+  :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
   => Text
   -> Address
   -> NodeDataSource
@@ -63,34 +67,72 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
+      PublicRequest_PollLedgerDevice -> inDb $ do
+        deleteAll (undefined :: ConnectedLedger)
+        -- Deliberately don't notify here: let the worker pick it up and notify
+        -- as required
+        insert $ ConnectedLedger
+          { _connectedLedger_bakingAppVersion = Nothing
+          , _connectedLedger_ledgerIdentifier = Nothing
+          , _connectedLedger_updated = Nothing
+          }
+      PublicRequest_ShowLedger sk -> inDb $ do
+        existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+        case existing of
+          Just _ -> update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+          Nothing -> insert $ LedgerAccount
+            { _ledgerAccount_secretKey = sk
+            , _ledgerAccount_publicKeyHash = Nothing
+            , _ledgerAccount_balance = Nothing
+            , _ledgerAccount_shouldImport = False
+            , _ledgerAccount_imported = False
+            , _ledgerAccount_shouldSetupToBake = False
+            , _ledgerAccount_shouldRegisterFee = Nothing
+            , _ledgerAccount_shouldSetHWM = Nothing
+            }
+      PublicRequest_ImportSecretKey sk -> inDb $ do
+        update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_SetupLedgerToBake sk -> inDb $ do
+        update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
+        update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_SetHWM sk bl -> inDb $ do
+        update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+
       PublicRequest_AddInternalNode -> inDb $ do
         getInternalNode >>= \case
           Nothing -> do
-            let nodeData = NodeInternalData
-                  { _nodeInternalData_running = True
-                  , _nodeInternalData_state = NodeInternalState_Stopped
-                  , _nodeInternalData_stateUpdated = Nothing
-                  , _nodeInternalData_backend = Nothing
+            let processData = ProcessData
+                  { _processData_running = True
+                  , _processData_state = ProcessState_Stopped
+                  , _processData_updated = Nothing
+                  , _processData_backend = Nothing
                   }
 
+            pdid <- insert' processData
             nid <- insert' Node
             insert $ NodeInternal
               { _nodeInternal_id = nid
               , _nodeInternal_data = DeletableRow
-                { _deletableRow_data = nodeData
+                { _deletableRow_data = pdid
                 , _deletableRow_deleted = False
                 }
               }
-            notify $ Notify_NodeInternal nid $ Just $ nodeData
+            notify NotifyTag_NodeInternal (nid, Just processData)
 
           Just (nid, nodeData) -> do
-            when (_deletableRow_deleted nodeData || (not $ nodeData ^. deletableRow_data . nodeInternalData_running)) $ do
+            processData <- do
+              getId (nodeData ^. deletableRow_data) >>= \case
+                Nothing -> error "NodeInternal ProcessData not found"
+                (Just v) -> pure v
+            when (_deletableRow_deleted nodeData || (not $ _processData_running processData)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
-                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. True
                 ]
-                CondEmpty
-              notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
+                (NodeInternal_idField ==. nid)
+              update [ProcessData_runningField =. True]
+                (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
+              notify NotifyTag_NodeInternal (nid, Just processData)
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
 
@@ -111,7 +153,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     }
                   }
             insert node
-            notify $ Notify_NodeExternal nid $ Just nodeData
+            notify NotifyTag_NodeExternal (nid, Just nodeData)
           Just nids -> for_ nids $ \nid -> do
             update
               [ NodeExternal_dataField ~> DeletableRow_deletedSelector =. False
@@ -121,22 +163,51 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               (NodeExternal_idField ==. nid)
             project (NodeExternal_dataField ~> DeletableRow_dataSelector)
                     (NodeExternal_idField ==. nid)
-              >>= traverse_ (notify . Notify_NodeExternal nid . Just)
+              >>= traverse_ (notify NotifyTag_NodeExternal . (nid,) . Just)
 
-      PublicRequest_UpdateInternalNode shouldRun -> inDb $ do
-        update
-          [ NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. shouldRun ]
-          CondEmpty
+      PublicRequest_UpdateInternalWorker workerType shouldRun -> case workerType of
+        WorkerType_Node
+          | shouldRun -> void $ updateNode True -- Only start node
+          | otherwise -> do -- On stopping node, stop the baker also (if running)
+          updateBaker False (Nothing :: Maybe (Id ProcessData))
+          void $ updateNode False
+        WorkerType_Baker
+          | not shouldRun -> updateBaker False (Nothing :: Maybe (Id ProcessData)) -- Only stop baker
+          | otherwise -> do -- On starting baker, start the node also (if stopped)
+          updateNode True >>= updateBaker True
+        where
+          updateBaker shouldRun' mPid = if shouldRun'
+            then mapM_ waitForNodeToStart mPid
+            else updateBakerDaemon shouldRun'
+            where
+              waitForNodeToStart pid =
+                (inDb $ project1 (ProcessData_stateField)
+                  (AutoKeyField ==. fromId pid)) >>= \case
+                Nothing -> return ()
+                Just ProcessState_Failed -> return ()
+                Just ProcessState_Running -> updateBakerDaemon shouldRun'
+                _ -> threadDelay' 1 *> waitForNodeToStart pid
 
-        (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) ->
-          notify $ Notify_NodeInternal nid $ Just $ _deletableRow_data nodeData
+          updateBakerDaemon shouldRun' = inDb $
+            project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+              >>= traverse_ (\(BakerDaemonInternalData _ _ _ bPid ePid) -> do
+                update [ProcessData_runningField =. shouldRun']
+                  (AutoKeyField `in_` (map fromId [bPid, ePid])))
+
+          updateNode shouldRun' = inDb $
+            (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
+              let pid = _deletableRow_data nodeData
+              update [ProcessData_runningField =. shouldRun'] (AutoKeyField ==. fromId pid)
+              processData <- getId $ _deletableRow_data nodeData
+              notify NotifyTag_NodeInternal (nid, processData)
+              return pid
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do
           nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
           for_ nids $ \nid -> do
             update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
-            notify $ Notify_NodeExternal nid Nothing
+            notify NotifyTag_NodeExternal (nid, Nothing)
             clearErrors nid
         Right () -> do
           getInternalNode >>= \case
@@ -144,11 +215,14 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             Just (nid, _nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
-                , NodeInternal_dataField ~> DeletableRow_dataSelector ~> NodeInternalData_runningSelector =. False
                 ]
                 CondEmpty
+              _ <- [executeQ|
+                UPDATE "ProcessData" p SET running = False
+                  FROM "NodeInternal" n
+                WHERE p.id = n."data#data"|]
               clearErrors nid
-              notify $ Notify_NodeInternal nid Nothing
+              notify NotifyTag_NodeInternal (nid, Nothing)
         where
           clearErrors nid = do
             let
@@ -160,7 +234,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                          -> m' [Id ErrorLog]
               deleteLogs tag field = do
                 ids <- errorLogIdForNodeLogTag tag <$$> select (field ==. nid)
-                for_ ids $ notify . mkDefaultNotify . (Id @t)
+                for_ ids $ notifyDefault . (Id @t)
                 pure ids
 
               onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
@@ -174,44 +248,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             now <- getTime
             update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
-      PublicRequest_AddClient addr alias -> inDb $ do
-        existingIds :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
-        case nonEmpty existingIds of
-          Nothing -> void $ insertNotify Client
-            { _client_address = addr
-            , _client_alias = alias
-            , _client_updated = Nothing
-            , _client_deleted = False
-            }
-          Just cids -> for_ cids $ \cid ->
-            updateIdNotify cid [Client_deletedField =. False, Client_aliasField =. alias]
-
-      PublicRequest_RemoveClient addr -> inDb $ do
-        cids :: [Id Client] <- fmap toId <$> project AutoKeyField (Client_addressField ==. addr)
-        let inCids = In cids
-        _ <- [executeQ| DELETE FROM "Client" c WHERE c.id IN ?inCids |]
-        for_ cids $ notify . mkDefaultNotify
-
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
-      PublicRequest_AddBaker pkh alias -> inDb $ do
-        existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-        let newVal = BakerData
-              { _bakerData_alias = alias
-              }
-        case nonEmpty existingIds of
-          Nothing -> void $ insert $ Baker
-            { _baker_publicKeyHash = pkh
-            , _baker_data = DeletableRow
-              { _deletableRow_data = newVal
-              , _deletableRow_deleted = False
-              }
-            }
-          Just bIds -> for_ bIds $ \bId ->
-            update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
-                   , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
-                   ]
-                   (BakerKey ==. fromId bId)
-        notify $ Notify_Baker (Id pkh) (Just newVal)
+      PublicRequest_AddBaker pkh alias -> inDb $ addBakerImpl pkh alias
 
       PublicRequest_RemoveBaker pkh -> inDb $ do
         bIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
@@ -220,7 +258,16 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [Baker_dataField ~> DeletableRow_deletedSelector =. True]
             (BakerKey ==. fromId bId)
-          notify $ Notify_Baker (Id pkh) Nothing
+          let data' = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+          selectSingle (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh) >>= \m -> for_ m $ \bdi -> do
+            let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
+                bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
+                endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
+            update [ProcessData_runningField =. False] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+          update
+            [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
+            (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
+          notify NotifyTag_Baker (Id pkh, Nothing)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'
@@ -278,14 +325,14 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                   , _publicNodeConfig_enabled = enabled
                   , _publicNodeConfig_updated = now
                   }
-              in notify . flip Notify_PublicNodeConfig pnc =<< insert' pnc
+              in notify NotifyTag_PublicNodeConfig . (,pnc) =<< insert' pnc
             Just cid -> do
               updateId cid
                 [ PublicNodeConfig_sourceField =. publicNode
                 , PublicNodeConfig_enabledField =. enabled
                 , PublicNodeConfig_updatedField =. now
                 ]
-              getId cid >>= traverse_ (notify . Notify_PublicNodeConfig cid)
+              getId cid >>= traverse_ (notify NotifyTag_PublicNodeConfig . (cid,))
 
         -- When turning something "on" immediately update the data source.
         when enabled $
@@ -368,7 +415,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     , _telegramRecipient_deleted = False
                     }
                 rid <- insert' new
-                notify $ Notify_TelegramRecipient rid (Just new)
+                notify NotifyTag_TelegramRecipient (rid, Just new)
                 pure rid
 
               Just rid -> do
@@ -382,7 +429,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                   , TelegramRecipient_createdField =. now
                   , TelegramRecipient_deletedField =. False
                   ]
-                notify . Notify_TelegramRecipient rid =<< getId rid
+                notify NotifyTag_TelegramRecipient . (rid,) =<< getId rid
                 pure rid
 
       PublicRequest_SetAlertNotificationMethodEnabled method enabled -> inDb $ do
@@ -409,7 +456,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseControl IO m') => DbPersist Postgresql m' a -> m' a
+    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => DbPersist Postgresql m' a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
@@ -422,5 +469,5 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
 
-getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow NodeInternalData))
+getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow (Id ProcessData)))
 getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty

@@ -142,6 +142,12 @@ kilnNodePort = "kiln-node-port"
 defaultKilnNodePort :: Port
 defaultKilnNodePort = 8732
 
+kilnDataDir :: FilePath
+kilnDataDir = "kiln-data-dir"
+
+defaultKilnDataDir :: FilePath
+defaultKilnDataDir = "./.kiln"
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 

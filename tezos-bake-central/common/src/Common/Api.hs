@@ -22,7 +22,7 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, Bake, MailServerView)
+import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
 import Common.Schema (LogTag)
 
 instance HasRequest Bake where
@@ -37,15 +37,9 @@ instance HasRequest Bake where
     PublicRequest_RemoveNode
       :: Either URI ()
       -> PublicRequest Bake ()
-    PublicRequest_UpdateInternalNode
-      :: Bool
-      -> PublicRequest Bake ()
-    PublicRequest_AddClient
-      :: URI -- address of client to subscribe to
-      -> Maybe Text
-      -> PublicRequest Bake () -- TODO: perhaps give an Id Client
-    PublicRequest_RemoveClient
-      :: URI -- address of client to unsubscribe from
+    PublicRequest_UpdateInternalWorker
+      :: WorkerType
+      -> Bool -- Desired running state
       -> PublicRequest Bake ()
     -- TODO think harder about update versus initial set
     PublicRequest_SetMailServerConfig
@@ -56,6 +50,12 @@ instance HasRequest Bake where
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
+    PublicRequest_PollLedgerDevice :: PublicRequest Bake ()
+    PublicRequest_ShowLedger :: SecretKey -> PublicRequest Bake ()
+    PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest Bake ()
+    PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest Bake ()
+    PublicRequest_RegisterKeyAsDelegate :: SecretKey -> Tez -> PublicRequest Bake ()
+    PublicRequest_SetHWM :: SecretKey -> RawLevel -> PublicRequest Bake ()
     PublicRequest_AddBaker
       :: PublicKeyHash
       -> Maybe Text

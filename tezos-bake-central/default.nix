@@ -11,14 +11,14 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite = import (hackGet dep/rhyolite);
     nodeKit = (import ./scoped-tzkits.nix {}).kits;
   in {
-    staticFiles = pkgs.callPackage ./static {};
+    staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
+    # staticFilesImpure = toString ./result-static;
     packages = {
       backend-db = ./backend-db;
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
       tezos-noderpc = ../tezos-noderpc;
 
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
-      dependent-sum-aeson-orphans = hackGet dep/dependent-sum-aeson-orphans;
       dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
@@ -42,8 +42,5 @@ obelisk.project ./. ({ pkgs, ... }@args:
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
       tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
       tezos-noderpc = dontHaddock super.tezos-noderpc;
-
-      # Must be here because it affects upstream rhyolite build
-      constraints-extras = self.callCabal2nix "constraints-extras" (hackGet dep/constraints-extras) {};
     });
   })

@@ -24,6 +24,7 @@ library
     , colour
     , common
     , constraints
+    , constraints-extras
     , containers
     , data-default
     , dependent-map
@@ -113,6 +114,7 @@ library
     --Backend.Graphs
     Backend.Http
     Backend.Migrations
+    Backend.NodeCmd
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
@@ -124,12 +126,13 @@ library
     Backend.ViewSelectorHandler
     Backend.WebApi
     Backend.Workers.Accusation
+    Backend.Workers.Baker
     Backend.Workers.Block
     Backend.Workers.Cache
     Backend.Workers.Client
-    Backend.Workers.Baker
     Backend.Workers.Node
-    Backend.NodeCmd
+    Backend.Workers.Process
+    Backend.Workers.TezosClient
     System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings

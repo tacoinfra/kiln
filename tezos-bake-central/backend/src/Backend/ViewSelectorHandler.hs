@@ -18,7 +18,6 @@ module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
 import Control.Monad.Logger
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
@@ -38,6 +37,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
+import Data.Tuple (swap)
 import Data.Universe (universe)
 import Database.Groundhog.Core (ConstructorMarker)
 import Database.Groundhog.Core (EntityConstr)
@@ -62,12 +62,14 @@ import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
+import Safe (minimumByMay)
 
 import Tezos.PublicKeyHash
 import Tezos.Types
@@ -87,7 +89,7 @@ import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseControl IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
   => FrontendConfig
   -> Maybe NamedChain
   -> NodeDataSource
@@ -160,7 +162,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   --     flip itraverse (_bakeViewSelector_bakerStats vs) $ \(i, j) -> _
   --     -- calculateBakerStats (_bakeViewSelector_bakerStats vs)
 
-
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
@@ -193,6 +194,28 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
+
+  let showLedgerVS = _bakeViewSelector_showLedger vs
+  showLedger <- whenM (not $ null showLedgerVS) $ do
+    las <- select CondEmpty -- Expect very few records here, so just select them all
+    let rangeView = toRangeView showLedgerVS $ flip fmap las $ \la ->
+          ( _ledgerAccount_secretKey la
+          , First $ (,) <$> _ledgerAccount_publicKeyHash la <*> _ledgerAccount_balance la
+          )
+    pure rangeView
+
+  let promptingVS = _bakeViewSelector_prompting vs
+  prompting <- whenM (not $ null promptingVS) $ do
+    las <- select CondEmpty
+    let rangeView = toRangeView promptingVS $ flip fmap las $ \la ->
+          ( _ledgerAccount_secretKey la
+          , First $ Just $ mempty
+            { _setupState_import = if _ledgerAccount_imported la then Just (First ImportSecretKeyStep_Done) else Nothing
+            }
+          )
+    pure rangeView
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_clients = mempty -- clients
@@ -215,6 +238,9 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
     , _bakeView_alertCount = alertCount
+    , _bakeView_connectedLedger = connectedLedger
+    , _bakeView_showLedger = showLedger
+    , _bakeView_prompting = prompting
     }
 
 getErrorLogs
@@ -332,7 +358,7 @@ getErrorLogsImpl flt intervalMap = do
             (lowerQ, lowerArgs) = qEndpoint lowerEnd
             (upperQ, upperArgs) = qEndpoint upperEnd
             in ("tsrange(" <> lowerQ <> ", " <> upperQ <> ", '[]')", lowerArgs . upperArgs)
-          
+
       $(logDebugSH) ("queryAlert" :: Text, sqlTable, window)
       MMap.fromDistinctAscList <$> traceQuery (
         qBase <>
@@ -343,7 +369,7 @@ getErrorLogsImpl flt intervalMap = do
     runQuery :: LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQuery lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
       logAssume lTag (queryAlert (singleConstructor $ proxify $ lTag) (logDep lTag) window)
-        
+
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
       leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- runQuery lTag window; $(logDebugSH) x; pure x }) universe
@@ -404,6 +430,27 @@ getBakerAddresses nds bid = do
       qFull
       (toPrimitivePersistValue pg bid :)
       buildRs
+  int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
+      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."running",
+        la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
+        ( SELECT COUNT(e.id)
+          FROM "ErrorLog" e
+          JOIN "ErrorLogBakerMissed" elbm
+            ON elbm.log = e.id
+          WHERE e.stopped IS NULL
+            AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
+        )
+      FROM "BakerDaemonInternal" b
+      JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
+      JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
+      WHERE NOT b."data#deleted"
+    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, running, li, sc, dp, alertCount) ->
+      let sk = SecretKey
+            { _secretKey_ledgerIdentifier = li
+            , _secretKey_signingCurve = sc
+            , _secretKey_derivationPath = dp
+            }
+      in (pkh, (running, sk, (alertCount, insufficientFunds))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -422,7 +469,10 @@ getBakerAddresses nds bid = do
   let
     (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
-    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys rs
+    bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
+    -- Insert pkh from Internal if present
+    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
+      fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
     chainId = _nodeDataSource_chain nds
     maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
@@ -447,14 +497,24 @@ getBakerAddresses nds bid = do
       |]
 
   let
+
+    getNextRight rights progress insufficientFunds = case minimumByMay (on compare swap) $ Map.toList rights of
+      Just v -> BakerNextRight_KnownRights v
+      Nothing -> if insufficientFunds
+        then BakerNextRight_KnownNoRights
+        else case subtract progress <$> maxProgress of
+          Just 0 -> BakerNextRight_WaitingForRights
+          Just _ -> BakerNextRight_GatheringData
+          Nothing -> BakerNextRight_GatheringData
+        -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(alias, alertCount) -> Just $ BakerSummary (BakerData alias) alertCount Map.empty 1) -- TODO: we can do better to estimate this value, but for now the only thing we display is "yes/no" are we fetching more data.
+        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)
-        (\(alias, alertCount) (Max progress, rights) -> Just $ BakerSummary (BakerData alias) alertCount rights (maybe 0 (subtract progress) maxProgress)) -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
-      ) rs (getMonoidalMap nextBakeRights)
+        (\(b, (alertCount, insufficientFunds)) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRight rights progress insufficientFunds))
+      ) bakers (getMonoidalMap nextBakeRights)
 
   return result
 
@@ -474,17 +534,18 @@ getNodeAddresses nid = do
       , _nodeExternalData_alias = alias
       , _nodeExternalData_minPeerConnections = mpc
       }))
-  int :: Map.Map (WithInfinity (Id Node)) NodeInternalData <- [queryQ|
-      SELECT n.id, n."data#data#running", n."data#data#state", n."data#data#stateUpdated" AT TIME ZONE 'UTC' , n."data#data#backend"
-      FROM "NodeInternal" n
+  int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
+      SELECT n.id, p.running, p.state, p.updated AT TIME ZONE 'UTC', p.backend
+        FROM "NodeInternal" n
+        JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', running, state, stateUpdated, backend) -> (Bounded nid',
-      NodeInternalData
-      { _nodeInternalData_running = running
-      , _nodeInternalData_state = state
-      , _nodeInternalData_stateUpdated = stateUpdated
-      , _nodeInternalData_backend = backend
+    <&> Map.fromList . (fmap $ \(nid', running, state, updated, backend) -> (Bounded nid',
+      ProcessData
+      { _processData_running = running
+      , _processData_state = state
+      , _processData_updated = updated
+      , _processData_backend = backend
       }))
   let qCount :: [Utf8]
       qCount = flip map universe $ \(This nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
@@ -521,6 +582,6 @@ getNodeAddresses nid = do
       (toPrimitivePersistValue pg nid :)
       buildCounts
   let
-    intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData NodeInternalData)
+    intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData ProcessData)
     intExt = fmap Left ext `Map.union` fmap Right int
   return $ Map.toList $ fmap (First . Just) $ liftF2 NodeSummary intExt counts

@@ -24,6 +24,7 @@ import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Prelude hiding (log)
 import Reflex.Dom.Core
+import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
@@ -32,8 +33,10 @@ import Text.URI (URI)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
+import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema hiding (Event)
 import Common.Vassal
@@ -58,12 +61,19 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
-watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe NodeInternalData))
+watchInternalBaker :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe BakerInternalData))
+watchInternalBaker = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_bakerAddresses = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _bakerSummary_baker) $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerAddresses v')
+
+watchInternalNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Id Node, ProcessData)))
 watchInternalNode = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> listToMaybe $ toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
+  return $ ffor theView $ \v' -> listToMaybe $ MMap.toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
 watchNodeAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
@@ -107,7 +117,7 @@ watchBakerDetails pkh = do
     }
   return $ ffor theView $ \v' -> MMap.lookup pkh $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
 
-watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id Client) -> m (Dynamic t (MonoidalMap (Id Client) ClientInfo))
+watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id BakerDaemon) -> m (Dynamic t (MonoidalMap (Id BakerDaemon) BakerDaemonInfoData))
 watchClient cidDyn = do
   theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
     { _bakeViewSelector_clients = viewRangeExactly cid 1
@@ -128,7 +138,7 @@ watchBakerStats bakers = do
   --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_bakerStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id Client) URI))
+watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id BakerDaemon) URI))
 watchClientAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_clientAddresses = viewRangeAll 1
@@ -213,8 +223,8 @@ data CollectiveNodesFailure
   -- ^ The last time any of the node was up, there must have been up
   deriving (Eq, Ord, Show)
 
-nodeSummaryStateIfInternal :: NodeSummary -> Maybe NodeInternalState
-nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . nodeInternalData_state
+nodeSummaryStateIfInternal :: NodeSummary -> Maybe ProcessState
+nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . processData_state
 
 watchCollectiveNodesStatus
   :: MonadRhyoliteFrontendWidget Bake t m
@@ -224,7 +234,7 @@ watchCollectiveNodesStatus alertWindow = do
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys
-        <$> ffilter (maybe True (== NodeInternalState_Running)
+        <$> ffilter (maybe True (== ProcessState_Running)
                      . nodeSummaryStateIfInternal)
         <$> dNodes
   ebn <- watchErrorsByNode alertWindow
@@ -284,6 +294,28 @@ watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
+
+watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedger = do
+  -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
+  poll <- tickLossyFromPostBuildTime 5
+  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
+  (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_connectedLedger = viewJust 1
+    }
+
+watchLedgerAccounts :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
+watchLedgerAccounts dkeys =
+  (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
+    { _bakeViewSelector_showLedger = RangeSelector $ AppendIMap.fromList $ ffor keys $ \k -> (ClosedInterval k k, 1)
+    }
+
+watchPrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynamic t (Maybe SetupState))
+watchPrompting sk = do
+  (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_prompting) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
+    }
+
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =

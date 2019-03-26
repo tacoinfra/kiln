@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -31,15 +32,20 @@ module Backend.Schema
 
   -- Re-exports
   , toId
+  , Only(..)
   ) where
 
 import Control.Lens (Field1, Field2)
 import Data.Time (UTCTime)
-import Data.Aeson (FromJSON, ToJSON, toJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
+import Data.Constraint (Dict(..))
+import Data.Constraint.Extras
+import Data.Constraint.Forall
 import Data.Dependent.Sum (DSum(..))
 import Data.Dependent.Sum (EqTag)
 import Data.Dependent.Sum (OrdTag)
@@ -48,6 +54,9 @@ import Data.Dependent.Sum (compareTagged)
 import Data.Dependent.Sum (eqTagged)
 import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Show.TH (deriveGShow)
 import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
@@ -75,7 +84,7 @@ import Language.Haskell.TH (conT)
 import Language.Haskell.TH (mkName)
 import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
-import Rhyolite.Backend.Listen (NotificationType (..), NotifyMessage (..), getSchemaName, notifyChannel)
+import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema (fromId, toId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
@@ -98,95 +107,139 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
+import Common.App (SetupState)
 import Common.Schema
 import ExtraPrelude
 
 stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
 
-data Notify
-  = Notify_Client !(Id Client)
-  | Notify_Baker !(Id Baker) !(Maybe BakerData)
-  | Notify_BakerDetails !BakerDetails
-  | Notify_BakerRightsProgress !(Id BakerRightsCycleProgress) !BakerRightsCycleProgress ![BakerRight]
-  | Notify_ErrorLog !(DSum LogTag Id)
-  | Notify_UpstreamVersion !(Id UpstreamVersion) !UpstreamVersion
-  | Notify_MailServerConfig !(Id MailServerConfig) !MailServerConfig
-  | Notify_NodeExternal !(Id Node) !(Maybe NodeExternalData)
-  | Notify_NodeInternal !(Id Node) !(Maybe NodeInternalData)
-  | Notify_NodeDetails !(Id Node) !(Maybe NodeDetailsData)
-  | Notify_Notificatee !(Id Notificatee)
-  | Notify_Parameters !(Id Parameters) Parameters
-  | Notify_PublicNodeConfig !(Id PublicNodeConfig) PublicNodeConfig
-  | Notify_PublicNodeHead !(Id PublicNodeHead) !(Maybe PublicNodeHead)
-  | Notify_TelegramConfig !(Id TelegramConfig) !TelegramConfig
-  | Notify_TelegramRecipient !(Id TelegramRecipient) (Maybe TelegramRecipient)
-  deriving (Typeable, Generic)
-deriving instance EqTag NodeLogTag Id => Eq Notify
-deriving instance OrdTag NodeLogTag Id => Ord Notify
-deriving instance ShowTag NodeLogTag Id => Show Notify
-instance ToJSON Notify
-instance FromJSON Notify
+data NotifyTag a where
+  NotifyTag_BakerDaemonExternal :: NotifyTag (Id BakerDaemon, Maybe BakerDaemonExternalData)
+  NotifyTag_Baker :: NotifyTag (Id Baker, Maybe BakerData)
+  NotifyTag_BakerDetails :: NotifyTag BakerDetails
+  NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
+  NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
+  NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
+  NotifyTag_MailServerConfig :: NotifyTag (Id MailServerConfig, MailServerConfig)
+  NotifyTag_NodeExternal :: NotifyTag (Id Node, Maybe NodeExternalData)
+  NotifyTag_NodeInternal :: NotifyTag (Id Node, Maybe ProcessData)
+  NotifyTag_NodeDetails :: NotifyTag (Id Node, Maybe NodeDetailsData)
+  NotifyTag_Notificatee :: NotifyTag (Id Notificatee)
+  NotifyTag_Parameters :: NotifyTag (Id Parameters, Parameters)
+  NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
+  NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
+  NotifyTag_TelegramConfig :: NotifyTag (Id TelegramConfig, TelegramConfig)
+  NotifyTag_TelegramRecipient :: NotifyTag (Id TelegramRecipient, Maybe TelegramRecipient)
+  NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
+  NotifyTag_ShowLedger :: NotifyTag (SecretKey, Maybe (PublicKeyHash, Tez))
+  NotifyTag_Prompting :: NotifyTag (SecretKey, Maybe SetupState)
+  deriving Typeable
 
-class HasDefaultNotify f where
-  mkDefaultNotify :: f -> Notify
+mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
+mkNotify n a = do
+  schemaName <- getSchemaName
+  pure DbNotification
+    { _dbNotification_schemaName = SchemaName $ T.pack schemaName
+    , _dbNotification_notificationType = NotificationType_Update
+    , _dbNotification_message = n :=> Identity a
+    }
+
+notify'
+  :: ( PersistBackend m
+     , Has' ToJSON n Identity
+     , ForallF ToJSON n
+     )
+  => DbNotification n -> m ()
+notify' n = do
+  let cmd = "NOTIFY " <> notifyChannel <> ", ?"
+  void $ executeRaw False cmd [PersistString $ T.unpack $ T.decodeUtf8 $ LBS.toStrict $ Aeson.encode n]
+
+notify
+  :: ( PersistBackend m
+     , Has' ToJSON n Identity
+     , ForallF ToJSON n
+     )
+  => n a -> a -> m ()
+notify n a = notify' =<< mkNotify n a
+
+notifyDefault
+  :: ( PersistBackend m
+     , HasDefaultNotify a
+     )
+  => a -> m ()
+notifyDefault x = notify' =<< mkDefaultNotify x
+
+mkNodeNotify :: NodeLogTag a -> NotifyTag (Id a)
+mkNodeNotify = NotifyTag_ErrorLog . LogTag_Node
+
+mkBakerNotify :: BakerLogTag a -> NotifyTag (Id a)
+mkBakerNotify = NotifyTag_ErrorLog . LogTag_Baker
+
+class HasDefaultNotify a where
+  mkDefaultNotify :: PersistBackend m => a -> m (DbNotification NotifyTag)
+  default mkDefaultNotify :: (PersistBackend m, HasNotification NotifyTag b, a ~ Id b) => a -> m (DbNotification NotifyTag)
+  mkDefaultNotify = mkNotify $ notification Proxy
 
 instance HasDefaultNotify (DSum LogTag Id) where
-  mkDefaultNotify = Notify_ErrorLog
+  mkDefaultNotify (t :=> v) = mkNotify (NotifyTag_ErrorLog t) v
 instance HasDefaultNotify (DSum NodeLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Node t :=> v
 instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
-instance HasDefaultNotify (Id Client) where
-  mkDefaultNotify = Notify_Client
-instance HasDefaultNotify (Id ErrorLogBakerAccused) where
-  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerAccused :=>)
-instance HasDefaultNotify (Id ErrorLogBadNodeHead) where
-  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_BadNodeHead :=>)
-instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat) where
-  mkDefaultNotify = mkDefaultNotify . (LogTag_BakerNoHeartbeat :=>)
-instance HasDefaultNotify (Id ErrorLogInaccessibleNode) where
-  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_InaccessibleNode :=>)
-instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker) where
-  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_MultipleBakersForSameBaker :=>)
-instance HasDefaultNotify (Id ErrorLogNodeWrongChain) where
-  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeWrongChain :=>)
-instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount) where
-  mkDefaultNotify = mkDefaultNotify . (NodeLogTag_NodeInvalidPeerCount :=>)
-instance HasDefaultNotify (Id ErrorLogNetworkUpdate) where
-  mkDefaultNotify = mkDefaultNotify . (LogTag_NetworkUpdate :=>)
-instance HasDefaultNotify (Id ErrorLogBakerDeactivated) where
-  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivated :=>)
-instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk) where
-  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerDeactivationRisk :=>)
+instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
+instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
+instance HasDefaultNotify (Id ErrorLogBadNodeHead)
+instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
+instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker)
+instance HasDefaultNotify (Id ErrorLogBakerAccused)
+instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
+instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk)
+instance HasDefaultNotify (Id ErrorLogBakerMissed)
+instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
+instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
+instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
+
+instance HasNotification NotifyTag ErrorLogNodeWrongChain where
+  notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
+instance HasNotification NotifyTag ErrorLogNodeInvalidPeerCount where
+  notification _ = mkNodeNotify NodeLogTag_NodeInvalidPeerCount
+instance HasNotification NotifyTag ErrorLogBadNodeHead where
+  notification _ = mkNodeNotify NodeLogTag_BadNodeHead
+instance HasNotification NotifyTag ErrorLogInaccessibleNode where
+  notification _ = mkNodeNotify NodeLogTag_InaccessibleNode
+
+instance HasNotification NotifyTag ErrorLogMultipleBakersForSameBaker where
+  notification _ = mkBakerNotify BakerLogTag_MultipleBakersForSameBaker
+instance HasNotification NotifyTag ErrorLogBakerAccused where
+  notification _ = mkBakerNotify BakerLogTag_BakerAccused
+instance HasNotification NotifyTag ErrorLogBakerDeactivated where
+  notification _ = mkBakerNotify BakerLogTag_BakerDeactivated
+instance HasNotification NotifyTag ErrorLogBakerDeactivationRisk where
+  notification _ = mkBakerNotify BakerLogTag_BakerDeactivationRisk
+instance HasNotification NotifyTag ErrorLogBakerMissed where
+  notification _ = mkBakerNotify BakerLogTag_BakerMissed
+instance HasNotification NotifyTag ErrorLogInsufficientFunds where
+  notification _ = mkBakerNotify BakerLogTag_InsufficientFunds
+
+instance HasNotification NotifyTag ErrorLogNetworkUpdate where
+  notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
+instance HasNotification NotifyTag ErrorLogBakerNoHeartbeat where
+  notification _ = NotifyTag_ErrorLog LogTag_BakerNoHeartbeat
+
 instance HasDefaultNotify (Id Notificatee) where
-  mkDefaultNotify = Notify_Notificatee
-instance HasDefaultNotify (Id ErrorLogBakerMissed) where
-  mkDefaultNotify = mkDefaultNotify . (BakerLogTag_BakerMissed :=>)
+  mkDefaultNotify = mkNotify NotifyTag_Notificatee
 instance HasDefaultNotify BakerDetails where
-  mkDefaultNotify = Notify_BakerDetails
+  mkDefaultNotify = mkNotify NotifyTag_BakerDetails
 
 class HasDefaultNotifyUnique f where
-  mkDefaultNotifyUnique :: Id f -> f -> Notify
+  mkDefaultNotifyUnique :: PersistBackend m => Id f -> f -> m (DbNotification NotifyTag)
 
 instance HasDefaultNotifyUnique MailServerConfig where
-  mkDefaultNotifyUnique = Notify_MailServerConfig
+  mkDefaultNotifyUnique = curry $ mkNotify NotifyTag_MailServerConfig
 instance HasDefaultNotifyUnique TelegramConfig where
-  mkDefaultNotifyUnique = Notify_TelegramConfig
-
-notify :: (PersistBackend m) => Notify -> m ()
-notify n = do
-  schemaName <- getSchemaName
-  let
-    cmd = "NOTIFY " <> notifyChannel <> ", ?"
-    notification = NotifyMessage { _notifyMessage_schemaName = SchemaName . T.pack $ schemaName
-                                 , _notifyMessage_notificationType = NotificationType_Update
-                                 , _notifyMessage_entityName = ""
-                                 , _notifyMessage_value = toJSON n
-                                 }
-  void $ executeRaw False cmd [PersistString $ T.unpack $ T.decodeUtf8 $ LBS.toStrict $ Aeson.encode notification]
-
+  mkDefaultNotifyUnique = curry $ mkNotify NotifyTag_TelegramConfig
 
 type EntityWithId a = (DefaultKeyId a, DefaultKey a ~ Key a BackendSpecific, PersistEntity a, PrimitivePersistField (Key a BackendSpecific))
 
@@ -214,7 +267,7 @@ updateIdNotify
   -> m ()
 updateIdNotify tid dt = do
   updateId tid dt
-  notify $ mkDefaultNotify tid
+  notifyDefault tid
 
 updateIdNotifyUnique
   :: (HasDefaultNotifyUnique a, EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
@@ -226,18 +279,18 @@ updateIdNotifyUnique tid dt = do
   newRow <- getId tid >>= \case
     Nothing -> fail "impossible got nothing back after insertion in DB transaction"
     Just x -> pure x
-  notify $ mkDefaultNotifyUnique tid newRow
+  notify' =<< mkDefaultNotifyUnique tid newRow
 
 insertNotify :: (HasDefaultNotify (Id a), EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
 insertNotify a = do
   primaryKey <- insert' a
-  notify $ mkDefaultNotify primaryKey
+  notifyDefault primaryKey
   pure primaryKey
 
 insertNotifyUnique :: (HasDefaultNotifyUnique a, EntityWithId a, AutoKey a ~ Key a BackendSpecific, PersistBackend m) => a -> m (Id a)
 insertNotifyUnique a = do
   primaryKey <- insert' a
-  notify $ mkDefaultNotifyUnique primaryKey a
+  notify' =<< mkDefaultNotifyUnique primaryKey a
   pure primaryKey
 
 selectIds
@@ -310,10 +363,10 @@ instance ToField NamedChain where
 instance FromField NamedChain where
   fromField f b = read <$> fromField f b
 
-instance FromField NodeInternalState where
+instance FromField ProcessState where
   fromField f b = read <$> fromField f b
 
-instance ToField NodeInternalState where
+instance ToField ProcessState where
   toField v = toField (show v)
 
 instance PersistField Tez where
@@ -341,6 +394,7 @@ instance NeverNull (Json BakedEvent)
 instance NeverNull (Json CacheDelegateInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
+instance NeverNull LedgerIdentifier
 instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
@@ -487,6 +541,41 @@ instance PrimitivePersistField URI where
   toPrimitivePersistValue x v = toPrimitivePersistValue x (Uri.render v)
   fromPrimitivePersistValue x v = fromMaybe (error "Invalid URI") $ Uri.mkURI $ fromPrimitivePersistValue x v
 
+instance PersistField LedgerIdentifier where
+  persistName _ = "LedgerIdentifier"
+  toPersistValues = primToPersistValue
+  fromPersistValues vs = first LedgerIdentifier <$> fromPersistValues vs
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField LedgerIdentifier where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (unLedgerIdentifier v)
+  fromPrimitivePersistValue x v = LedgerIdentifier $ fromPrimitivePersistValue x v
+
+instance PersistField DerivationPath where
+  persistName _ = "DerivationPath"
+  toPersistValues = primToPersistValue
+  fromPersistValues vs = first DerivationPath <$> fromPersistValues vs
+  dbType p x = dbType p ("" :: Text)
+
+instance PrimitivePersistField DerivationPath where
+  toPrimitivePersistValue x v = toPrimitivePersistValue x (unDerivationPath v)
+  fromPrimitivePersistValue x v = DerivationPath $ fromPrimitivePersistValue x v
+
+
+instance ToField LedgerIdentifier where
+  toField = toField . unLedgerIdentifier
+instance FromField LedgerIdentifier where
+  fromField f = fmap LedgerIdentifier . fromField f
+
+instance ToField DerivationPath where
+  toField = toField . unDerivationPath
+instance FromField DerivationPath where
+  fromField f = fmap DerivationPath . fromField f
+
+instance ToField SigningCurve where
+  toField = toField . show
+instance FromField SigningCurve where
+  fromField f = maybe (fail "Invalid value for SigningCurve") pure . readMaybe <=< fromField f
 
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
@@ -523,7 +612,17 @@ instance Field1 (a :. b) (a' :. b) a a' where
 instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
+--        - name: LedgerAccount_secretKey
+--          type: primary
+--          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
+
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - primitive: SigningCurve
+  - entity: ConnectedLedger
+    autoKey: null
+  - embedded: SecretKey
+  - entity: LedgerAccount
+    autoKey: null
   - entity: Accusation
     autoKey: null
     constructors:
@@ -546,26 +645,51 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     keys:
       - name: BlockTodo_hash
         default: true
-  - entity: Client
-    constructors:
-      - name: Client
-        uniques:
-          - name: _client_uniqueness
-            type: constraint
-            fields: [_client_address]
-  - entity: ClientInfo
-    constructors:
-      - name: ClientInfo
-        uniques:
-          - name: _clientInfo_uniqueness
-            type: constraint
-            fields: [_clientInfo_client]
-        fields:
-          - name: _clientInfo_client
-            reference:
-              table: Client
-              onDelete: cascade
   - embedded: DeletableRow
+  - entity: BakerDaemon
+    constructors:
+      - name: BakerDaemon
+  - entity: BakerDaemonExternal
+    autoKey: null
+    constructors:
+      - name: BakerDaemonExternal
+        uniques:
+          - name: BakerDaemonExternalId
+            type: primary
+            fields: [_bakerDaemonExternal_id]
+          - name: BakerDaemonExternal_uniqueness
+            type: constraint
+            fields: [_bakerDaemonExternal_data] #data#address
+  - embedded: BakerDaemonExternalData
+  - entity: BakerDaemonInternal
+    autoKey: null
+    keys:
+      - name: BakerDaemonInternalId
+        default: true
+    constructors:
+      - name: BakerDaemonInternal
+        uniques:
+          - name: BakerDaemonInternalId
+            type: primary
+            fields: [_bakerDaemonInternal_id]
+  - embedded: BakerDaemonInternalData
+  - entity: BakerDaemonInfo
+    autoKey: null
+    keys:
+      - name: BakerDaemonInfoId
+        default: true
+    constructors:
+      - name: BakerDaemonInfo
+        uniques:
+          - name: BakerDaemonInfoId
+            type: primary
+            fields: [_bakerDaemonInfo_id]
+        fields:
+          - name: _bakerDaemonInfo_id
+            reference:
+              table: BakerDaemon
+              onDelete: cascade
+  - embedded: BakerDaemonInfoData
   - entity: Node
     constructors:
       - name: Node
@@ -581,7 +705,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeExternal_id]
   - embedded: NodeExternalData
-  - primitive: NodeInternalState
   - entity: NodeInternal
     autoKey: null
     keys:
@@ -593,7 +716,8 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: NodeInternalId
             type: primary
             fields: [_nodeInternal_id]
-  - embedded: NodeInternalData
+  - entity: ProcessData
+  - primitive: ProcessState
   - entity: NodeDetails
     autoKey: null
     keys:
@@ -776,6 +900,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerDeactivationRiskId
             type: primary
             fields: [_errorLogBakerDeactivationRisk_log]
+  - entity: ErrorLogInsufficientFunds
+    autoKey: null
+    keys:
+      - name: ErrorLogInsufficientFundsId
+        default: true
+    constructors:
+      - name: ErrorLogInsufficientFunds
+        uniques:
+          - name: ErrorLogInsufficientFundsId
+            type: primary
+            fields: [_errorLogInsufficientFunds_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -852,8 +987,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''Client, 'ClientKey)
-  , (''ClientInfo, 'ClientInfoKey)
+  , (''BakerDaemon, 'BakerDaemonKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
@@ -862,6 +996,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
+  , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''TelegramConfig, 'TelegramConfigKey)
@@ -913,6 +1048,9 @@ instance DefaultKeyId ErrorLogBakerDeactivated where
 instance DefaultKeyId ErrorLogBakerDeactivationRisk where
   toIdData _ (ErrorLogBakerDeactivationRiskIdKey eid) = eid
   fromIdData _ = ErrorLogBakerDeactivationRiskIdKey
+instance DefaultKeyId ErrorLogInsufficientFunds where
+  toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
+  fromIdData _ = ErrorLogInsufficientFundsIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -953,7 +1091,6 @@ type LogTagConstraints e =
   , Show (IdData e)
   , DefaultKey e ~ Key e (Unique (DefaultKeyUnique e))
   , DefaultKeyId e
-  , HasDefaultNotify (Id e)
   , HasSingleConstructor e
   , IdData e ~ Id ErrorLog
   , IsUniqueKey (Key e (Unique (DefaultKeyUnique e)))
@@ -974,6 +1111,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
+  BakerLogTag_InsufficientFunds -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
 logAssume = \case
@@ -1041,6 +1179,91 @@ bakerLogDep = \case
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
+  BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   where
     depBakerAlert' f = Related f $ ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
+
+embeddedSecretKeyEquals
+  :: (ProjectionDb r db, ProjectionRestriction r (RestrictionHolder v c), FieldLike r SecretKey, EntityConstr v c, DbDescriptor db)
+  => r -> SecretKey -> Cond db (RestrictionHolder v c)
+embeddedSecretKeyEquals f sk =
+         f ~> SecretKey_ledgerIdentifierSelector ==. _secretKey_ledgerIdentifier sk
+  GH.&&. f ~> SecretKey_signingCurveSelector ==. _secretKey_signingCurve sk
+  GH.&&. f ~> SecretKey_derivationPathSelector ==. _secretKey_derivationPath sk
+
+instance ArgDict NotifyTag where
+  type ConstraintsFor NotifyTag c =
+    ( c (Id BakerDaemon, Maybe BakerDaemonExternalData)
+    , c (Id Baker, Maybe BakerData)
+    , c BakerDetails
+    , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
+    , c (Id ErrorLogNetworkUpdate)
+    , c (Id ErrorLogBakerNoHeartbeat)
+    , c (Id ErrorLogInaccessibleNode)
+    , c (Id ErrorLogNodeWrongChain)
+    , c (Id ErrorLogNodeInvalidPeerCount)
+    , c (Id ErrorLogBadNodeHead)
+    , c (Id ErrorLogMultipleBakersForSameBaker)
+    , c (Id ErrorLogBakerMissed)
+    , c (Id ErrorLogBakerDeactivated)
+    , c (Id ErrorLogBakerDeactivationRisk)
+    , c (Id ErrorLogBakerAccused)
+    , c (Id ErrorLogInsufficientFunds)
+    , c (Id UpstreamVersion, UpstreamVersion)
+    , c (Id MailServerConfig, MailServerConfig)
+    , c (Id Node, Maybe NodeExternalData)
+    , c (Id Node, Maybe ProcessData)
+    , c (Id Node, Maybe NodeDetailsData)
+    , c (Id Notificatee)
+    , c (Id Parameters, Parameters)
+    , c (Id PublicNodeConfig, PublicNodeConfig)
+    , c (Id PublicNodeHead, Maybe PublicNodeHead)
+    , c (Id TelegramConfig, TelegramConfig)
+    , c (Id TelegramRecipient, Maybe TelegramRecipient)
+    , c (Maybe ConnectedLedger)
+    , c (SecretKey, Maybe (PublicKeyHash, Tez))
+    , c (SecretKey, Maybe SetupState)
+    )
+  argDict = \case
+    NotifyTag_BakerDaemonExternal -> Dict
+    NotifyTag_Baker -> Dict
+    NotifyTag_BakerDetails -> Dict
+    NotifyTag_BakerRightsProgress -> Dict
+    NotifyTag_ErrorLog t' -> case t' of
+      LogTag_NetworkUpdate -> Dict
+      LogTag_BakerNoHeartbeat -> Dict
+      LogTag_Node t -> case t of
+        NodeLogTag_InaccessibleNode -> Dict
+        NodeLogTag_NodeWrongChain -> Dict
+        NodeLogTag_NodeInvalidPeerCount -> Dict
+        NodeLogTag_BadNodeHead -> Dict
+      LogTag_Baker t -> case t of
+        BakerLogTag_MultipleBakersForSameBaker -> Dict
+        BakerLogTag_BakerMissed -> Dict
+        BakerLogTag_BakerDeactivated -> Dict
+        BakerLogTag_BakerDeactivationRisk -> Dict
+        BakerLogTag_BakerAccused -> Dict
+        BakerLogTag_InsufficientFunds -> Dict
+    NotifyTag_UpstreamVersion -> Dict
+    NotifyTag_MailServerConfig -> Dict
+    NotifyTag_NodeExternal -> Dict
+    NotifyTag_NodeInternal -> Dict
+    NotifyTag_NodeDetails -> Dict
+    NotifyTag_Notificatee -> Dict
+    NotifyTag_Parameters -> Dict
+    NotifyTag_PublicNodeConfig -> Dict
+    NotifyTag_PublicNodeHead -> Dict
+    NotifyTag_TelegramConfig -> Dict
+    NotifyTag_TelegramRecipient -> Dict
+    NotifyTag_ConnectedLedger -> Dict
+    NotifyTag_ShowLedger -> Dict
+    NotifyTag_Prompting -> Dict
+
+fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
+  [ deriveJSONGADT t
+--  , deriveArgDict t -- weird bug
+  , deriveGEq t
+  , deriveGCompare t
+  , deriveGShow t
+  ]
