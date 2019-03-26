@@ -644,7 +644,7 @@ liveErrorsWidget = void $ do
     combinedErrors
       :: Dynamic t (Map.Map (Down (Time.UTCTime, Either (Id ErrorLog) SynthError))
                             (ErrorLog, Either ErrorLogView' SynthError))
-    combinedErrors = fold
+    combinedErrors = Map.take 20 <$> fold
       [ fmap (errorsByTime Left . (fmap . fmap) Left) combinedRealErrors
       , fmap (errorsByTime Right . (fmap . fmap) Right) filteredSynthErrors
       ]
