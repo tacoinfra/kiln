@@ -13,7 +13,6 @@
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
-
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.RequestHandler where
@@ -40,7 +39,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
-import Tezos.Types (Tez)
+import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
@@ -125,7 +124,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               getId (nodeData ^. deletableRow_data) >>= \case
                 Nothing -> error "NodeInternal ProcessData not found"
                 (Just v) -> pure v
-            when (_deletableRow_deleted nodeData || (not $ _processData_running processData)) $ do
+            when (_deletableRow_deleted nodeData || not (_processData_running processData)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 ]
@@ -181,7 +180,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             else updateBakerDaemon shouldRun'
             where
               waitForNodeToStart pid =
-                (inDb $ project1 (ProcessData_stateField)
+                inDb (project1 ProcessData_stateField
                   (AutoKeyField ==. fromId pid)) >>= \case
                 Nothing -> return ()
                 Just ProcessState_Failed -> return ()
@@ -192,7 +191,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
               >>= traverse_ (\(BakerDaemonInternalData _ _ _ bPid ePid) -> do
                 update [ProcessData_runningField =. shouldRun']
-                  (AutoKeyField `in_` (map fromId [bPid, ePid])))
+                  (AutoKeyField `in_` map fromId [bPid, ePid]))
 
           updateNode shouldRun' = inDb $
             (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
@@ -234,7 +233,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                          -> m' [Id ErrorLog]
               deleteLogs tag field = do
                 ids <- errorLogIdForNodeLogTag tag <$$> select (field ==. nid)
-                for_ ids $ notifyDefault . (Id @t)
+                for_ ids $ notifyDefault . Id @t
                 pure ids
 
               onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
@@ -267,7 +266,50 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
+          clearErrors bId
           notify NotifyTag_Baker (Id pkh, Nothing)
+        where
+          clearErrors bid = do
+            let
+              -- TODO: Unify the types of the baker alert columns so this duplication isn't needed.
+              deleteLogsId
+                :: forall cstr m' t.
+                 ( Monad m', PersistBackend m'
+                 , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr
+                 )
+                => BakerLogTag t
+                -> Field t cstr (Id Baker)
+                -> m' [Id ErrorLog]
+              deleteLogsId tag field = do
+                ids <- errorLogIdForBakerLogTag tag <$$> select (field ==. bid)
+                for_ ids $ notifyDefault . Id @t
+                pure ids
+
+              deleteLogsPkh
+                :: forall cstr m' t.
+                 ( Monad m', PersistBackend m'
+                 , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr
+                 )
+                => BakerLogTag t
+                -> Field t cstr PublicKeyHash
+                -> m' [Id ErrorLog]
+              deleteLogsPkh tag field = do
+                ids <- errorLogIdForBakerLogTag tag <$$> select (field ==. unId bid)
+                for_ ids $ notifyDefault . Id @t
+                pure ids
+
+              onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
+              onTag (This tag) = case tag of
+                BakerLogTag_MultipleBakersForSameBaker -> deleteLogsPkh tag ErrorLogMultipleBakersForSameBaker_publicKeyHashField
+                BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
+                BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
+                BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
+                BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
+                BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
+
+            ids <- fmap concat $ for universe onTag
+            now <- getTime
+            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
       PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
         (simpleMail'
@@ -288,7 +330,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                   , _mailServerConfig_portNumber = _mailServerView_portNumber mailServerView
                   , _mailServerConfig_smtpProtocol = _mailServerView_smtpProtocol mailServerView
                   , _mailServerConfig_userName = _mailServerView_userName mailServerView
-                  , _mailServerConfig_password = maybe "" id mPassword
+                  , _mailServerConfig_password = fromMaybe "" mPassword
                   , _mailServerConfig_madeDefaultAt = now
                   , _mailServerConfig_enabled = _mailServerView_enabled mailServerView
                   }
