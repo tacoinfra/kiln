@@ -22,9 +22,11 @@
 module Frontend where
 
 import Control.Lens ((<>~), imap, to)
+import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
@@ -565,6 +567,43 @@ newtype SynthError
   = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
+-- | Meta info for alerts to customize their appearance/behaviour
+data AlertMetaData = AlertMetaData
+  { _alertMetaData_isEventBased :: !Bool
+  }
+
+class HasAlertMetaData a where
+  getAlertMetaData :: a -> AlertMetaData
+
+instance Default AlertMetaData where
+  def = AlertMetaData
+    { _alertMetaData_isEventBased = False
+    }
+
+instance HasAlertMetaData ErrorLogView' where
+  getAlertMetaData (ErrorLogView' (logTag :=> _) _) = case logTag of
+    LogTag_Node nlt -> case nlt of
+      NodeLogTag_InaccessibleNode -> def
+      NodeLogTag_NodeWrongChain -> def
+      NodeLogTag_NodeInvalidPeerCount -> def
+      NodeLogTag_BadNodeHead -> def
+    LogTag_Baker blt -> case blt of
+      BakerLogTag_MultipleBakersForSameBaker -> def
+      BakerLogTag_BakerMissed -> def { _alertMetaData_isEventBased = True }
+      BakerLogTag_BakerDeactivated -> def
+      BakerLogTag_BakerDeactivationRisk -> def
+      BakerLogTag_BakerAccused -> def { _alertMetaData_isEventBased = True }
+      BakerLogTag_InsufficientFunds -> def
+    LogTag_BakerNoHeartbeat -> def
+    LogTag_NetworkUpdate -> def { _alertMetaData_isEventBased = True }
+
+instance HasAlertMetaData SynthError where
+  getAlertMetaData (SynthError_BakersInformationDown _) = def
+
+instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a b) where
+  getAlertMetaData (Left v) = getAlertMetaData v
+  getAlertMetaData (Right v) = getAlertMetaData v
+
 liveErrorsWidget
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -671,11 +710,13 @@ liveErrorsWidget = void $ do
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
       elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
-        dyn_ . fmap (either logEntry synthEntry) =<< holdUniqDyn widgetDyn
+        wDyn <- holdUniqDyn widgetDyn
+        dyn_ . fmap (either logEntry synthEntry) $ wDyn
+        let isEv = _alertMetaData_isEventBased . getAlertMetaData <$> wDyn
         el "div" $ do
-          el "label" $ text "First Detected"
+          el "label" $ dynText $ ffor isEv $ bool "First Detected" "Detected"
           localTimestamp' $ _errorLog_started <$> logDyn
-        el "div" $ do
+        dyn_ $ ffor isEv $ \b -> unless b $ el "div" $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> "Last Detected"
             Just _ -> "Stopped"
