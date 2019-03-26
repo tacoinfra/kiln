@@ -258,7 +258,7 @@ data OperationContentsProposals = OperationContentsProposals
 -- | "ballot": { "type": "string", "enum": [ "nay", "yay", "pass" ] },
 data Ballot
    = Ballot_Nay
-   | Ballot_Yea
+   | Ballot_Yay
    | Ballot_Pass
   deriving (Eq, Ord, Read, Show, Enum, Bounded, Typeable, Generic)
 

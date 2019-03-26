@@ -18,7 +18,7 @@ newtype Ballots = Ballots { unBallots :: Ballot -> Int } deriving (Typeable, Gen
 
 instance ToJSON Ballots where
   toJSON (Ballots f) = object
-    [ "yay"  .= f Ballot_Yea
+    [ "yay"  .= f Ballot_Yay
     , "nay"  .= f Ballot_Nay
     , "pass" .= f Ballot_Pass
     ]
@@ -29,7 +29,7 @@ instance FromJSON Ballots where
     nay  <- o .: "nay"
     pass <- o .: "pass"
     pure $ Ballots $ \case
-      Ballot_Yea -> yay
+      Ballot_Yay -> yay
       Ballot_Nay -> nay
       Ballot_Pass -> pass
 
