@@ -89,9 +89,10 @@ initNode :: (MonadIO m)
   => AppConfig
   -> FilePath
   -> Pool Postgresql
+  -> (ProcessState -> m ())
   -> FilePath
   -> m FilePath
-initNode appConfig nodePath _ nodeConfigPath = do
+initNode appConfig nodePath _ updateState nodeConfigPath = do
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
@@ -101,7 +102,8 @@ initNode appConfig nodePath _ nodeConfigPath = do
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["config", "show", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
-  when (not haveIdentityFile) $
+  when (not haveIdentityFile) $ do
+    updateState ProcessState_GeneratingIdentity
     liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
   return dataDir
 
@@ -147,8 +149,8 @@ bakerDaemonProcess appConfig logger db namedChain = do
   return (bp, ep)
 
 fetchAlias :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Pool Postgresql -> FilePath -> m String
-fetchAlias db _ = runDb (Identity db) $ do
+  => Pool Postgresql -> a -> b -> m String
+fetchAlias db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
     (Just (BakerDaemonInternalData alias _ _ _ _)) -> return $ T.unpack alias

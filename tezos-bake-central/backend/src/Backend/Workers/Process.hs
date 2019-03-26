@@ -65,7 +65,7 @@ processWorker
   => LoggingEnv
   -> Pool Postgresql
   -> AppConfig
-  -> (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> FilePath -> m' a)
+  -> (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> (ProcessState -> m' ()) -> FilePath -> m' a)
   -> (a -> FilePath -> CreateProcess)
   -> Id ProcessData
   -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
@@ -75,7 +75,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
-      v <- runLoggingEnv logger $ initialize db configFile
+      v <- runLoggingEnv logger $ initialize db updateState configFile
       updateState ProcessState_Starting
       withCreateProcess (process v configFile) procMonitor
     threadDelay' 10
