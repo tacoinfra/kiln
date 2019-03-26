@@ -196,7 +196,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_tile = "Accused of double " <> right <> "."
   , _bakerErrorDescriptions_notification =
       plaintextErrorDescription firstParagraph
-      <> ".\n\nSecurity deposits and rewards may have been confiscated."
+      <> "\nSecurity deposits and rewards may have been confiscated."
       <> bool "" ("\n\n" <> turnOffShort) accusedInSameCycle
   , _bakerErrorDescriptions_problem = firstParagraph
       <> errorEmphasis ("All security deposits and rewards earned in cycle "
