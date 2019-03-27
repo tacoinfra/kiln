@@ -10,4 +10,4 @@ Delete the node and client data. By default these are stored at `~/.tezos-node` 
 
 ## Kiln Data
 
-Delete Kiln's database, located at `/app/db`.
+Delete Kiln's node data, stored in `./app/.kiln`.
