@@ -1610,7 +1610,7 @@ bakersTab =
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
                 Right (lTag :=> Identity log) -> case lTag of
                   BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
+                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
                     where
                       aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
