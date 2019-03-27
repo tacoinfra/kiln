@@ -139,7 +139,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
 
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
-  [ Just $ plaintextErrorDescription $ _bakerErrorDescriptions_problem dsc
+  [ Just $ plaintextErrorDescription $ foldl (\t x -> t <> "\n\n" <> x) "" (_bakerErrorDescriptions_problem dsc)
   , _bakerErrorDescriptions_warning dsc
   ]
 

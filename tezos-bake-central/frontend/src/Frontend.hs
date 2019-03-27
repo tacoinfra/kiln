@@ -1686,9 +1686,13 @@ bakersTab =
             (_bakerErrorDescriptions_title dsc)
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                el "div" $ htmlErrorDescription $ _bakerErrorDescriptions_problem dsc
-                for_ warning $ el "div" . text
-                el "div" $ do
+                for_ (_bakerErrorDescriptions_problem dsc)
+                  (\par ->
+                    do
+                      htmlErrorDescription par
+                      el "br" blank)
+                for_ warning $ el "p" . text
+                el "p" $ do
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)
