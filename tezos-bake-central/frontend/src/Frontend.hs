@@ -1614,7 +1614,7 @@ bakersTab =
                     where
                       aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
-                        RightKind_Endorsing -> "an endorse"
+                        RightKind_Endorsing -> "an endorsement"
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
