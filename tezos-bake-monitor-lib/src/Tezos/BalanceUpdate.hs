@@ -42,11 +42,19 @@ data ContractUpdate = ContractUpdate
 data FreezerUpdate = FreezerUpdate
   { _freezerUpdate_category :: !FreezerCategory --  "category": { "type": "string", "enum": ... }
   , _freezerUpdate_delegate :: !PublicKeyHash --  *delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-    -- yes, cycle, in spite of the name!
-  , _freezerUpdate_level :: !Cycle --  *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  -- Protocol 003: *level": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  -- Protocol 004: *cycle": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _freezerUpdate_cycle :: !Cycle
   , _freezerUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" }
   }
   deriving (Eq, Ord, Show, Typeable)
+instance FromJSON FreezerUpdate where
+  parseJSON = withObject "FreezerUpdate" $ \o ->
+    FreezerUpdate
+      <$> o .: "category"
+      <*> o .: "delegate"
+      <*> (o .: "cycle" <|> o .: "level")
+      <*> o .: "change"
 
 data BalanceUpdate
    = BalanceUpdate_Contract ContractUpdate
@@ -112,7 +120,7 @@ getBalanceChanges = views balanceUpdates toBalance
 
 concat <$> traverse deriveTezosJson
   [ ''ContractUpdate
-  , ''FreezerUpdate
   , ''FreezerCategory
   , ''Balance'
   ]
+deriveTezosToJson ''FreezerUpdate
