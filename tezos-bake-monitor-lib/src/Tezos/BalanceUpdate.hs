@@ -1,38 +1,39 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Tezos.BalanceUpdate where
 
-import Control.Lens
+import Control.Applicative ((<|>))
+import Control.Lens (Traversal', views)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
 import Data.Text (Text)
-import Data.Map(Map)
-import Data.Monoid(Sum(..))
+import Data.Map (Map)
+import Data.Monoid (Sum(..))
 import Data.Group
-import Data.Typeable
+import Data.Typeable (Typeable)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map as Map
 import GHC.Generics (Generic)
 
 import Tezos.Contract
+import Tezos.Json
+import Tezos.Level
 import Tezos.PublicKeyHash
 import Tezos.Tez
-import Tezos.Level
-import Tezos.Json
 
 data FreezerCategory
    = FreezerCategory_Rewards --  *category": { "type": "string", "enum": [ "rewards" ] },
    | FreezerCategory_Fees --  *category": { "type": "string", "enum": [ "fees" ] },
    | FreezerCategory_Deposits --  *category": { "type": "string", "enum": [ "deposits" ] },
   deriving (Eq, Ord, Show, Typeable, Generic)
-
-instance FromJSONKey FreezerCategory where
-instance ToJSONKey FreezerCategory where
+instance FromJSONKey FreezerCategory
+instance ToJSONKey FreezerCategory
 
 data ContractUpdate = ContractUpdate
   { _contractUpdate_contract :: !ContractId --  *contract": { "$ref": "#/definitions/contract_id" },
@@ -67,8 +68,7 @@ instance FromJSON BalanceUpdate where
     case kind of
       "contract" -> BalanceUpdate_Contract <$> parseJSON (Object v)
       "freezer" -> BalanceUpdate_Freezer <$> parseJSON (Object v)
-      bad -> fail $ "wrong kind:" <> show bad
-
+      bad -> fail $ "wrong kind: " <> show bad
 instance ToJSON BalanceUpdate where
   toJSON (BalanceUpdate_Contract x) = case toJSON x of
     Object xs -> Object $ xs <> HashMap.singleton "kind" "contract"
@@ -82,8 +82,8 @@ class HasBalanceUpdates a where
 
 
 data Balance' g = Balance
-  { _balance_spendable :: g
-  , _balance_frozen :: Map Cycle (Map FreezerCategory g)
+  { _balance_spendable :: !g
+  , _balance_frozen :: !(Map Cycle (Map FreezerCategory g))
   }
   deriving (Eq, Ord, Show, Typeable, Generic)
 type Balance = Balance' (Sum Tez)
@@ -91,7 +91,7 @@ type Balance = Balance' (Sum Tez)
 instance Semigroup g => Semigroup (Balance' g) where
   Balance xs xf <> Balance ys yf = Balance (xs <> ys) (Map.unionWith (Map.unionWith (<>)) xf yf)
 instance (Semigroup g, Monoid g) => Monoid (Balance' g) where
-  mempty = Balance mempty (Map.empty)
+  mempty = Balance mempty Map.empty
   mappend = (<>)
 instance (Semigroup g, Group g) => Group (Balance' g) where
   invert (Balance xs xf) = Balance (invert xs) (fmap invert <$> xf)
@@ -102,7 +102,7 @@ newtype Balances = Balances {unBalances :: Map ContractId Balance}
 instance Semigroup Balances where
   Balances x <> Balances y = Balances $ Map.unionWith (<>) x y
 instance Monoid Balances where
-  mempty = Balances $ Map.empty
+  mempty = Balances Map.empty
   mappend = (<>)
 instance Group Balances where
   invert = Balances . fmap invert . unBalances
@@ -112,11 +112,9 @@ getBalanceChanges = views balanceUpdates toBalance
   where
     toBalance :: BalanceUpdate -> Balances
     toBalance (BalanceUpdate_Contract (ContractUpdate contract change)) =
-      Balances (Map.singleton contract (Balance (Sum change) $ Map.empty))
+      Balances (Map.singleton contract (Balance (Sum change) Map.empty))
     toBalance (BalanceUpdate_Freezer (FreezerUpdate category delegate lvl change)) =
       Balances (Map.singleton (Implicit delegate) (Balance mempty $ Map.singleton lvl $ Map.singleton category $ Sum change))
-
-
 
 concat <$> traverse deriveTezosJson
   [ ''ContractUpdate
