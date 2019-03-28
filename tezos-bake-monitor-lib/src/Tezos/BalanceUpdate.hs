@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -17,6 +17,7 @@ import Data.Group
 import Data.Typeable
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map as Map
+import GHC.Generics (Generic)
 
 import Tezos.Contract
 import Tezos.PublicKeyHash
@@ -28,7 +29,7 @@ data FreezerCategory
    = FreezerCategory_Rewards --  *category": { "type": "string", "enum": [ "rewards" ] },
    | FreezerCategory_Fees --  *category": { "type": "string", "enum": [ "fees" ] },
    | FreezerCategory_Deposits --  *category": { "type": "string", "enum": [ "deposits" ] },
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
 
 instance FromJSONKey FreezerCategory where
 instance ToJSONKey FreezerCategory where
@@ -37,7 +38,7 @@ data ContractUpdate = ContractUpdate
   { _contractUpdate_contract :: !ContractId --  *contract": { "$ref": "#/definitions/contract_id" },
   , _contractUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" } },
   }
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
 
 data FreezerUpdate = FreezerUpdate
   { _freezerUpdate_category :: !FreezerCategory --  "category": { "type": "string", "enum": ... }
@@ -47,7 +48,7 @@ data FreezerUpdate = FreezerUpdate
   , _freezerUpdate_cycle :: !Cycle
   , _freezerUpdate_change :: !Tez --  *change": { "$ref": "#/definitions/int64" }
   }
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON FreezerUpdate where
   parseJSON = withObject "FreezerUpdate" $ \o ->
     FreezerUpdate
@@ -59,8 +60,7 @@ instance FromJSON FreezerUpdate where
 data BalanceUpdate
    = BalanceUpdate_Contract ContractUpdate
    | BalanceUpdate_Freezer FreezerUpdate
-  deriving (Eq, Ord, Show, Typeable)
-
+  deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BalanceUpdate where
   parseJSON = withObject "BalanceUpdate" $ \v -> do
     kind :: Text <- v .: "kind"
@@ -85,7 +85,7 @@ data Balance' g = Balance
   { _balance_spendable :: g
   , _balance_frozen :: Map Cycle (Map FreezerCategory g)
   }
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
 type Balance = Balance' (Sum Tez)
 
 instance Semigroup g => Semigroup (Balance' g) where
@@ -97,7 +97,7 @@ instance (Semigroup g, Group g) => Group (Balance' g) where
   invert (Balance xs xf) = Balance (invert xs) (fmap invert <$> xf)
 
 newtype Balances = Balances {unBalances :: Map ContractId Balance}
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
 
 instance Semigroup Balances where
   Balances x <> Balances y = Balances $ Map.unionWith (<>) x y
