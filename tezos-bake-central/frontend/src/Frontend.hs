@@ -817,7 +817,7 @@ liveErrorsWidget = void $ do
 
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
-      header $ _bakerErrorDescriptions_title dsc
+      header $ _bakerErrorDescriptions_title dsc <> "."
       divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
@@ -1683,16 +1683,14 @@ bakersTab =
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
-            (_bakerErrorDescriptions_title dsc)
+            (_bakerErrorDescriptions_title dsc <> ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
                 for_ (_bakerErrorDescriptions_problem dsc)
                   (\par ->
-                    do
-                      htmlErrorDescription par
-                      el "br" blank)
+                      htmlErrorDescription par *> el "br" blank)
                 for_ warning $ el "p" . text
-                el "p" $ do
+                elClass "p" "fix" $ do
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)

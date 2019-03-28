@@ -125,7 +125,7 @@ data BakerErrorDescriptions = BakerErrorDescriptions
 
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker will be marked as inactive."
+  { _bakerErrorDescriptions_title = "Baker will be marked as inactive"
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
   , _bakerErrorDescriptions_problem = ("In the past " <> errorEmphasis (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur.") : []
@@ -143,7 +143,7 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
 
 bakerDeactivatedDescriptions :: ErrorLogBakerDeactivated -> BakerErrorDescriptions
 bakerDeactivatedDescriptions elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker has been marked as inactive."
+  { _bakerErrorDescriptions_title = "Baker has been marked as inactive"
   , _bakerErrorDescriptions_tile = "Has been marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for " <> tshow preserved <> " cycles and has been marked as inactive."
   , _bakerErrorDescriptions_problem = [
@@ -182,7 +182,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
 
 bakerInsufficientFundsDescriptions :: ErrorLogInsufficientFunds -> BakerErrorDescriptions
 bakerInsufficientFundsDescriptions _{-elog-} = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights."
+  { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
   , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
   , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
   , _bakerErrorDescriptions_problem = [
@@ -198,7 +198,7 @@ bakerInsufficientFundsDescriptions _{-elog-} = BakerErrorDescriptions
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right <> "."
+  { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right
   , _bakerErrorDescriptions_tile = "Accused of double " <> right <> "."
   , _bakerErrorDescriptions_notification =
       plaintextErrorDescription firstParagraph
