@@ -256,6 +256,7 @@ data BakerDaemonInternalData = BakerDaemonInternalData
   { _bakerDaemonInternalData_alias :: !(Text)
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_insufficientFunds :: !Bool
+  , _bakerDaemonInternalData_protocol :: !(Maybe ProtocolHash)
   , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
   , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)

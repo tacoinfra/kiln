@@ -18,7 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Except (ExceptT, runExceptT, forM_, forM)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -28,6 +28,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -39,7 +40,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (toId)
+import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -443,3 +444,64 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
 
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
+
+-- Monitors changes in protocol, and restarts the baker daemon if running
+protocolMonitorWorker
+  :: NodeDataSource
+  -> Pool Postgresql
+  -> IO (IO ())
+protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> do
+  protoInfo <- liftIO $ atomically $ waitForParams nds
+  let
+    getNextProtocol = getNextProtocol' >>= \case
+      Right p -> return p
+      Left e -> do
+        putStrLn $ "DIVAM: debug: no nextProto: " <> show e
+        threadDelay' 1
+        getNextProtocol
+    getNextProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
+      blk <- nodeQueryDataSource (NodeQuery_Block $ latestHead ^. hash)
+      return $ _blockMetadata_nextProtocol $ _block_metadata blk
+
+  nextProto <- getNextProtocol
+  liftIO $ putStrLn $ "DIVAM: debug nextProto:" <> (show nextProto)
+  let
+    inDb :: DbPersist Postgresql (LoggingT IO) a -> IO a
+    inDb m = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) m
+  processes <- inDb $ do
+    let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+    project1 ds CondEmpty >>= \case
+      Nothing -> return Nothing
+      Just (BakerDaemonInternalData _ _ _ mp bpid epid) -> (join <$>) $ forM mp $ \proto -> if proto == nextProto
+        then return Nothing
+        else do
+          update [ds ~> BakerDaemonInternalData_protocolSelector =. Just nextProto] CondEmpty
+          let processes = map fromId [bpid, epid]
+          r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
+          if r == Just True
+            then do
+              update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+              return $ Just processes
+            else return Nothing
+  forM_ processes $ mapM $ \p -> do
+    let
+      loop = do
+        s <- inDb $ project1 ProcessData_stateField $ AutoKeyField ==. p
+        if s == Just ProcessState_Stopped
+          then inDb $ update [ProcessData_runningField =. True] $ AutoKeyField ==. p
+          else threadDelay' 1 >> loop
+    loop
+
+  -- Wait till the end of this cycle
+  let
+    currentLvl = latestHead ^. level
+    nextCycle = 1 + levelToCycle protoInfo currentLvl
+    -- resume the worker during the last block of this cycle
+    nextCheckLvl = firstLevelInCycle protoInfo nextCycle - 1
+    delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
+    oneBlockTime :: TezosWord64
+    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
+  liftIO $ putStrLn $ "DIVAM: debug current:" <> (show currentLvl) <> " nextCheckLvl: " <> (show nextCheckLvl)
+  liftIO $ putStrLn $ "DIVAM: debug delay:" <> (show delay) <> " oneBlockTime: " <> (show oneBlockTime)
+  threadDelay' delay
+  return ()

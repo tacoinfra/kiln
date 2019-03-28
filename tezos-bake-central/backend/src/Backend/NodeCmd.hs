@@ -14,6 +14,9 @@ module Backend.NodeCmd where
 
 import Control.Monad.Logger (MonadLogger)
 import Data.Pool (Pool)
+import Data.List (find)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
@@ -23,6 +26,7 @@ import System.FilePath (combine)
 import System.Process (readProcess, proc)
 import qualified Data.Text as T
 
+import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
@@ -37,15 +41,37 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
-bakerPaths :: NamedChain -> FilePath
-bakerPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
-bakerPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
-bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-alpha")
+bakerPaths :: NamedChain -> Maybe ProtocolHash -> FilePath
+bakerPaths n = \case
+  Nothing -> snd $ NonEmpty.head paths
+  Just p -> maybe e snd $ find ((== p8) . fst) paths
+    where
+      -- drop '(fromString "'
+      p8 = take 8 $ drop 13 $ show p
+      e = error ("tezos-baker not available for the given chain:" <> (show n) <> " and protocol: " <> p8)
+  where
+    paths = case n of
+      NamedChain_Mainnet -> ("PsddFKi3", $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")) :| []
+      NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")) :| []
+      NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-baker-004-PsGn8G5U")) :|
+        [ ("PsuzFErA", $(staticWhich "zeronet-tezos-baker-004-PsuzFErA"))
+        ]
 
-endorserPaths :: NamedChain -> FilePath
-endorserPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
-endorserPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
-endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
+endorserPaths :: NamedChain -> Maybe ProtocolHash -> FilePath
+endorserPaths n = \case
+  Nothing -> snd $ NonEmpty.head paths
+  Just p -> maybe e snd $ find ((== p8) . fst) paths
+    where
+      -- drop '(fromString "'
+      p8 = take 8 $ drop 13 $ show p
+      e = error ("tezos-endorser not available for the given chain:" <> (show n) <> " and protocol: " <> p8)
+  where
+    paths = case n of
+      NamedChain_Mainnet -> ("PsddFKi3", $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")) :| []
+      NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")) :| []
+      NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-endorser-004-PsGn8G5U")) :|
+        [ ("PsuzFErA", $(staticWhich "zeronet-tezos-endorser-004-PsuzFErA"))
+        ]
 
 -- TODO: use postgres for "process-id's"
 
@@ -111,7 +137,7 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
 bakerDaemonProcess appConfig logger db namedChain = do
-  (_nid, BakerDaemonInternalData _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (_nid, BakerDaemonInternalData _ _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
@@ -126,7 +152,7 @@ bakerDaemonProcess appConfig logger db namedChain = do
         bpid <- insert' processData
         epid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing False bpid epid
+        let v = BakerDaemonInternalData "ledger_kiln" Nothing False Nothing bpid epid
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
@@ -138,19 +164,19 @@ bakerDaemonProcess appConfig logger db namedChain = do
   let nodePort = show $ _appConfig_kilnNodePort appConfig
   bp <- processWorker logger db appConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", "with", "local", "node", nodeDataDir appConfig, alias])
+    (\(alias, proto) _nodeConfigPath -> proc (bakerPaths namedChain proto) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", "with", "local", "node", nodeDataDir appConfig, alias])
     bpid
     Nothing
   ep <- processWorker logger db appConfig
     fetchAlias
-    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", alias])
+    (\(alias, proto) _nodeConfigPath -> proc (endorserPaths namedChain proto) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", alias])
     epid
     Nothing
   return (bp, ep)
 
 fetchAlias :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Pool Postgresql -> a -> b -> m String
+  => Pool Postgresql -> a -> b -> m (String, Maybe ProtocolHash)
 fetchAlias db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
-    (Just (BakerDaemonInternalData alias _ _ _ _)) -> return $ T.unpack alias
+    (Just (BakerDaemonInternalData alias _ _ proto _ _)) -> return $ (T.unpack alias, proto)
