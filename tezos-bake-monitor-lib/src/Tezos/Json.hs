@@ -42,6 +42,9 @@ parseIntegralAsString x = ((floor :: Scientific -> a) <$> parseJSON x) <|> parse
 deriveTezosJson :: Name -> Q [Dec]
 deriveTezosJson = deriveTezosJsonKind "kind"
 
+deriveTezosToJson :: Name -> Q [Dec]
+deriveTezosToJson = Aeson.deriveToJSON (tezosJsonOptionsKind "kind")
+
 deriveTezosJsonKind :: String -> Name -> Q [Dec]
 deriveTezosJsonKind = Aeson.deriveJSON . tezosJsonOptionsKind
 
