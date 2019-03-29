@@ -18,7 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT, forM_, forM)
+import Control.Monad.Except (ExceptT, runExceptT, forM_)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -445,18 +445,24 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
 
--- Monitors changes in protocol, and restarts the baker daemon if running
+-- Monitors changes in protocol/voting period, and manages the baker daemon if running
+-- Set the main and test protocol on start, restart processes if mismatch
+-- wait for voting period
+-- As per the result of voting period change protocol
+-- if no change, then stop test processes
+-- if change, then stop main process, set procols, swap pid with test
 protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> do
+protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   protoInfo <- liftIO $ atomically $ waitForParams nds
+  $(logWarnSH) ("protocolMonitorWorker: waiting for next_protocol"::Text,())
   let
     getNextProtocol = getNextProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        putStrLn $ "DIVAM: debug: no nextProto: " <> show e
+        $(logWarnSH) ("protocolMonitorWorker: cannot fetch next_protocol"::Text, e)
         threadDelay' 1
         getNextProtocol
     getNextProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
@@ -464,33 +470,84 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> d
       return $ _blockMetadata_nextProtocol $ _block_metadata blk
 
   nextProto <- getNextProtocol
-  liftIO $ putStrLn $ "DIVAM: debug nextProto:" <> (show nextProto)
+
   let
-    inDb :: DbPersist Postgresql (LoggingT IO) a -> IO a
-    inDb m = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) m
-  processes <- inDb $ do
-    let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
-    project1 ds CondEmpty >>= \case
-      Nothing -> return Nothing
-      Just (BakerDaemonInternalData _ _ _ mp bpid epid) -> (join <$>) $ forM mp $ \proto -> if proto == nextProto
-        then return Nothing
+    mainProto = nextProto
+    testProto = Nothing :: Maybe ProtocolHash
+    inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
+    inDb m = runDb (Identity db) m
+    restartPids ps = do
+      $(logWarnSH) ("protocolMonitorWorker: restarting pids"::Text, ps)
+      forM_ ps $ \p -> do
+        let cond = AutoKeyField ==. p
+        inDb $ update [ProcessData_runningField =. False] cond
+        let
+          loop = do
+            s <- inDb $ project1 ProcessData_stateField $ cond
+            if s == Just ProcessState_Stopped
+              then inDb $ update [ProcessData_runningField =. True] cond
+              else threadDelay' 1 >> loop
+        loop
+      $(logWarnSH) ("protocolMonitorWorker: restarting pids done"::Text, ps)
+
+  $(logWarnSH) ("protocolMonitorWorker: setting initial protocol values"::Text, nextProto)
+  let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+  pids <- inDb $ project1 ds CondEmpty >>= \case
+    Nothing -> return []
+    Just bp@(BakerDaemonInternalData _ _ _ mp bpid epid tp tbpid tepid) -> do
+      $(logWarnSH) ("protocolMonitorWorker: initial values"::Text, bp)
+      p1 <- if mp == Just mainProto
+        then return []
         else do
-          update [ds ~> BakerDaemonInternalData_protocolSelector =. Just nextProto] CondEmpty
           let processes = map fromId [bpid, epid]
+          update [ds ~> BakerDaemonInternalData_protocolSelector =. Just mainProto] CondEmpty
           r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
           if r == Just True
-            then do
-              update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
-              return $ Just processes
-            else return Nothing
-  forM_ processes $ mapM $ \p -> do
-    let
-      loop = do
-        s <- inDb $ project1 ProcessData_stateField $ AutoKeyField ==. p
-        if s == Just ProcessState_Stopped
-          then inDb $ update [ProcessData_runningField =. True] $ AutoKeyField ==. p
-          else threadDelay' 1 >> loop
-    loop
+            then return processes
+            else return []
+      p2 <- case testProto of
+        Nothing -> do
+          let processes = map fromId [tbpid, tepid]
+          update [ds ~> BakerDaemonInternalData_testProtocolSelector =. testProto] CondEmpty
+          update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+          return []
+        Just _ -> if tp == testProto
+          then return []
+          else do
+            let processes = map fromId [tbpid, tepid]
+            update [ds ~> BakerDaemonInternalData_testProtocolSelector =. testProto] CondEmpty
+            r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
+            if r == Just True
+              then return processes
+              else return []
+      return $ p1 ++ p2
+
+  restartPids pids
+
+  -- After voting period
+  let
+    newMainProto = nextProto
+
+  inDb $ project1 ds CondEmpty >>= \case
+    Nothing -> return ()
+    Just (BakerDaemonInternalData _ _ _ mp bpid epid _ tbpid tepid) -> if mp == Just newMainProto
+      then do
+        $(logWarnSH) ("protocolMonitorWorker: no change in protocol"::Text, newMainProto)
+        -- No change in protocol, so stop test processes if running
+        let processes = map fromId [tbpid, tepid]
+        update [ds ~> BakerDaemonInternalData_testProtocolSelector =. (Nothing :: Maybe ProtocolHash)] CondEmpty
+        update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+      else do
+        $(logWarnSH) ("protocolMonitorWorker: swapping processes"::Text, newMainProto)
+        -- swap with test
+        update [ ds ~> BakerDaemonInternalData_protocolSelector =. Just newMainProto
+               , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
+               , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
+               , ds ~> BakerDaemonInternalData_testBakerProcessDataSelector =. bpid
+               , ds ~> BakerDaemonInternalData_testEndorserProcessDataSelector =. epid
+               ] CondEmpty
+        let processes = map fromId [bpid, epid]
+        update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
 
   -- Wait till the end of this cycle
   let
@@ -501,7 +558,6 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> d
     delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
     oneBlockTime :: TezosWord64
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
-  liftIO $ putStrLn $ "DIVAM: debug current:" <> (show currentLvl) <> " nextCheckLvl: " <> (show nextCheckLvl)
-  liftIO $ putStrLn $ "DIVAM: debug delay:" <> (show delay) <> " oneBlockTime: " <> (show oneBlockTime)
+  $(logWarnSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
   return ()

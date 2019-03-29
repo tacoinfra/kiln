@@ -135,9 +135,9 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO (), IO (), IO ())
 bakerDaemonProcess appConfig logger db namedChain = do
-  (_nid, BakerDaemonInternalData _ _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (_nid, BakerDaemonInternalData aliasT _ _ _ bpid1 epid1 _ bpid2 epid2) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
@@ -151,8 +151,10 @@ bakerDaemonProcess appConfig logger db namedChain = do
 
         bpid <- insert' processData
         epid <- insert' processData
+        tbpid <- insert' processData
+        tepid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing False Nothing bpid epid
+        let v = BakerDaemonInternalData "ledger_kiln" Nothing False Nothing bpid epid Nothing tbpid tepid
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
@@ -162,21 +164,42 @@ bakerDaemonProcess appConfig logger db namedChain = do
           }
         return (nid, v)
   let nodePort = show $ _appConfig_kilnNodePort appConfig
-  bp <- processWorker logger db appConfig
-    fetchAlias
-    (\(alias, proto) _nodeConfigPath -> proc (bakerPaths namedChain proto) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", "with", "local", "node", nodeDataDir appConfig, alias])
-    bpid
-    Nothing
-  ep <- processWorker logger db appConfig
-    fetchAlias
-    (\(alias, proto) _nodeConfigPath -> proc (endorserPaths namedChain proto) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", alias])
-    epid
-    Nothing
-  return (bp, ep)
+      alias = T.unpack aliasT
+      bakerArgs = [ "--port", nodePort
+                  , "--base-dir", tezosClientDataDir appConfig
+                  , "run", "with", "local", "node", nodeDataDir appConfig
+                  , alias]
+      endorserArgs = ["--port", nodePort
+                     , "--base-dir", tezosClientDataDir appConfig
+                     , "run"
+                     , alias]
+      pw (pathF, args) pid = processWorker logger db appConfig
+        (fetchProtocol pid)
+        (\proto _nodeConfigPath -> proc (pathF namedChain proto) args)
+        pid
+        Nothing
+      bakerPw = pw (bakerPaths, bakerArgs)
+      endorserPw = pw (endorserPaths, endorserArgs)
 
-fetchAlias :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Pool Postgresql -> a -> b -> m (String, Maybe ProtocolHash)
-fetchAlias db _ _ = runDb (Identity db) $ do
+  -- We run two sets of ProcessWorkers, which one actually runs the main baker/test baker
+  -- depends upon the protocol set for that PID.
+  -- This allows us to switch a 'test baker' to 'main baker' without actually restarting the baker
+  -- ie bp1 starts as main baker, bp2 as test baker
+  -- after voting period ends, we simply stop the bp1 and set bpid2 as 'bakerProcessData'
+  -- So bp2 process keeps on running but is now identified as 'main baker'
+  bp1 <- bakerPw bpid1
+  bp2 <- bakerPw bpid2
+  ep1 <- endorserPw epid1
+  ep2 <- endorserPw epid2
+  return (bp1, bp2, ep1, ep2)
+
+-- protocol is a variable field, and therefore it is fetched everytime we restart process
+fetchProtocol :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  => Id ProcessData -> Pool Postgresql -> a -> b -> m (Maybe ProtocolHash)
+fetchProtocol pid db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
-    (Just (BakerDaemonInternalData alias _ _ proto _ _)) -> return $ (T.unpack alias, proto)
+    (Just (BakerDaemonInternalData _ _ _ proto _ _ testProto tbpid tepid)) ->
+      if pid == tbpid || pid == tepid
+        then return testProto
+        else return proto

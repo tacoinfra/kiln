@@ -259,6 +259,9 @@ data BakerDaemonInternalData = BakerDaemonInternalData
   , _bakerDaemonInternalData_protocol :: !(Maybe ProtocolHash)
   , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
   , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_testProtocol :: !(Maybe ProtocolHash)
+  , _bakerDaemonInternalData_testBakerProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_testEndorserProcessData :: !(Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternalData where
