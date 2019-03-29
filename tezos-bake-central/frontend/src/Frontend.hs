@@ -1772,7 +1772,7 @@ bakersTab =
                 let eventDyn = constDyn (r, l)
                 etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
-                dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
+                dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
         let
           dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'

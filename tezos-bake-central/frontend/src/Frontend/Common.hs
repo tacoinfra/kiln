@@ -44,7 +44,7 @@ import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common (humanizeTimestamp)
+import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest)
 import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
@@ -141,18 +141,35 @@ localHumanizedTimestamp titleDyn tsDyn = do
 
 -- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
 -- tooltips since they are more lightweight
-localHumanizedTimestampBasic
+-- The actual string displayed is given by the first argument 'humanize'.
+localHumanizedTimestampBasicGen
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
-  => Dynamic t Time.UTCTime
+  => (TimeZone -> UTCTime -> UTCTime -> Text)
+  -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestampBasic tsDyn = do
+localHumanizedTimestampBasicGen humanize tsDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
   let attrs = ffor tsDyn $ \ts -> M.fromList
         [ ("data-position", "bottom left")
         , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
         ]
-  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanize tz
+
+-- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
+-- tooltips since they are more lightweight
+localHumanizedTimestampBasic
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasic tsDyn = localHumanizedTimestampBasicGen humanizeTimestamp tsDyn
+
+-- | Like 'localHumanizedTimestampBasic' but don't show the timezone
+localHumanizedTimestampBasicWithoutTZ
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
 
 data TooltipPos
   = TooltipPos_TopLeft
