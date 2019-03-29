@@ -817,7 +817,7 @@ liveErrorsWidget = void $ do
 
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
-      header $ _bakerErrorDescriptions_title dsc
+      header $ _bakerErrorDescriptions_title dsc <> "."
       divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
@@ -1610,11 +1610,11 @@ bakersTab =
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
                 Right (lTag :=> Identity log) -> case lTag of
                   BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
+                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
                     where
                       aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
-                        RightKind_Endorsing -> "an endorse"
+                        RightKind_Endorsing -> "an endorsement"
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
@@ -1683,12 +1683,14 @@ bakersTab =
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
-            (_bakerErrorDescriptions_title dsc)
+            (_bakerErrorDescriptions_title dsc <> ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                el "div" $ htmlErrorDescription $ _bakerErrorDescriptions_problem dsc
-                for_ warning $ el "div" . text
-                el "div" $ do
+                for_ (_bakerErrorDescriptions_problem dsc)
+                  (\par ->
+                      htmlErrorDescription par *> el "br" blank)
+                for_ warning $ el "p" . text
+                elClass "p" "fix" $ do
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)

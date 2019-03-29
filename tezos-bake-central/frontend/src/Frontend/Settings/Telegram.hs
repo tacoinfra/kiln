@@ -147,9 +147,13 @@ settingsForm cfg = holdUniqDyn =<< do
 
     el "li" $ text "Click the link to your bot that the BotFather gives you and send " *> st "‘/start’" *> text " to your bot."
 
-    el "li" $ text "If you’d like alerts sent to a group chat add the bot to that group. Now send a message containing anything  (e.g. " *> st "‘Kiln is amazing’" *> text ")  to the bot or the group chat you’re using. This lets us lookup the bot’s recent conversation ID and use it to send messages."
+    el "li"
+      $ text "To receive direct messages from the bot, send any random message to it." *> el "br" blank
+      *> text "To receive messages to a group, add the bot to a group. If you had already added the bot to a group, remove the bot from the group and add it again." *> el "br" blank
+      *> text "This allows us to look up the bot’s recent conversation ID and use it to send messages to the correct place."
 
-    el "li" $ text "You’re done! Click " *> st "‘Connect Telegram'" *> text " to finish!"
+    el "li"
+      $ text "You’re done! Click " *> st "‘Connect Telegram'" *> text " to finish linking Kiln to your bot!"
 
     return v
 watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))

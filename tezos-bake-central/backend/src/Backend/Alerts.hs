@@ -139,7 +139,7 @@ clearUnrelatedNetworkUpdateError namedChain = do
 
 unresolvedBakerAlert :: BakerErrorDescriptions -> Alert
 unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) $ T.unlines $ catMaybes
-  [ Just $ plaintextErrorDescription $ _bakerErrorDescriptions_problem dsc
+  [ Just $ plaintextErrorDescription $ foldl (\t x -> t <> "\n\n" <> x) "" (_bakerErrorDescriptions_problem dsc)
   , _bakerErrorDescriptions_warning dsc
   ]
 
@@ -207,7 +207,7 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
     SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
-      JOIN "Baker" b ON b.publicKeyHash = t."publicKeyHash"
+      JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
      ORDER BY el."lastSeen" DESC, el.started DESC
