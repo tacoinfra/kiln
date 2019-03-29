@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0
+*March 29, 2019*
+
+  * Support for baking and endorsing directly in Kiln! (Requires a Ledger Nano S)
+  * Support for various Ledger interactions via Kiln:
+      * Authorize/Re-authorize baking
+      * Set high-water mark
+  * Support for Telegram notifications to private groups
+  * New configuration options via command-line/config files
+  * Improved performance and stability
+      * Data from public nodes is updated more reliably
+      * Limited number of notifications on frontend
+  * Bug fixes
+      * Fixed incorrect "Node is on a branch" bug from 0.4.1
+      * Available balance for monitored bakers is now correct
+
+
 ## 0.4.1
 *March 11, 2019*
 
