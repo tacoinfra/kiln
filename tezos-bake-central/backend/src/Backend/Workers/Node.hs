@@ -553,8 +553,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   let
     currentLvl = latestHead ^. level
     nextCycle = 1 + levelToCycle protoInfo currentLvl
-    -- resume the worker during the last block of this cycle
-    nextCheckLvl = firstLevelInCycle protoInfo nextCycle - 1
+    nextCheckLvl = firstLevelInCycle protoInfo nextCycle
     delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
     oneBlockTime :: TezosWord64
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
