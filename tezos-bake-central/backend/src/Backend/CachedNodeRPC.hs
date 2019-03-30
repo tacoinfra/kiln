@@ -130,6 +130,7 @@ data NodeQuery a where
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
+  NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -678,6 +679,7 @@ getKey params hist = \case
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
   NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
+  NodeQuery_CurrentProposal ctx lvl -> (\ctx' -> (ctx' , NodeQuery_CurrentProposal ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
@@ -841,6 +843,7 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
+  NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
