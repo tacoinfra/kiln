@@ -446,11 +446,6 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
--- Set the main and test protocol on start, restart processes if mismatch
--- wait for voting period
--- As per the result of voting period change protocol
--- if no change, then stop test processes
--- if change, then stop main process, set procols, swap pid with test
 protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
@@ -459,21 +454,23 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   protoInfo <- liftIO $ atomically $ waitForParams nds
   $(logWarnSH) ("protocolMonitorWorker: waiting for next_protocol"::Text,())
   let
-    getNextProtocol = getNextProtocol' >>= \case
+    getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
         $(logWarnSH) ("protocolMonitorWorker: cannot fetch next_protocol"::Text, e)
         threadDelay' 1
-        getNextProtocol
-    getNextProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
-      blk <- nodeQueryDataSource (NodeQuery_Block $ latestHead ^. hash)
-      return $ _blockMetadata_nextProtocol $ _block_metadata blk
+        getProtocol
+    getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
+      blk <- nodeQueryDataSource $ NodeQuery_Block $ latestHead ^. hash
+      let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
+      tp <- if vp == VotingPeriodKind_PromotionVote
+        then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)
+        else return Nothing
+      return $ ( blk ^. block_metadata . blockMetadata_protocol, tp)
 
-  nextProto <- getNextProtocol
+  (mainProto, testProto) <- getProtocol
 
   let
-    mainProto = nextProto
-    testProto = Nothing :: Maybe ProtocolHash
     inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
     inDb m = runDb (Identity db) m
     restartPids ps = do
@@ -490,64 +487,59 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         loop
       $(logWarnSH) ("protocolMonitorWorker: restarting pids done"::Text, ps)
 
-  $(logWarnSH) ("protocolMonitorWorker: setting initial protocol values"::Text, nextProto)
+  $(logWarnSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, testProto)
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
-  pids <- inDb $ project1 ds CondEmpty >>= \case
+  pidsToRestart <- inDb $ project1 ds CondEmpty >>= \case
     Nothing -> return []
     Just bp@(BakerDaemonInternalData _ _ _ mp bpid epid tp tbpid tepid) -> do
       $(logWarnSH) ("protocolMonitorWorker: initial values"::Text, bp)
-      p1 <- if mp == Just mainProto
-        then return []
-        else do
+      let
+        setMainProto p = do
           let processes = map fromId [bpid, epid]
-          update [ds ~> BakerDaemonInternalData_protocolSelector =. Just mainProto] CondEmpty
+          update [ds ~> BakerDaemonInternalData_protocolSelector =. Just p] CondEmpty
           r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
           if r == Just True
             then return processes
             else return []
-      p2 <- case testProto of
-        Nothing -> do
+        setTestProto p = do
           let processes = map fromId [tbpid, tepid]
-          update [ds ~> BakerDaemonInternalData_testProtocolSelector =. testProto] CondEmpty
+          update [ds ~> BakerDaemonInternalData_testProtocolSelector =. Just p] CondEmpty
+          r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
+          if r == Just True
+            then return processes
+            else return []
+        stopMain = do
+          let processes = map fromId [bpid, epid]
           update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
-          return []
-        Just _ -> if tp == testProto
-          then return []
-          else do
-            let processes = map fromId [tbpid, tepid]
-            update [ds ~> BakerDaemonInternalData_testProtocolSelector =. testProto] CondEmpty
-            r <- project1 ProcessData_runningField $ AutoKeyField `in_` processes
-            if r == Just True
-              then return processes
-              else return []
-      return $ p1 ++ p2
+        stopTP = do
+          let processes = map fromId [tbpid, tepid]
+          update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+        -- swap pids with test
+        testToMain = do
+          $(logWarnSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
+          stopMain
+          update [ ds ~> BakerDaemonInternalData_protocolSelector =. Just mainProto
+                 , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
+                 , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
+                 , ds ~> BakerDaemonInternalData_testBakerProcessDataSelector =. bpid
+                 , ds ~> BakerDaemonInternalData_testEndorserProcessDataSelector =. epid
+                 ] CondEmpty
+      case testProto of
+        Just tp' -> do
+          p1 <- if mp == Just mainProto
+            then return []
+            else setMainProto mainProto
+          p2 <- if tp == Just tp'
+            then return []
+            else setTestProto tp'
+          return $ p1 ++ p2
+        Nothing -> if
+          | mp == Just mainProto -> stopTP >> return []
+          | tp == Just mainProto -> stopMain >> testToMain >> return []
+          | otherwise -> stopTP >> setMainProto mainProto
 
-  restartPids pids
-
-  -- After voting period
-  let
-    newMainProto = nextProto
-
-  inDb $ project1 ds CondEmpty >>= \case
-    Nothing -> return ()
-    Just (BakerDaemonInternalData _ _ _ mp bpid epid _ tbpid tepid) -> if mp == Just newMainProto
-      then do
-        $(logWarnSH) ("protocolMonitorWorker: no change in protocol"::Text, newMainProto)
-        -- No change in protocol, so stop test processes if running
-        let processes = map fromId [tbpid, tepid]
-        update [ds ~> BakerDaemonInternalData_testProtocolSelector =. (Nothing :: Maybe ProtocolHash)] CondEmpty
-        update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
-      else do
-        $(logWarnSH) ("protocolMonitorWorker: swapping processes"::Text, newMainProto)
-        -- swap with test
-        update [ ds ~> BakerDaemonInternalData_protocolSelector =. Just newMainProto
-               , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
-               , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
-               , ds ~> BakerDaemonInternalData_testBakerProcessDataSelector =. bpid
-               , ds ~> BakerDaemonInternalData_testEndorserProcessDataSelector =. epid
-               ] CondEmpty
-        let processes = map fromId [bpid, epid]
-        update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+  -- This has to be done outside runDb
+  restartPids pidsToRestart
 
   -- Wait till the end of this cycle
   let
