@@ -15,6 +15,7 @@ let
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
+      histMode = "archive";
     };
     alphanet = {
       network = "alphanet";
@@ -32,7 +33,7 @@ let
     };
   };
 
-  mkTezosNodeServiceModule = { p2pPort, rpcPort, network, tzKit, ... }: {...}:
+  mkTezosNodeServiceModule = { p2pPort, rpcPort, network, tzKit, histMode ? null, ... }: {...}:
     let serviceName = "${network}-node"; user = serviceName; group = user;
     in {
       networking.firewall.allowedTCPPorts = [p2pPort];
@@ -44,7 +45,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" --history-mode archive
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
         '';
         serviceConfig = {
           User = user;
