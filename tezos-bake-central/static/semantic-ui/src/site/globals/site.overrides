@@ -877,41 +877,35 @@ img.credits-obsidian {
   }
 }
 
+.internal-subtitle {
+  display: flex;
+  margin-top: @4px;
+
+  img {
+    height: @10px;
+    margin-right: @10px;
+    font-size: @10px;
+  }
+  div {
+    height: @10px;
+  }
+}
+
+
 .dashboard-section > .ui.cards {
   margin-left: 0;
   margin-right: 0;
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
-
-    .internal-node-subtitle {
-      display: flex;
-      margin-top: @4px;
-
-      img {
-        height: @10px;
-        margin-right: @10px;
-        font-size: @10px;
-      }
-      div {
-        height: @10px;
-      }
-    }
-
-    .internal-node-tile-body {
-      .ui.row {
-        margin-top: @15px;
-        margin-bottom: @15px;
-
-        i.icon-id-badge {
-          color: #d8dce6;
-        }
-      }
-    }
   }
 
   > .ui.card.baker-tile {
     width: unit(430 / @emSize, rem);
+
+    .internal-subtitle + .secondary-name {
+      margin-top: @8px;
+    }
 
     .ui.loader {
       margin-right: @6px;
