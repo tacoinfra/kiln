@@ -293,7 +293,7 @@ in obApp // {
         '';
       };
     };
-  kiln-debian = (import ./makeRelease.nix {inherit pkgs; obApp = obAppGargoyle;
-    pkgName = "kiln"; version = "0.4.1";
+  kiln-debian = (import ./linux-distros.nix {inherit pkgs; obApp = obAppGargoyle;
+    pkgName = "kiln"; version = "0.5.1";
     }).kiln-debian;
 }
