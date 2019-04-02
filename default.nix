@@ -3,7 +3,7 @@
 , pkgs ? obelisk.reflex-platform.nixpkgs
 }:
 let
-  obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
+  obApp = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = false; };
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
@@ -83,7 +83,7 @@ let
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = obApp.linuxExeConfigurable appConfig version;
+          exe = (obApp null).linuxExeConfigurable appConfig version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -211,7 +211,7 @@ let
     };
   };
 
-  dockerExe = let exe = obApp.linuxExe; in pkgs.runCommand "dockerExe" {} ''
+  dockerExe = let exe = (obApp "docker").linuxExe; in pkgs.runCommand "dockerExe" {} ''
     mkdir "$out"
 
     cp '${exe}/backend' "$out/backend"
@@ -260,7 +260,7 @@ let
     };
   };
 
-in obApp // {
+in (obApp null) // {
   inherit pkgs dockerExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let

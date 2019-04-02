@@ -30,6 +30,7 @@ import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 
 import Common.Api
 import Common.App
+import Common.Distribution
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_upgradeBranch)
 import Common.Schema hiding (Event)
@@ -249,7 +250,9 @@ settingsTab = do
               el "p" $ do
                 text "Release notes: "
                 hrefLink uri $ text uri
-              el "p" $ text "To update, install the latest version using whichever package manager you are using to manage Kiln."
+              el "p" $ text $ case distributionMethod of
+                Distribution_FromSource -> "To update, install the latest version using whichever package manager you are using to manage Kiln."
+                Distribution_Docker -> "You are running Kiln via Docker. To update, quit Kiln and run the ‘docker run’ command using the tag ‘" <> T.pack (showVersion v) <> "’."
             else
               text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
           _ -> blank
