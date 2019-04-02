@@ -79,7 +79,7 @@ import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain)
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
@@ -244,7 +244,7 @@ appSidebar
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
+     , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -311,7 +311,7 @@ appGutter =
         bakersList
         nodesList
 
-appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m) => m ()
+appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -329,6 +329,13 @@ appSideFooter =
               routeSelector (AppRoute_Options :/ ()) SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
+                currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+                upstreamVersion <- watchUpstreamVersion
+                dyn_ $ ffor upstreamVersion $ \case
+                  Just uv | Just v <- _upstreamVersion_version uv , v > currentVersion ->
+                    elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
+                  _ -> pure ()
+
         hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
           elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
