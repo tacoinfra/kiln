@@ -19,8 +19,8 @@ nominalDiffTimeToSeconds n = numerator ratio `div` denominator ratio
   where
     ratio = toRational n
 
-humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
+humanizeTimestampGen :: Bool -> Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
+humanizeTimestampGen withTz tz now ts = if diff > 0 then futureMoment else humanizeDiffTime diff
   where
     diff = Time.diffUTCTime ts now
     localNow = Time.utcToLocalTime tz now
@@ -29,7 +29,14 @@ humanizeTimestamp tz now ts = if diff > 0 then futureMoment else humanizeDiffTim
       0 -> "Today"
       1 -> "Tomorrow"
       d -> bool "Next %A" "%b %e" $ d >= 7
-    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> " @ %-l:%M%P %Z") $ Time.utcToZonedTime tz ts
+    format = if withTz then " @ %-l:%M%P %Z" else " @ %-l:%M%P"
+    futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> format) $ Time.utcToZonedTime tz ts
+
+humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
+humanizeTimestamp tz now ts = humanizeTimestampGen True tz now ts
+
+humanizeTimestampWithoutTZ :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
+humanizeTimestampWithoutTZ tz now ts = humanizeTimestampGen False tz now ts
 
 humanizeDiffTime :: Time.NominalDiffTime -> Text
 humanizeDiffTime t = T.unwords elems <> " ago"
