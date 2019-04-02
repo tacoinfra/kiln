@@ -5,7 +5,7 @@
 }:
 let
   maintainer = "Obsidian Systems <tezos@obsidian.systems>";
-  description = "Kiln, provides individuals running Tezos nodes and bakers with a locally hosted graphical interface enabling easy and effective monitoring.";
+  description = "Kiln, by Obsidian Systems, is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.";
 
   var-prefix = "/var/lib/${pkgName}";
 
