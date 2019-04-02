@@ -55,6 +55,7 @@ bakerPaths n = \case
       NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")) :| []
       NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-baker-004-PsGn8G5U")) :|
         [ ("PsuzFErA", $(staticWhich "zeronet-tezos-baker-004-PsuzFErA"))
+        , ("ProtoALp", $(staticWhich "zeronet-tezos-baker-alpha"))
         ]
 
 endorserPaths :: NamedChain -> Maybe ProtocolHash -> FilePath
@@ -71,6 +72,7 @@ endorserPaths n = \case
       NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")) :| []
       NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-endorser-004-PsGn8G5U")) :|
         [ ("PsuzFErA", $(staticWhich "zeronet-tezos-endorser-004-PsuzFErA"))
+        , ("ProtoALp", $(staticWhich "zeronet-tezos-endorser-alpha"))
         ]
 
 -- TODO: use postgres for "process-id's"
