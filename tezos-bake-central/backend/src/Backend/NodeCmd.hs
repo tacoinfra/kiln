@@ -41,38 +41,47 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
-bakerPaths :: NamedChain -> Maybe ProtocolHash -> FilePath
-bakerPaths n = \case
-  Nothing -> snd $ NonEmpty.head paths
-  Just p -> maybe e snd $ find ((== p8) . fst) paths
-    where
-      -- drop '(fromString "'
-      p8 = take 8 $ drop 13 $ show p
-      e = error ("tezos-baker not available for the given chain:" <> (show n) <> " and protocol: " <> p8)
-  where
-    paths = case n of
-      NamedChain_Mainnet -> ("PsddFKi3", $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")) :| []
-      NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")) :| []
-      NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-baker-004-PsGn8G5U")) :|
-        [ ("PsuzFErA", $(staticWhich "zeronet-tezos-baker-004-PsuzFErA"))
-        , ("ProtoALp", $(staticWhich "zeronet-tezos-baker-alpha"))
-        ]
+bakerPath :: NamedChain -> Maybe ProtocolHash -> FilePath
+bakerPath = getPath (view _2)
 
-endorserPaths :: NamedChain -> Maybe ProtocolHash -> FilePath
-endorserPaths n = \case
-  Nothing -> snd $ NonEmpty.head paths
-  Just p -> maybe e snd $ find ((== p8) . fst) paths
+endorserPath :: NamedChain -> Maybe ProtocolHash -> FilePath
+endorserPath = getPath (view _3)
+
+getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath) -> NamedChain -> Maybe ProtocolHash -> FilePath
+getPath f n = \case
+  Nothing -> f $ NonEmpty.head paths
+  Just p -> maybe e f $ find (\(p', _, _) -> p' == p) paths
     where
-      -- drop '(fromString "'
-      p8 = take 8 $ drop 13 $ show p
-      e = error ("tezos-endorser not available for the given chain:" <> (show n) <> " and protocol: " <> p8)
+      e = error ("tezos-baker/endorser not available for the given chain:" <> (show n) <> " and protocol: " <> show p)
   where
+    mainPh1 :: ProtocolHash
+    mainPh1 = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+    alphaPh1 = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+    zeroPh1 = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
+    zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
+    zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
     paths = case n of
-      NamedChain_Mainnet -> ("PsddFKi3", $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")) :| []
-      NamedChain_Alphanet -> ("PsddFKi3", $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")) :| []
-      NamedChain_Zeronet -> ("PsGn8G5U", $(staticWhich "zeronet-tezos-endorser-004-PsGn8G5U")) :|
-        [ ("PsuzFErA", $(staticWhich "zeronet-tezos-endorser-004-PsuzFErA"))
-        , ("ProtoALp", $(staticWhich "zeronet-tezos-endorser-alpha"))
+      NamedChain_Mainnet -> ( mainPh1
+                            , $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
+                            , $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
+                            ) :| []
+      NamedChain_Alphanet -> ( alphaPh1
+                             , $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
+                             , $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
+                             ) :| []
+      NamedChain_Zeronet ->
+        ( zeroPh2
+        , $(staticWhich "zeronet-tezos-baker-004-PsGn8G5U")
+        , $(staticWhich "zeronet-tezos-endorser-004-PsGn8G5U")
+        ) :|
+        [ ( zeroPh3
+          , $(staticWhich "zeronet-tezos-baker-004-PsuzFErA")
+          , $(staticWhich "zeronet-tezos-endorser-004-PsuzFErA")
+          )
+        , ( zeroPh1
+          , $(staticWhich "zeronet-tezos-baker-alpha")
+          , $(staticWhich "zeronet-tezos-endorser-alpha")
+          )
         ]
 
 -- TODO: use postgres for "process-id's"
@@ -180,13 +189,13 @@ bakerDaemonProcess appConfig logger db namedChain = do
         (\proto _nodeConfigPath -> proc (pathF namedChain proto) args)
         pid
         Nothing
-      bakerPw = pw (bakerPaths, bakerArgs)
-      endorserPw = pw (endorserPaths, endorserArgs)
+      bakerPw = pw (bakerPath, bakerArgs)
+      endorserPw = pw (endorserPath, endorserArgs)
 
-  -- We run two sets of ProcessWorkers, which one actually runs the main baker/test baker
+  -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
-  -- This allows us to switch a 'test baker' to 'main baker' without actually restarting the baker
-  -- ie bp1 starts as main baker, bp2 as test baker
+  -- This allows us to switch a 'alt baker' to 'main baker' without actually restarting the baker
+  -- ie bp1 starts as main baker, bp2 as alt baker
   -- after voting period ends, we simply stop the bp1 and set bpid2 as 'bakerProcessData'
   -- So bp2 process keeps on running but is now identified as 'main baker'
   bp1 <- bakerPw bpid1
