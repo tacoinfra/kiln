@@ -227,7 +227,7 @@ let
       '';
     };
 
-  # Also see obelisk/default.nix systemd.services, ideally these two be in sync somehow
+  # Also see obelisk/default.nix systemd.services, ideally these two should be in sync somehow
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
     [Unit]
     Description=Kiln
