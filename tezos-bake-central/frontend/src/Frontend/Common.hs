@@ -332,18 +332,6 @@ publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)
 fitnessText :: Fitness -> Text
 fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
 
-changelogLink :: (DomBuilder t m, MonadReader r m, HasFrontendConfig r) => Text -> Version -> m a -> m a
-changelogLink cls version f = do
-  asks (^. frontendConfig . frontendConfig_upgradeBranch) >>= \case
-    Nothing -> f
-    Just upgradeBranch -> elAttr "a"
-      (  "class"=:cls
-      <> "href"=:(changelogUrl upgradeBranch <> "#" <> versionAnchor)
-      <> "target"=:"_blank") f
-  where
-    versionText = T.pack (showVersion version)
-    versionAnchor = "anchor-" <> T.filter (/='.') versionText
-
 iconClass :: Text -> Text
 iconClass i = "ui " <> i <> " icon"
 
