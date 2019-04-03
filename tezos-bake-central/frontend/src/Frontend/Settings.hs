@@ -27,6 +27,7 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import Text.Read (readMaybe)
 
 import Common.Api
 import Common.App
@@ -89,13 +90,11 @@ settingsTab = do
   SemUi.divider def
 
   divClass "notifications-section" $ do
-    SemUi.header
-      (def
-        & SemUi.headerConfig_size SemUi.|?~ SemUi.H3
-        )
-      $ text "Notifications"
+    SemUi.header (def & SemUi.headerConfig_size SemUi.|?~ SemUi.H3) $ do
+      text "Notification Channels"
+      SemUi.subHeader $ text "Configure channels to send notifications out from Kiln."
 
-    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection
+    divClass "notification-settings-section" $ sequence_ $ intersperse (SemUi.divider def) $ map notificationSection
       [ NotificationCfg
         { _notificationCfg_name = "Email"
         , _notificationCfg_description = "Use your own email server to send alerts."
@@ -118,7 +117,52 @@ settingsTab = do
         , _notificationCfg_getEnabled = _telegramConfig_enabled
         }
       ]
+
+  SemUi.divider def
+
+  divClass "notifications-section" $ do
+    SemUi.header (def & SemUi.headerConfig_size SemUi.|?~ SemUi.H3) $ do
+      text "Notification Settings"
+      SemUi.subHeader $ text "Configure settings for various Kiln notifications."
+
+    divClass "notification-settings-section" $ sequence_ $ intersperse (SemUi.divider def) $ map notificationSettings [ RightKind_Baking, RightKind_Endorsing ]
+
   where
+    notificationSettings :: RightKind -> m ()
+    notificationSettings rk = do
+      mLimit <- watchRightNotificationLimit rk
+      let textKind = case rk of
+            RightKind_Baking -> "bake"
+            RightKind_Endorsing -> "endorsement"
+          fakeRadioItem :: Dynamic t Bool -> m a -> m (Event t (), a)
+          fakeRadioItem checked ma = do
+            (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
+            pure (domEvent Click e, a)
+      divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
+      (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
+      (after, rnlDyn) <- fakeRadioItem (isJust <$> mLimit) $ do
+        let input f = fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
+              & initialAttributes .~ "type" =: "number" <> "min" =: "0"
+              & inputElementConfig_initialValue .~ "1"
+              & inputElementConfig_setValue .~ (fforMaybe (updated mLimit) $ fmap $ tshow . f)
+        text "Notify when "
+        amount <- input _rightNotificationLimit_amount
+        text $ " or more " <> textKind <> "s are missed within "
+        within <- input _rightNotificationLimit_withinMinutes
+        text " minutes"
+        pure $ ffor2 amount within $ liftA2 $ \a w -> RightNotificationLimit
+          { _rightNotificationLimit_amount = a
+          , _rightNotificationLimit_withinMinutes = w
+          }
+      choice <- throttle 1 $ leftmost
+        [ Nothing <$ every
+        , Just <$> attachWithMaybe (\rnl () -> rnl) (current rnlDyn) after
+        , updated rnlDyn
+        ]
+      choice' <- holdUniqDyn <=< holdDyn Nothing $ Just <$> choice
+      _ <- requestingIdentity $ public . PublicRequest_SetRightNotificationSettings rk <$> fmapMaybe id (updated choice')
+      pure ()
+
     notificationSection :: NotificationCfg m t -> m ()
     notificationSection (NotificationCfg name descr iconName viewCfg editCfg method watchCfg (getEnabled :: cfg -> Bool)) =
       divClass "notifications-subsection" $ do

@@ -818,6 +818,18 @@ data UpstreamVersion = UpstreamVersion
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
+-- | Stores settings for limiting notifications. Missing records for a
+-- 'RightKind' indicate not to do any filtering
+data RightNotificationSettings = RightNotificationSettings
+  { _rightNotificationSettings_rightKind :: !RightKind
+  , _rightNotificationSettings_limit :: !RightNotificationLimit
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
+data RightNotificationLimit = RightNotificationLimit
+  { _rightNotificationLimit_amount :: !Int -- ^ How many rights have to be missed before notifying
+  , _rightNotificationLimit_withinMinutes :: !Int -- ^ Time window (minutes) for counting missed rights
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
 data TelegramConfig = TelegramConfig
   { _telegramConfig_botName :: !(Maybe Text)
   , _telegramConfig_botApiKey :: !Text
@@ -936,6 +948,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessState
   , ''NodeDetails
   , ''NodeDetailsData
+  , ''RightNotificationLimit
+  , ''RightNotificationSettings
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
@@ -990,6 +1004,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
+  , 'RightNotificationLimit
+  , 'RightNotificationSettings
   , 'ProcessData
   , 'NodeDetails
   , 'NodeDetailsData

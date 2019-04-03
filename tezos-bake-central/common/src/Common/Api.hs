@@ -23,7 +23,7 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (LogTag)
+import Common.Schema (LogTag, RightKind, RightNotificationLimit)
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -78,6 +78,10 @@ instance HasRequest Bake where
       -> PublicRequest Bake Bool -- True: success, False: no config to enable
     PublicRequest_ResolveAlert
       :: DSum LogTag Identity
+      -> PublicRequest Bake ()
+    PublicRequest_SetRightNotificationSettings
+      :: RightKind
+      -> Maybe RightNotificationLimit
       -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where

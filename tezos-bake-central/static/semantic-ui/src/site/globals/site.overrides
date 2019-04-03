@@ -232,6 +232,52 @@ body {
   flex-wrap: nowrap;
 }
 
+.notification-settings-section {
+  margin: @32px @30px;
+}
+
+.fake-radio-item {
+  cursor: pointer;
+  position: relative;
+  margin: 1rem 0;
+  padding-left: @25px;
+  &:before, &:after {
+    content: '';
+    border-radius: 50%;
+    display: block;
+    position: absolute;
+    left: 0;
+    top: @1px;
+  }
+  &:before {
+    width: @18px;
+    height: @18px;
+    border: @2px solid @blue;
+  }
+  &:after {
+    margin: @4px;
+    width: @10px;
+    height: @10px;
+  }
+  &.checked:after {
+    background-color: @blue;
+  }
+  input {
+    display: inline;
+    width: @60px;
+    height: @23px;
+    margin: 0 @5px;
+    padding-left: @10px;
+    border: 1px solid @lightGrey;
+    border-radius: 3px;
+    color: #c6c6c6;
+    background: #fcfcfc;
+  }
+  &.checked input {
+    color: @black;
+  }
+}
+
 .app-sidebar {
   width: unit(220 / @emSize, rem);
   height: 100%;

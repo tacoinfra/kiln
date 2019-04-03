@@ -73,6 +73,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_ConnectedLedger :=> Identity mli -> handleConnectedLedger mli
     NotifyTag_ShowLedger :=> Identity (sk, mpkh) -> handleShowLedger sk mpkh
     NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
+    NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -321,3 +322,11 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleUpstreamVersion :: Applicative m' => UpstreamVersion -> m' (BakeView a)
     handleUpstreamVersion ent = whenM (viewSelects () upgradeVS) $ do
       pure $ mempty { _bakeView_upstreamVersion = toMaybeView upgradeVS (Just ent) }
+
+    rightNotificationSettingsVS = _bakeViewSelector_rightNotificationSettings aggVS
+    handleRightNotificationSettings :: Applicative m' => RightKind -> Maybe RightNotificationLimit -> m' (BakeView a)
+    handleRightNotificationSettings rk mrnl
+      | viewSelects rk rightNotificationSettingsVS = pure $ mempty
+        { _bakeView_rightNotificationSettings = toRangeView1 rightNotificationSettingsVS rk $ Just $ First mrnl
+        }
+      | otherwise = pure mempty

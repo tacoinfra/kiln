@@ -316,6 +316,11 @@ watchPrompting sk = do
     { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
     }
 
+watchRightNotificationLimit :: MonadRhyoliteFrontendWidget Bake t m => RightKind -> m (Dynamic t (Maybe RightNotificationLimit))
+watchRightNotificationLimit rk = do
+  (fmap . fmap) (MMap.lookup rk . fmapMaybe getFirst . getRangeView . _bakeView_rightNotificationSettings) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_rightNotificationSettings = RangeSelector $ AppendIMap.singleton (ClosedInterval rk rk) 1
+    }
 
 validatingRange :: (View (RangeSelector e v) a -> b) -> (View (RangeSelector e v) a -> Maybe b)
 validatingRange f v =

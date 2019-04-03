@@ -494,6 +494,18 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
       PublicRequest_ResolveAlert elv -> inDb $ resolveAlert elv
 
+      PublicRequest_SetRightNotificationSettings rk mLimit -> inDb $ do
+        let pk = RightNotificationSettings_rightKindField ==. rk
+        case mLimit of
+          Nothing -> delete pk
+          Just limit -> selectSingle pk >>= \case --upsert
+            Nothing -> insert $ RightNotificationSettings
+              { _rightNotificationSettings_rightKind = rk
+              , _rightNotificationSettings_limit = limit
+              }
+            Just _ -> update [RightNotificationSettings_limitField =. limit] pk
+        notify NotifyTag_RightNotificationSettings (rk, mLimit)
+
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
