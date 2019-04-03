@@ -40,12 +40,12 @@ nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 bakerPaths :: NamedChain -> FilePath
 bakerPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
 bakerPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
-bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-alpha")
+bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
 
 endorserPaths :: NamedChain -> FilePath
 endorserPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
 endorserPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
-endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
+endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
 
 -- TODO: use postgres for "process-id's"
 
@@ -78,7 +78,8 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
-    useArchiveMode = namedChain == NamedChain_Zeronet
+    -- (19/04/03) after zeronet reset, now it no longer supports archive mode
+    useArchiveMode = False
   processWorker logger db appConfig
     (initNode appConfig nodePath)
     (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
