@@ -8,6 +8,10 @@ stability: Experimental
 build-type: Simple
 cabal-version: >=1.8
 
+flag docker
+  description: Is being built for docker
+  default: False
+
 library
   hs-source-dirs: src
 
@@ -66,6 +70,7 @@ library
     Common.App
     Common.AppendIntervalMap
     Common.Config
+    Common.Distribution
     Common.HeadTag
     Common.Route
     Common.Schema
@@ -76,3 +81,6 @@ library
     ExtraPrelude
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
+
+  if flag(docker)
+    cpp-options: -DDOCKER
