@@ -54,33 +54,29 @@ getPath f n = \case
     where
       e = error ("tezos-baker/endorser not available for the given chain:" <> (show n) <> " and protocol: " <> show p)
   where
-    mainPh1 :: ProtocolHash
-    mainPh1 = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
-    alphaPh1 = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
-    zeroPh1 = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
-    zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
-    zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
+    psdd :: ProtocolHash
+    psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+    -- alpha = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
+    pt24 = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+    -- zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
+    -- zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
     paths = case n of
-      NamedChain_Mainnet -> ( mainPh1
+      NamedChain_Mainnet -> ( psdd
                             , $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
                             , $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
                             ) :| []
-      NamedChain_Alphanet -> ( alphaPh1
+      NamedChain_Alphanet -> ( psdd
                              , $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
                              , $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
                              ) :| []
       NamedChain_Zeronet ->
-        ( zeroPh2
-        , $(staticWhich "zeronet-tezos-baker-004-PsGn8G5U")
-        , $(staticWhich "zeronet-tezos-endorser-004-PsGn8G5U")
+        ( psdd
+        , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
+        , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
         ) :|
-        [ ( zeroPh3
-          , $(staticWhich "zeronet-tezos-baker-004-PsuzFErA")
-          , $(staticWhich "zeronet-tezos-endorser-004-PsuzFErA")
-          )
-        , ( zeroPh1
-          , $(staticWhich "zeronet-tezos-baker-alpha")
-          , $(staticWhich "zeronet-tezos-endorser-alpha")
+        [ ( pt24
+          , $(staticWhich "zeronet-tezos-baker-004-Pt24m4xi")
+          , $(staticWhich "zeronet-tezos-endorser-004-Pt24m4xi")
           )
         ]
 
@@ -115,7 +111,7 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
-    useArchiveMode = namedChain == NamedChain_Zeronet
+    useArchiveMode = False
   processWorker logger db appConfig
     (initNode appConfig nodePath)
     (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
