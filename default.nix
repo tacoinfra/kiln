@@ -261,7 +261,7 @@ let
   };
 
 
-  runKilnExe =
+  runKilnExe = app:
     let
       # Somehow these desktop icons dont work
       runKilnDesktopItem = pkgs.makeDesktopItem {
@@ -286,14 +286,14 @@ let
         if [ ! -d "/home/demo/kiln" ]
         then
             mkdir "/home/demo/kiln"
-            ln -s ${obApp.exe}/* "/home/demo/kiln/"
+            ln -s ${app.exe}/* "/home/demo/kiln/"
         fi
         cd "/home/demo/kiln"
         /home/demo/kiln/backend --pg-connection='dbname=kiln-db'
       '';
     in pkgs.stdenv.mkDerivation {
       name = "run-kiln";
-      buildInputs = [ obApp.exe ];
+      buildInputs = [ app.exe ];
       src = script;
 
       # This was adapted from some other derivation in nixpkgs
@@ -307,7 +307,7 @@ let
 
     };
 
-in obApp // {
+in (obApp null) // {
   inherit pkgs dockerExe runKilnExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
@@ -347,7 +347,7 @@ in obApp // {
         "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
         "${pkgs.path}/nixos/modules/profiles/demo.nix"
       ];
-      environment.systemPackages = [ runKilnExe obApp.exe pkgs.firefox];
+      environment.systemPackages = [ (runKilnExe (obApp null)) pkgs.firefox];
       services.postgresql = {
         enable         = true;
         authentication = ''
