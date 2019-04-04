@@ -260,8 +260,55 @@ let
     };
   };
 
-in (obApp null) // {
-  inherit pkgs dockerExe dockerImage;
+
+  runKilnExe =
+    let
+      # Somehow these desktop icons dont work
+      runKilnDesktopItem = pkgs.makeDesktopItem {
+        name = "run-kiln-desktop-item";
+        desktopName = "Run Kiln";
+        genericName = "Initiate Kiln directory and run in terminal";
+        icon = "utilities-terminal";
+        terminal = "true";
+        exec = "bash run-kiln";
+        categories = "Application";
+      };
+      openKilnDesktopItem = pkgs.makeDesktopItem {
+        name = "open-kiln-desktop-item";
+        desktopName = "Open Kiln";
+        genericName = "Open Kiln in Firefox";
+        icon = "firefox";
+        exec = "firefox http://127.0.0.1:8000/";
+        categories = "Application;WebBrowser";
+      };
+      script = pkgs.writeScriptBin "run-kiln" ''
+        #!/run/current-system/sw/bin/bash
+        if [ ! -d "/home/demo/kiln" ]
+        then
+            mkdir "/home/demo/kiln"
+            ln -s ${obApp.exe}/* "/home/demo/kiln/"
+        fi
+        cd "/home/demo/kiln"
+        /home/demo/kiln/backend --pg-connection='dbname=kiln-db'
+      '';
+    in pkgs.stdenv.mkDerivation {
+      name = "run-kiln";
+      buildInputs = [ obApp.exe ];
+      src = script;
+
+      # This was adapted from some other derivation in nixpkgs
+      # but the icons dont show on Desktop/start menu
+      installPhase = ''
+        mkdir -p $out/share/applications
+        mv * $out/
+        cp ${runKilnDesktopItem}/share/applications/* $out/share/applications
+        cp ${openKilnDesktopItem}/share/applications/* $out/share/applications
+      '';
+
+    };
+
+in obApp // {
+  inherit pkgs dockerExe runKilnExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =
@@ -293,4 +340,46 @@ in (obApp null) // {
         '';
       };
     };
+
+  kilnVM = (import (pkgs.path + /nixos) {
+    configuration = {
+      imports = [
+        "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
+        "${pkgs.path}/nixos/modules/profiles/demo.nix"
+      ];
+      environment.systemPackages = [ runKilnExe obApp.exe pkgs.firefox];
+      services.postgresql = {
+        enable         = true;
+        authentication = ''
+          #      #db              #user  #auth-method  #auth-options
+          local  "kiln-db"  "demo" peer
+        '';
+      };
+      services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
+        CREATE USER "demo";
+        CREATE DATABASE "kiln-db" OWNER "demo";
+      '';
+      services.udev.extraRules = ''
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="3b7c", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="4b7c", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1807", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1808", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0000", MODE="0660", GROUP="users"
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0001", MODE="0660", GROUP="users"
+      '';
+      nix.binaryCaches = [ "https://cache.nixos.org/" "https://nixcache.reflex-frp.org" ];
+      nix.binaryCachePublicKeys = [ "ryantrinkle.com-1:JJiAKaRv9mWgpVAz8dwewnZe0AzzEAzPkagE9SP5NWI=" ];
+
+      nixpkgs = { localSystem.system = "x86_64-linux"; };
+      virtualbox = {
+        baseImageSize = 20 * 1024; # in MiB
+        memorySize = 16 * 1024; # in MiB
+        vmDerivationName = "kiln-baker-vm";
+        vmName = "Kiln Baker VM";
+        vmFileName = "kiln-baker-vm.ova";
+      };
+    };
+  }).config.system.build.virtualBoxOVA;
 }
