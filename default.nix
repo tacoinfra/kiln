@@ -367,10 +367,9 @@ let
       };
     };
   });
-  kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
 
 in (obApp null) // {
-  inherit pkgs dockerExe kilnVM dockerImage;
+  inherit pkgs dockerExe kilnVMConfig dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =
@@ -402,4 +401,6 @@ in (obApp null) // {
         '';
       };
     };
+  kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
+  kilnVMSystem = kilnVMConfig.system;
 }
