@@ -140,20 +140,26 @@ settingsTab = do
             pure (domEvent Click e, a)
       divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
       (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
-      (after, rnlDyn) <- fakeRadioItem (isJust <$> mLimit) $ do
-        let input f = fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
-              & initialAttributes .~ "type" =: "number" <> "min" =: "0"
-              & inputElementConfig_initialValue .~ "1"
-              & inputElementConfig_setValue .~ (fforMaybe (updated mLimit) $ fmap $ tshow . f)
-        text "Notify when "
-        amount <- input _rightNotificationLimit_amount
-        text $ " or more " <> textKind <> "s are missed within "
-        within <- input _rightNotificationLimit_withinMinutes
-        text " minutes"
-        pure $ ffor2 amount within $ liftA2 $ \a w -> RightNotificationLimit
-          { _rightNotificationLimit_amount = a
-          , _rightNotificationLimit_withinMinutes = w
-          }
+      rec
+        (after, rnlDyn) <- fakeRadioItem (isJust <$> mLimit) $ mdo
+          let input f = do
+                rec result <- fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
+                      & initialAttributes .~ "type" =: "number" <> "min" =: "0"
+                      & inputElementConfig_setValue .~ leftmost
+                        [ fforMaybe (updated mLimit) (fmap $ tshow . f)
+                        -- Set value to "1" if there's nothing there and the user just selected this option
+                        , attachWithMaybe (\m () -> maybe (Just "1") (const Nothing) m) (current result) after
+                        ]
+                pure result
+          text "Notify when "
+          amount <- input _rightNotificationLimit_amount
+          text $ " or more " <> textKind <> "s are missed within "
+          within <- input _rightNotificationLimit_withinMinutes
+          text " minutes"
+          pure $ ffor2 amount within $ liftA2 $ \a w -> RightNotificationLimit
+            { _rightNotificationLimit_amount = a
+            , _rightNotificationLimit_withinMinutes = w
+            }
       choice <- throttle 1 $ leftmost
         [ Nothing <$ every
         , Just <$> attachWithMaybe (\rnl () -> rnl) (current rnlDyn) after
