@@ -385,6 +385,8 @@ in (obApp null) // {
         after = [ "network.target" ];
         restartIfChanged = true;
         script = ''
+          mkdir -p kiln
+          cd kiln
           ln -sft . '${(obApp null).exe}'/*
           mkdir -p log
           exec ./backend --pg-connection='dbname=kiln-db' >>backend.out 2>>backend.err </dev/null
