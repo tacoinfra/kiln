@@ -679,7 +679,7 @@ getKey params hist = \case
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
   NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
-  NodeQuery_CurrentProposal ctx lvl -> pure (ctx, NodeQuery_CurrentProposal ctx)
+  NodeQuery_CurrentProposal ctx lvl -> pure (ctx, NodeQuery_CurrentProposal ctx lvl)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
