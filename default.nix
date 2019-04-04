@@ -307,41 +307,7 @@ let
 
     };
 
-in (obApp null) // {
-  inherit pkgs dockerExe runKilnExe dockerImage;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
-    let
-      network =
-        if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
-        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
-        "mainnet";
-      nodeConfig = nodeConfigOptions.${network};
-      nixos = import (pkgs.path + /nixos);
-    in nixos {
-      system = "x86_64-linux";
-      configuration = {
-        imports = [
-          (obelisk.serverModules.mkBaseEc2 args)
-          (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig // {
-              appConfig = config;
-              version = version;
-            })
-          )
-          (syslog-ngModule {
-            opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
-          })
-          usersModule
-        ];
-
-        services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
-          CREATE USER "${network}-monitor";
-          CREATE DATABASE "${network}-monitor" OWNER "${network}-monitor";
-        '';
-      };
-    };
-
-  kilnVM = (import (pkgs.path + /nixos) {
+  kilnVMConfig = (import (pkgs.path + /nixos) {
     configuration = {
       imports = [
         "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
@@ -400,5 +366,40 @@ in (obApp null) // {
         };
       };
     };
-  }).config.system.build.virtualBoxOVA;
+  });
+  kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
+
+in (obApp null) // {
+  inherit pkgs dockerExe kilnVM dockerImage;
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
+    let
+      network =
+        if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
+        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
+        "mainnet";
+      nodeConfig = nodeConfigOptions.${network};
+      nixos = import (pkgs.path + /nixos);
+    in nixos {
+      system = "x86_64-linux";
+      configuration = {
+        imports = [
+          (obelisk.serverModules.mkBaseEc2 args)
+          (mkTezosNodeServiceModule nodeConfig)
+          (mkMonitorModule (args // nodeConfig // {
+              appConfig = config;
+              version = version;
+            })
+          )
+          (syslog-ngModule {
+            opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
+          })
+          usersModule
+        ];
+
+        services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
+          CREATE USER "${network}-monitor";
+          CREATE DATABASE "${network}-monitor" OWNER "${network}-monitor";
+        '';
+      };
+    };
 }
