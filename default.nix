@@ -21,7 +21,6 @@ let
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
-      histMode = "archive";
     };
     alphanet = {
       network = "alphanet";
