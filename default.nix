@@ -380,6 +380,23 @@ in (obApp null) // {
         vmName = "Kiln Baker VM";
         vmFileName = "kiln-baker-vm.ova";
       };
+      systemd.services.kiln = {
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network.target" ];
+        restartIfChanged = true;
+        script = ''
+          ln -sft . '${(obApp null).exe}'/*
+          mkdir -p log
+          exec ./backend --pg-connection='dbname=kiln-db' >>backend.out 2>>backend.err </dev/null
+        '';
+        serviceConfig = {
+          User = "demo";
+          KillMode = "process";
+          WorkingDirectory = "~";
+          Restart = "always";
+          RestartSec = 5;
+        };
+      };
     };
   }).config.system.build.virtualBoxOVA;
 }
