@@ -265,9 +265,16 @@ let
       srcTar = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/master/tezos-bake-monitor-master.tar.gz";
     in pkgs.writeScriptBin "upgrade-kiln" ''
         #!/run/current-system/sw/bin/bash
-        echo "Downloading latest Kiln"
-        echo "Fetching ${srcTar}"
-        sudo nix-env -f ${srcTar} -p /nix/var/nix/profiles/system --set -A kilnVMSystem
+        set -e
+        if [[ $# -eq 0 ]] ; then
+           echo "Downloading latest Kiln"
+           echo "Fetching ${srcTar}"
+           export KILN_SRC_TAR="${srcTar}"
+        else
+           echo "Fetching $1"
+           export KILN_SRC_TAR="$1"
+        fi
+        sudo nix-env -f $KILN_SRC_TAR -p /nix/var/nix/profiles/system --set -A kilnVMSystem
         echo "Installing Kiln"
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
