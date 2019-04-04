@@ -11,3 +11,9 @@ Delete the node and client data. By default these are stored at `~/.tezos-node` 
 ## Kiln Data
 
 Delete Kiln's node data, stored in `./app/.kiln`.
+
+## Reset HWM of Ledger Device
+
+Can be done either through the Kiln's GUI interface or with the following command
+
+  `tezos-client set ledger high watermark for "ledger://<tz...>/" to <HWM>`
