@@ -260,13 +260,25 @@ let
     };
   };
 
+  upgradeKilnVM =
+    let
+      srcTar = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/master/tezos-bake-monitor-master.tar.gz";
+    in pkgs.writeScriptBin "upgrade-kiln" ''
+        #!/run/current-system/sw/bin/bash
+        echo "Downloading latest Kiln"
+        echo "Fetching ${srcTar}"
+        sudo nix-env -f ${srcTar} -p /nix/var/nix/profiles/system --set -A kilnVMSystem
+        echo "Installing Kiln"
+        sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+      '';
+
   kilnVMConfig = (import (pkgs.path + /nixos) {
     configuration = {
       imports = [
         "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
         "${pkgs.path}/nixos/modules/profiles/demo.nix"
       ];
-      environment.systemPackages = [ pkgs.firefox];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox];
       services.postgresql = {
         enable         = true;
         authentication = ''
