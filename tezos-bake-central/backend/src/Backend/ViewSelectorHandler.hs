@@ -216,6 +216,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           )
     pure rangeView
 
+  let rnsVS = _bakeViewSelector_rightNotificationSettings vs
+  rightNotificationSettings <- whenM (not $ null rnsVS) $ do
+    rnss <- select CondEmpty
+    let rangeView = toRangeView rnsVS $ flip fmap rnss $ \rns ->
+          ( _rightNotificationSettings_rightKind rns
+          , First $ Just $ _rightNotificationSettings_limit rns
+          )
+    pure rangeView
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_clients = mempty -- clients
@@ -241,6 +250,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_connectedLedger = connectedLedger
     , _bakeView_showLedger = showLedger
     , _bakeView_prompting = prompting
+    , _bakeView_rightNotificationSettings = rightNotificationSettings
     }
 
 getErrorLogs
