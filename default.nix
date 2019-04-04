@@ -260,60 +260,13 @@ let
     };
   };
 
-
-  runKilnExe = app:
-    let
-      # Somehow these desktop icons dont work
-      runKilnDesktopItem = pkgs.makeDesktopItem {
-        name = "run-kiln-desktop-item";
-        desktopName = "Run Kiln";
-        genericName = "Initiate Kiln directory and run in terminal";
-        icon = "utilities-terminal";
-        terminal = "true";
-        exec = "bash run-kiln";
-        categories = "Application";
-      };
-      openKilnDesktopItem = pkgs.makeDesktopItem {
-        name = "open-kiln-desktop-item";
-        desktopName = "Open Kiln";
-        genericName = "Open Kiln in Firefox";
-        icon = "firefox";
-        exec = "firefox http://127.0.0.1:8000/";
-        categories = "Application;WebBrowser";
-      };
-      script = pkgs.writeScriptBin "run-kiln" ''
-        #!/run/current-system/sw/bin/bash
-        if [ ! -d "/home/demo/kiln" ]
-        then
-            mkdir "/home/demo/kiln"
-            ln -s ${app.exe}/* "/home/demo/kiln/"
-        fi
-        cd "/home/demo/kiln"
-        /home/demo/kiln/backend --pg-connection='dbname=kiln-db'
-      '';
-    in pkgs.stdenv.mkDerivation {
-      name = "run-kiln";
-      buildInputs = [ app.exe ];
-      src = script;
-
-      # This was adapted from some other derivation in nixpkgs
-      # but the icons dont show on Desktop/start menu
-      installPhase = ''
-        mkdir -p $out/share/applications
-        mv * $out/
-        cp ${runKilnDesktopItem}/share/applications/* $out/share/applications
-        cp ${openKilnDesktopItem}/share/applications/* $out/share/applications
-      '';
-
-    };
-
   kilnVMConfig = (import (pkgs.path + /nixos) {
     configuration = {
       imports = [
         "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
         "${pkgs.path}/nixos/modules/profiles/demo.nix"
       ];
-      environment.systemPackages = [ (runKilnExe (obApp null)) pkgs.firefox];
+      environment.systemPackages = [ pkgs.firefox];
       services.postgresql = {
         enable         = true;
         authentication = ''
