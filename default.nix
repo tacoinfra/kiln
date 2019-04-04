@@ -3,7 +3,7 @@
 , pkgs ? obelisk.reflex-platform.nixpkgs
 }:
 let
-  obApp = import ./tezos-bake-central { inherit system; supportGargoyle = false; };
+  obApp = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = false; };
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
@@ -15,6 +15,7 @@ let
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
+      histMode = "archive";
     };
     alphanet = {
       network = "alphanet";
@@ -32,7 +33,7 @@ let
     };
   };
 
-  mkTezosNodeServiceModule = { p2pPort, rpcPort, network, tzKit, ... }: {...}:
+  mkTezosNodeServiceModule = { p2pPort, rpcPort, network, tzKit, histMode ? null, ... }: {...}:
     let serviceName = "${network}-node"; user = serviceName; group = user;
     in {
       networking.firewall.allowedTCPPorts = [p2pPort];
@@ -44,7 +45,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" --history-mode archive
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
         '';
         serviceConfig = {
           User = user;
@@ -82,7 +83,7 @@ let
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = obApp.linuxExeConfigurable appConfig version;
+          exe = (obApp null).linuxExeConfigurable appConfig version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -210,7 +211,7 @@ let
     };
   };
 
-  dockerExe = let exe = obApp.linuxExe; in pkgs.runCommand "dockerExe" {} ''
+  dockerExe = let exe = (obApp "docker").linuxExe; in pkgs.runCommand "dockerExe" {} ''
     mkdir "$out"
 
     cp '${exe}/backend' "$out/backend"
@@ -259,7 +260,7 @@ let
     };
   };
 
-in obApp // {
+in (obApp null) // {
   inherit pkgs dockerExe dockerImage;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let

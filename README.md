@@ -1,6 +1,6 @@
 # Overview
 
-Kiln, by [Obsidian Systems](https://obsidian.systems/), is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects. 
+Kiln, by [Obsidian Systems](https://obsidian.systems/), is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.
 
 # System Requirements
 
@@ -57,20 +57,20 @@ Now you can download and run the monitor like this:
 On Linux and macOS (Docker Toolbox):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.4.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.5.0 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS (Docker Desktop for Mac):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.4.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.5.0 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.4.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.5.0 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
 
 ## Updating an older Docker container
 
@@ -99,10 +99,10 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.4.1 ...
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.5.0 ...
 ```
 
-you can replace `0.4.1` with another available version.
+you can replace `0.5.0` with another available version.
 
 You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
 
@@ -190,9 +190,9 @@ The result of this command will be the path to a Docker image. You can load it w
 
 # Using Kiln to Bake
 
-Kiln, in conjunction with [Tezos Baking for the Ledger Nano S](https://github.com/obsidiansystems/ledger-app-tezos), can be used to bake. Kiln runs the node, baker, and endorser locally while monitoring them to notify the user of common issues and events. 
+Kiln, in conjunction with [Tezos Baking for the Ledger Nano S](https://github.com/obsidiansystems/ledger-app-tezos), can be used to bake. Kiln runs the node, baker, and endorser locally while monitoring them to notify the user of common issues and events.
 
-Baking requires the Kiln node to be fully synced with the Tezos blockchain. Once the node is synced, click ‘Add Baker’ in the left sidebar. Then click ‘Start Baking’ and follow the instructions provided. 
+Baking requires the Kiln node to be fully synced with the Tezos blockchain. Once the node is synced, click ‘Add Baker’ in the left sidebar. Then click ‘Start Baking’ and follow the instructions provided.
 
 Once you’ve registered as a delegate, it will take time for you to earn baking and endorsing rights. As soon as Kiln detects you have rights, your next right will be displayed.
 
@@ -227,7 +227,7 @@ Kiln produces a notification if a monitored baker:
 
 ### Notification Pathways
 
-In addition to in-app alerts, users can configure Kiln to send Telegram alerts or use their SMTP Mail Server to send alerts to the email addresses of their choice. Notification pathways can be configured on the Settings page. 
+In addition to in-app alerts, users can configure Kiln to send Telegram alerts or use their SMTP Mail Server to send alerts to the email addresses of their choice. Notification pathways can be configured on the Settings page.
 
 For more information, see notes on configuring [Telegram](#configuring-telegram-notifications) and [Email](#configuring-email-notifications) notifications below.
 
@@ -253,7 +253,7 @@ Once you’ve added at least one node or a Public Node, the Dashboard header wil
 
 ### Adding public nodes
 
-Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node. 
+Click *Add Node* from the left panel and click one of the tiles under *Connect to a Public Node*. Clicking again will disable the Public Node.
 
 ### Monitoring a baker
 

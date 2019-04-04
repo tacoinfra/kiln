@@ -30,6 +30,7 @@ import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 
 import Common.Api
 import Common.App
+import Common.Distribution
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_upgradeBranch)
 import Common.Schema hiding (Event)
@@ -85,6 +86,8 @@ settingsTab = do
 
     enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
     when enableUpgradeCheck upgradeOptions
+
+  SemUi.divider def
 
   divClass "notifications-section" $ do
     SemUi.header
@@ -223,21 +226,33 @@ settingsTab = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
       upstreamVersion <- watchUpstreamVersion
 
-      elClass "p" "check-for-updates" $ do
-        (aEl, _) <- el' "a" $ text "Check for updates"
-        rec
-          let submit = gate (not <$> current isLoading) $ domEvent Click aEl
-          (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
+      isLoading <- elClass "p" "check-for-updates" $ mdo
+        (e, _) <- el' "a" $ text "Check for updates"
+        dyn_ $ ffor isLoading $ \case
+          True -> divClass "ui tiny active blue inline loader" blank *> text " Checking for updates..."
+          False -> pure ()
+        let submit = gate (not <$> current isLoading) $ domEvent Click e
+        (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
         _ <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ submit
+        pure isLoading
 
-        dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
-          True -> divClass "ui tiny active inline loader" blank *> text " Checking for updates..."
-          False -> case v' of
-            Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
-            Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
-              if v > currentVersion
-              then changelogLink "" v $
-                text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
-              else
-                text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
-            _ -> blank
+      dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
+        True -> pure ()
+        False -> case v' of
+          Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
+          Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
+            if v > currentVersion
+            then do
+              elAttr "div" ("class" =: "ui tiny header" <> "style" =: "margin-bottom: 1rem") $ do
+                icon "upgrade-icon icon-arrow-up"
+                text ("Kiln " <> T.pack (showVersion v) <> " is available!")
+              let uri = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases"
+              el "p" $ do
+                text "Release notes: "
+                hrefLink uri $ text uri
+              el "p" $ text $ case distributionMethod of
+                Distribution_FromSource -> "To update, install the latest version using whichever package manager you are using to manage Kiln."
+                Distribution_Docker -> "You are running Kiln via Docker. To update, quit Kiln and run the ‘docker run’ command using the tag ‘" <> T.pack (showVersion v) <> "’."
+            else
+              text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
+          _ -> blank

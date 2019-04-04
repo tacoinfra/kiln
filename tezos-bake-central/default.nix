@@ -1,6 +1,7 @@
 { system ? builtins.currentSystem
 , supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
 , profiling ? false
+, distMethod ? null
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -27,6 +28,9 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions (rhyolite args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+      common = if distMethod == null
+        then super.common
+        else enableCabalFlag super.common distMethod;
       backend = overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
       });
