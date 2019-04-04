@@ -353,7 +353,7 @@ getErrorLogsImpl flt intervalMap = do
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
           \ WHERE ("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
-          <> " AND el.started != el.stopped"
+          <> " AND COALESCE(el.started != el.stopped, true)"
           <> ")"
           <> qFlt
         qFlt = case flt of
