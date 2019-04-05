@@ -5,7 +5,7 @@
 }:
 let
   maintainer = "Obsidian Systems <tezos@obsidian.systems>";
-  description = "Kiln, by Obsidian Systems, is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.";
+  description = "Application for participating in the Tezos blockchain.\n  Kiln is an application for participating in the Tezos blockchain. It allows the user to run a node, produce and validate blocks, and vote on protocol amendments through its interface. It can also be used to monitor existing Tezos infrastructure, and sends notifications via Telegram or SMTP when It detects an issue.";
 
   var-prefix = "/var/lib/${pkgName}";
 
