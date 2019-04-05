@@ -132,6 +132,7 @@ settingsTab = do
     notificationSettings :: RightKind -> m ()
     notificationSettings rk = do
       mLimit <- watchRightNotificationLimit rk
+      initialLimit <- sample $ current mLimit
       let textKind = case rk of
             RightKind_Baking -> "bake"
             RightKind_Endorsing -> "endorsement"
@@ -146,6 +147,7 @@ settingsTab = do
           let input f = do
                 rec result <- fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
                       & initialAttributes .~ "type" =: "number" <> "min" =: "0"
+                      & inputElementConfig_initialValue .~ maybe "1" (tshow . f) initialLimit
                       & inputElementConfig_setValue .~ leftmost
                         [ fforMaybe (updated mLimit) (fmap $ tshow . f)
                         -- Set value to "1" if there's nothing there and the user just selected this option

@@ -531,14 +531,32 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       , _errorLogBakerMissed_level = lvl
       , _errorLogBakerMissed_fitness = f
       }
-    queueAlert (Just eid) alert
+    project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
+      Nothing -> queueAlert (Just eid) $ alert lvl
+      Just rnl -> do
+        let mins = _rightNotificationLimit_withinMinutes rnl
+        elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
+          SELECT el.id, elbm.level
+          FROM "Baker" b
+          JOIN "ErrorLogBakerMissed" elbm
+            ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+            AND elbm.right = ?right
+          JOIN "ErrorLog" el
+            ON el.id = elbm.log
+            AND el.stopped IS NULL
+          WHERE NOT b."data#deleted"
+            AND b."publicKeyHash" = ?pkh
+            AND el.started > now() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
+            AND el."noticeSentAt" IS NULL
+        |]
+        when (length elIds >= _rightNotificationLimit_amount rnl) $ for_ elIds $ \(eid', lvl') -> queueAlert (Just eid') $ alert lvl'
   Just xs -> for_ xs $ \(eid, _elbmid, f') -> when (f' <= f) $ do
     updateErrorLogBy eid ErrorLogBakerMissed_logField [ ErrorLogBakerMissed_fitnessField =. f ]
-    queueAlert (Just eid) alert
+    queueAlert (Just eid) $ alert lvl
   where
-    alert = Alert Unresolved
+    alert lvl' = Alert Unresolved
       ("Missed " <> rightTxt <> " opportunity")
-      ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl))
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl'))
     rightTxt = case right of
       RightKind_Baking -> "bake"
       RightKind_Endorsing -> "endorsement"
