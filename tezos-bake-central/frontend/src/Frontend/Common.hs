@@ -234,8 +234,11 @@ whenJustDyn d f = dyn_ . ffor d $ \case
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
-uiButton classes label = fmap (domEvent Click . fst) $
-  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+uiButton classes = uiButtonM classes . text
+
+uiButtonM :: DomBuilder t m => Text -> m () -> m (Event t ())
+uiButtonM classes label = fmap (domEvent Click . fst) $
+  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) label
 
 uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Enabled) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->

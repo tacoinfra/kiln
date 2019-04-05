@@ -1573,7 +1573,6 @@ bakersTab
   => m ()
 bakersTab =
   divClass "dashboard-section dashboard-section-bakers" $ do
-    elClass "h4" "dashboard-section-title" $ text "Bakers"
     tilesWidget =<< watchBakerAddresses
   where
     tilesWidget :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> m ()
@@ -1585,6 +1584,15 @@ bakersTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
+         anyErrors <- holdUniqDyn $ not . null <$> dEbb
+         resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
+           icon "icon-check"
+           text "Resolve All"
+         let toLogTag (f :=> k) = let g = LogTag_Baker f in g :=> Const (errorLogIdForErrorLogView $ g :=> k)
+             alerts = concatMap (fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+         _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
+         elClass "h4" "dashboard-section-title" $ text "Bakers"
+
          let
            bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
              fmap $ \bakerSummary ->
@@ -1831,7 +1839,9 @@ renderResolvableSplashAlert splashIcon title entity desc mReq = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
     for_ mReq $ \resolveReq -> do
-      resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+      resolve <- divClass "buttons" $ uiButtonM "primary" $ do
+        icon "icon-check"
+        text "Resolve"
       requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)

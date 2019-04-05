@@ -12,18 +12,19 @@
 module Common.Api where
 
 import Data.Dependent.Sum (DSum)
+import Data.Functor.Const
 import Data.Functor.Identity (Identity)
 import Data.Text (Text)
 import Rhyolite.App (HasRequest, PrivateRequest, PublicRequest)
 import Rhyolite.Request.TH (makeRequestForDataInstance)
-import Rhyolite.Schema (Email)
+import Rhyolite.Schema (Email, Id)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (LogTag, RightKind, RightNotificationLimit)
+import Common.Schema (ErrorLog, LogTag, RightKind, RightNotificationLimit)
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -78,6 +79,9 @@ instance HasRequest Bake where
       -> PublicRequest Bake Bool -- True: success, False: no config to enable
     PublicRequest_ResolveAlert
       :: DSum LogTag Identity
+      -> PublicRequest Bake ()
+    PublicRequest_ResolveAlerts
+      :: [DSum LogTag (Const (Id ErrorLog))]
       -> PublicRequest Bake ()
     PublicRequest_SetRightNotificationSettings
       :: RightKind
