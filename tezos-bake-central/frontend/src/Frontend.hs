@@ -747,7 +747,7 @@ liveErrorsWidget = void $ do
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
       let (pkh, bakerData) = NEL.head pkhs
-      errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ T.take 20 (toPublicKeyHashText pkh) <> "..."
+      divClass "alert-entity" $ errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ toPublicKeyHashText pkh
       el "div" $
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
@@ -761,13 +761,13 @@ liveErrorsWidget = void $ do
               case _nodeSummary_node n of
                 Right _ -> blank
                 Left (NodeExternalData address alias _) -> do
-                  header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address
+                  header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address <> "."
                   nodeLabel n
 
             NodeLogTag_NodeWrongChain -> do
               let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
                   (primary, _) = nodeSummaryIdentification n
-              header $ "Node on wrong network: " <> primary
+              header $ "Node on wrong network: " <> primary <> "."
               nodeLabel n
               el "div" $
                 text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
@@ -775,13 +775,13 @@ liveErrorsWidget = void $ do
             NodeLogTag_BadNodeHead -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
                   (primary, _) = nodeSummaryIdentification n
-              header $ heading <> ": " <> primary
+              header $ heading <> ": " <> primary <> "."
               nodeLabel n
               el "div" message
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header $ "Node has too few peers"
+              header $ "Node has too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -797,7 +797,7 @@ liveErrorsWidget = void $ do
               (bakerAccusedDescriptions log)
               pkh
             BakerLogTag_MultipleBakersForSameBaker -> do
-              header "Multiple bakers for same baker" -- TODO Fill this out
+              header "Multiple bakers for same baker." -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
               pkh
@@ -809,7 +809,7 @@ liveErrorsWidget = void $ do
 
         LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
-            header "Baker lagging behind" -- TODO Show client address
+            header "Baker lagging behind." -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
@@ -1782,6 +1782,8 @@ bakersTab =
             BakerNextRight_KnownRights (r,l) -> Right (r,l)
           wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
         isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
+
+        divClass "divider" blank
 
         el "dl" $ do
           latestHead <- watchLatestHead

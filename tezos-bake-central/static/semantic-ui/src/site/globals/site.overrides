@@ -615,10 +615,12 @@ body {
         .header {
           color: @black;
           font-size: @20px;
+          line-height: 1.5;
         }
 
         .alert-entity {
           font-size: @14px;
+          label.secondary-label { font-size: @12px; }
         }
 
         label {
@@ -902,6 +904,8 @@ img.credits-obsidian {
 
   > .ui.card.baker-tile {
     width: unit(430 / @emSize, rem);
+
+    .divider { width: auto !important; }
 
     .internal-subtitle + .secondary-name {
       margin-top: @8px;

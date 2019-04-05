@@ -560,9 +560,9 @@ nbsp = "\x00A0"
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
 errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
+  el "wbr" blank
   for_ secondary $ \x -> do
     elClass "label" "secondary-label" $ do
-      text nbsp
       text x
 
 nodeLabel :: DomBuilder t m => NodeSummary -> m ()
