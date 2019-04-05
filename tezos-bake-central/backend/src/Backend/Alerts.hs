@@ -726,3 +726,11 @@ resolveAlert elv@(tag :=> _) = logAssume tag $ do
   where
     mkId :: proxy e -> IdData e -> Id e
     mkId _ = Id
+
+resolveAlerts :: (PersistBackend m, SqlDb (PhantomDb m)) => [DSum LogTag (Const (Id ErrorLog))] -> m ()
+resolveAlerts tags = do
+  eids :: [Key ErrorLog BackendSpecific] <- for tags $ \(tag :=> Const eid) -> logAssume tag $ do
+    notifyDefault (tag :=> Id eid)
+    pure $ fromId eid
+  now <- getTime
+  update [ErrorLog_stoppedField =. Just now] $ AutoKeyField `in_` eids
