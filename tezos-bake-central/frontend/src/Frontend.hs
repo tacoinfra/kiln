@@ -836,6 +836,7 @@ pluralOf = (<> "s") -- good enough for all existing uses, lol
 -- existing uses of the Ord instance if the order is changed.
 data MonitoredStatus
   = MonitoredStatus_Unhealthy
+  | MonitoredStatus_Stopped
   | MonitoredStatus_Unknown
   | MonitoredStatus_Healthy
   deriving (Eq, Ord, Bounded, Enum, Show)
@@ -843,6 +844,7 @@ data MonitoredStatus
 statusColor :: IsString a => MonitoredStatus -> a
 statusColor = \case
   MonitoredStatus_Healthy -> "green"
+  MonitoredStatus_Stopped -> "orange"
   MonitoredStatus_Unhealthy -> "red"
   MonitoredStatus_Unknown -> "grey"
 
@@ -888,6 +890,7 @@ bakerStatus = \case
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
+    | Right bid <- _bakerSummary_baker bakerSummary, not (_bakerInternalData_running bid) -> MonitoredStatus_Stopped
     | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
@@ -1133,7 +1136,7 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
   where
     fromStatus = case mInternalState of
       Just internalState -> case internalState of
-        ProcessState_Stopped -> MonitoredStatus_Unknown
+        ProcessState_Stopped -> MonitoredStatus_Stopped
         ProcessState_Initializing -> MonitoredStatus_Unknown
         ProcessState_GeneratingIdentity -> MonitoredStatus_Unknown
         ProcessState_Starting -> MonitoredStatus_Unknown
@@ -1388,7 +1391,7 @@ nodesTab =
 
                 subtitle :: m ()
                 subtitle =
-                  divClass "internal-node-subtitle" $ do
+                  divClass "internal-subtitle" $ do
                     kilnLogo
                     divClass "ui sub header" $ dynText $ ffor state $ \case
                       ProcessState_Stopped -> "Stopped"
@@ -1745,11 +1748,19 @@ bakersTab =
               removeEntry removeInternalBakerModal
 
         divClass "title" $ do
+          let bakerStatusDyn = (\b n -> bakerStatus $ b <$ n) <$> bakerDyn <*> dCollectiveNodesStatus
           for_ errors' $ \errors -> do
             _errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ fmap (("tiny circle " <>) . statusColor) $ bakerStatus
-              <$> ((<$) <$> bakerDyn <*> dCollectiveNodesStatus)
+            iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
+          isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
+          dyn_ $ ffor isInternal $ \i -> when i $ divClass "internal-subtitle" $ do
+            kilnLogo
+            divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
+              MonitoredStatus_Stopped -> "Stopped"
+              MonitoredStatus_Healthy -> "Running"
+              MonitoredStatus_Unhealthy -> "Unhealthy"
+              MonitoredStatus_Unknown -> "Unknown"
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
