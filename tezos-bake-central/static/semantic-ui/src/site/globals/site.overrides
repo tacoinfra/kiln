@@ -120,6 +120,16 @@ h6.ui.header {
   opacity: 0.50;
 }
 
+i.ui.icon.icon-arrow-up.upgrade-icon {
+  border-radius: 50%;
+  font-size: @10px;
+  line-height: @18px;
+  height: @18px;
+  width: @18px !important;
+  background-color: @blue;
+  color: @white !important;
+}
+
 .ui.publicnodes {
   > .public-node.grid {
     border: @1px solid #CED4DA;
