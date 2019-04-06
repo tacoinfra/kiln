@@ -18,7 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT, forM_)
+import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -475,7 +475,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     inDb m = runDb (Identity db) m
     restartPids ps = do
       $(logDebugSH) ("protocolMonitorWorker: restarting pids"::Text, ps)
-      forM_ ps $ \p -> do
+      for_ ps $ \p -> do
         let cond = AutoKeyField ==. (fromId p)
         inDb $ update [ProcessData_runningField =. False] cond
         let
