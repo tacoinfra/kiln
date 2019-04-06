@@ -66,6 +66,7 @@ preMigrate =
   >=> migrateProcessDataToSplitTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
+  >=> migrateBakerDaemonInternalTable
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -317,6 +318,50 @@ migrateProcessDataToSplitTable ta = do
               UPDATE "NodeInternal" n SET "data#data" = p."id" FROM "ProcessData" p;
               ALTER TABLE "NodeInternal" ALTER COLUMN "data#data" SET NOT NULL;
               ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateBakerDaemonInternalTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDaemonInternalTable ta = do
+  let table = (Nothing, "BakerDaemonInternal")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "data#data#protocol") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "BakerDaemonInternal" ADD COLUMN "data#data#protocol" BYTEA NULL;
+              ALTER TABLE "BakerDaemonInternal" ADD COLUMN "data#data#altProtocol" BYTEA NULL;
+              ALTER TABLE "BakerDaemonInternal" ADD COLUMN "data#data#altBakerProcessData" INT8 NULL;
+              ALTER TABLE "BakerDaemonInternal" ADD COLUMN "data#data#altEndorserProcessData" INT8 NULL;
+              CREATE FUNCTION addcols() RETURNS VOID AS $$
+              DECLARE
+                      abpid integer;
+                      aepid integer;
+                      bid integer;
+              BEGIN
+              FOR bid IN SELECT "id" FROM "BakerDaemonInternal" LOOP
+                      INSERT INTO "ProcessData" ("running", "state", "updated", "backend")
+                        VALUES (FALSE, 'ProcessState_Stopped', NULL, NULL) RETURNING "id" INTO abpid;
+                      INSERT INTO "ProcessData" ("running", "state", "updated", "backend")
+                        VALUES(FALSE, 'ProcessState_Stopped', NULL, NULL) RETURNING "id" INTO aepid;
+                      UPDATE "BakerDaemonInternal"
+                        -- Hex value for 'PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP' :: ProtocolHash
+                        SET "data#data#protocol" = E'\\x782f0e56d71e26cfe09e2e33eb44b32ad6d467b742bb79d461db2d86af22adad',
+                            "data#data#altBakerProcessData" = abpid,
+                            "data#data#altEndorserProcessData" = aepid
+                        WHERE "id" = bid;
+              END LOOP;
+              RETURN;
+              END;
+              $$ LANGUAGE plpgsql;
+              SELECT addcols();
+              DROP FUNCTION addcols();
+              ALTER TABLE "BakerDaemonInternal" ALTER COLUMN "data#data#protocol" SET NOT NULL;
+              ALTER TABLE "BakerDaemonInternal" ALTER COLUMN "data#data#altBakerProcessData" SET NOT NULL;
+              ALTER TABLE "BakerDaemonInternal" ALTER COLUMN "data#data#altEndorserProcessData" SET NOT NULL;
+              ALTER TABLE "BakerDaemonInternal" ADD FOREIGN KEY("data#data#altBakerProcessData") REFERENCES "ProcessData"("id");
+              ALTER TABLE "BakerDaemonInternal" ADD FOREIGN KEY("data#data#altEndorserProcessData") REFERENCES "ProcessData"("id");
             |]
           getTableAnalysis
     _ -> pure ta
