@@ -43,7 +43,7 @@ import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
-import Backend.Alerts (resolveAlert)
+import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
@@ -495,6 +495,19 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
       PublicRequest_ResolveAlert elv -> inDb $ resolveAlert elv
+      PublicRequest_ResolveAlerts dm -> inDb $ resolveAlerts dm
+
+      PublicRequest_SetRightNotificationSettings rk mLimit -> inDb $ do
+        let pk = RightNotificationSettings_rightKindField ==. rk
+        case mLimit of
+          Nothing -> delete pk
+          Just limit -> selectSingle pk >>= \case --upsert
+            Nothing -> insert $ RightNotificationSettings
+              { _rightNotificationSettings_rightKind = rk
+              , _rightNotificationSettings_limit = limit
+              }
+            Just _ -> update [RightNotificationSettings_limitField =. limit] pk
+        notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

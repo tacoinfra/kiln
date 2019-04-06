@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -29,7 +28,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
-import Data.Version (Version, showVersion)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -49,8 +47,7 @@ import Common.Api (PublicRequest)
 import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
-                      frontendConfig_upgradeBranch, parseBakerAddr)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -234,8 +231,11 @@ whenJustDyn d f = dyn_ . ffor d $ \case
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
-uiButton classes label = fmap (domEvent Click . fst) $
-  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+uiButton classes = uiButtonM classes . text
+
+uiButtonM :: DomBuilder t m => Text -> m () -> m (Event t ())
+uiButtonM classes label = fmap (domEvent Click . fst) $
+  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) label
 
 uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Enabled) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
@@ -560,9 +560,9 @@ nbsp = "\x00A0"
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
 errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
+  el "wbr" blank
   for_ secondary $ \x -> do
     elClass "label" "secondary-label" $ do
-      text nbsp
       text x
 
 nodeLabel :: DomBuilder t m => NodeSummary -> m ()

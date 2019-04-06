@@ -4,6 +4,7 @@
 }:
 let
   obApp = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = false; };
+  obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
@@ -293,4 +294,7 @@ in (obApp null) // {
         '';
       };
     };
+  kiln-debian = (import ./linux-distros.nix {inherit pkgs; obApp = obAppGargoyle null;
+    pkgName = "kiln"; version = "0.5.1";
+    }).kiln-debian;
 }

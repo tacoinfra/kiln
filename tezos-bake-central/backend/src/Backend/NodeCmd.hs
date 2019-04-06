@@ -101,6 +101,7 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
+    -- (19/04/03) after zeronet reset, now it no longer supports archive mode
     useArchiveMode = False
   processWorker logger db appConfig
     (initNode appConfig nodePath)
