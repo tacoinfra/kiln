@@ -41,18 +41,18 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
-bakerPath :: NamedChain -> Maybe ProtocolHash -> FilePath
+bakerPath :: Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
 
-endorserPath :: NamedChain -> Maybe ProtocolHash -> FilePath
+endorserPath :: Maybe ProtocolHash -> FilePath
 endorserPath = getPath (view _3)
 
-getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath) -> NamedChain -> Maybe ProtocolHash -> FilePath
-getPath f n = \case
+getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath) -> Maybe ProtocolHash -> FilePath
+getPath f = \case
   Nothing -> f $ NonEmpty.head paths
   Just p -> maybe e f $ find (\(p', _, _) -> p' == p) paths
     where
-      e = error ("tezos-baker/endorser not available for the given chain:" <> (show n) <> " and protocol: " <> show p)
+      e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
   where
     psdd :: ProtocolHash
     psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
@@ -60,17 +60,7 @@ getPath f n = \case
     pt24 = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
     -- zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
     -- zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
-    paths = case n of
-      NamedChain_Mainnet -> ( psdd
-                            , $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
-                            , $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
-                            ) :| []
-      NamedChain_Alphanet -> ( psdd
-                             , $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
-                             , $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
-                             ) :| []
-      NamedChain_Zeronet ->
-        ( psdd
+    paths = ( psdd
         , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
         , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
         ) :|
@@ -142,8 +132,8 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
-bakerDaemonProcess appConfig logger db namedChain = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> m (IO ())
+bakerDaemonProcess appConfig logger db = do
   (_nid, BakerDaemonInternalData aliasT _ _ _ bpid1 epid1 _ bpid2 epid2) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -185,7 +175,7 @@ bakerDaemonProcess appConfig logger db namedChain = do
                      , alias]
       pw (pathF, args) pid = processWorker logger db appConfig
         (fetchProtocol pid)
-        (\proto _nodeConfigPath -> proc (pathF namedChain proto) args)
+        (\proto _nodeConfigPath -> proc (pathF proto) args)
         pid
         Nothing
       bakerPw = pw (bakerPath, bakerArgs)
