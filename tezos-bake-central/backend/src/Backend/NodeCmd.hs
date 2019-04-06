@@ -142,7 +142,7 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO (), IO (), IO ())
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
 bakerDaemonProcess appConfig logger db namedChain = do
   (_nid, BakerDaemonInternalData aliasT _ _ _ bpid1 epid1 _ bpid2 epid2) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
@@ -198,7 +198,7 @@ bakerDaemonProcess appConfig logger db namedChain = do
   bp2 <- bakerPw bpid2
   ep1 <- endorserPw epid1
   ep2 <- endorserPw epid2
-  return (bp1, bp2, ep1, ep2)
+  return (bp1 *> bp2 *> ep1 *> ep2)
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)

@@ -345,7 +345,7 @@ backendImpl cfg serve = do
       for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< internalNodeWorker appConfig logger db namedChain
         addFinalizer =<< protocolMonitorWorker dataSrc db
-        (\(a,b,c,d) -> mapM_ addFinalizer [a, b, c, d]) =<< bakerDaemonProcess appConfig logger db namedChain
+        addFinalizer =<< bakerDaemonProcess appConfig logger db namedChain
         addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
 
       liftIO $ serve $ \case
