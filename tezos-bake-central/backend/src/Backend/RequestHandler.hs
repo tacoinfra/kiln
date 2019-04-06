@@ -189,7 +189,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
           updateBakerDaemon shouldRun' = inDb $
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              >>= traverse_ (\(BakerDaemonInternalData _ _ _ _ bPid ePid _ _ _) -> do
+              >>= traverse_ (\bdid -> do
+                let bPid = _bakerDaemonInternalData_bakerProcessData bdid
+                    ePid = _bakerDaemonInternalData_endorserProcessData bdid
                 update [ProcessData_runningField =. shouldRun']
                   (AutoKeyField `in_` map fromId [bPid, ePid]))
 
