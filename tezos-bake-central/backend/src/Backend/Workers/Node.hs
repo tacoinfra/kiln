@@ -494,10 +494,10 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     Just (BakerDaemonInternalData _ _ _ mp bpid epid tp tbpid tepid) -> do
       isRunning <- (== Just True) <$> (project1 ProcessData_runningField $ AutoKeyField ==. (fromId bpid))
       let
-        setMainProto = if mp == Just mainProto
+        setMainProto = if mp == mainProto
           then return []
           else do
-            update [ds ~> BakerDaemonInternalData_protocolSelector =. Just mainProto] CondEmpty
+            update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
             return $ if isRunning then [bpid, epid] else []
         setAltProto p = do
           isAltRunning <- (== Just True) <$> (project1 ProcessData_runningField $ AutoKeyField ==. (fromId tbpid))
@@ -518,7 +518,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         altToMain = do
           $(logDebugSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
           stopMain
-          update [ ds ~> BakerDaemonInternalData_protocolSelector =. Just mainProto
+          update [ ds ~> BakerDaemonInternalData_protocolSelector =. mainProto
                  , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
                  , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
                  , ds ~> BakerDaemonInternalData_altBakerProcessDataSelector =. bpid
@@ -530,7 +530,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
           p2 <- setAltProto tp'
           return $ p1 ++ p2
         Nothing -> if
-          | mp == Just mainProto -> stopAlt >> return []
+          | mp == mainProto -> stopAlt >> return []
           | tp == Just mainProto -> stopMain >> altToMain >> return []
           | otherwise -> stopAlt >> setMainProto
 

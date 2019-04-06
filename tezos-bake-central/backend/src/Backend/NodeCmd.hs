@@ -161,7 +161,10 @@ bakerDaemonProcess appConfig logger db namedChain = do
         tbpid <- insert' processData
         tepid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing False Nothing bpid epid Nothing tbpid tepid
+        let v = BakerDaemonInternalData "ledger_kiln" Nothing False psdd bpid epid Nothing tbpid tepid
+            -- Add this as default protocol, we will anyways fix this in protocolMonitorWorker once the synced node is available
+            psdd :: ProtocolHash
+            psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
@@ -209,4 +212,4 @@ fetchProtocol pid db _ _ = runDb (Identity db) $ do
     (Just (BakerDaemonInternalData _ _ _ proto _ _ testProto tbpid tepid)) ->
       if pid == tbpid || pid == tepid
         then return testProto
-        else return proto
+        else return $ Just proto
