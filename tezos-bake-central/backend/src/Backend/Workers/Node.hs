@@ -18,7 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -473,47 +473,31 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   let
     inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
     inDb m = runDb (Identity db) m
-    restartPids ps = do
-      $(logDebugSH) ("protocolMonitorWorker: restarting pids"::Text, ps)
-      for_ ps $ \p -> do
-        let cond = AutoKeyField ==. (fromId p)
-        inDb $ update [ProcessData_runningField =. False] cond
-        let
-          loop = do
-            s <- inDb $ project1 ProcessData_stateField $ cond
-            if s == Just ProcessState_Stopped || s == Just ProcessState_Failed
-              then inDb $ update [ProcessData_runningField =. True] cond
-              else threadDelay' 1 >> loop
-        loop
-      $(logDebugSH) ("protocolMonitorWorker: restarting pids done"::Text, ps)
+    setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` (map fromId ps))
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
-  pidsToRestart <- inDb $ project1 ds CondEmpty >>= \case
-    Nothing -> return []
+  inDb $ project1 ds CondEmpty >>= \case
+    Nothing -> return ()
     Just (BakerDaemonInternalData _ _ _ mp bpid epid tp tbpid tepid) -> do
-      isRunning <- (== Just True) <$> (project1 ProcessData_runningField $ AutoKeyField ==. (fromId bpid))
+      isRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId bpid))
       let
-        setMainProto = if mp == mainProto
-          then return []
-          else do
-            update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
-            return $ if isRunning then [bpid, epid] else []
+        setMainProto = unless (mp == mainProto) $ do
+          update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
+          when isRunning $ setControl ProcessControl_Restart [bpid, epid]
         setAltProto p = do
-          isAltRunning <- (== Just True) <$> (project1 ProcessData_runningField $ AutoKeyField ==. (fromId tbpid))
+          isAltRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId tbpid))
           if tp == Just p
-            then return $ if isRunning && (not isAltRunning) then [tbpid, tepid] else []
+            then when (isRunning && (not isAltRunning)) $ setControl ProcessControl_Restart [tbpid, tepid]
             else do
               update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
-              return $ if isRunning then [tbpid, tepid] else []
+              when isRunning $ setControl ProcessControl_Restart [tbpid, tepid]
         stopMain = do
           $(logDebugSH) ("protocolMonitorWorker: stopping main protocol baker/endorser"::Text, mainProto)
-          let processes = map fromId [bpid, epid]
-          update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+          setControl ProcessControl_Stop [bpid, epid]
         stopAlt = do
           $(logDebugSH) ("protocolMonitorWorker: stopping alternate protocol baker/endorser"::Text, mainProto)
-          let processes = map fromId [tbpid, tepid]
-          update [ProcessData_runningField =. False] $ AutoKeyField `in_` processes
+          setControl ProcessControl_Stop [tbpid, tepid]
         -- stop main and swap pids
         altToMain = do
           $(logDebugSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
@@ -525,17 +509,11 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
                  , ds ~> BakerDaemonInternalData_altEndorserProcessDataSelector =. epid
                  ] CondEmpty
       case altProto of
-        Just tp' -> do
-          p1 <- setMainProto
-          p2 <- setAltProto tp'
-          return $ p1 ++ p2
+        Just tp' -> setMainProto >> setAltProto tp'
         Nothing -> if
-          | mp == mainProto -> stopAlt >> return []
-          | tp == Just mainProto -> stopMain >> altToMain >> return []
+          | mp == mainProto -> stopAlt
+          | tp == Just mainProto -> stopMain >> altToMain
           | otherwise -> stopAlt >> setMainProto
-
-  -- This has to be done outside runDb
-  restartPids pidsToRestart
 
   -- Wait till the end of this cycle
   let

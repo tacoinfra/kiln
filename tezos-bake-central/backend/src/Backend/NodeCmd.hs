@@ -81,7 +81,7 @@ internalNodeWorker appConfig logger db namedChain = do
       (Just v) -> return v
       Nothing -> do
         let processData = ProcessData
-              { _processData_running = False
+              { _processData_control = ProcessControl_Stop
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing
@@ -141,7 +141,7 @@ bakerDaemonProcess appConfig logger db = do
       (Just v) -> return v
       Nothing -> do
         let processData = ProcessData
-              { _processData_running = False
+              { _processData_control = ProcessControl_Stop
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing

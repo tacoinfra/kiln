@@ -442,7 +442,7 @@ getBakerAddresses nds bid = do
       (toPrimitivePersistValue pg bid :)
       buildRs
   int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."running",
+      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."control",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
@@ -546,14 +546,14 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.running, p.state, p.updated AT TIME ZONE 'UTC', p.backend
+      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', running, state, updated, backend) -> (Bounded nid',
+    <&> Map.fromList . (fmap $ \(nid', control, state, updated, backend) -> (Bounded nid',
       ProcessData
-      { _processData_running = running
+      { _processData_control = control
       , _processData_state = state
       , _processData_updated = updated
       , _processData_backend = backend

@@ -102,7 +102,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         getInternalNode >>= \case
           Nothing -> do
             let processData = ProcessData
-                  { _processData_running = True
+                  { _processData_control = ProcessControl_Stop
                   , _processData_state = ProcessState_Stopped
                   , _processData_updated = Nothing
                   , _processData_backend = Nothing
@@ -124,12 +124,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               getId (nodeData ^. deletableRow_data) >>= \case
                 Nothing -> error "NodeInternal ProcessData not found"
                 (Just v) -> pure v
-            when (_deletableRow_deleted nodeData || not (_processData_running processData)) $ do
+            when (_deletableRow_deleted nodeData || (ProcessControl_Stop == _processData_control processData)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 ]
                 (NodeInternal_idField ==. nid)
-              update [ProcessData_runningField =. True]
+              update [ProcessData_controlField =. ProcessControl_Run]
                 (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
               notify NotifyTag_NodeInternal (nid, Just processData)
 
@@ -192,13 +192,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               >>= traverse_ (\bdid -> do
                 let bPid = _bakerDaemonInternalData_bakerProcessData bdid
                     ePid = _bakerDaemonInternalData_endorserProcessData bdid
-                update [ProcessData_runningField =. shouldRun']
+                    c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
+                update [ProcessData_controlField =. c]
                   (AutoKeyField `in_` map fromId [bPid, ePid]))
 
           updateNode shouldRun' = inDb $
             (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
               let pid = _deletableRow_data nodeData
-              update [ProcessData_runningField =. shouldRun'] (AutoKeyField ==. fromId pid)
+                  c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
+              update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
               return pid
@@ -264,7 +266,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
                 bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
                 endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
-            update [ProcessData_runningField =. False] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+            update [ProcessData_controlField =. ProcessControl_Stop] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)

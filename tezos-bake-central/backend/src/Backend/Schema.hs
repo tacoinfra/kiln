@@ -370,6 +370,12 @@ instance FromField ProcessState where
 instance ToField ProcessState where
   toField v = toField (show v)
 
+instance FromField ProcessControl where
+  fromField f b = read <$> fromField f b
+
+instance ToField ProcessControl where
+  toField v = toField (show v)
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
@@ -719,6 +725,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields: [_nodeInternal_id]
   - entity: ProcessData
   - primitive: ProcessState
+  - primitive: ProcessControl
   - entity: NodeDetails
     autoKey: null
     keys:
