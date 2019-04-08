@@ -67,6 +67,7 @@ preMigrate =
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
+  >=> migrateProcessDataTable
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -362,6 +363,22 @@ migrateBakerDaemonInternalTable ta = do
               ALTER TABLE "BakerDaemonInternal" ALTER COLUMN "data#data#altEndorserProcessData" SET NOT NULL;
               ALTER TABLE "BakerDaemonInternal" ADD FOREIGN KEY("data#data#altBakerProcessData") REFERENCES "ProcessData"("id");
               ALTER TABLE "BakerDaemonInternal" ADD FOREIGN KEY("data#data#altEndorserProcessData") REFERENCES "ProcessData"("id");
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateProcessDataTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataTable ta = do
+  let table = (Nothing, "ProcessData")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "running") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ProcessData" ADD COLUMN "control" VARCHAR NULL;
+              ALTER TABLE "ProcessData" DROP COLUMN "running";
+              UPDATE "ProcessData" SET "control" = 'ProcessControl_Stop';
+              ALTER TABLE "ProcessData" ALTER COLUMN "control" SET NOT NULL;
             |]
           getTableAnalysis
     _ -> pure ta
