@@ -455,13 +455,13 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, running, li, sc, dp, alertCount) ->
+    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, control, li, sc, dp, alertCount) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (running, sk, (alertCount, insufficientFunds))))
+      in (pkh, (control == ProcessControl_Run, sk, (alertCount, insufficientFunds))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
