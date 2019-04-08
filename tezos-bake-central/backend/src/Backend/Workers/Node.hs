@@ -508,6 +508,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
                  , ds ~> BakerDaemonInternalData_altBakerProcessDataSelector =. bpid
                  , ds ~> BakerDaemonInternalData_altEndorserProcessDataSelector =. epid
                  ] CondEmpty
+      unless isRunning stopAlt
       case altProto of
         Just tp' -> setMainProto >> setAltProto tp'
         Nothing -> if
