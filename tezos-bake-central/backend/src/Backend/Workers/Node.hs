@@ -479,7 +479,14 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
   inDb $ project1 ds CondEmpty >>= \case
     Nothing -> return ()
-    Just (BakerDaemonInternalData _ _ _ mp bpid epid tp tbpid tepid) -> do
+    Just bdid -> do
+      let
+        mp = _bakerDaemonInternalData_protocol bdid
+        tp = _bakerDaemonInternalData_altProtocol bdid
+        bpid = _bakerDaemonInternalData_bakerProcessData bdid
+        epid = _bakerDaemonInternalData_endorserProcessData bdid
+        tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
+        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
       isRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId bpid))
       let
         setMainProto = unless (mp == mainProto) $ do

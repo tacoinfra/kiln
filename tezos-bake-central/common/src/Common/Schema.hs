@@ -985,6 +985,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerDaemonExternalData
   , 'BakerDaemonInfo
   , 'BakerDaemonInfoData
+  , 'BakerDaemonInternalData
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight

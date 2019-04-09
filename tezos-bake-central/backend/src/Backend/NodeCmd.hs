@@ -135,7 +135,7 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> m (IO ())
 bakerDaemonProcess appConfig logger db = do
-  (_nid, BakerDaemonInternalData aliasT _ _ _ bpid1 epid1 _ bpid2 epid2) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (_nid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
@@ -152,7 +152,17 @@ bakerDaemonProcess appConfig logger db = do
         tbpid <- insert' processData
         tepid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing False psdd bpid epid Nothing tbpid tepid
+        let v = BakerDaemonInternalData
+              { _bakerDaemonInternalData_alias = "ledger_kiln"
+              , _bakerDaemonInternalData_publicKeyHash = Nothing
+              , _bakerDaemonInternalData_insufficientFunds = False
+              , _bakerDaemonInternalData_protocol = psdd
+              , _bakerDaemonInternalData_bakerProcessData = bpid
+              , _bakerDaemonInternalData_endorserProcessData = epid
+              , _bakerDaemonInternalData_altProtocol = Nothing
+              , _bakerDaemonInternalData_altBakerProcessData = tbpid
+              , _bakerDaemonInternalData_altEndorserProcessData = tepid
+              }
             -- Add this as default protocol, we will anyways fix this in protocolMonitorWorker once the synced node is available
             psdd :: ProtocolHash
             psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
@@ -164,23 +174,29 @@ bakerDaemonProcess appConfig logger db = do
             }
           }
         return (nid, v)
-  let nodePort = show $ _appConfig_kilnNodePort appConfig
-      alias = T.unpack aliasT
-      bakerArgs = [ "--port", nodePort
-                  , "--base-dir", tezosClientDataDir appConfig
-                  , "run", "with", "local", "node", nodeDataDir appConfig
-                  , alias]
-      endorserArgs = ["--port", nodePort
-                     , "--base-dir", tezosClientDataDir appConfig
-                     , "run"
-                     , alias]
-      pw (pathF, args) pid = processWorker logger db appConfig
-        (fetchProtocol pid)
-        (\proto _nodeConfigPath -> proc (pathF proto) args)
-        pid
-        Nothing
-      bakerPw = pw (bakerPath, bakerArgs)
-      endorserPw = pw (endorserPath, endorserArgs)
+  let
+    aliasT = _bakerDaemonInternalData_alias bdid
+    bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
+    epid1 = _bakerDaemonInternalData_endorserProcessData bdid
+    bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
+    epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
+    nodePort = show $ _appConfig_kilnNodePort appConfig
+    alias = T.unpack aliasT
+    bakerArgs = [ "--port", nodePort
+                , "--base-dir", tezosClientDataDir appConfig
+                , "run", "with", "local", "node", nodeDataDir appConfig
+                , alias]
+    endorserArgs = ["--port", nodePort
+                   , "--base-dir", tezosClientDataDir appConfig
+                   , "run"
+                   , alias]
+    pw (pathF, args) pid = processWorker logger db appConfig
+      (fetchProtocol pid)
+      (\proto _nodeConfigPath -> proc (pathF proto) args)
+      pid
+      Nothing
+    bakerPw = pw (bakerPath, bakerArgs)
+    endorserPw = pw (endorserPath, endorserArgs)
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
@@ -200,7 +216,10 @@ fetchProtocol :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
 fetchProtocol pid db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
-    (Just (BakerDaemonInternalData _ _ _ proto _ _ testProto tbpid tepid)) ->
-      if pid == tbpid || pid == tepid
-        then return testProto
-        else return $ Just proto
+    Just bdid ->
+      let
+        tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
+        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
+      in if pid == tbpid || pid == tepid
+        then return $ _bakerDaemonInternalData_altProtocol bdid
+        else return $ Just $ _bakerDaemonInternalData_protocol bdid
