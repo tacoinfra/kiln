@@ -376,8 +376,9 @@ migrateProcessDataTable ta = do
       -> do
           void [traceExecuteQ|
               ALTER TABLE "ProcessData" ADD COLUMN "control" VARCHAR NULL;
+              UPDATE "ProcessData" SET "control" = 'ProcessControl_Stop' WHERE "running" = FALSE;
+              UPDATE "ProcessData" SET "control" = 'ProcessControl_Run' WHERE "running" = TRUE;
               ALTER TABLE "ProcessData" DROP COLUMN "running";
-              UPDATE "ProcessData" SET "control" = 'ProcessControl_Stop';
               ALTER TABLE "ProcessData" ALTER COLUMN "control" SET NOT NULL;
             |]
           getTableAnalysis
