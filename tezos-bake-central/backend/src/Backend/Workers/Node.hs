@@ -473,7 +473,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   let
     inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
     inDb m = runDb (Identity db) m
-    setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` (map fromId ps))
+    setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector

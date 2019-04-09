@@ -86,7 +86,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
     control_ = ProcessData_controlField
     waitUntilShouldRun = do
       isStopped <- runLoggingEnv logger $ runDb (Identity db) $
-        all ((==) ProcessControl_Stop) <$> project control_ (AutoKeyField ==. (fromId pid))
+        all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
       when isStopped $ threadDelay' 1 >> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
@@ -127,8 +127,11 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         {-# INLINE go #-}
         go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
         go = do
+          let getPC = \case
+                [] -> ProcessControl_Stop
+                (c:_) -> c
           procControl <- runDb (Identity db)
-            (head <$> project control_ (AutoKeyField ==. (fromId pid)))
+            (getPC <$> project control_ (AutoKeyField ==. (fromId pid)))
           (liftIO $ getProcessExitCode ph) >>= \case
             Nothing -> do
               updateState ProcessState_Running

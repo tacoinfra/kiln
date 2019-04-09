@@ -1368,7 +1368,7 @@ nodesTab =
                       [preface, body running "Stopping"]
                       "Stop Node"
 
-                  runningDyn :: Dynamic t Bool <- (fmap (fmap (== ProcessControl_Run))) $ holdUniqDyn $ _processData_control <$> nodeData
+                  runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                   bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
