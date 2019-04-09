@@ -371,7 +371,7 @@ instance ToField ProcessState where
   toField v = toField (show v)
 
 instance FromField ProcessControl where
-  fromField f b = read <$> fromField f b
+  fromField f = maybe (fail "Invalid value for ProcessControl") pure . readMaybe <=< fromField f
 
 instance ToField ProcessControl where
   toField v = toField (show v)
