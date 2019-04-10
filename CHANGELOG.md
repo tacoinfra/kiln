@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1
+*April 12, 2019*
+
+  * New settings for missed bake/endorsement notification frequency
+  * Support for Zeronet protocol 004
+  * Installation via Debian package
+  * UI updates and bug fixes
+
+
 ## 0.5.0
 *March 29, 2019*
 
