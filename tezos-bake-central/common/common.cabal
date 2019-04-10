@@ -12,6 +12,10 @@ flag docker
   description: Is being built for docker
   default: False
 
+flag linux-package
+  description: Is being built for a Linux package (Debian, Redhat, etc.)
+  default: False
+
 library
   hs-source-dirs: src
 
@@ -83,4 +87,7 @@ library
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
 
   if flag(docker)
-    cpp-options: -DDOCKER
+    cpp-options: -DDISTRO_DOCKER
+  else
+    if flag(linux-package)
+      cpp-options: -DDISTRO_LINUX_PACKAGE
