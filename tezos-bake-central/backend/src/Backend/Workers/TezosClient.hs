@@ -112,7 +112,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                         ]
                   update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
                         , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
-                  update [ProcessData_runningField =. True] $ AutoKeyField `in_` processes
+                  update [ProcessData_controlField =. ProcessControl_Run] $ AutoKeyField `in_` processes
 
           -- run appropriate 'show ledger' commands, but only do one at a time
           -- to allow other commands to take precedence

@@ -934,7 +934,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         let f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
             f (Just (nid, pd), es) ()
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
-              | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
+              | MMap.member nid es || (ProcessControl_Stop == _processData_control pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
               | otherwise = Workflow $ do
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
@@ -1368,7 +1368,7 @@ nodesTab =
                       [preface, body running "Stopping"]
                       "Stop Node"
 
-                  runningDyn :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
+                  runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                   bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case

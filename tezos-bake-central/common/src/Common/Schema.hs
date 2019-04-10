@@ -256,8 +256,12 @@ data BakerDaemonInternalData = BakerDaemonInternalData
   { _bakerDaemonInternalData_alias :: !(Text)
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_insufficientFunds :: !Bool
+  , _bakerDaemonInternalData_protocol :: !ProtocolHash
   , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
   , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_altProtocol :: !(Maybe ProtocolHash)
+  , _bakerDaemonInternalData_altBakerProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_altEndorserProcessData :: !(Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternalData where
@@ -313,8 +317,14 @@ data ProcessState
    | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
+data ProcessControl
+  = ProcessControl_Run
+  | ProcessControl_Stop
+  | ProcessControl_Restart
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data ProcessData = ProcessData
-  { _processData_running :: !Bool -- the state we /want/ the process to be in;
+  { _processData_control :: !ProcessControl
   , _processData_state :: !ProcessState -- the state the process is actually in.
   , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
   , _processData_backend :: !(Maybe Int) -- a "unique" process id
@@ -946,6 +956,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeInternal
   , ''ProcessData
   , ''ProcessState
+  , ''ProcessControl
   , ''NodeDetails
   , ''NodeDetailsData
   , ''RightNotificationLimit
@@ -974,6 +985,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerDaemonExternalData
   , 'BakerDaemonInfo
   , 'BakerDaemonInfoData
+  , 'BakerDaemonInternalData
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight

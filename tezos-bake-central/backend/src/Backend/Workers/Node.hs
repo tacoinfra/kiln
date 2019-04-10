@@ -18,8 +18,8 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfo, logInfoSH, logWarnSH)
+import Control.Monad.Except (ExceptT, runExceptT, unless)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
@@ -28,6 +28,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -39,7 +40,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (toId)
+import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -443,3 +444,93 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
 
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
+
+-- Monitors changes in protocol/voting period, and manages the baker daemon if running
+protocolMonitorWorker
+  :: NodeDataSource
+  -> Pool Postgresql
+  -> IO (IO ())
+protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  protoInfo <- liftIO $ atomically $ waitForParams nds
+  $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
+  let
+    getProtocol = getProtocol' >>= \case
+      Right p -> return p
+      Left e -> do
+        $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, e)
+        threadDelay' 1
+        getProtocol
+    getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
+      blk <- nodeQueryDataSource $ NodeQuery_Block $ latestHead ^. hash
+      let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
+      tp <- if vp == VotingPeriodKind_PromotionVote
+        then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)
+        else return Nothing
+      return $ ( blk ^. block_metadata . blockMetadata_protocol, tp)
+
+  (mainProto, altProto) <- getProtocol
+
+  let
+    inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
+    inDb m = runDb (Identity db) m
+    setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
+
+  $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
+  let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
+  inDb $ project1 ds CondEmpty >>= \case
+    Nothing -> return ()
+    Just bdid -> do
+      let
+        mp = _bakerDaemonInternalData_protocol bdid
+        tp = _bakerDaemonInternalData_altProtocol bdid
+        bpid = _bakerDaemonInternalData_bakerProcessData bdid
+        epid = _bakerDaemonInternalData_endorserProcessData bdid
+        tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
+        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
+      isRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId bpid))
+      let
+        setMainProto = unless (mp == mainProto) $ do
+          update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
+          when isRunning $ setControl ProcessControl_Restart [bpid, epid]
+        setAltProto p = do
+          isAltRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId tbpid))
+          if tp == Just p
+            then when (isRunning && (not isAltRunning)) $ setControl ProcessControl_Restart [tbpid, tepid]
+            else do
+              update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
+              when isRunning $ setControl ProcessControl_Restart [tbpid, tepid]
+        stopMain = do
+          $(logDebugSH) ("protocolMonitorWorker: stopping main protocol baker/endorser"::Text, mainProto)
+          setControl ProcessControl_Stop [bpid, epid]
+        stopAlt = do
+          $(logDebugSH) ("protocolMonitorWorker: stopping alternate protocol baker/endorser"::Text, mainProto)
+          setControl ProcessControl_Stop [tbpid, tepid]
+        -- stop main and swap pids
+        altToMain = do
+          $(logDebugSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
+          stopMain
+          update [ ds ~> BakerDaemonInternalData_protocolSelector =. mainProto
+                 , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
+                 , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
+                 , ds ~> BakerDaemonInternalData_altBakerProcessDataSelector =. bpid
+                 , ds ~> BakerDaemonInternalData_altEndorserProcessDataSelector =. epid
+                 ] CondEmpty
+      unless isRunning stopAlt
+      case altProto of
+        Just tp' -> setMainProto >> setAltProto tp'
+        Nothing -> if
+          | mp == mainProto -> stopAlt
+          | tp == Just mainProto -> stopMain >> altToMain
+          | otherwise -> stopAlt >> setMainProto
+
+  -- Wait till the end of this cycle
+  let
+    currentLvl = latestHead ^. level
+    nextCycle = 1 + levelToCycle protoInfo currentLvl
+    nextCheckLvl = firstLevelInCycle protoInfo nextCycle
+    delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
+    oneBlockTime :: TezosWord64
+    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
+  $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
+  threadDelay' delay
+  return ()
