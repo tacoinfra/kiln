@@ -302,9 +302,10 @@ settingsTab = do
               el "p" $ do
                 text "Release notes: "
                 hrefLink uri $ text uri
-              el "p" $ text $ case distributionMethod of
-                Distribution_FromSource -> "To update, install the latest version using whichever package manager you are using to manage Kiln."
-                Distribution_Docker -> "You are running Kiln via Docker. To update, quit Kiln and run the ‘docker run’ command using the tag ‘" <> T.pack (showVersion v) <> "’."
+              case distributionMethod of
+                Distribution_FromSource -> blank
+                Distribution_Docker -> el "p" $ text $ "You are running Kiln via Docker. To update, quit Kiln and run the ‘docker run’ command using the tag ‘" <> T.pack (showVersion v) <> "’."
+                Distribution_LinuxPackage -> el "p" $ text "To update, install the latest version using whichever package manager you are using to manage Kiln."
             else
               text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
           _ -> blank
