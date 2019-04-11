@@ -140,12 +140,15 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
                 _ -> liftIO $ terminateProcess ph
               (threadDelay' 1) *> go
             Just _ -> case procControl of
-              ProcessControl_Stop ->
+              ProcessControl_Stop -> do
+                updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully:" :: Text, pid)
               ProcessControl_Restart -> do
+                updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
                 runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. (fromId pid))
-              ProcessControl_Run ->
+              ProcessControl_Run -> do
+                updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
     updateState :: (MonadIO m, MonadBaseNoPureAborts IO m) => ProcessState -> m ()
