@@ -202,8 +202,10 @@ tooltipped pos tip w = mdo
 
   (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
     a' <- w
-    let
-      hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    let mouseenter = True <$ domEvent Mouseenter wEl
+        mouseleave = False <$ domEvent Mouseleave wEl
+    hovered' <- debounce 0.75 $ leftmost [mouseenter, mouseleave]
+    hovered <- fmap updated . holdUniqDyn <=< holdDyn False $ leftmost [mouseenter, hovered']
     open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
     close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
     let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
