@@ -110,6 +110,13 @@ You can remove old images and containers for the monitor safely. All your data i
 
 Obsidian Systems packages Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with v0.5.1.
 
+To get started:
+
+1. Download the deb file from our [releases](https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases) page.
+2. Open the file.
+3. Follow the installation instructions.
+4. Open [http://localhost:8000](http://localhost:8000)
+
 ### Configuring the Debian Package
 
 By default, the debian installation runs on mainnet with a standard options, like using port `8000`. You can use Kiln on a test network and configure advanced settings in its config file, located at `/etc/kiln`.
@@ -292,13 +299,3 @@ There are instances where Kiln’s front end will stop updating, but the backend
 # Contact Us
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
-
-
-
-
-
-
-
-
-
-
