@@ -1,6 +1,6 @@
-# Importing Chain History to the Kiln Node from Another Tezos Node
+# Importing Chain History to the Kiln Node from another Tezos Node
 
-To bake with Kiln, the Kiln Node must be fully synced with the blockchain. Rather than waiting for the Kiln Node to sync from genesis, it is possible to copy chain history from another node. The import process is dependent upon how you are running Kiln.
+To bake with Kiln, the Kiln Node must be fully synced with the blockchain. Rather than waiting for the Kiln Node to sync from genesis, it is possible to copy chain history from another node. The import process is dependent upon how you are running Kiln. Follow the instructions below specific to your distribution.
 
 ## Built from source
 
@@ -10,17 +10,21 @@ To bake with Kiln, the Kiln Node must be fully synced with the blockchain. Rathe
 
 3. Remove the Kiln Node’s existing context and store
 
-`rm -rf /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]/context`
-`rm -rf /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]/store`
+```
+rm -rf /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]/context
+rm -rf /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]/store
+```
+
+_Note: The chainId for mainnet is `NetXdQprcVkpaWU`_
 
 4. Stop the node whose data you are copying.
 
-5. Copy the context and store folders from the synced node into the Kiln Node’s folder. They can be found in the .tezos-node folder
+5. Copy the context and store folders from the synced node into the Kiln Node’s folder. `~/.tezos-node` is the default location for node data:
 
-`cp -r ~/.tezos-node/context /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]`
-`cp -r ~/.tezos-node/store /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]`
-
-_Note: The `chainId` for mainnet is `NetXdQprcVkpaWU`_
+```
+cp -r ~/.tezos-node/context /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]
+cp -r ~/.tezos-node/store /tezos-bake-monitor/app/.kiln/tezos-node/[chainId]
+```
 
 6. Restart the Kiln Node. As it starts, it should recognize the chain data and update its head block level.
 
@@ -32,16 +36,20 @@ _Note: The `chainId` for mainnet is `NetXdQprcVkpaWU`_
 
 3. Remove the Kiln Node's existing context and store:
 
-`sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chainId]/context`
-`sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chainId]/store`
+```
+sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chainId]/context
+sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chainId]/store
+```
 
-4. Stop the node whose data you are copying
+4. Stop the node whose data you are copying.
 
-5. Copy new data. Be sure you have stopped the node whose data you are copying first.
+5. Copy new data and set file permissions:
 
-`sudo cp -r ~/.tezos-node/context /var/lib/kiln/data-dir/tezos-node/[chainId]/`
-`sudo cp -r ~/.tezos-node/store /var/lib/kiln/data-dir/tezos-node/[chainId]/`
-`sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chainId]/context`
-`sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chainId]/store`
+```
+sudo cp -r ~/.tezos-node/context /var/lib/kiln/data-dir/tezos-node/[chainId]/
+sudo cp -r ~/.tezos-node/store /var/lib/kiln/data-dir/tezos-node/[chainId]/
+sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chainId]/context
+sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chainId]/store
+```
 
 6. Restart Kiln: `sudo systemctl start kiln`
