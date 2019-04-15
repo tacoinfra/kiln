@@ -38,6 +38,14 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
+import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.Document as Document
+import qualified GHCJS.DOM.HTMLElement as HTMLElement
+import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
+import qualified GHCJS.DOM.Node as Node
+import qualified GHCJS.DOM.Types as DOM
+
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
@@ -167,6 +175,42 @@ localHumanizedTimestampBasicWithoutTZ
   => Dynamic t Time.UTCTime
   -> m ()
 localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
+
+-- | Clickable copy-to-clipboard icon
+copyButton
+  :: (SemUi.UI t m, MonadJSM (Performable m))
+  => Behavior t Text -- ^ Text to copy to clipboard
+  -> m ()
+copyButton content = mdo
+  let conf = ffor state $ ("class" =:) . \case
+        Nothing -> "blue icon-copy link icon"
+        Just True -> "green icon-check icon"
+        Just False -> "red icon-cross icon"
+  copy <- fmap fst $ elDynAttr' "i" conf blank
+  result <- copyToClipboard $ tag content $ domEvent Click copy
+  delayed <- delay 1 result
+  state <- holdDyn Nothing $ leftmost [Just <$> result, Nothing <$ delayed]
+  pure ()
+
+-- | Copy the given text to the clipboard
+copyToClipboard
+  :: (MonadJSM (Performable m), PerformEvent t m)
+  => Event t Text
+  -- ^ Text to copy to clipboard. Event must come directly from user
+  -- interaction (e.g. domEvent Click), or the copy will not take place.
+  -> m (Event t Bool)
+  -- ^ Did the copy take place successfully?
+copyToClipboard copy = performEvent $ ffor copy $ \t -> do
+  doc <- DOM.currentDocumentUnchecked
+  ta <- DOM.uncheckedCastTo TextArea.HTMLTextAreaElement <$> Document.createElement doc ("textarea" :: Text)
+  TextArea.setValue ta t
+  body <- Document.getBodyUnchecked doc
+  _ <- Node.appendChild body ta
+  HTMLElement.focus ta
+  TextArea.select ta
+  success <- Document.execCommand doc ("copy" :: Text) False (Nothing :: Maybe Text)
+  _ <- Node.removeChild body ta
+  pure success
 
 data TooltipPos
   = TooltipPos_TopLeft
