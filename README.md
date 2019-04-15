@@ -110,8 +110,6 @@ You can remove old images and containers for the monitor safely. All your data i
 
 Obsidian Systems packages Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with v0.5.1.
 
-
-
 ### Configuring the Debian Package
 
 By default, the debian installation runs on mainnet with a standard options, like using port `8000`. You can use Kiln on a test network and configure advanced settings in its config file, located at `/etc/kiln`.
@@ -122,7 +120,7 @@ To change the port, network, or specify other arguments, add the relevant option
 KILNARGS="--network=zeronet -- --port=8080"
 ```
 
-This sets Kiln to run on zeronet and use the port 8080. Note that `--` must be placed before all configuration options other than the network.
+This sets Kiln to run on zeronet and use the port 8080. Note the `--` before `--port` configuration.
 
 ## Building from Source
 
