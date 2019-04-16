@@ -1,10 +1,11 @@
 # Changelog
 
 ## 0.5.1
-*April 12, 2019*
+*April 16, 2019*
 
   * New settings for missed bake/endorsement notification frequency
-  * Support for Zeronet protocol 004
+  * New button to resolve all notifications
+  * A new "You will be deactivated" notification
   * Installation via Debian package
   * UI updates and bug fixes
 
