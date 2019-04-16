@@ -101,11 +101,12 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
+    nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
     -- (19/04/03) after zeronet reset, now it no longer supports archive mode
     useArchiveMode = False
   processWorker logger db appConfig
     (initNode appConfig nodePath)
-    (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
+    (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ nodeExtraArgs ++ if useArchiveMode then ["--history-mode", "archive"] else [])
     pid
     (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
