@@ -256,8 +256,12 @@ data BakerDaemonInternalData = BakerDaemonInternalData
   { _bakerDaemonInternalData_alias :: !(Text)
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_insufficientFunds :: !Bool
+  , _bakerDaemonInternalData_protocol :: !ProtocolHash
   , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
   , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_altProtocol :: !(Maybe ProtocolHash)
+  , _bakerDaemonInternalData_altBakerProcessData :: !(Id ProcessData)
+  , _bakerDaemonInternalData_altEndorserProcessData :: !(Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternalData where
@@ -313,8 +317,14 @@ data ProcessState
    | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
+data ProcessControl
+  = ProcessControl_Run
+  | ProcessControl_Stop
+  | ProcessControl_Restart
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data ProcessData = ProcessData
-  { _processData_running :: !Bool -- the state we /want/ the process to be in;
+  { _processData_control :: !ProcessControl
   , _processData_state :: !ProcessState -- the state the process is actually in.
   , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
   , _processData_backend :: !(Maybe Int) -- a "unique" process id
@@ -818,6 +828,18 @@ data UpstreamVersion = UpstreamVersion
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
+-- | Stores settings for limiting notifications. Missing records for a
+-- 'RightKind' indicate not to do any filtering
+data RightNotificationSettings = RightNotificationSettings
+  { _rightNotificationSettings_rightKind :: !RightKind
+  , _rightNotificationSettings_limit :: !RightNotificationLimit
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
+data RightNotificationLimit = RightNotificationLimit
+  { _rightNotificationLimit_amount :: !Int -- ^ How many rights have to be missed before notifying
+  , _rightNotificationLimit_withinMinutes :: !Int -- ^ Time window (minutes) for counting missed rights
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+
 data TelegramConfig = TelegramConfig
   { _telegramConfig_botName :: !(Maybe Text)
   , _telegramConfig_botApiKey :: !Text
@@ -934,8 +956,11 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeInternal
   , ''ProcessData
   , ''ProcessState
+  , ''ProcessControl
   , ''NodeDetails
   , ''NodeDetailsData
+  , ''RightNotificationLimit
+  , ''RightNotificationSettings
   , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
@@ -960,6 +985,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerDaemonExternalData
   , 'BakerDaemonInfo
   , 'BakerDaemonInfoData
+  , 'BakerDaemonInternalData
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight
@@ -990,6 +1016,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
+  , 'RightNotificationLimit
+  , 'RightNotificationSettings
   , 'ProcessData
   , 'NodeDetails
   , 'NodeDetailsData

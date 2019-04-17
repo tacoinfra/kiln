@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -29,7 +28,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
-import Data.Version (Version, showVersion)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -40,6 +38,14 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
+import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.Document as Document
+import qualified GHCJS.DOM.HTMLElement as HTMLElement
+import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
+import qualified GHCJS.DOM.Node as Node
+import qualified GHCJS.DOM.Types as DOM
+
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
@@ -49,8 +55,7 @@ import Common.Api (PublicRequest)
 import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
-                      frontendConfig_upgradeBranch, parseBakerAddr)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -171,6 +176,42 @@ localHumanizedTimestampBasicWithoutTZ
   -> m ()
 localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
 
+-- | Clickable copy-to-clipboard icon
+copyButton
+  :: (SemUi.UI t m, MonadJSM (Performable m))
+  => Behavior t Text -- ^ Text to copy to clipboard
+  -> m ()
+copyButton content = mdo
+  let conf = ffor state $ ("class" =:) . \case
+        Nothing -> "blue icon-copy link icon"
+        Just True -> "green icon-check icon"
+        Just False -> "red icon-cross icon"
+  copy <- fmap fst $ elDynAttr' "i" conf blank
+  result <- copyToClipboard $ tag content $ domEvent Click copy
+  delayed <- delay 1 result
+  state <- holdDyn Nothing $ leftmost [Just <$> result, Nothing <$ delayed]
+  pure ()
+
+-- | Copy the given text to the clipboard
+copyToClipboard
+  :: (MonadJSM (Performable m), PerformEvent t m)
+  => Event t Text
+  -- ^ Text to copy to clipboard. Event must come directly from user
+  -- interaction (e.g. domEvent Click), or the copy will not take place.
+  -> m (Event t Bool)
+  -- ^ Did the copy take place successfully?
+copyToClipboard copy = performEvent $ ffor copy $ \t -> do
+  doc <- DOM.currentDocumentUnchecked
+  ta <- DOM.uncheckedCastTo TextArea.HTMLTextAreaElement <$> Document.createElement doc ("textarea" :: Text)
+  TextArea.setValue ta t
+  body <- Document.getBodyUnchecked doc
+  _ <- Node.appendChild body ta
+  HTMLElement.focus ta
+  TextArea.select ta
+  success <- Document.execCommand doc ("copy" :: Text) False (Nothing :: Maybe Text)
+  _ <- Node.removeChild body ta
+  pure success
+
 data TooltipPos
   = TooltipPos_TopLeft
   | TooltipPos_TopCenter
@@ -205,8 +246,10 @@ tooltipped pos tip w = mdo
 
   (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
     a' <- w
-    let
-      hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    let mouseenter = True <$ domEvent Mouseenter wEl
+        mouseleave = False <$ domEvent Mouseleave wEl
+    hovered' <- debounce 0.75 $ leftmost [mouseenter, mouseleave]
+    hovered <- fmap updated . holdUniqDyn <=< holdDyn False $ leftmost [mouseenter, hovered']
     open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
     close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
     let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
@@ -234,8 +277,11 @@ whenJustDyn d f = dyn_ . ffor d $ \case
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
-uiButton classes label = fmap (domEvent Click . fst) $
-  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+uiButton classes = uiButtonM classes . text
+
+uiButtonM :: DomBuilder t m => Text -> m () -> m (Event t ())
+uiButtonM classes label = fmap (domEvent Click . fst) $
+  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) label
 
 uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Enabled) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
@@ -560,9 +606,9 @@ nbsp = "\x00A0"
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
 errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
+  el "wbr" blank
   for_ secondary $ \x -> do
     elClass "label" "secondary-label" $ do
-      text nbsp
       text x
 
 nodeLabel :: DomBuilder t m => NodeSummary -> m ()

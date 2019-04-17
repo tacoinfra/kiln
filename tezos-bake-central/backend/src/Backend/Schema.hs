@@ -134,6 +134,7 @@ data NotifyTag a where
   NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
   NotifyTag_ShowLedger :: NotifyTag (SecretKey, Maybe (PublicKeyHash, Tez))
   NotifyTag_Prompting :: NotifyTag (SecretKey, Maybe SetupState)
+  NotifyTag_RightNotificationSettings :: NotifyTag (RightKind, Maybe RightNotificationLimit)
   deriving Typeable
 
 mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
@@ -367,6 +368,12 @@ instance FromField ProcessState where
   fromField f b = read <$> fromField f b
 
 instance ToField ProcessState where
+  toField v = toField (show v)
+
+instance FromField ProcessControl where
+  fromField f = maybe (fail "Invalid value for ProcessControl") pure . readMaybe <=< fromField f
+
+instance ToField ProcessControl where
   toField v = toField (show v)
 
 instance PersistField Tez where
@@ -718,6 +725,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields: [_nodeInternal_id]
   - entity: ProcessData
   - primitive: ProcessState
+  - primitive: ProcessControl
   - entity: NodeDetails
     autoKey: null
     keys:
@@ -983,6 +991,15 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: TelegramMessageQueue
   - entity: TelegramRecipient
   - entity: UpstreamVersion
+  - embedded: RightNotificationLimit
+  - entity: RightNotificationSettings
+    autoKey: null
+    constructors:
+    - name: RightNotificationSettings
+      uniques:
+      - name: RightNotificationSettingsId
+        type: primary
+        fields: [_rightNotificationSettings_rightKind]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -1224,6 +1241,7 @@ instance ArgDict NotifyTag where
     , c (Maybe ConnectedLedger)
     , c (SecretKey, Maybe (PublicKeyHash, Tez))
     , c (SecretKey, Maybe SetupState)
+    , c (RightKind, Maybe RightNotificationLimit)
     )
   argDict = \case
     NotifyTag_BakerDaemonExternal -> Dict
@@ -1259,6 +1277,7 @@ instance ArgDict NotifyTag where
     NotifyTag_ConnectedLedger -> Dict
     NotifyTag_ShowLedger -> Dict
     NotifyTag_Prompting -> Dict
+    NotifyTag_RightNotificationSettings -> Dict
 
 fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t

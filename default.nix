@@ -4,6 +4,12 @@
 }:
 let
   obApp = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = false; };
+  obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
+
+  distroMethods = {
+    docker = "docker";
+    linuxPackage = "linux-package";
+  };
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
@@ -211,7 +217,7 @@ let
     };
   };
 
-  dockerExe = let exe = (obApp "docker").linuxExe; in pkgs.runCommand "dockerExe" {} ''
+  dockerExe = let exe = (obApp distroMethods.docker).linuxExe; in pkgs.runCommand "dockerExe" {} ''
     mkdir "$out"
 
     cp '${exe}/backend' "$out/backend"
@@ -375,4 +381,10 @@ in (obApp null) // {
     };
   kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
   kilnVMSystem = kilnVMConfig.system;
+
+  kiln-debian = (import ./linux-distros.nix {
+    inherit pkgs;
+    obApp = obAppGargoyle distroMethods.linuxPackage;
+    pkgName = "kiln"; version = "0.5.1";
+  }).kiln-debian;
 }

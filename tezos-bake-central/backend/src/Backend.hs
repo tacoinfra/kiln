@@ -85,7 +85,7 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -344,7 +344,8 @@ backendImpl cfg serve = do
 
       for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< internalNodeWorker appConfig logger db namedChain
-        (\(a,b) -> addFinalizer a >> addFinalizer b) =<< bakerDaemonProcess appConfig logger db namedChain
+        addFinalizer =<< protocolMonitorWorker dataSrc db
+        addFinalizer =<< bakerDaemonProcess appConfig logger db
         addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
 
       liftIO $ serve $ \case
