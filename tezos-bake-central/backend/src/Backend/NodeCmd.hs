@@ -14,6 +14,9 @@ module Backend.NodeCmd where
 
 import Control.Monad.Logger (MonadLogger)
 import Data.Pool (Pool)
+import Data.List (find)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Database.Groundhog.Postgresql
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
@@ -23,6 +26,7 @@ import System.FilePath (combine)
 import System.Process (readProcess, proc)
 import qualified Data.Text as T
 
+import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
@@ -37,15 +41,34 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
-bakerPaths :: NamedChain -> FilePath
-bakerPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
-bakerPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-baker-003-PsddFKi3")
-bakerPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-baker-alpha")
+bakerPath :: Maybe ProtocolHash -> FilePath
+bakerPath = getPath (view _2)
 
-endorserPaths :: NamedChain -> FilePath
-endorserPaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
-endorserPaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-endorser-003-PsddFKi3")
-endorserPaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-endorser-alpha")
+endorserPath :: Maybe ProtocolHash -> FilePath
+endorserPath = getPath (view _3)
+
+getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath) -> Maybe ProtocolHash -> FilePath
+getPath f = \case
+  Nothing -> f $ NonEmpty.head paths
+  Just p -> maybe e f $ find (\(p', _, _) -> p' == p) paths
+    where
+      e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
+  where
+    psdd :: ProtocolHash
+    psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+    -- alpha = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
+    pt24 = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+    -- zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
+    -- zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
+    paths = ( psdd
+        , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
+        , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
+        ) :|
+        [ ( pt24
+          , $(staticWhich "zeronet-tezos-baker-004-Pt24m4xi")
+          , $(staticWhich "zeronet-tezos-endorser-004-Pt24m4xi")
+          )
+        ]
 
 -- TODO: use postgres for "process-id's"
 
@@ -58,7 +81,7 @@ internalNodeWorker appConfig logger db namedChain = do
       (Just v) -> return v
       Nothing -> do
         let processData = ProcessData
-              { _processData_running = False
+              { _processData_control = ProcessControl_Stop
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing
@@ -78,7 +101,8 @@ internalNodeWorker appConfig logger db namedChain = do
   let
     nodePath = nodePaths namedChain
     nodePort = show $ _appConfig_kilnNodePort appConfig
-    useArchiveMode = namedChain == NamedChain_Zeronet
+    -- (19/04/03) after zeronet reset, now it no longer supports archive mode
+    useArchiveMode = False
   processWorker logger db appConfig
     (initNode appConfig nodePath)
     (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ if useArchiveMode then ["--history-mode", "archive"] else [])
@@ -109,15 +133,15 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO (), IO ())
-bakerDaemonProcess appConfig logger db namedChain = do
-  (_nid, BakerDaemonInternalData _ _ _ bpid epid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> m (IO ())
+bakerDaemonProcess appConfig logger db = do
+  (_nid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
       Nothing -> do
         let processData = ProcessData
-              { _processData_running = False
+              { _processData_control = ProcessControl_Stop
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing
@@ -125,8 +149,23 @@ bakerDaemonProcess appConfig logger db namedChain = do
 
         bpid <- insert' processData
         epid <- insert' processData
+        tbpid <- insert' processData
+        tepid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData "ledger_kiln" Nothing False bpid epid
+        let v = BakerDaemonInternalData
+              { _bakerDaemonInternalData_alias = "ledger_kiln"
+              , _bakerDaemonInternalData_publicKeyHash = Nothing
+              , _bakerDaemonInternalData_insufficientFunds = False
+              , _bakerDaemonInternalData_protocol = psdd
+              , _bakerDaemonInternalData_bakerProcessData = bpid
+              , _bakerDaemonInternalData_endorserProcessData = epid
+              , _bakerDaemonInternalData_altProtocol = Nothing
+              , _bakerDaemonInternalData_altBakerProcessData = tbpid
+              , _bakerDaemonInternalData_altEndorserProcessData = tepid
+              }
+            -- Add this as default protocol, we will anyways fix this in protocolMonitorWorker once the synced node is available
+            psdd :: ProtocolHash
+            psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
@@ -135,22 +174,52 @@ bakerDaemonProcess appConfig logger db namedChain = do
             }
           }
         return (nid, v)
-  let nodePort = show $ _appConfig_kilnNodePort appConfig
-  bp <- processWorker logger db appConfig
-    fetchAlias
-    (\alias _nodeConfigPath -> proc (bakerPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", "with", "local", "node", nodeDataDir appConfig, alias])
-    bpid
-    Nothing
-  ep <- processWorker logger db appConfig
-    fetchAlias
-    (\alias _nodeConfigPath -> proc (endorserPaths namedChain) ["--port", nodePort, "--base-dir", tezosClientDataDir appConfig, "run", alias])
-    epid
-    Nothing
-  return (bp, ep)
+  let
+    aliasT = _bakerDaemonInternalData_alias bdid
+    bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
+    epid1 = _bakerDaemonInternalData_endorserProcessData bdid
+    bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
+    epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
+    nodePort = show $ _appConfig_kilnNodePort appConfig
+    alias = T.unpack aliasT
+    bakerArgs = [ "--port", nodePort
+                , "--base-dir", tezosClientDataDir appConfig
+                , "run", "with", "local", "node", nodeDataDir appConfig
+                , alias]
+    endorserArgs = ["--port", nodePort
+                   , "--base-dir", tezosClientDataDir appConfig
+                   , "run"
+                   , alias]
+    pw (pathF, args) pid = processWorker logger db appConfig
+      (fetchProtocol pid)
+      (\proto _nodeConfigPath -> proc (pathF proto) args)
+      pid
+      Nothing
+    bakerPw = pw (bakerPath, bakerArgs)
+    endorserPw = pw (endorserPath, endorserArgs)
 
-fetchAlias :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Pool Postgresql -> a -> b -> m String
-fetchAlias db _ _ = runDb (Identity db) $ do
+  -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
+  -- depends upon the protocol set for that PID.
+  -- This allows us to switch a 'alt baker' to 'main baker' without actually restarting the baker
+  -- ie bp1 starts as main baker, bp2 as alt baker
+  -- after voting period ends, we simply stop the bp1 and set bpid2 as 'bakerProcessData'
+  -- So bp2 process keeps on running but is now identified as 'main baker'
+  bp1 <- bakerPw bpid1
+  bp2 <- bakerPw bpid2
+  ep1 <- endorserPw epid1
+  ep2 <- endorserPw epid2
+  return (bp1 *> bp2 *> ep1 *> ep2)
+
+-- protocol is a variable field, and therefore it is fetched everytime we restart process
+fetchProtocol :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  => Id ProcessData -> Pool Postgresql -> a -> b -> m (Maybe ProtocolHash)
+fetchProtocol pid db _ _ = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
-    (Just (BakerDaemonInternalData alias _ _ _ _)) -> return $ T.unpack alias
+    Just bdid ->
+      let
+        tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
+        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
+      in if pid == tbpid || pid == tepid
+        then return $ _bakerDaemonInternalData_altProtocol bdid
+        else return $ Just $ _bakerDaemonInternalData_protocol bdid

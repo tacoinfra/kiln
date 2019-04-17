@@ -27,9 +27,11 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import Text.Read (readMaybe)
 
 import Common.Api
 import Common.App
+import Common.Distribution
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_upgradeBranch)
 import Common.Schema hiding (Event)
@@ -86,14 +88,14 @@ settingsTab = do
     enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
     when enableUpgradeCheck upgradeOptions
 
-  divClass "notifications-section" $ do
-    SemUi.header
-      (def
-        & SemUi.headerConfig_size SemUi.|?~ SemUi.H3
-        )
-      $ text "Notifications"
+  SemUi.divider def
 
-    sequence_ $ intersperse (SemUi.divider def) $ map notificationSection
+  divClass "notifications-section" $ do
+    SemUi.header (def & SemUi.headerConfig_size SemUi.|?~ SemUi.H3) $ do
+      text "Notification Channels"
+      SemUi.subHeader $ text "Configure channels to send notifications out from Kiln."
+
+    divClass "notification-settings-section" $ sequence_ $ intersperse (SemUi.divider def) $ map notificationSection
       [ NotificationCfg
         { _notificationCfg_name = "Email"
         , _notificationCfg_description = "Use your own email server to send alerts."
@@ -116,7 +118,60 @@ settingsTab = do
         , _notificationCfg_getEnabled = _telegramConfig_enabled
         }
       ]
+
+  SemUi.divider def
+
+  divClass "notifications-section" $ do
+    SemUi.header (def & SemUi.headerConfig_size SemUi.|?~ SemUi.H3) $ do
+      text "Notification Settings"
+      SemUi.subHeader $ text "Configure settings for various Kiln notifications."
+
+    divClass "notification-settings-section" $ sequence_ $ intersperse (SemUi.divider def) $ map notificationSettings [ RightKind_Baking, RightKind_Endorsing ]
+
   where
+    notificationSettings :: RightKind -> m ()
+    notificationSettings rk = do
+      mLimit <- watchRightNotificationLimit rk
+      initialLimit <- sample $ current mLimit
+      let textKind = case rk of
+            RightKind_Baking -> "bake"
+            RightKind_Endorsing -> "endorsement"
+          fakeRadioItem :: Dynamic t Bool -> m a -> m (Event t (), a)
+          fakeRadioItem checked ma = do
+            (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
+            pure (domEvent Click e, a)
+      divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
+      (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
+      rec
+        (after, rnlDyn) <- fakeRadioItem (isJust <$> mLimit) $ mdo
+          let input f = do
+                rec result <- fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
+                      & initialAttributes .~ "type" =: "number" <> "min" =: "0"
+                      & inputElementConfig_initialValue .~ maybe "1" (tshow . f) initialLimit
+                      & inputElementConfig_setValue .~ leftmost
+                        [ fforMaybe (updated mLimit) (fmap $ tshow . f)
+                        -- Set value to "1" if there's nothing there and the user just selected this option
+                        , attachWithMaybe (\m () -> maybe (Just "1") (const Nothing) m) (current result) after
+                        ]
+                pure result
+          text "Notify when "
+          amount <- input _rightNotificationLimit_amount
+          text $ " or more " <> textKind <> "s are missed within "
+          within <- input _rightNotificationLimit_withinMinutes
+          text " minutes"
+          pure $ ffor2 amount within $ liftA2 $ \a w -> RightNotificationLimit
+            { _rightNotificationLimit_amount = a
+            , _rightNotificationLimit_withinMinutes = w
+            }
+      choice <- throttle 1 $ leftmost
+        [ Nothing <$ every
+        , Just <$> attachWithMaybe (\rnl () -> rnl) (current rnlDyn) after
+        , updated rnlDyn
+        ]
+      choice' <- holdUniqDyn <=< holdDyn Nothing $ Just <$> choice
+      _ <- requestingIdentity $ public . PublicRequest_SetRightNotificationSettings rk <$> fmapMaybe id (updated choice')
+      pure ()
+
     notificationSection :: NotificationCfg m t -> m ()
     notificationSection (NotificationCfg name descr iconName viewCfg editCfg method watchCfg (getEnabled :: cfg -> Bool)) =
       divClass "notifications-subsection" $ do
@@ -223,21 +278,34 @@ settingsTab = do
       currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
       upstreamVersion <- watchUpstreamVersion
 
-      elClass "p" "check-for-updates" $ do
-        (aEl, _) <- el' "a" $ text "Check for updates"
-        rec
-          let submit = gate (not <$> current isLoading) $ domEvent Click aEl
-          (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
+      isLoading <- elClass "p" "check-for-updates" $ mdo
+        (e, _) <- el' "a" $ text "Check for updates"
+        dyn_ $ ffor isLoading $ \case
+          True -> divClass "ui tiny active blue inline loader" blank *> text " Checking for updates..."
+          False -> pure ()
+        let submit = gate (not <$> current isLoading) $ domEvent Click e
+        (isLoading, _gotResponse) <- formIsLoading ((<) `on` (^? _Just . upstreamVersion_updated)) upstreamVersion submit
         _ <- requestingIdentity $ public PublicRequest_CheckForUpgrade <$ submit
+        pure isLoading
 
-        dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
-          True -> divClass "ui tiny active inline loader" blank *> text " Checking for updates..."
-          False -> case v' of
-            Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
-            Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
-              if v > currentVersion
-              then changelogLink "" v $
-                text ("Version " <> T.pack (showVersion v) <> " Available ") *> icon "icon-pop-out"
-              else
-                text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
-            _ -> blank
+      dyn_ $ ffor2 upstreamVersion isLoading $ \v' loading -> case loading of
+        True -> pure ()
+        False -> case v' of
+          Just UpstreamVersion { _upstreamVersion_error = Just _e } -> text "Unable to reach update server."
+          Just UpstreamVersion { _upstreamVersion_version = Just v, _upstreamVersion_updated = updatedTime } ->
+            if v > currentVersion
+            then do
+              elAttr "div" ("class" =: "ui tiny header" <> "style" =: "margin-bottom: 1rem") $ do
+                icon "upgrade-icon icon-arrow-up"
+                text ("Kiln " <> T.pack (showVersion v) <> " is available!")
+              let uri = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases"
+              el "p" $ do
+                text "Release notes: "
+                hrefLink uri $ text uri
+              case distributionMethod of
+                Distribution_FromSource -> blank
+                Distribution_Docker -> el "p" $ text $ "You are running Kiln via Docker. To update, quit Kiln and run the ‘docker run’ command using the tag ‘" <> T.pack (showVersion v) <> "’."
+                Distribution_LinuxPackage -> el "p" $ text "To update, install the latest version using whichever package manager you are using to manage Kiln."
+            else
+              text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
+          _ -> blank

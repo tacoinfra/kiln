@@ -79,7 +79,7 @@ import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain)
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
@@ -244,7 +244,7 @@ appSidebar
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
+     , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -311,7 +311,7 @@ appGutter =
         bakersList
         nodesList
 
-appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m) => m ()
+appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -329,6 +329,13 @@ appSideFooter =
               routeSelector (AppRoute_Options :/ ()) SemUi.menuItem' def $ do
                 icon "icon-gear"
                 text "Settings"
+                currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+                upstreamVersion <- watchUpstreamVersion
+                dyn_ $ ffor upstreamVersion $ \case
+                  Just uv | Just v <- _upstreamVersion_version uv , v > currentVersion ->
+                    elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
+                  _ -> pure ()
+
         hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
           elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
@@ -740,7 +747,7 @@ liveErrorsWidget = void $ do
     synthEntry (SynthError_BakersInformationDown pkhs) = do
       header "Cannot gather baker data."
       let (pkh, bakerData) = NEL.head pkhs
-      errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ T.take 20 (toPublicKeyHashText pkh) <> "..."
+      divClass "alert-entity" $ errorLabel (fromMaybe "Baker" $ _bakerData_alias bakerData) $ Identity $ toPublicKeyHashText pkh
       el "div" $
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
@@ -754,13 +761,13 @@ liveErrorsWidget = void $ do
               case _nodeSummary_node n of
                 Right _ -> blank
                 Left (NodeExternalData address alias _) -> do
-                  header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address
+                  header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address <> "."
                   nodeLabel n
 
             NodeLogTag_NodeWrongChain -> do
               let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
                   (primary, _) = nodeSummaryIdentification n
-              header $ "Node on wrong network: " <> primary
+              header $ "Node on wrong network: " <> primary <> "."
               nodeLabel n
               el "div" $
                 text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
@@ -768,13 +775,13 @@ liveErrorsWidget = void $ do
             NodeLogTag_BadNodeHead -> do
               let (heading, message) = badNodeHeadMessage text (blockHashLink . pure) log
                   (primary, _) = nodeSummaryIdentification n
-              header $ heading <> ": " <> primary
+              header $ heading <> ": " <> primary <> "."
               nodeLabel n
               el "div" message
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header $ "Node has too few peers"
+              header $ "Node has too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -790,7 +797,7 @@ liveErrorsWidget = void $ do
               (bakerAccusedDescriptions log)
               pkh
             BakerLogTag_MultipleBakersForSameBaker -> do
-              header "Multiple bakers for same baker" -- TODO Fill this out
+              header "Multiple bakers for same baker." -- TODO Fill this out
             BakerLogTag_BakerMissed -> renderBakerError
               (bakerMissedDescriptions log)
               pkh
@@ -802,7 +809,7 @@ liveErrorsWidget = void $ do
 
         LogTag_BakerNoHeartbeat -> do
             let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
-            header "Baker lagging behind" -- TODO Show client address
+            header "Baker lagging behind." -- TODO Show client address
             el "div" $ do
               text "Last block level seen: "
               blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
@@ -817,7 +824,7 @@ liveErrorsWidget = void $ do
 
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
-      header $ _bakerErrorDescriptions_title dsc
+      header $ _bakerErrorDescriptions_title dsc <> "."
       divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
 
@@ -829,6 +836,7 @@ pluralOf = (<> "s") -- good enough for all existing uses, lol
 -- existing uses of the Ord instance if the order is changed.
 data MonitoredStatus
   = MonitoredStatus_Unhealthy
+  | MonitoredStatus_Stopped
   | MonitoredStatus_Unknown
   | MonitoredStatus_Healthy
   deriving (Eq, Ord, Bounded, Enum, Show)
@@ -836,6 +844,7 @@ data MonitoredStatus
 statusColor :: IsString a => MonitoredStatus -> a
 statusColor = \case
   MonitoredStatus_Healthy -> "green"
+  MonitoredStatus_Stopped -> "orange"
   MonitoredStatus_Unhealthy -> "red"
   MonitoredStatus_Unknown -> "grey"
 
@@ -881,6 +890,7 @@ bakerStatus = \case
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
+    | Right bid <- _bakerSummary_baker bakerSummary, not (_bakerInternalData_running bid) -> MonitoredStatus_Stopped
     | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
@@ -924,7 +934,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         let f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
             f (Just (nid, pd), es) ()
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
-              | MMap.member nid es || not (_processData_running pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
+              | MMap.member nid es || (ProcessControl_Stop == _processData_control pd) = handleClientErrorWorkflow splash ClientError_NodeNotReady
               | otherwise = Workflow $ do
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
@@ -1126,7 +1136,7 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
   where
     fromStatus = case mInternalState of
       Just internalState -> case internalState of
-        ProcessState_Stopped -> MonitoredStatus_Unknown
+        ProcessState_Stopped -> MonitoredStatus_Stopped
         ProcessState_Initializing -> MonitoredStatus_Unknown
         ProcessState_GeneratingIdentity -> MonitoredStatus_Unknown
         ProcessState_Starting -> MonitoredStatus_Unknown
@@ -1358,7 +1368,7 @@ nodesTab =
                       [preface, body running "Stopping"]
                       "Stop Node"
 
-                  runningDyn :: Dynamic t Bool <- holdUniqDyn $ _processData_running <$> nodeData
+                  runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                   bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
@@ -1381,7 +1391,7 @@ nodesTab =
 
                 subtitle :: m ()
                 subtitle =
-                  divClass "internal-node-subtitle" $ do
+                  divClass "internal-subtitle" $ do
                     kilnLogo
                     divClass "ui sub header" $ dynText $ ffor state $ \case
                       ProcessState_Stopped -> "Stopped"
@@ -1563,7 +1573,6 @@ bakersTab
   => m ()
 bakersTab =
   divClass "dashboard-section dashboard-section-bakers" $ do
-    elClass "h4" "dashboard-section-title" $ text "Bakers"
     tilesWidget =<< watchBakerAddresses
   where
     tilesWidget :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> m ()
@@ -1575,6 +1584,15 @@ bakersTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
+         anyErrors <- holdUniqDyn $ not . null <$> dEbb
+         resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
+           icon "icon-check"
+           text "Resolve All"
+         let toLogTag (f :=> k) = let g = LogTag_Baker f in g :=> Const (errorLogIdForErrorLogView $ g :=> k)
+             alerts = concatMap (fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+         _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
+         elClass "h4" "dashboard-section-title" $ text "Bakers"
+
          let
            bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
              fmap $ \bakerSummary ->
@@ -1610,11 +1628,11 @@ bakersTab =
                 Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
                 Right (lTag :=> Identity log) -> case lTag of
                   BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight
+                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
                     where
                       aRight = case _errorLogBakerMissed_right log of
                         RightKind_Baking -> "a bake"
-                        RightKind_Endorsing -> "an endorse"
+                        RightKind_Endorsing -> "an endorsement"
                   BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
                   BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                   BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
@@ -1683,12 +1701,14 @@ bakersTab =
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
-            (_bakerErrorDescriptions_title dsc)
+            (_bakerErrorDescriptions_title dsc <> ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                el "div" $ htmlErrorDescription $ _bakerErrorDescriptions_problem dsc
-                for_ warning $ el "div" . text
-                el "div" $ do
+                for_ (_bakerErrorDescriptions_problem dsc)
+                  (\par ->
+                      htmlErrorDescription par *> el "br" blank)
+                for_ warning $ el "p" . text
+                elClass "p" "fix" $ do
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)
@@ -1736,11 +1756,19 @@ bakersTab =
               removeEntry removeInternalBakerModal
 
         divClass "title" $ do
+          let bakerStatusDyn = (\b n -> bakerStatus $ b <$ n) <$> bakerDyn <*> dCollectiveNodesStatus
           for_ errors' $ \errors -> do
             _errorsEmpty <- holdUniqDyn $ null <$> errors
-            iconDyn $ fmap (("tiny circle " <>) . statusColor) $ bakerStatus
-              <$> ((<$) <$> bakerDyn <*> dCollectiveNodesStatus)
+            iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
+          isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
+          dyn_ $ ffor isInternal $ \i -> when i $ divClass "internal-subtitle" $ do
+            kilnLogo
+            divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
+              MonitoredStatus_Stopped -> "Stopped"
+              MonitoredStatus_Healthy -> "Running"
+              MonitoredStatus_Unhealthy -> "Unhealthy"
+              MonitoredStatus_Unknown -> "Unknown"
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
@@ -1754,6 +1782,8 @@ bakersTab =
             BakerNextRight_KnownRights (r,l) -> Right (r,l)
           wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
         isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
+
+        divClass "divider" blank
 
         el "dl" $ do
           latestHead <- watchLatestHead
@@ -1770,7 +1800,7 @@ bakersTab =
                 let eventDyn = constDyn (r, l)
                 etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
-                dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasic
+                dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
         let
           dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
@@ -1811,7 +1841,9 @@ renderResolvableSplashAlert splashIcon title entity desc mReq = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
     for_ mReq $ \resolveReq -> do
-      resolve <- divClass "buttons" $ uiButton "primary" "Resolve"
+      resolve <- divClass "buttons" $ uiButtonM "primary" $ do
+        icon "icon-check"
+        text "Resolve"
       requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)

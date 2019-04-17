@@ -83,11 +83,11 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
     state_ = ProcessData_stateField
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
-    running_ = ProcessData_runningField
+    control_ = ProcessData_controlField
     waitUntilShouldRun = do
-      shouldRun <- runLoggingEnv logger $ runDb (Identity db) $
-        or <$> project running_ (AutoKeyField ==. (fromId pid))
-      unless shouldRun $ threadDelay' 1 >> waitUntilShouldRun
+      isStopped <- runLoggingEnv logger $ runDb (Identity db) $
+        all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
+      when isStopped $ threadDelay' 1 >> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
@@ -127,20 +127,29 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         {-# INLINE go #-}
         go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
         go = do
-          shouldRun <- runDb (Identity db)
-            (or <$> project running_ (AutoKeyField ==. (fromId pid)))
+          let getPC = \case
+                [] -> ProcessControl_Stop
+                (c:_) -> c
+          procControl <- runDb (Identity db)
+            (getPC <$> project control_ (AutoKeyField ==. (fromId pid)))
           (liftIO $ getProcessExitCode ph) >>= \case
             Nothing -> do
               updateState ProcessState_Running
-              unless shouldRun $ liftIO $ terminateProcess ph
+              case procControl of
+                ProcessControl_Run -> return ()
+                _ -> liftIO $ terminateProcess ph
               (threadDelay' 1) *> go
-            Just _ -> if shouldRun
-              then do
-                updateState ProcessState_Failed
-                $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
-              else do
+            Just _ -> case procControl of
+              ProcessControl_Stop -> do
                 updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully:" :: Text, pid)
+              ProcessControl_Restart -> do
+                updateState ProcessState_Stopped
+                $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
+                runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. (fromId pid))
+              ProcessControl_Run -> do
+                updateState ProcessState_Failed
+                $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
     updateState :: (MonadIO m, MonadBaseNoPureAborts IO m) => ProcessState -> m ()
     updateState state = runLoggingEnv logger $ runDb (Identity db) $ do

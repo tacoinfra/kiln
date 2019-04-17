@@ -43,7 +43,7 @@ import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Http (runHttpT)
-import Backend.Alerts (resolveAlert)
+import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
@@ -102,7 +102,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         getInternalNode >>= \case
           Nothing -> do
             let processData = ProcessData
-                  { _processData_running = True
+                  { _processData_control = ProcessControl_Stop
                   , _processData_state = ProcessState_Stopped
                   , _processData_updated = Nothing
                   , _processData_backend = Nothing
@@ -124,12 +124,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               getId (nodeData ^. deletableRow_data) >>= \case
                 Nothing -> error "NodeInternal ProcessData not found"
                 (Just v) -> pure v
-            when (_deletableRow_deleted nodeData || not (_processData_running processData)) $ do
+            when (_deletableRow_deleted nodeData || (ProcessControl_Stop == _processData_control processData)) $ do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 ]
                 (NodeInternal_idField ==. nid)
-              update [ProcessData_runningField =. True]
+              update [ProcessData_controlField =. ProcessControl_Run]
                 (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
               notify NotifyTag_NodeInternal (nid, Just processData)
 
@@ -189,14 +189,18 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
 
           updateBakerDaemon shouldRun' = inDb $
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              >>= traverse_ (\(BakerDaemonInternalData _ _ _ bPid ePid) -> do
-                update [ProcessData_runningField =. shouldRun']
+              >>= traverse_ (\bdid -> do
+                let bPid = _bakerDaemonInternalData_bakerProcessData bdid
+                    ePid = _bakerDaemonInternalData_endorserProcessData bdid
+                    c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
+                update [ProcessData_controlField =. c]
                   (AutoKeyField `in_` map fromId [bPid, ePid]))
 
           updateNode shouldRun' = inDb $
             (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
               let pid = _deletableRow_data nodeData
-              update [ProcessData_runningField =. shouldRun'] (AutoKeyField ==. fromId pid)
+                  c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
+              update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
               return pid
@@ -211,15 +215,13 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         Right () -> do
           getInternalNode >>= \case
             Nothing -> pure ()
-            Just (nid, _nodeData) -> do
+            Just (nid, nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
                 ]
                 CondEmpty
-              _ <- [executeQ|
-                UPDATE "ProcessData" p SET running = False
-                  FROM "NodeInternal" n
-                WHERE p.id = n."data#data"|]
+              let pid = _deletableRow_data nodeData
+              update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
         where
@@ -262,7 +264,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
                 bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
                 endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
-            update [ProcessData_runningField =. False] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+            update [ProcessData_controlField =. ProcessControl_Stop] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)
@@ -493,6 +495,19 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             f "Telegram" TelegramConfig_enabledField =<< getTelegramCfgId
 
       PublicRequest_ResolveAlert elv -> inDb $ resolveAlert elv
+      PublicRequest_ResolveAlerts dm -> inDb $ resolveAlerts dm
+
+      PublicRequest_SetRightNotificationSettings rk mLimit -> inDb $ do
+        let pk = RightNotificationSettings_rightKindField ==. rk
+        case mLimit of
+          Nothing -> delete pk
+          Just limit -> selectSingle pk >>= \case --upsert
+            Nothing -> insert $ RightNotificationSettings
+              { _rightNotificationSettings_rightKind = rk
+              , _rightNotificationSettings_limit = limit
+              }
+            Just _ -> update [RightNotificationSettings_limitField =. limit] pk
+        notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

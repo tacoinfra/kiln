@@ -211,6 +211,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
   , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable (PublicKeyHash, Tez)) a)
   , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
+  , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data BakeView a = BakeView
@@ -244,6 +245,7 @@ data BakeView a = BakeView
   , _bakeView_connectedLedger :: !(MaybeView (Maybe ConnectedLedger) a)
   , _bakeView_showLedger :: !(RangeView SecretKey (Deletable (PublicKeyHash, Tez)) a)
   , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
+  , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 
@@ -348,6 +350,7 @@ cropBakeView vs v = BakeView
   , _bakeView_connectedLedger = cropView (_bakeViewSelector_connectedLedger vs) (_bakeView_connectedLedger v)
   , _bakeView_showLedger = cropView (_bakeViewSelector_showLedger vs) (_bakeView_showLedger v)
   , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
+  , _bakeView_rightNotificationSettings = cropView (_bakeViewSelector_rightNotificationSettings vs) (_bakeView_rightNotificationSettings v)
   }
 
 instance FunctorMaybe BakeViewSelector where
@@ -374,6 +377,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_connectedLedger = fmapMaybe f (_bakeViewSelector_connectedLedger a)
     , _bakeViewSelector_showLedger = fmapMaybe f (_bakeViewSelector_showLedger a)
     , _bakeViewSelector_prompting = fmapMaybe f (_bakeViewSelector_prompting a)
+    , _bakeViewSelector_rightNotificationSettings = fmapMaybe f $ _bakeViewSelector_rightNotificationSettings a
     }
 
 instance Align BakeViewSelector where
@@ -400,6 +404,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_connectedLedger = nil
     , _bakeViewSelector_showLedger = nil
     , _bakeViewSelector_prompting = nil
+    , _bakeViewSelector_rightNotificationSettings = nil
     }
 
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
@@ -426,6 +431,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_connectedLedger = f' _bakeViewSelector_connectedLedger
     , _bakeViewSelector_showLedger = f' _bakeViewSelector_showLedger
     , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
+    , _bakeViewSelector_rightNotificationSettings = f' _bakeViewSelector_rightNotificationSettings
     }
     where
       f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
@@ -455,6 +461,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_connectedLedger = fmapMaybe f $ _bakeView_connectedLedger a
     , _bakeView_showLedger = fmapMaybe f $ _bakeView_showLedger a
     , _bakeView_prompting = fmapMaybe f $ _bakeView_prompting a
+    , _bakeView_rightNotificationSettings = fmapMaybe f $ _bakeView_rightNotificationSettings a
     }
 
 fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -489,6 +496,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_connectedLedger = (<>) (_bakeViewSelector_connectedLedger u) (_bakeViewSelector_connectedLedger v)
     , _bakeViewSelector_showLedger = (<>) (_bakeViewSelector_showLedger u) (_bakeViewSelector_showLedger v)
     , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
+    , _bakeViewSelector_rightNotificationSettings = (<>) (_bakeViewSelector_rightNotificationSettings u) (_bakeViewSelector_rightNotificationSettings v)
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
@@ -515,6 +523,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_connectedLedger = mempty
     , _bakeViewSelector_showLedger = mempty
     , _bakeViewSelector_prompting = mempty
+    , _bakeViewSelector_rightNotificationSettings = mempty
     }
   mappend = (<>)
 
@@ -550,6 +559,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_connectedLedger = mempty
     , _bakeView_showLedger = mempty
     , _bakeView_prompting = mempty
+    , _bakeView_rightNotificationSettings = mempty
     }
   mappend u v = u <> v
 
@@ -579,6 +589,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_connectedLedger = _bakeView_connectedLedger u <> _bakeView_connectedLedger v
     , _bakeView_showLedger = _bakeView_showLedger u <> _bakeView_showLedger v
     , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v
+    , _bakeView_rightNotificationSettings = _bakeView_rightNotificationSettings u <> _bakeView_rightNotificationSettings v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

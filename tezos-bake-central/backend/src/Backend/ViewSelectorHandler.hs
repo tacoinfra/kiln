@@ -216,6 +216,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           )
     pure rangeView
 
+  let rnsVS = _bakeViewSelector_rightNotificationSettings vs
+  rightNotificationSettings <- whenM (not $ null rnsVS) $ do
+    rnss <- select CondEmpty
+    let rangeView = toRangeView rnsVS $ flip fmap rnss $ \rns ->
+          ( _rightNotificationSettings_rightKind rns
+          , First $ Just $ _rightNotificationSettings_limit rns
+          )
+    pure rangeView
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_clients = mempty -- clients
@@ -241,6 +250,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_connectedLedger = connectedLedger
     , _bakeView_showLedger = showLedger
     , _bakeView_prompting = prompting
+    , _bakeView_rightNotificationSettings = rightNotificationSettings
     }
 
 getErrorLogs
@@ -343,6 +353,7 @@ getErrorLogsImpl flt intervalMap = do
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
           \ WHERE ("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
+          <> " AND COALESCE(el.started != el.stopped, true)"
           <> ")"
           <> qFlt
         qFlt = case flt of
@@ -431,7 +442,7 @@ getBakerAddresses nds bid = do
       (toPrimitivePersistValue pg bid :)
       buildRs
   int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."running",
+      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."control",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         ( SELECT COUNT(e.id)
           FROM "ErrorLog" e
@@ -444,13 +455,13 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, running, li, sc, dp, alertCount) ->
+    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, control, li, sc, dp, alertCount) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (running, sk, (alertCount, insufficientFunds))))
+      in (pkh, (control == ProcessControl_Run, sk, (alertCount, insufficientFunds))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -535,14 +546,14 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.running, p.state, p.updated AT TIME ZONE 'UTC', p.backend
+      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', running, state, updated, backend) -> (Bounded nid',
+    <&> Map.fromList . (fmap $ \(nid', control, state, updated, backend) -> (Bounded nid',
       ProcessData
-      { _processData_running = running
+      { _processData_control = control
       , _processData_state = state
       , _processData_updated = updated
       , _processData_backend = backend

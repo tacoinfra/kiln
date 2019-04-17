@@ -120,6 +120,16 @@ h6.ui.header {
   opacity: 0.50;
 }
 
+i.ui.icon.icon-arrow-up.upgrade-icon {
+  border-radius: 50%;
+  font-size: @10px;
+  line-height: @18px;
+  height: @18px;
+  width: @18px !important;
+  background-color: @blue;
+  color: @white !important;
+}
+
 .ui.publicnodes {
   > .public-node.grid {
     border: @1px solid #CED4DA;
@@ -220,6 +230,52 @@ body {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
+}
+
+.notification-settings-section {
+  margin: @32px @30px;
+}
+
+.fake-radio-item {
+  cursor: pointer;
+  position: relative;
+  margin: 1rem 0;
+  padding-left: @25px;
+  &:before, &:after {
+    content: '';
+    border-radius: 50%;
+    display: block;
+    position: absolute;
+    left: 0;
+    top: @1px;
+  }
+  &:before {
+    width: @18px;
+    height: @18px;
+    border: @2px solid @blue;
+  }
+  &:after {
+    margin: @4px;
+    width: @10px;
+    height: @10px;
+  }
+  &.checked:after {
+    background-color: @blue;
+  }
+  input {
+    display: inline;
+    width: @60px;
+    height: @23px;
+    margin: 0 @5px;
+    padding-left: @10px;
+    border: 1px solid @lightGrey;
+    border-radius: 3px;
+    color: #c6c6c6;
+    background: #fcfcfc;
+  }
+  &.checked input {
+    color: @black;
+  }
 }
 
 .app-sidebar {
@@ -559,10 +615,12 @@ body {
         .header {
           color: @black;
           font-size: @20px;
+          line-height: 1.5;
         }
 
         .alert-entity {
           font-size: @14px;
+          label.secondary-label { font-size: @12px; }
         }
 
         label {
@@ -814,9 +872,27 @@ img.credits-obsidian {
         display: flex;
         justify-content: flex-end;
       }
+      .fix {
+        margin-top: @10px;
+      }
     }
   }
 }
+
+.internal-subtitle {
+  display: flex;
+  margin-top: @4px;
+
+  img {
+    height: @10px;
+    margin-right: @10px;
+    font-size: @10px;
+  }
+  div {
+    height: @10px;
+  }
+}
+
 
 .dashboard-section > .ui.cards {
   margin-left: 0;
@@ -824,35 +900,16 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
-
-    .internal-node-subtitle {
-      display: flex;
-      margin-top: @4px;
-
-      img {
-        height: @10px;
-        margin-right: @10px;
-        font-size: @10px;
-      }
-      div {
-        height: @10px;
-      }
-    }
-
-    .internal-node-tile-body {
-      .ui.row {
-        margin-top: @15px;
-        margin-bottom: @15px;
-
-        i.icon-id-badge {
-          color: #d8dce6;
-        }
-      }
-    }
   }
 
   > .ui.card.baker-tile {
     width: unit(430 / @emSize, rem);
+
+    .divider { width: auto !important; }
+
+    .internal-subtitle + .secondary-name {
+      margin-top: @8px;
+    }
 
     .ui.loader {
       margin-right: @6px;

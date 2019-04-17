@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -29,7 +28,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
-import Data.Version (Version, showVersion)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.Form.Validators as Validator
@@ -44,13 +42,12 @@ import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
-import Common (humanizeTimestamp)
+import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest)
 import Common.Alerts (ErrorDescription(..))
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
-import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), changelogUrl, frontendConfig_chain,
-                      frontendConfig_upgradeBranch, parseBakerAddr)
+import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -141,18 +138,35 @@ localHumanizedTimestamp titleDyn tsDyn = do
 
 -- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
 -- tooltips since they are more lightweight
-localHumanizedTimestampBasic
+-- The actual string displayed is given by the first argument 'humanize'.
+localHumanizedTimestampBasicGen
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
-  => Dynamic t Time.UTCTime
+  => (TimeZone -> UTCTime -> UTCTime -> Text)
+  -> Dynamic t Time.UTCTime
   -> m ()
-localHumanizedTimestampBasic tsDyn = do
+localHumanizedTimestampBasicGen humanize tsDyn = do
   tz <- asks (^. timeZone)
   currentTime <- asks (^. timer)
   let attrs = ffor tsDyn $ \ts -> M.fromList
         [ ("data-position", "bottom left")
         , ("data-tooltip", T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts)
         ]
-  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+  elDynAttr "span" attrs $ dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanize tz
+
+-- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
+-- tooltips since they are more lightweight
+localHumanizedTimestampBasic
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasic tsDyn = localHumanizedTimestampBasicGen humanizeTimestamp tsDyn
+
+-- | Like 'localHumanizedTimestampBasic' but don't show the timezone
+localHumanizedTimestampBasicWithoutTZ
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, MonadReader r m, HasTimeZone r, HasTimer t r)
+  => Dynamic t Time.UTCTime
+  -> m ()
+localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
 
 data TooltipPos
   = TooltipPos_TopLeft
@@ -217,8 +231,11 @@ whenJustDyn d f = dyn_ . ffor d $ \case
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
-uiButton classes label = fmap (domEvent Click . fst) $
-  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) $ text label
+uiButton classes = uiButtonM classes . text
+
+uiButtonM :: DomBuilder t m => Text -> m () -> m (Event t ())
+uiButtonM classes label = fmap (domEvent Click . fst) $
+  elAttr' "button" ("type" =: "button" <> "class" =: ("ui " <> classes <> " button")) label
 
 uiDynSubmit :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe Enabled) -> m () -> m ()
 uiDynSubmit state = elDynAttr "button" (ffor state $ \s ->
@@ -331,18 +348,6 @@ publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)
 
 fitnessText :: Fitness -> Text
 fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
-
-changelogLink :: (DomBuilder t m, MonadReader r m, HasFrontendConfig r) => Text -> Version -> m a -> m a
-changelogLink cls version f = do
-  asks (^. frontendConfig . frontendConfig_upgradeBranch) >>= \case
-    Nothing -> f
-    Just upgradeBranch -> elAttr "a"
-      (  "class"=:cls
-      <> "href"=:(changelogUrl upgradeBranch <> "#" <> versionAnchor)
-      <> "target"=:"_blank") f
-  where
-    versionText = T.pack (showVersion version)
-    versionAnchor = "anchor-" <> T.filter (/='.') versionText
 
 iconClass :: Text -> Text
 iconClass i = "ui " <> i <> " icon"
@@ -555,9 +560,9 @@ nbsp = "\x00A0"
 errorLabel :: (DomBuilder t m, Traversable f) => Text -> f Text -> m ()
 errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
+  el "wbr" blank
   for_ secondary $ \x -> do
     elClass "label" "secondary-label" $ do
-      text nbsp
       text x
 
 nodeLabel :: DomBuilder t m => NodeSummary -> m ()
