@@ -127,7 +127,7 @@ To change the port, network, or specify other arguments, add the relevant option
 KILNARGS="--network=zeronet -- --port=8080"
 ```
 
-This sets Kiln to run on zeronet and use the port 8080. Note the `--` before `--port` configuration.
+This sets Kiln to run on zeronet and use the port 8080. Note the `--` before `--port` configuration. After editing the file, do `sudo systemctl restart kiln` to start kiln with the new configuration.
 
 ## Building from Source
 
