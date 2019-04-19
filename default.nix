@@ -291,8 +291,8 @@ let
         "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
         "${pkgs.path}/nixos/modules/profiles/demo.nix"
       ];
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox];
       security.sudo.wheelNeedsPassword = false;
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox pkgs.chromium tezos.mainnet.kit ];
       services.postgresql = {
         enable         = true;
         authentication = ''
