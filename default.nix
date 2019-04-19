@@ -292,6 +292,7 @@ let
         "${pkgs.path}/nixos/modules/profiles/demo.nix"
       ];
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox];
+      security.sudo.wheelNeedsPassword = false;
       services.postgresql = {
         enable         = true;
         authentication = ''
@@ -299,7 +300,6 @@ let
           local  "kiln-db"  "demo" peer
         '';
       };
-      security.sudo.wheelNeedsPassword = false;
       services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
         CREATE USER "demo";
         CREATE DATABASE "kiln-db" OWNER "demo";
