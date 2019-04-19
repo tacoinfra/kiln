@@ -15,7 +15,7 @@ import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..), select)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
@@ -74,6 +74,11 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_ShowLedger :=> Identity (sk, mpkh) -> handleShowLedger sk mpkh
     NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
     NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
+    NotifyTag_Amendment :=> Identity (k, ma) -> handleAmendment k ma
+    NotifyTag_Proposals :=> Identity () -> handleProposals
+    NotifyTag_PeriodTestingVote :=> Identity ma -> handlePeriodTestingVote ma
+    NotifyTag_PeriodTesting :=> Identity ma -> handlePeriodTesting ma
+    NotifyTag_PeriodPromotionVote :=> Identity ma -> handlePeriodPromotionVote ma
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -329,4 +334,37 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | viewSelects rk rightNotificationSettingsVS = pure $ mempty
         { _bakeView_rightNotificationSettings = toRangeView1 rightNotificationSettingsVS rk $ Just $ First mrnl
         }
+      | otherwise = pure mempty
+
+    amendmentVS = _bakeViewSelector_amendment aggVS
+    handleAmendment :: Applicative m' => VotingPeriodKind -> Maybe Amendment -> m' (BakeView a)
+    handleAmendment k ma = whenM (viewSelects k amendmentVS) $ do
+      pure $ mempty { _bakeView_amendment = toRangeView1 amendmentVS k (Just $ First ma) }
+
+    proposalsVS = _bakeViewSelector_proposals aggVS
+    handleProposals :: PersistBackend m' => m' (BakeView a)
+    handleProposals
+      | viewSelects () proposalsVS = do
+        ps <- select CondEmpty
+        pure $ mempty
+          { _bakeView_proposals = toMaybeView proposalsVS $ Just ps
+          }
+      | otherwise = pure mempty
+
+    periodTestingVoteVS = _bakeViewSelector_periodTestingVote aggVS
+    handlePeriodTestingVote :: PersistBackend m' => Maybe PeriodTestingVote -> m' (BakeView a)
+    handlePeriodTestingVote ma
+      | viewSelects () periodTestingVoteVS = pure $ mempty { _bakeView_periodTestingVote = toMaybeView periodTestingVoteVS $ Just ma }
+      | otherwise = pure mempty
+
+    periodTestingVS = _bakeViewSelector_periodTesting aggVS
+    handlePeriodTesting :: PersistBackend m' => Maybe PeriodTesting -> m' (BakeView a)
+    handlePeriodTesting ma
+      | viewSelects () periodTestingVS = pure $ mempty { _bakeView_periodTesting = toMaybeView periodTestingVS $ Just ma }
+      | otherwise = pure mempty
+
+    periodPromotionVoteVS = _bakeViewSelector_periodPromotionVote aggVS
+    handlePeriodPromotionVote :: PersistBackend m' => Maybe PeriodPromotionVote -> m' (BakeView a)
+    handlePeriodPromotionVote ma
+      | viewSelects () periodPromotionVoteVS = pure $ mempty { _bakeView_periodPromotionVote = toMaybeView periodPromotionVoteVS $ Just ma }
       | otherwise = pure mempty

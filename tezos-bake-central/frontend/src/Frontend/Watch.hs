@@ -17,6 +17,7 @@ module Frontend.Watch where
 
 import Data.Fixed (Micro)
 import qualified Data.List.NonEmpty as NEL
+import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
 import Data.Semigroup (Min (..))
@@ -308,6 +309,36 @@ watchLedgerAccounts :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t [Secret
 watchLedgerAccounts dkeys =
   (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
     { _bakeViewSelector_showLedger = RangeSelector $ AppendIMap.fromList $ ffor keys $ \k -> (ClosedInterval k k, 1)
+    }
+
+watchAmendment :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map VotingPeriodKind Amendment))
+watchAmendment =
+  (fmap . fmap) (MMap.getMonoidalMap . fmapMaybe getFirst . getRangeView . _bakeView_amendment) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_amendment = viewRangeAll 1 }
+
+watchProposals :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe [PeriodProposal]))
+watchProposals =
+  (fmap . fmap) (getMaybeView . _bakeView_proposals) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_proposals = viewJust 1
+    }
+
+watchPeriodTestingVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodTestingVote))
+watchPeriodTestingVote =
+  (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_periodTestingVote = viewJust 1
+    }
+
+watchPeriodTesting :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodTesting))
+watchPeriodTesting =
+  (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_periodTesting = viewJust 1
+    }
+
+watchPeriodPromotionVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodPromotionVote))
+watchPeriodPromotionVote =
+  (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_periodPromotionVote = viewJust 1
     }
 
 watchPrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynamic t (Maybe SetupState))

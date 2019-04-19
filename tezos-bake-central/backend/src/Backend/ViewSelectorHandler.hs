@@ -194,6 +194,16 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  let amendmentVS = _bakeViewSelector_amendment vs
+  amendment <- whenM (not $ null amendmentVS) $ do
+    as <- select CondEmpty
+    pure $ toRangeView amendmentVS $ flip fmap as $ \a -> (_amendment_period a, First $ Just a)
+
+  periodProposals <- maybeViewHandler _bakeViewSelector_proposals $ Just <$> select CondEmpty
+  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> selectSingle CondEmpty
+  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> selectSingle CondEmpty
+  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> selectSingle CondEmpty
+
   connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
 
   let showLedgerVS = _bakeViewSelector_showLedger vs
@@ -243,6 +253,11 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
+    , _bakeView_amendment = amendment
+    , _bakeView_proposals = periodProposals
+    , _bakeView_periodTestingVote = periodTestingVote
+    , _bakeView_periodTesting = periodTesting
+    , _bakeView_periodPromotionVote = periodPromotionVote
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients

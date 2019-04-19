@@ -85,6 +85,7 @@ import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
 import Common.Schema hiding (Event)
 import ExtraPrelude
+import Frontend.Amendment
 import Frontend.Common
 import Frontend.Ledger
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)
@@ -341,7 +342,7 @@ appSideFooter =
 
 appHeader
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -356,22 +357,38 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
         latestHead <- watchLatestHead
-        let info faded title body = divClass "item" $
+        let infoItem faded title body = divClass "item" $
               elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
                 divClass "header" $ text title
                 body
 
-        info (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        protoInfo <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> info disconnected "Cycle" $
+        protoInfo' <- watchProtoInfo
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
           text $ tshow $ unCycle c
 
-        whenJustDyn latestHead $ \b -> info disconnected "Block" $ el "span" $ do
+        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
           text $ tshow (unRawLevel $ b ^. level)
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestampBasic $ pure $ b ^. timestamp
+
+        amendments <- watchAmendment
+        mProtoInfo <- maybeDyn protoInfo'
+        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+        whenJustDyn ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \(protoInfo, amendment) -> do
+          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+            kind <- holdUniqDyn $ _amendment_period <$> amendment
+            divClass "header" $ text "Amendment Period"
+            divClass "amendment-period" $ do
+              dynText $ textPeriod <$> kind
+              text " "
+              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+              text "/"
+              display $ unCycle . cyclesPerPeriod <$> protoInfo
+              dyn_ $ ffor (periodHasVote <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
       dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"

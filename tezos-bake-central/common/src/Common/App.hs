@@ -202,6 +202,11 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
+  , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
+  , _bakeViewSelector_proposals :: !(MaybeSelector [PeriodProposal] a)
+  , _bakeViewSelector_periodTestingVote :: !(MaybeSelector (Maybe PeriodTestingVote) a)
+  , _bakeViewSelector_periodTesting :: !(MaybeSelector (Maybe PeriodTesting) a)
+  , _bakeViewSelector_periodPromotionVote :: !(MaybeSelector (Maybe PeriodPromotionVote) a)
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
@@ -234,6 +239,11 @@ data BakeView a = BakeView
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
+  , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
+  , _bakeView_proposals :: !(MaybeView [PeriodProposal] a)
+  , _bakeView_periodTestingVote :: !(MaybeView (Maybe PeriodTestingVote) a)
+  , _bakeView_periodTesting :: !(MaybeView (Maybe PeriodTesting) a)
+  , _bakeView_periodPromotionVote :: !(MaybeView (Maybe PeriodPromotionVote) a)
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
@@ -247,7 +257,6 @@ data BakeView a = BakeView
   , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
   , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
-
 
 data MailServerView = MailServerView
   { _mailServerView_hostName :: !Text
@@ -343,6 +352,11 @@ cropBakeView vs v = BakeView
   , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
   , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
+  , _bakeView_amendment = cropView (_bakeViewSelector_amendment vs) (_bakeView_amendment v)
+  , _bakeView_proposals = cropView (_bakeViewSelector_proposals vs) (_bakeView_proposals v)
+  , _bakeView_periodTestingVote = cropView (_bakeViewSelector_periodTestingVote vs) (_bakeView_periodTestingVote v)
+  , _bakeView_periodTesting = cropView (_bakeViewSelector_periodTesting vs) (_bakeView_periodTesting v)
+  , _bakeView_periodPromotionVote = cropView (_bakeViewSelector_periodPromotionVote vs) (_bakeView_periodPromotionVote v)
   , _bakeView_upstreamVersion = cropView (_bakeViewSelector_upstreamVersion vs) (_bakeView_upstreamVersion v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
@@ -370,6 +384,11 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_errors = (fmap.fmapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
+    , _bakeViewSelector_amendment = fmapMaybe f $ _bakeViewSelector_amendment a
+    , _bakeViewSelector_proposals = fmapMaybe f $ _bakeViewSelector_proposals a
+    , _bakeViewSelector_periodTestingVote = fmapMaybe f $ _bakeViewSelector_periodTestingVote a
+    , _bakeViewSelector_periodTesting = fmapMaybe f $ _bakeViewSelector_periodTesting a
+    , _bakeViewSelector_periodPromotionVote = fmapMaybe f $ _bakeViewSelector_periodPromotionVote a
     , _bakeViewSelector_upstreamVersion = fmapMaybe f $ _bakeViewSelector_upstreamVersion a
     , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = fmapMaybe f (_bakeViewSelector_telegramRecipients a)
@@ -397,6 +416,11 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = nil
     , _bakeViewSelector_errors = nil
     , _bakeViewSelector_latestHead = nil
+    , _bakeViewSelector_amendment = nil
+    , _bakeViewSelector_proposals = nil
+    , _bakeViewSelector_periodTestingVote = nil
+    , _bakeViewSelector_periodTesting = nil
+    , _bakeViewSelector_periodPromotionVote = nil
     , _bakeViewSelector_upstreamVersion = nil
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
@@ -424,6 +448,11 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
     , _bakeViewSelector_errors = alignWith (these (fmap $ f . This) (fmap $ f . That) (alignWith f)) (_bakeViewSelector_errors xs) (_bakeViewSelector_errors ys)
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
+    , _bakeViewSelector_amendment = f' _bakeViewSelector_amendment
+    , _bakeViewSelector_proposals = f' _bakeViewSelector_proposals
+    , _bakeViewSelector_periodTestingVote = f' _bakeViewSelector_periodTestingVote
+    , _bakeViewSelector_periodTesting = f' _bakeViewSelector_periodTesting
+    , _bakeViewSelector_periodPromotionVote = f' _bakeViewSelector_periodPromotionVote
     , _bakeViewSelector_upstreamVersion = f' _bakeViewSelector_upstreamVersion
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
@@ -454,6 +483,11 @@ instance FunctorMaybe BakeView where
     , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
     , _bakeView_errors = (fmap.fmapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
+    , _bakeView_amendment = fmapMaybe f $ _bakeView_amendment a
+    , _bakeView_proposals = fmapMaybe f $ _bakeView_proposals a
+    , _bakeView_periodTestingVote = fmapMaybe f $ _bakeView_periodTestingVote a
+    , _bakeView_periodTesting = fmapMaybe f $ _bakeView_periodTesting a
+    , _bakeView_periodPromotionVote = fmapMaybe f $ _bakeView_periodPromotionVote a
     , _bakeView_upstreamVersion = fmapMaybe f $ _bakeView_upstreamVersion a
     , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = fmapMaybe f $ _bakeView_telegramRecipients a
@@ -489,6 +523,11 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
+    , _bakeViewSelector_amendment = (<>) (_bakeViewSelector_amendment u) (_bakeViewSelector_amendment v)
+    , _bakeViewSelector_proposals = (<>) (_bakeViewSelector_proposals u) (_bakeViewSelector_proposals v)
+    , _bakeViewSelector_periodTestingVote = (<>) (_bakeViewSelector_periodTestingVote u) (_bakeViewSelector_periodTestingVote v)
+    , _bakeViewSelector_periodTesting = (<>) (_bakeViewSelector_periodTesting u) (_bakeViewSelector_periodTesting v)
+    , _bakeViewSelector_periodPromotionVote = (<>) (_bakeViewSelector_periodPromotionVote u) (_bakeViewSelector_periodPromotionVote v)
     , _bakeViewSelector_upstreamVersion = (<>) (_bakeViewSelector_upstreamVersion u) (_bakeViewSelector_upstreamVersion v)
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
@@ -516,6 +555,11 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_errors = mempty
     , _bakeViewSelector_latestHead = mempty
+    , _bakeViewSelector_amendment = mempty
+    , _bakeViewSelector_proposals = mempty
+    , _bakeViewSelector_periodTestingVote = mempty
+    , _bakeViewSelector_periodTesting = mempty
+    , _bakeViewSelector_periodPromotionVote = mempty
     , _bakeViewSelector_upstreamVersion = mempty
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
@@ -552,6 +596,11 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_nodeAddresses = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
+    , _bakeView_amendment = mempty
+    , _bakeView_proposals = mempty
+    , _bakeView_periodTestingVote = mempty
+    , _bakeView_periodTesting = mempty
+    , _bakeView_periodPromotionVote = mempty
     , _bakeView_upstreamVersion = mempty
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
@@ -582,6 +631,11 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
+    , _bakeView_amendment = _bakeView_amendment u <> _bakeView_amendment v
+    , _bakeView_proposals = _bakeView_proposals u <> _bakeView_proposals v
+    , _bakeView_periodTestingVote = _bakeView_periodTestingVote u <> _bakeView_periodTestingVote v
+    , _bakeView_periodTesting = _bakeView_periodTesting u <> _bakeView_periodTesting v
+    , _bakeView_periodPromotionVote = _bakeView_periodPromotionVote u <> _bakeView_periodPromotionVote v
     , _bakeView_upstreamVersion = _bakeView_upstreamVersion u <> _bakeView_upstreamVersion v
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v

@@ -11,6 +11,7 @@ import Control.Lens ((^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson
 import qualified Data.Aeson.TH as Aeson
+import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
@@ -26,6 +27,8 @@ import Tezos.Json
 import Tezos.PeriodSequence
 import Tezos.Level
 
+calcTimeBetweenBlocks :: ProtoInfo -> Time.NominalDiffTime
+calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
 data ProtoInfo = ProtoInfo
   { _protoInfo_proofOfWorkNonceSize :: !Word8 -- "proof_of_work_nonce_size": { "type": "integer", "minimum": 0, "maximum": 255 },

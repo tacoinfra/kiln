@@ -135,6 +135,11 @@ data NotifyTag a where
   NotifyTag_ShowLedger :: NotifyTag (SecretKey, Maybe (PublicKeyHash, Tez))
   NotifyTag_Prompting :: NotifyTag (SecretKey, Maybe SetupState)
   NotifyTag_RightNotificationSettings :: NotifyTag (RightKind, Maybe RightNotificationLimit)
+  NotifyTag_Amendment :: NotifyTag (VotingPeriodKind, Maybe Amendment)
+  NotifyTag_Proposals :: NotifyTag ()
+  NotifyTag_PeriodTestingVote :: NotifyTag (Maybe PeriodTestingVote)
+  NotifyTag_PeriodTesting :: NotifyTag (Maybe PeriodTesting)
+  NotifyTag_PeriodPromotionVote :: NotifyTag (Maybe PeriodPromotionVote)
   deriving Typeable
 
 mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
@@ -624,6 +629,33 @@ instance Field2 (a :. b) (a :. b') b b' where
 --          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - primitive: VotingPeriodKind
+  - embedded: Ballots
+  - entity: Amendment
+    autoKey: null
+    constructors:
+      - name: Amendment
+        uniques:
+          - name: Amendment_period
+            type: primary
+            fields: [_amendment_period]
+  - embedded: PeriodVote
+  - entity: PeriodProposal
+    autoKey: null
+    constructors:
+      - name: PeriodProposal
+        uniques:
+          - name: PeriodProposal_hash
+            type: primary
+            fields: [_periodProposal_hash]
+  - entity: PeriodTestingVote
+    autoKey: null
+  - primitive: TestChainStatus
+  - entity: PeriodTesting
+    autoKey: null
+  - entity: PeriodPromotionVote
+    autoKey: null
+
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
@@ -1242,6 +1274,11 @@ instance ArgDict NotifyTag where
     , c (SecretKey, Maybe (PublicKeyHash, Tez))
     , c (SecretKey, Maybe SetupState)
     , c (RightKind, Maybe RightNotificationLimit)
+    , c (VotingPeriodKind, Maybe Amendment)
+    , c ()
+    , c (Maybe PeriodTestingVote)
+    , c (Maybe PeriodTesting)
+    , c (Maybe PeriodPromotionVote)
     )
   argDict = \case
     NotifyTag_BakerDaemonExternal -> Dict
@@ -1278,6 +1315,11 @@ instance ArgDict NotifyTag where
     NotifyTag_ShowLedger -> Dict
     NotifyTag_Prompting -> Dict
     NotifyTag_RightNotificationSettings -> Dict
+    NotifyTag_Amendment -> Dict
+    NotifyTag_Proposals -> Dict
+    NotifyTag_PeriodTestingVote -> Dict
+    NotifyTag_PeriodTesting -> Dict
+    NotifyTag_PeriodPromotionVote -> Dict
 
 fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
