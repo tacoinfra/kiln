@@ -293,17 +293,6 @@ let
       ];
       security.sudo.wheelNeedsPassword = false;
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox pkgs.chromium tezos.mainnet.kit ];
-      services.postgresql = {
-        enable         = true;
-        authentication = ''
-          #      #db              #user  #auth-method  #auth-options
-          local  "kiln-db"  "demo" peer
-        '';
-      };
-      services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
-        CREATE USER "demo";
-        CREATE DATABASE "kiln-db" OWNER "demo";
-      '';
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
@@ -332,9 +321,9 @@ let
         script = ''
           mkdir -p kiln
           cd kiln
-          ln -sft . '${(obApp null).exe}'/*
+          ln -sft . '${(obAppGargoyle null).exe}'/*
           mkdir -p log
-          exec ./backend --pg-connection='dbname=kiln-db' >>backend.out 2>>backend.err </dev/null
+          exec ./backend >>backend.out 2>>backend.err </dev/null
         '';
         serviceConfig = {
           User = "demo";
