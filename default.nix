@@ -299,6 +299,7 @@ let
           local  "kiln-db"  "demo" peer
         '';
       };
+      security.sudo.wheelNeedsPassword = false;
       services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
         CREATE USER "demo";
         CREATE DATABASE "kiln-db" OWNER "demo";
