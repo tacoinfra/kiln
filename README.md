@@ -20,7 +20,7 @@ System requirements are dependent on whether you plan on running a Tezos node in
 
 Kiln bakes with a local node, which increases system requirements.
 
-**Disk:** A node running in Kiln will sync with the Tezos blockchain, which is currently ~70GB.
+**Disk:** A node running in Kiln will sync with the Tezos blockchain, which is currently ~70GB. **SSD is highly recommended over HHD.**
 
 **Memory:** Recommendated RAM for running a Tezos Node is 8GB. We recommend at least 10GB RAM to account for the node, baker, endorser, and Kiln’s processes.
 
