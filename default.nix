@@ -268,20 +268,22 @@ let
 
   upgradeKilnVM =
     let
-      srcTar = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/master/tezos-bake-monitor-master.tar.gz";
+      resultStorePathFile = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/raw/dn-make-vm-2/results/kilnVMSystem";
     in pkgs.writeScriptBin "upgrade-kiln" ''
         #!/usr/bin/env bash
         set -e
         if [[ $# -eq 0 ]] ; then
-           echo "Downloading latest Kiln"
-           echo "Fetching ${srcTar}"
-           export KILN_SRC_TAR="${srcTar}"
+           echo "Downloading latest Kiln path"
+           echo "Fetching ${resultStorePathFile}"
+           export KILN_VM_STORE_PATH=`curl '${resultStorePathFile}'`
         else
-           echo "Fetching $1"
-           export KILN_SRC_TAR="$1"
+           echo "Using the user supplied store path: $1"
+           export KILN_VM_STORE_PATH='$1'
         fi
-        sudo nix-env --prebuilt-only -f $KILN_SRC_TAR -p /nix/var/nix/profiles/system --set -A kilnVMSystem
+        echo "Downloading Kiln"
+        nix copy --from 's3://tezos-nix-cache?region=eu-west-3' '$KILN_VM_STORE_PATH'
         echo "Installing Kiln"
+        sudo nix-env -p /nix/var/nix/profiles/system --set '$KILN_VM_STORE_PATH'
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
