@@ -66,7 +66,7 @@ let
 
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
-          cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
+          cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
           sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
@@ -172,11 +172,11 @@ let
   run-kiln-exe =
     let
       # Not using writeScriptBin here, as we want to use /bin/bash
-      run-backend = pkgs.writeTextFile { name = "run-backend"; executable = true; text = ''
-        #!/bin/bash
+      run-backend = ''
+        #!/usr/bin/env bash
         cd '${exe-dir}'
-        ./backend --kiln-data-dir='${data-dir}' $@
-      ''; };
+        ./backend --kiln-data-dir='${data-dir}' \$@
+      '';
 
       # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
       # We need to do a nested unshare (after doing mount) to change to a non-root shell
@@ -184,8 +184,8 @@ let
       # (see error EPERM, in man 2 unshare)
       # 
       # So in order to do a nested unshare we instead do 'pivot_root'
-      do-mount-and-pivot = pkgs.writeTextFile { name = "do-mount-and-pivot"; executable = true; text = ''
-        #!/bin/bash
+      do-mount-and-pivot = ''
+        #!/usr/bin/env bash
         mount --bind '${root-dir}'  '${root-dir}'
         mount --rbind /proc  '${root-dir}/proc'
         mount --rbind --make-unbindable '${nix-store-root}/nix'   '${root-dir}/nix'
@@ -203,28 +203,35 @@ let
         cd '${root-dir}'
         pivot_root . oldroot
         cd /
-        exec '${do-umount-and-unshare}' $@
-      ''; };
+        exec do-umount-and-unshare \$@
+      '';
 
-      do-umount-and-unshare = pkgs.writeTextFile { name = "do-umount-and-unshare"; executable = true; text = ''
-        #!/bin/bash
+      do-umount-and-unshare = ''
+        #!/usr/bin/env bash
         umount -l oldroot
-        exec unshare --user '${run-backend}' $@
-      ''; };
+        exec unshare --user run-backend \$@
+      '';
 
-      # not putting #!/bin/bash here as it gets replaced by /nix/store during nix-build
-      mainScript = pkgs.writeTextFile { name = "run-kiln-mainScript"; executable = true; text = ''
-        exec unshare --mount --map-root-user '${nix-store-root}/${do-mount-and-pivot}' $@
-      ''; };
+      mainScript = ''
+        #!/usr/bin/env bash
+        exec unshare --mount --map-root-user do-mount-and-pivot \$@
+      '';
 
+    # not using pkgs.writeTextFile here as it complains about missing exec
+    # and we need to avoid patching shebangs in the scripts.
     in pkgs.stdenv.mkDerivation {
       name = "run-kiln-exe";
       src = ./.;
       propagatedBuildInputs = [ obApp.exe ];
       installPhase = ''
         mkdir -p $prefix/bin
-        cp ${mainScript} $prefix/bin/run-kiln
+        echo -n "${mainScript}" > $prefix/bin/run-kiln
+        echo -n "${do-mount-and-pivot}" > $prefix/bin/do-mount-and-pivot
+        echo -n "${do-umount-and-unshare}" > $prefix/bin/do-umount-and-unshare
+        echo -n "${run-backend}" > $prefix/bin/run-backend
+        chmod +x $prefix/bin/*
       '';
+      dontPatchShebangs = true;
     };
 
   # Also see obelisk/default.nix systemd.services, ideally these two should be in sync somehow
