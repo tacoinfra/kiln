@@ -285,11 +285,12 @@ let
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
-  kilnVMConfig = (import (pkgs.path + /nixos) {
+  vmPkgs = import dep/nixpkgs-kilnVM {};
+  kilnVMConfig = (import (vmPkgs.path + /nixos) {
     configuration = {
       imports = [
-        "${pkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
-        "${pkgs.path}/nixos/modules/profiles/demo.nix"
+        "${vmPkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
+        "${vmPkgs.path}/nixos/modules/profiles/demo.nix"
       ];
       security.sudo.wheelNeedsPassword = false;
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox pkgs.chromium tezos.mainnet.kit ];
@@ -308,18 +309,22 @@ let
 
       nixpkgs = { localSystem.system = "x86_64-linux"; };
       virtualbox = {
-        baseImageSize = 20 * 1024; # in MiB
+        baseImageSize = 64 * 1024; # in MiB
         memorySize = 16 * 1024; # in MiB
         vmDerivationName = "kiln-baker-vm";
         vmName = "Kiln Baker VM";
         vmFileName = "kiln-baker-vm.ova";
+        extraDisk = {
+          label = "kiln-data";
+          mountPoint = "/home/demo/kiln";
+          size = 500 * 1024;
+        };
       };
       systemd.services.kiln = {
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" ];
         restartIfChanged = true;
         script = ''
-          mkdir -p kiln
           cd kiln
           ln -sft . '${(obAppGargoyle null).exe}'/*
           mkdir -p log
