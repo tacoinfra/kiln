@@ -268,7 +268,7 @@ let
 
   upgradeKilnVM =
     let
-      resultStorePathFile = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/raw/dn-make-vm-2/results/kilnVMSystem";
+      resultStorePathFile = "https://s3.eu-west-3.amazonaws.com/tezos-kiln/vm/master-store-path";
     in pkgs.writeScriptBin "upgrade-kiln" ''
         #!/usr/bin/env bash
         set -e
@@ -281,12 +281,13 @@ let
            export KILN_VM_STORE_PATH='$1'
         fi
         echo "Downloading Kiln"
-        nix copy --from 's3://tezos-nix-cache?region=eu-west-3' '$KILN_VM_STORE_PATH'
+        nix copy --from 's3://tezos-nix-cache?region=eu-west-3' $KILN_VM_STORE_PATH
         echo "Installing Kiln"
-        sudo nix-env -p /nix/var/nix/profiles/system --set '$KILN_VM_STORE_PATH'
+        sudo nix-env -p /nix/var/nix/profiles/system --set $KILN_VM_STORE_PATH
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
+  # This fork supports extraDisk field in virtualbox
   vmPkgs = import dep/nixpkgs-kilnVM {};
   kilnVMConfig = (import (vmPkgs.path + /nixos) {
     configuration = {
