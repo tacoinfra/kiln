@@ -29,6 +29,6 @@ Kiln's logs can be found in journal control. Some useful commands for viewing lo
 * `journalctl -u kiln --S YYYY-MM-DD` - View Kiln's logs since the date provided
 * `journalctl -u kiln --S "YYYY-MM-DD HH:MM"` - View Kiln's logs since the date and time provided
 * `journalctl -u kiln -ef` - View and follow Kiln's most recent logs
-* `Shit + G` - Jump to the most recent logs
+* `Shift + G` - Jump to the most recent logs
 * `Ctrl + C` - Exit journal control
 
