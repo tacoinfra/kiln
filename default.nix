@@ -322,9 +322,21 @@ let
           size = 500 * 1024;
         };
       };
+      systemd.services.setupkiln = {
+        wantedBy = [ "multi-user.target" ];
+        after = [ "home-demo-kiln.mount" ];
+        # Change the ownership of the kiln folder (root of the other disk)
+        script = ''
+          chown -R demo:users /home/demo/kiln
+        '';
+        serviceConfig = {
+          User = "root";
+          Type = "oneshot";
+        };
+      };
       systemd.services.kiln = {
         wantedBy = [ "multi-user.target" ];
-        after = [ "network.target" ];
+        after = [ "setupkiln.service" ];
         restartIfChanged = true;
         script = ''
           cd kiln
