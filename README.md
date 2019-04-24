@@ -20,7 +20,7 @@ System requirements are dependent on whether you plan on running a Tezos node in
 
 Kiln bakes with a local node, which increases system requirements.
 
-**Disk:** A node running in Kiln will sync with the Tezos blockchain, which is currently ~70GB.
+**Disk:** A node running in Kiln will sync with the Tezos blockchain, which is currently ~70GB. **SSD is highly recommended over HHD.**
 
 **Memory:** Recommendated RAM for running a Tezos Node is 8GB. We recommend at least 10GB RAM to account for the node, baker, endorser, and Kiln’s processes.
 
@@ -28,186 +28,19 @@ Kiln bakes with a local node, which increases system requirements.
 
 # Obtaining Kiln
 
-Kiln can be built from source on linux distributions and Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
-
-We are in the process of packaging Kiln as an application for various operating systems, and will also provide a package which can be run in a virtual machine on any operating system.
-
-## Running a Pre-Built Monitor (Docker Image)
-
-Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
-
-To run the Docker image you need to have [Docker](https://www.docker.com/get-started) installed.
-
-Before you can download and run the monitor, you'll need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
-
-The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
-
-```shell
-DOCKER_CONTENT_TRUST=1 docker run --name tezos-monitor-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
-```
-
-(For anything serious you'll want to pick a better password than `mysecretpassword`.)
-
-For more advanced users, we recommend setting up a Docker network, or better yet, using [Docker Compose](https://docs.docker.com/compose/).
-
-You can stop this database by running `docker container stop tezos-monitor-postgres`. You can then remove it with `docker container rm tezos-monitor-postgres` but be aware your database state will be lost.
-
-Now you can download and run the monitor like this:
-
-On Linux and macOS (Docker Toolbox):
-
-```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.5.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
-```
-
-On macOS (Docker Desktop for Mac):
-
-```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.5.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
-```
-
-Replace `mysecretpassword` with your *actually secret* password.
-
-Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
-
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.5.1 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
-
-### Updating an older Docker container
-
-Updating to a newer pre-built Docker image is simple because all your data is stored separately in the PostgreSQL database.
-
-#### Making a backup of your data
-
-Ideally you should make a backup of your database before upgrading, just in case something goes wrong.
-
-If you started your PostgreSQL database in Docker (as described above) you can use `docker commit` to save a copy of you current database before the upgrade:
-
-```shell
-docker commit tezos-monitor-postgres tezos-monitor-postgres:backup1
-```
-
-Use `docker image ls` to see your backup image listed. `docker image rm tezos-monitor-postgres:backup1` will delete it.
-
-Alternatively, if you have a compatible version of `pg_dump` installed, you can make a more lightweight backup by connecting to your database:
-
-```shell
-pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > tezos-monitor-postgres-backup1.sql
-```
-
-#### Running the newer version
-
-Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
-
-```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.5.1 ...
-```
-
-you can replace `0.5.1` with another available version.
-
-You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
-
-## Ubuntu Distribution
-
-Obsidian Systems packages Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with v0.5.1. This package has been tested on Ubuntu only, but we plan on supporting other linux distributions in the near future.
-
-To get started:
-
-1. Download the deb file from our [releases](https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases) page.
-2. Open the file.
-3. Follow the installation instructions.
-4. Open [http://localhost:8000](http://localhost:8000)
-
-### Configuring the Ubuntu Package
-
-By default, the ubuntu installation runs on mainnet with a standard options, like using port `8000`. You can use Kiln on a test network and configure advanced settings in its config file, located at `/etc/kiln`.
-
-To change the port, network, or specify other arguments, add the relevant options in file `/etc/kiln/args`. For example: 
-
-```
-KILNARGS="--network=zeronet -- --port=8080"
-```
-
-This sets Kiln to run on zeronet and use the port 8080. Note the `--` before `--port` configuration. After editing the file, do `sudo systemctl restart kiln` to start kiln with the new configuration.
-
-## Building from Source
-
-### Prerequisites
-
-These builds have only been tested on Linux.
-
-#### Configuring the Nix cache (Recommended)
-
-If you have not done so already, we recommend you add our Nix caches to your Nix configuration to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md#setting-up-nix-caching-recommended).
-
-#### Cloning the repository
-
-```shell
-git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
-cd tezos-bake-monitor/
-```
-
-By default you will be on the `develop` branch which is the latest unstable version. For a stable version, checkout `master` or one of the specific version tags.
-
-#### Running the build
-
-```shell
-mkdir app
-```
-
-Then run this command to link the build’s path to the app directory.
-
-```shell
-ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
-```
-
-#### Starting the monitor
-
-To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `alphanet`, `mainnet`, or with a specific chain ID.
-
-```shell
-cd app
-./backend --network <network>
-```
-
-If you completed these steps correctly, your Monitor should now be running at http://127.0.0.1:8000.
-
-#### Command Line Options
-
-For the most complete list of options while starting Kiln, run `./backend --help`. Some of the most helpful options are:
-
-* `--network <network>` - Values are 'zeronet', 'alphanet', and 'mainnet' (default).
-* `--node` or `--nodes` - Adds monitored nodes to Kiln at startup. Entries should be comma separated, and can optionally take an alias.
-    *   Note: Nodes must begin with `http://`
-    *   Example: `--nodes http://localhost:8732,http://localhost:8733@SecondNode`
-* `--baker` or `--bakers` - Adds monitored bakers to Kiln at startup. Entries should be comma separated, and can optionally take an alias.
-    *   Example: `--bakers tz3RDC3Jdn4j15J7bBHZd29EUee9gVB1CxD9@FirstBaker,tz3NExpXn9aPNZPorRE4SdjJ2RGrfbJgMAaV@SecondBaker,tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r`
-* `--kiln-node-port=PORT` - Configures the RPC port of the Kiln Node. Default is `8732`
-
-#### Updating from an older source build
-
-To update your source build, simply checkout the newer version and `git pull`. For example:
-
-```shell
-git checkout master
-git pull
-```
-
-Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `ln` command.
-
-```shell
-ln -sf $(nix-build tezos-bake-central -A exe --no-out-link)/* app/
-```
-
-### Building the Docker image
-
-To build the Docker image you must be running on Linux or have at least one Linux remote builder configured.
-
-```shell
-nix-build -A dockerImage --no-out-link
-```
-
-The result of this command will be the path to a Docker image. You can load it with `docker load -i <path>`.
-
+Kiln can be built from source on linux distributions and Obsidian Systems provides:
+* pre-built Docker images hosted on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/).
+* pre-built deb files
+
+This table details Kiln's distributions, their key features, and their availability. Click a link in the left column to learn more about that distribution of Kiln.
+
+| **Distribution**                                       | **Supports Baking?** | **Operating Systems**           | **Released?**     |
+|--------------------------------------------------------|----------------------|---------------------------------|-------------------|
+| [Build from Source](docs/distros/build-from-source.md) | Yes                  | Linux                           | Yes               |
+| [Docker](docs/distros/docker.md)                       | **No**               | Linux / Mac                     | Yes               |
+| [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Ubuntu (others soon)            | Yes               |
+| VM Package (OVA)                                       | Yes                  | Any                             | Est. May 2019     |
+| Mac Distribution                                       | Yes                  | Mac                             | Est. May 2019     |
 
 # Using Kiln to Bake
 
@@ -295,6 +128,10 @@ Click *Settings* from the left panel and provide the SMTP configuration for your
 ### Known Issue: Front End Stops Updating
 
 There are instances where Kiln’s front end will stop updating, but the backend will continue functioning properly. For instance, resolving a notification will not cause the notification to disappear until the page is refreshed. Stopping and restarting Kiln fixes this issue.
+
+### Known Issue: Ubuntu package may not recognize Ledger device
+
+v0.5.1 of Kiln assumes you have previously used the ledger device on your machine, and thus your udev rules have been set. If Kiln does not recognize your ledger, [set your udev rules](https://github.com/obsidiansystems/ledger-app-tezos#udev-rules-linux-only), then restart Kiln.
 
 # Contact Us
 

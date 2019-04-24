@@ -36,6 +36,7 @@ data AppConfig = AppConfig
   , _appConfig_kilnDataDir :: FilePath
   , _appConfig_kilnNodeConfig :: NodeConfigFile
   , _appConfig_chainId :: ChainId
+  , _appConfig_kilnNodeCustomArgs :: Maybe Text
   }
 
 class HasAppConfig a where
