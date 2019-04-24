@@ -312,7 +312,7 @@ let
       nixpkgs = { localSystem.system = "x86_64-linux"; };
       virtualbox = {
         baseImageSize = 64 * 1024; # in MiB
-        memorySize = 16 * 1024; # in MiB
+        memorySize = 12 * 1024; # in MiB
         vmDerivationName = "kiln-baker-vm";
         vmName = "Kiln Baker VM";
         vmFileName = "kiln-baker-vm.ova";
