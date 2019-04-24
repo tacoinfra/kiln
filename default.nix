@@ -338,16 +338,17 @@ let
         wantedBy = [ "multi-user.target" ];
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
-        script = ''
-          cd kiln
+        preStart = ''
           ln -sft . '${(obAppGargoyle null).exe}'/*
           mkdir -p log
-          exec ./backend >>backend.out 2>>backend.err </dev/null
+        '';
+        script = ''
+          exec ./backend
         '';
         serviceConfig = {
           User = "demo";
           KillMode = "process";
-          WorkingDirectory = "~";
+          WorkingDirectory = "/home/demo/kiln";
           Restart = "always";
           RestartSec = 5;
         };
