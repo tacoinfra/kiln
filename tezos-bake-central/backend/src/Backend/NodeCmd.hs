@@ -31,7 +31,7 @@ import Backend.Workers.Process
 import ExtraPrelude
 import System.Which
 import Tezos.Chain (NamedChain(..))
-import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir)
+import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.Schema
 
@@ -41,40 +41,41 @@ nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 
-bakerPath :: Maybe ProtocolHash -> FilePath
+bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
 
-endorserPath :: Maybe ProtocolHash -> FilePath
+endorserPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 endorserPath = getPath (view _3)
 
-getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath) -> Maybe ProtocolHash -> FilePath
-getPath f = \case
+getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath)
+  -> NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
+getPath f paths = \case
   Nothing -> f $ NonEmpty.head paths
   Just p -> maybe e f $ find (\(p', _, _) -> p' == p) paths
     where
       e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
+
+zeronetPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
+zeronetPaths = ( psdd
+    , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
+    , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
+    ) :|
+    [ ( pt24
+      , $(staticWhich "zeronet-tezos-baker-004-Pt24m4xi")
+      , $(staticWhich "zeronet-tezos-endorser-004-Pt24m4xi")
+      )
+    ]
   where
     psdd :: ProtocolHash
     psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
     -- alpha = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
     pt24 = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-    -- zeroPh2 = "PsGn8G5U5vPVnHiXNh5gvUm8dHv8bXJHqKM5DpusyRmHF5tBDXT"
-    -- zeroPh3 = "PsuzFErA1YzvLS9dx3JULWwdsjE2EFdRseEi4uvLWKxPJ2vXveZ"
-    paths = ( psdd
-        , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
-        , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
-        ) :|
-        [ ( pt24
-          , $(staticWhich "zeronet-tezos-baker-004-Pt24m4xi")
-          , $(staticWhich "zeronet-tezos-endorser-004-Pt24m4xi")
-          )
-        ]
 
 -- TODO: use postgres for "process-id's"
 
 internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> NamedChain -> m (IO ())
-internalNodeWorker appConfig logger db namedChain = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
+internalNodeWorker appConfig logger db namedChainOrPaths = do
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -99,7 +100,7 @@ internalNodeWorker appConfig logger db namedChain = do
         return (nid, pid)
 
   let
-    nodePath = nodePaths namedChain
+    nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
     nodePort = show $ _appConfig_kilnNodePort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
     -- (19/04/03) after zeronet reset, now it no longer supports archive mode
@@ -134,8 +135,8 @@ initNode appConfig nodePath _ updateState nodeConfigPath = do
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> m (IO ())
-bakerDaemonProcess appConfig logger db = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
+bakerDaemonProcess appConfig logger db namedChainOrPaths = do
   (_nid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 ( BakerDaemonInternal_idField
              , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -196,8 +197,9 @@ bakerDaemonProcess appConfig logger db = do
       (\proto _nodeConfigPath -> proc (pathF proto) args)
       pid
       Nothing
-    bakerPw = pw (bakerPath, bakerArgs)
-    endorserPw = pw (endorserPath, endorserArgs)
+    bakerPw = pw (bakerPath paths, bakerArgs)
+    endorserPw = pw (endorserPath paths, endorserArgs)
+    paths = either (const zeronetPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.

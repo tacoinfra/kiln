@@ -45,7 +45,7 @@ import qualified System.Process as Process
 import Tezos.Types
 
 import Backend.Common (workerWithDelay)
-import Backend.Config (AppConfig (..), tezosClientDataDir)
+import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..))
 import Common.Schema
@@ -56,7 +56,7 @@ tezosClientWorker
   -> LoggingEnv
   -> AppConfig
   -> Pool Postgresql
-  -> NamedChain
+  -> Either NamedChain BinaryPaths
   -> IO (IO ())
 tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
@@ -72,7 +72,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
           inDb (selectSingle $ LedgerAccount_shouldImportField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
-            importSecretKey appConfig (Just chain) sk >>= \i -> inDb $ do
+            importSecretKey appConfig chain sk >>= \i -> inDb $ do
               update [LedgerAccount_importedField =. False] (LedgerAccount_importedField ==. True)
               update
                 [LedgerAccount_importedField =. (i == ImportSecretKeyStep_Done), LedgerAccount_shouldImportField =. False]
@@ -83,7 +83,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
           inDb (selectSingle $ LedgerAccount_shouldSetupToBakeField ==. True &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
-            setupLedgerToBake appConfig (Just chain) >>= \i -> inDb $ do
+            setupLedgerToBake appConfig chain >>= \i -> inDb $ do
               update
                 [LedgerAccount_shouldSetupToBakeField =. False]
                 (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -98,7 +98,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             Just (fee, pkh) -> do
               let sk = _ledgerAccount_secretKey la
               inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
-              registerKeyAsDelegate appConfig (Just chain) fee >>= \result -> inDb $ do
+              registerKeyAsDelegate appConfig chain fee >>= \result -> inDb $ do
                 update
                   [LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -117,7 +117,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
           -- run appropriate 'show ledger' commands, but only do one at a time
           -- to allow other commands to take precedence
           inDb (project1 LedgerAccount_secretKeyField (isFieldNothing LedgerAccount_publicKeyHashField)) >>= \msk -> for_ msk $ \sk -> do
-            runClientT (showLedger appConfig (Just chain) sk) >>= \case
+            runClientT (showLedger appConfig chain sk) >>= \case
               Left ClientError_LedgerDisconnected -> inDb $ do
                 now <- getTime
                 -- Mark ledger as disconnected
@@ -134,7 +134,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
               Right mPkh -> do
                 case mPkh of
                   Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
-                  Just pkh -> runClientT (getBalanceFor appConfig (Just chain) pkh) >>= \case
+                  Just pkh -> runClientT (getBalanceFor appConfig chain pkh) >>= \case
                     Left err -> $(logError) (T.pack (show err))
                     Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                     Right (Just tez) -> inDb $ do
@@ -146,7 +146,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
           -- get any missing balances
           las <- inDb $ select $ LedgerAccount_publicKeyHashField /=. (Nothing :: Maybe PublicKeyHash) &&. isFieldNothing LedgerAccount_balanceField
           let las' = mapMaybe (\la -> (,) (_ledgerAccount_secretKey la) <$> _ledgerAccount_publicKeyHash la) las
-          for_ las' $ \(sk, pkh) -> runClientT (getBalanceFor appConfig (Just chain) pkh) >>= \case
+          for_ las' $ \(sk, pkh) -> runClientT (getBalanceFor appConfig chain pkh) >>= \case
             Left err -> $(logError) (T.pack (show err))
             Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
             Right (Just tez) -> inDb $ do
@@ -160,13 +160,13 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
               Just hwm -> do
                 let sk = _ledgerAccount_secretKey la
                 inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting })
-                setHighWaterMark appConfig (Just chain) sk hwm >>= \i -> inDb $ do
+                setHighWaterMark appConfig chain sk hwm >>= \i -> inDb $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
-        | isNothing (_connectedLedger_updated cl) -> runClientT (getConnectedLedger appConfig $ Just chain) >>= \case
+        | isNothing (_connectedLedger_updated cl) -> runClientT (getConnectedLedger appConfig chain) >>= \case
         Left err -> $(logError) (T.pack (show err))
         Right mliv -> do
           liftIO $ print mliv
@@ -187,11 +187,13 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
     inDb = runDb (Identity db) . flip runReaderT appConfig
 
 -- TODO XXX OBVIOUSLY BAD
-clientPath :: Maybe NamedChain -> FilePath
-clientPath Nothing = $(staticWhich "mainnet-tezos-client") -- TODO what should we actually do here?
-clientPath (Just NamedChain_Mainnet) = $(staticWhich "mainnet-tezos-client")
-clientPath (Just NamedChain_Alphanet) = $(staticWhich "alphanet-tezos-client")
-clientPath (Just NamedChain_Zeronet) = $(staticWhich "zeronet-tezos-client")
+clientPath :: Either NamedChain BinaryPaths -> FilePath
+clientPath = \case
+  Right (BinaryPaths _ c _) -> c
+  Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
+  Left NamedChain_Alphanet -> $(staticWhich "alphanet-tezos-client")
+  Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
+
 
 {- Example output from `list connected ledgers`
 Found a Tezos Baking 1.5.0 (commit v1.4.3-19-g55cc026d) application running on Ledger Nano S at [0003:0007:00].
@@ -202,7 +204,7 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
  tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/P-256/0'/0'"
 -}
 
-getConnectedLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> ExceptT ClientError m (Maybe (LedgerIdentifier, Text))
+getConnectedLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, Text))
 getConnectedLedger appConfig chain = do
   stdout <- runClientCommand appConfig chain ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
@@ -222,7 +224,7 @@ getConnectedLedger appConfig chain = do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
 
-getBalanceFor :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
+getBalanceFor :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
 getBalanceFor appConfig chain pkh = do
   stdout <- runClientCommand appConfig chain ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
     | "Failed to acquire the protocol version from the node" : _ <- warnings
@@ -238,7 +240,7 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
+showLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
 showLedger appConfig chain sk = do
   stdout <- runClientCommand appConfig chain ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
@@ -257,7 +259,7 @@ showLedger appConfig chain sk = do
         -> Just pkh
       _ -> Nothing
 
-importSecretKey :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> SecretKey -> m ImportSecretKeyStep
+importSecretKey :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> m ImportSecretKeyStep
 importSecretKey appConfig chain sk = do
   e <- runExceptT $ runClientCommand appConfig chain ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ImportSecretKeyStep_Declined
@@ -267,7 +269,7 @@ importSecretKey appConfig chain sk = do
 
 runClientCommand
   :: (MonadLogger m, MonadIO m, Show e)
-  => AppConfig -> Maybe NamedChain -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
+  => AppConfig -> Either NamedChain BinaryPaths -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
 runClientCommand appConfig chain args handleError = do
   $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
   (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodePort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
@@ -292,7 +294,7 @@ runClientT m = do
     Nothing -> pure $ Left $ ClientError_Other "Timeout"
     Just a -> pure a
 
-setupLedgerToBake :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> m SetupLedgerToBakeStep
+setupLedgerToBake :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> m SetupLedgerToBakeStep
 setupLedgerToBake appConfig chain = do
   e <- runExceptT $ runClientCommand appConfig chain ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
     | "Ledger Application level error (setup): Conditions of use not satisfied" : _ <- errors -> Left SetupLedgerToBakeStep_Declined
@@ -309,7 +311,7 @@ setupLedgerToBake appConfig chain = do
 -- get up-to-date. We detect that case and just return an error.
 -- Also, if we are already registered as a delegate, the tezos-client command
 -- succeeds without re-registering.
-registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => AppConfig -> Maybe NamedChain -> Tez -> m RegisterStep
+registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> Tez -> m RegisterStep
 registerKeyAsDelegate appConfig chain fee
   | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
   | otherwise = do
@@ -348,7 +350,7 @@ registerKeyAsDelegate appConfig chain fee
   $(logWarn) $ T.pack $ show result
   pure result
 
-setHighWaterMark :: MonadLoggerIO m => AppConfig -> Maybe NamedChain -> SecretKey -> RawLevel -> m SetHWMStep
+setHighWaterMark :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> RawLevel -> m SetHWMStep
 setHighWaterMark appConfig chain sk bl = do
   e <- runExceptT $ runClientCommand appConfig chain ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
     | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetHWMStep_Declined

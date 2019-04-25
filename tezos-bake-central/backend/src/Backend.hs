@@ -68,7 +68,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir)
+import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -154,8 +154,13 @@ backendImpl cfg serve = do
 
   !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
 
+  !(binaryPaths :: Maybe BinaryPaths) <- getJSONConfigFromFile $ configPath Config.binaryPaths
+
   let
     maybeNamedChain = either Just (const Nothing) chain
+    maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
+    maybeNamedChainOrPaths = either (Just . Left)
+      (const $ maybe Nothing (Just . Right) binaryPaths) chain
 
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
@@ -298,7 +303,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId kilnNodeCustomArgs
+        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId kilnNodeCustomArgs binaryPaths
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -344,11 +349,11 @@ backendImpl cfg serve = do
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< internalNodeWorker appConfig logger db namedChain
+      for_ maybeNamedChainOrPaths $ \v -> do
+        addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
-        addFinalizer =<< bakerDaemonProcess appConfig logger db
-        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
+        addFinalizer =<< bakerDaemonProcess appConfig logger db v
+        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

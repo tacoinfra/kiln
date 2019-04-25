@@ -151,6 +151,9 @@ defaultKilnDataDir = "./.kiln"
 kilnNodeCustomArgs :: FilePath
 kilnNodeCustomArgs = "kiln-node-custom-args"
 
+binaryPaths :: FilePath
+binaryPaths = "binary-paths"
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 
