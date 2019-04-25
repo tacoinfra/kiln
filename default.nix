@@ -287,14 +287,30 @@ let
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
-  # This fork supports extraDisk field in virtualbox
-  vmPkgs = import dep/nixpkgs-kilnVM {};
-  kilnVMConfig = (import (vmPkgs.path + /nixos) {
+  kilnVMConfig = (import (pkgs.path + /nixos) {
     configuration = {
       imports = [
-        "${vmPkgs.path}/nixos/modules/virtualisation/virtualbox-image.nix"
-        "${vmPkgs.path}/nixos/modules/profiles/demo.nix"
+        ./virtualbox-image.nix
       ];
+      users.users.kiln =
+        { isNormalUser = true;
+          description = "Kiln account";
+          extraGroups = [ "wheel" ];
+          password = "";
+          uid = 1000;
+        };
+      services.xserver = {
+        enable = true;
+        displayManager.sddm.enable = true;
+        displayManager.sddm.autoLogin = {
+          enable = true;
+          relogin = true;
+          user = "kiln";
+        };
+        desktopManager.plasma5.enable = true;
+        libinput.enable = true; # for touchpad support on many laptops
+      };
+
       security.sudo.wheelNeedsPassword = false;
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox tezos.mainnet.kit ];
       services.udev.extraRules = ''
@@ -320,16 +336,16 @@ let
         vmFileName = "kiln-vm.ova";
         extraDisk = {
           label = "kiln-data";
-          mountPoint = "/home/demo/kiln";
+          mountPoint = "/home/kiln/app";
           size = 500 * 1024;
         };
       };
       systemd.services.setupkiln = {
         wantedBy = [ "multi-user.target" ];
-        after = [ "home-demo-kiln.mount" ];
+        after = [ "home-kiln-app.mount" ];
         # Change the ownership of the kiln folder (root of the other disk)
         script = ''
-          chown -R demo:users /home/demo/kiln
+          chown -R kiln:users /home/kiln/app
         '';
         serviceConfig = {
           User = "root";
@@ -348,9 +364,9 @@ let
           exec ./backend
         '';
         serviceConfig = {
-          User = "demo";
+          User = "kiln";
           KillMode = "process";
-          WorkingDirectory = "/home/demo/kiln";
+          WorkingDirectory = "/home/kiln/app";
           Restart = "always";
           RestartSec = 5;
         };
