@@ -105,9 +105,20 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
     -- (19/04/03) after zeronet reset, now it no longer supports archive mode
     useArchiveMode = False
+    -- use the user supplied config file if specified
+    -- we can only specify this option once
+    hasUserConfigFile = any (== "--config-file") nodeExtraArgs
+    nodeArgs configPath dataDir = [ "run" ]
+      ++ (if hasUserConfigFile then [] else [ "--config-file", configPath]) ++
+      [
+        "--data-dir", dataDir,
+        "--rpc-addr", ":" <> nodePort
+      ]
+      ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
+      ++ nodeExtraArgs
   processWorker logger db appConfig
     (initNode appConfig nodePath)
-    (\dataDir nodeConfigPath -> proc nodePath $ ["run", "--config-file", nodeConfigPath, "--data-dir", dataDir, "--rpc-addr", ":" <> nodePort] ++ nodeExtraArgs ++ if useArchiveMode then ["--history-mode", "archive"] else [])
+    (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
     pid
     (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
