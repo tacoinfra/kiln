@@ -37,7 +37,7 @@ let
 
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
-        src = ./.;
+        src = ./CHANGELOG.md;
         buildInputs = [ pkgs.dpkg pkgs.perl ];
         exportReferencesGraph =
           [ "closure" run-kiln-exe ];
@@ -51,7 +51,7 @@ let
           mkdir -p $DEBDIR/DEBIAN
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${deb-copyright} $DEBDIR/DEBIAN/copyright
-          cp $src/CHANGELOG.md $DEBDIR/DEBIAN/changelog
+          cp $src $DEBDIR/DEBIAN/changelog
           cp ${deb-pre-install}  $DEBDIR/DEBIAN/preinst
           cp ${deb-post-install}  $DEBDIR/DEBIAN/postinst
           cp ${deb-pre-rm}  $DEBDIR/DEBIAN/prerm
@@ -217,13 +217,10 @@ let
         exec unshare --mount --map-root-user do-mount-and-pivot \$@
       '';
 
-    # not using pkgs.writeTextFile here as it complains about missing exec
-    # and we need to avoid patching shebangs in the scripts.
-    in pkgs.stdenv.mkDerivation {
-      name = "run-kiln-exe";
-      src = ./.;
-      propagatedBuildInputs = [ obApp.exe ];
-      installPhase = ''
+    in pkgs.runCommand "run-kiln-exe" {
+        propagatedBuildInputs = [ obApp.exe ];
+        dontPatchShebangs = true;
+      } ''
         mkdir -p $prefix/bin
         echo -n "${mainScript}" > $prefix/bin/run-kiln
         echo -n "${do-mount-and-pivot}" > $prefix/bin/do-mount-and-pivot
@@ -231,8 +228,6 @@ let
         echo -n "${run-backend}" > $prefix/bin/run-backend
         chmod +x $prefix/bin/*
       '';
-      dontPatchShebangs = true;
-    };
 
   # Also see obelisk/default.nix systemd.services, ideally these two should be in sync somehow
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
