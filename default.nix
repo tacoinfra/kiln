@@ -296,7 +296,7 @@ let
         "${vmPkgs.path}/nixos/modules/profiles/demo.nix"
       ];
       security.sudo.wheelNeedsPassword = false;
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox pkgs.chromium tezos.mainnet.kit ];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox tezos.mainnet.kit ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
