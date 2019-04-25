@@ -292,13 +292,13 @@ let
       imports = [
         ./virtualbox-image.nix
       ];
-      users.users.kiln =
-        { isNormalUser = true;
-          description = "Kiln account";
-          extraGroups = [ "wheel" ];
-          password = "";
-          uid = 1000;
-        };
+      users.users.kiln = {
+        isNormalUser = true;
+        description = "Kiln account";
+        extraGroups = [ "wheel" ];
+        password = "";
+        uid = 1000;
+      };
       services.xserver = {
         enable = true;
         displayManager.sddm.enable = true;
