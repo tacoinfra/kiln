@@ -154,7 +154,9 @@ backendImpl cfg serve = do
 
   !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
 
-  !(binaryPaths :: Maybe BinaryPaths) <- getJSONConfigFromFile $ configPath Config.binaryPaths
+  !(binaryPaths :: Maybe BinaryPaths) <- (<|>)
+    (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
+    (getJSONConfigFromFile $ configPath Config.binaryPaths)
 
   let
     maybeNamedChain = either Just (const Nothing) chain
@@ -428,6 +430,7 @@ data Opts = Opts
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   , _opts_kilnNodePort :: !(Maybe Port)
   , _opts_kilnDataDir :: !(Maybe FilePath)
+  , _opts_binaryPaths :: !(Maybe Text)
   }
 makeLenses ''Opts
 
@@ -448,13 +451,14 @@ instance Semigroup Opts where
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
+    , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -505,6 +509,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
       ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
+
+  , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
+      ("Custom paths to tezos binaries.")
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
