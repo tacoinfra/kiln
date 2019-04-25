@@ -152,6 +152,8 @@ backendImpl cfg serve = do
     (pure $ _opts_kilnDataDir cfg)
     (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
+  !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
+
   let
     maybeNamedChain = either Just (const Nothing) chain
 
@@ -296,7 +298,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId
+        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId kilnNodeCustomArgs
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
