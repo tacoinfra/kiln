@@ -154,7 +154,7 @@ backendImpl cfg serve = do
 
   !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
 
-  !(binaryPaths :: Maybe BinaryPaths) <- (<|>)
+  !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
     (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
     (getJSONConfigFromFile $ configPath Config.binaryPaths)
 
