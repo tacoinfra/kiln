@@ -142,12 +142,12 @@ in {
          device = "/dev/disk/by-label/nixos";
          autoResize = true;
        };
-    } // (if cfg.extraDisk == null then { } else
-      { ${cfg.extraDisk.mountPoint} = {
+    } // (if cfg.extraDisk == null then {} else {
+      ${cfg.extraDisk.mountPoint} = {
         device = "/dev/disk/by-label/" + cfg.extraDisk.label;
         autoResize = true;
-        };
-      });
+      };
+    });
 
     boot.growPartition = true;
     boot.loader.grub.device = "/dev/sda";
