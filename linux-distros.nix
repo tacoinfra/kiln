@@ -38,9 +38,8 @@ let
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
         src = ./CHANGELOG.md;
-        buildInputs = [ pkgs.dpkg pkgs.perl ];
         exportReferencesGraph =
-          [ "closure" run-kiln-exe ];
+          [ "closure" obApp.exe ];
         builder = pkgs.writeScript "builder.sh" ''
           source "$stdenv/setup"
           mkdir -p $out
@@ -67,7 +66,6 @@ let
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
           cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
-          sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
 
@@ -75,7 +73,7 @@ let
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
           # copy nix closure
-          storePaths=$(perl ${pkgs.pathsFromGraph} closure)
+          storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
           cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
@@ -218,7 +216,6 @@ let
       '';
 
     in pkgs.runCommand "run-kiln-exe" {
-        propagatedBuildInputs = [ obApp.exe ];
         dontPatchShebangs = true;
       } ''
         mkdir -p $prefix/bin
