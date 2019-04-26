@@ -66,7 +66,6 @@ let
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
           cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
-          sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
 
