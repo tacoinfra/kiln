@@ -38,7 +38,6 @@ let
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
         src = ./CHANGELOG.md;
-        buildInputs = [ pkgs.dpkg pkgs.perl obApp.exe ];
         exportReferencesGraph =
           [ "closure" obApp.exe ];
         builder = pkgs.writeScript "builder.sh" ''
@@ -75,7 +74,7 @@ let
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
           # copy nix closure
-          storePaths=$(perl ${pkgs.pathsFromGraph} closure)
+          storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
           cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
