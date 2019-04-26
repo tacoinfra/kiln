@@ -59,6 +59,7 @@ let
           # make install file structure
           mkdir -p $DEBDIR/usr/bin
           mkdir -p $DEBDIR/etc/${pkgName}
+          mkdir -p $DEBDIR/etc/sysctl.d
           mkdir -p $DEBDIR/lib/systemd/system/
           mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
           mkdir -p $DEBDIR/${exe-dir}
@@ -68,6 +69,7 @@ let
           cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
+          echo 'kernel.unprivileged_userns_clone=1' > $DEBDIR/etc/sysctl.d/10-kiln-userns.conf
 
           # User can modify this to specify optional args like --network, --port
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
@@ -101,6 +103,7 @@ let
          adduser --system --quiet --ingroup kiln --no-create-home --home /var/lib/kiln kiln
          adduser --quiet kiln plugdev
          chown -R kiln /var/lib/kiln
+         service procps start
     esac
     if [ -d /run/systemd/system ]; then
         systemctl --system daemon-reload >/dev/null
