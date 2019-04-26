@@ -217,7 +217,7 @@ registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanat
           text ") too low to cover fee."
       | otherwise = Nothing
     explanation = do
-      let minimumDefaultFee = 0.00232 :: Tez
+      let minimumDefaultFee = 0.004 :: Tez
       text "The selected address must be registered as a delegate on the Tezos network in order to bake."
       divClass "start-baking-message" $ do
         icon "large orange icon-warning"
