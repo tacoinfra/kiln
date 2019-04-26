@@ -38,9 +38,9 @@ let
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
         src = ./CHANGELOG.md;
-        buildInputs = [ pkgs.dpkg pkgs.perl ];
+        buildInputs = [ pkgs.dpkg pkgs.perl obApp.exe ];
         exportReferencesGraph =
-          [ "closure" run-kiln-exe ];
+          [ "closure" obApp.exe ];
         builder = pkgs.writeScript "builder.sh" ''
           source "$stdenv/setup"
           mkdir -p $out
@@ -218,7 +218,6 @@ let
       '';
 
     in pkgs.runCommand "run-kiln-exe" {
-        propagatedBuildInputs = [ obApp.exe ];
         dontPatchShebangs = true;
       } ''
         mkdir -p $prefix/bin
