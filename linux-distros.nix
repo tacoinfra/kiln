@@ -60,6 +60,7 @@ let
           mkdir -p $DEBDIR/usr/bin
           mkdir -p $DEBDIR/etc/${pkgName}
           mkdir -p $DEBDIR/etc/sysctl.d
+          mkdir -p $DEBDIR/etc/udev/rules.d
           mkdir -p $DEBDIR/lib/systemd/system/
           mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
           mkdir -p $DEBDIR/${exe-dir}
@@ -70,6 +71,7 @@ let
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
           echo 'kernel.unprivileged_userns_clone=1' > $DEBDIR/etc/sysctl.d/10-kiln-userns.conf
+          cp ${udevRules}  $DEBDIR/etc/udev/rules.d/20-kiln-ledger.rules
 
           # User can modify this to specify optional args like --network, --port
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
@@ -104,6 +106,8 @@ let
          adduser --quiet kiln plugdev
          chown -R kiln /var/lib/kiln
          service procps start
+         udevadm trigger
+         udevadm control --reload-rules
     esac
     if [ -d /run/systemd/system ]; then
         systemctl --system daemon-reload >/dev/null
@@ -141,6 +145,18 @@ let
     esac
 
     exit 0
+  ''; };
+
+  udevRules = pkgs.writeTextFile { name = "20-kiln-ledger.rules"; text = ''
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="3b7c", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="4b7c", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1807", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1808", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0000", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0001", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0004", MODE="0660", GROUP="plugdev"
   ''; };
 
   deb-copyright = pkgs.writeTextFile { name = "${pkgName}-deb-copyright"; text = ''
