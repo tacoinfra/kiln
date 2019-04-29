@@ -638,7 +638,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: Amendment_period
             type: primary
-            fields: [_amendment_period]
+            fields: [_amendment_period, _amendment_chainId, _amendment_votingPeriod]
   - embedded: PeriodVote
   - entity: PeriodProposal
     autoKey: null
@@ -647,7 +647,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: PeriodProposal_hash
             type: primary
-            fields: [_periodProposal_hash]
+            fields: [_periodProposal_hash, _periodProposal_chainId, _periodProposal_votingPeriod]
   - entity: PeriodTestingVote
     autoKey: null
   - primitive: TestChainStatus

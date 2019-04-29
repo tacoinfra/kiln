@@ -196,13 +196,17 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let amendmentVS = _bakeViewSelector_amendment vs
   amendment <- whenM (not $ null amendmentVS) $ do
-    as <- select CondEmpty
+    as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
     pure $ toRangeView amendmentVS $ flip fmap as $ \a -> (_amendment_period a, First $ Just a)
 
-  periodProposals <- maybeViewHandler _bakeViewSelector_proposals $ Just <$> select CondEmpty
-  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> selectSingle CondEmpty
-  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> selectSingle CondEmpty
-  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> selectSingle CondEmpty
+  periodProposals <- maybeViewHandler _bakeViewSelector_proposals $ Just <$>
+    select (PeriodProposal_chainIdField ==. _nodeDataSource_chain nds)
+  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$>
+    selectSingle (PeriodTestingVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
+  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$>
+    selectSingle (PeriodTesting_chainIdField ==. _nodeDataSource_chain nds)
+  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$>
+    selectSingle (PeriodPromotionVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
 
   connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
 

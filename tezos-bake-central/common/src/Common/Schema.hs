@@ -481,6 +481,8 @@ instance HasId Accusation where
 
 data Amendment = Amendment
   { _amendment_period :: !VotingPeriodKind
+  , _amendment_chainId :: !ChainId
+  , _amendment_votingPeriod :: !RawLevel
   , _amendment_start :: !UTCTime -- ^ Start time
   , _amendment_startLevel :: !RawLevel -- ^ Start level
   , _amendment_position :: !RawLevel -- ^ Blocks passed in this period
@@ -488,19 +490,23 @@ data Amendment = Amendment
 
 data PeriodProposal = PeriodProposal
   { _periodProposal_hash :: !ProtocolHash
+  , _periodProposal_chainId :: !ChainId
+  , _periodProposal_votingPeriod :: !RawLevel
   , _periodProposal_votes :: !Int
-  } deriving (Eq, Ord, Generic, Typeable, Read, Show)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodVote = PeriodVote
   { _periodVote_proposal :: !ProtocolHash
+  , _periodVote_chainId :: !ChainId
+  , _periodVote_votingPeriod :: !RawLevel
   , _periodVote_ballots :: !Ballots
   , _periodVote_quorum :: !Int -- Percent * 100, e.g. 80.02% would be 8002
   , _periodVote_totalRolls :: !Int -- Total number of rolls of delegates who are eligible to vote
-  } deriving (Eq, Ord, Generic, Typeable, Read, Show)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodTestingVote = PeriodTestingVote
   { _periodTestingVote_periodVote :: PeriodVote
-  } deriving (Eq, Ord, Generic, Typeable, Read, Show)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- | Like Tezos.TestChainStatus, but for a single column
 data TestChainStatus = TestChainStatus_NotRunning | TestChainStatus_Forking | TestChainStatus_Running
@@ -510,14 +516,16 @@ instance Aeson.FromJSON TestChainStatus
 
 data PeriodTesting = PeriodTesting
   { _periodTesting_proposal :: !ProtocolHash
-  , _periodTesting_chainId :: !(Maybe ChainId)
+  , _periodTesting_chainId :: !ChainId
+  , _periodTesting_testChainId :: !(Maybe ChainId)
+  , _periodTesting_votingPeriod :: !RawLevel
   , _periodTesting_startingLevel :: !(Maybe RawLevel)
   , _periodTesting_status :: !TestChainStatus
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodPromotionVote = PeriodPromotionVote
   { _periodPromotionVote_periodVote :: PeriodVote
-  } deriving (Eq, Ord, Generic, Typeable, Read, Show)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
   { _blockTodo_hash :: !BlockHash

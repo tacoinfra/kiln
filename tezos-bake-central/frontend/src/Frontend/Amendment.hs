@@ -163,7 +163,7 @@ periodTest test = el "dl" $ do
     let proposalHash = toBase58Text . _periodTesting_proposal <$> test
     copyButton $ current proposalHash
     dynText proposalHash
-  mChain <- maybeDyn $ _periodTesting_chainId <$> test
+  mChain <- maybeDyn $ _periodTesting_testChainId <$> test
   whenJustDyn mChain $ \chainId -> do
     el "dt" $ text "Chain ID"
     el "dd" $ dynText $ toBase58Text <$> chainId

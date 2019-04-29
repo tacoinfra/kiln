@@ -493,8 +493,12 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     updateTo blk p = do
       wipe p
       let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition -- TODO this is probably off by one?
+          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+          chainId = _nodeDataSource_chain nds
       let amendment = Amendment
             { _amendment_period = p
+            , _amendment_chainId = chainId
+            , _amendment_votingPeriod = votingPeriod
             , _amendment_start = blk ^. timestamp
             , _amendment_startLevel = blk ^. level
             , _amendment_position = position'
@@ -506,12 +510,18 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         VotingPeriodKind_Proposal -> do
           proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (blk ^. hash)
           runDb (Identity db) $ do
-            for_ proposals $ insert_ . uncurry PeriodProposal . unProposalVotes
+            for_ proposals $ \(ProposalVotes (phash, votes)) -> do
+              insert_ $ PeriodProposal
+                { _periodProposal_hash = phash
+                , _periodProposal_chainId = chainId
+                , _periodProposal_votingPeriod = votingPeriod
+                , _periodProposal_votes = votes
+                }
             notify NotifyTag_Proposals ()
         VotingPeriodKind_Testing -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
           for_ mProposal $ \proposal -> do
-            let (status, chainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+            let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
                   Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
                   Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
                   Tezos.TestChainStatus_Running
@@ -523,15 +533,19 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
               let t = PeriodTesting
                     { _periodTesting_proposal = proposal
                     , _periodTesting_chainId = chainId
+                    , _periodTesting_testChainId = testChainId
+                    , _periodTesting_votingPeriod = votingPeriod
                     , _periodTesting_startingLevel = (^. level) <$> tcStartBlock
                     , _periodTesting_status = status
                     }
               insert_ t
               notify NotifyTag_PeriodTesting $ Just t
-        VotingPeriodKind_TestingVote -> votingPeriod blk PeriodTestingVote NotifyTag_PeriodTestingVote
-        VotingPeriodKind_PromotionVote -> votingPeriod blk PeriodPromotionVote NotifyTag_PeriodPromotionVote
-    votingPeriod :: PersistEntity a => Block -> (PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
-    votingPeriod blk f n = do
+        VotingPeriodKind_TestingVote -> handleVotingPeriod blk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_PromotionVote -> handleVotingPeriod blk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+    handleVotingPeriod :: PersistEntity a => Block -> (PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    handleVotingPeriod blk f n = do
+      let chainId = _nodeDataSource_chain nds
+          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
         ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
@@ -539,6 +553,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         totalRolls <- foldl' (\x d -> _delegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
         pure $ flip fmap mProposal $ \proposal -> PeriodVote
           { _periodVote_proposal = proposal
+          , _periodVote_chainId = chainId
+          , _periodVote_votingPeriod = votingPeriod
           , _periodVote_ballots = ballots
           , _periodVote_quorum = quorum
           , _periodVote_totalRolls = totalRolls
