@@ -272,7 +272,7 @@ runClientCommand
   => AppConfig -> Either NamedChain BinaryPaths -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
 runClientCommand appConfig chain args handleError = do
   $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodePort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
+  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
   case exitCode of
     ExitSuccess -> pure $ T.strip $ T.pack stdout
     ExitFailure _ -> do
@@ -315,7 +315,7 @@ registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => AppConfig -> Either Named
 registerKeyAsDelegate appConfig chain fee
   | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
   | otherwise = do
-  let p = (Process.proc (clientPath chain) ["--port", show (_appConfig_kilnNodePort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
+  let p = (Process.proc (clientPath chain) ["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
         { Process.std_err = Process.CreatePipe
         , Process.std_out = Process.CreatePipe
         }

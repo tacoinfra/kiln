@@ -57,7 +57,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
-import Backend.Config (AppConfig (..), kilnNodeURI)
+import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -186,7 +186,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
-nodeData_address appConfig = either (const $ kilnNodeURI appConfig) _nodeExternalData_address
+nodeData_address appConfig = either (const $ kilnNodeRpcURI appConfig) _nodeExternalData_address
 
 nodeData_minPeerConnections :: NodeData -> Int
 nodeData_minPeerConnections = either (const 0) (fromMaybe 0 . _nodeExternalData_minPeerConnections)

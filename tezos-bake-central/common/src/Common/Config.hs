@@ -136,11 +136,17 @@ parseBakersUnsafe = Map.fromList . parseCommaList (parseWithAlias parsePublicKey
 networkGitLabProjectId :: FilePath
 networkGitLabProjectId = "network-gitlab-project-id"
 
-kilnNodePort :: FilePath
-kilnNodePort = "kiln-node-port"
+kilnNodeNetPort :: FilePath
+kilnNodeNetPort = "kiln-node-net-port"
 
-defaultKilnNodePort :: Port
-defaultKilnNodePort = 8732
+defaultKilnNodeNetPort :: Port
+defaultKilnNodeNetPort = 8733
+
+kilnNodeRpcPort :: FilePath
+kilnNodeRpcPort = "kiln-node-rpc-port"
+
+defaultKilnNodeRpcPort :: Port
+defaultKilnNodeRpcPort = 9733
 
 kilnDataDir :: FilePath
 kilnDataDir = "kiln-data-dir"
