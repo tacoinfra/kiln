@@ -469,7 +469,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   let currentPeriod = latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
   for_ [minBound..maxBound] $ \p -> case compare p currentPeriod of
     LT -> do
-      let periods = fromIntegral $ fromEnum p - fromEnum currentPeriod
+      let periods = fromIntegral $ fromEnum currentPeriod - fromEnum p
       thisPeriodStartBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get block") $
         levelAncestor history (currentPeriodStartBlock ^. level - periods * blocksPerVotingPeriod) (currentPeriodStartBlock ^. hash)
       updateTo thisPeriodStartBlock p
@@ -480,7 +480,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     getBlock = nodeQueryDataSource . NodeQuery_Block
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
-    runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT @CacheError
+    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
+    runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
     wipe p = runDb (Identity db) $ do
       delete $ Amendment_periodField ==. p
       -- TODO notify
@@ -507,46 +508,44 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
           runDb (Identity db) $ do
             for_ proposals $ insert_ . uncurry PeriodProposal . unProposalVotes
             notify NotifyTag_Proposals ()
-        _ -> do
-          mpv <- runMaybe $ do
-            mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
-            ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
-            quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
-            totalRolls <- foldl' (\x d -> _delegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
-            pure $ flip fmap mProposal $ \proposal -> PeriodVote
-              { _periodVote_proposal = proposal
-              , _periodVote_ballots = ballots
-              , _periodVote_quorum = quorum
-              , _periodVote_totalRolls = totalRolls
-              }
-          for_ mpv $ \pv -> case p of
-            VotingPeriodKind_Proposal -> pure ()
-            VotingPeriodKind_TestingVote -> do
-              runDb (Identity db) $ do
-                insert_ $ PeriodTestingVote pv
-                notify NotifyTag_PeriodTestingVote $ Just $ PeriodTestingVote pv
-            VotingPeriodKind_PromotionVote -> do
-              runDb (Identity db) $ do
-                insert_ $ PeriodPromotionVote pv
-                notify NotifyTag_PeriodPromotionVote $ Just $ PeriodPromotionVote pv
-            VotingPeriodKind_Testing -> do
-              let (status, chainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
-                    Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
-                    Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
-                    Tezos.TestChainStatus_Running
-                      { Tezos._testChainStatusRunning_chainId = c
-                      , Tezos._testChainStatusRunning_genesis = b
-                      } -> (TestChainStatus_Forking, Just c, Just b)
-              tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
-              runDb (Identity db) $ do
-                let t = PeriodTesting
-                      { _periodTesting_proposal = _periodVote_proposal pv
-                      , _periodTesting_chainId = chainId
-                      , _periodTesting_startingLevel = (^. level) <$> tcStartBlock
-                      , _periodTesting_status = status
-                      }
-                insert_ t
-                notify NotifyTag_PeriodTesting $ Just t
+        VotingPeriodKind_Testing -> do
+          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
+          for_ mProposal $ \proposal -> do
+            let (status, chainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+                  Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
+                  Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
+                  Tezos.TestChainStatus_Running
+                    { Tezos._testChainStatusRunning_chainId = c
+                    , Tezos._testChainStatusRunning_genesis = b
+                    } -> (TestChainStatus_Forking, Just c, Just b)
+            tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
+            runDb (Identity db) $ do
+              let t = PeriodTesting
+                    { _periodTesting_proposal = proposal
+                    , _periodTesting_chainId = chainId
+                    , _periodTesting_startingLevel = (^. level) <$> tcStartBlock
+                    , _periodTesting_status = status
+                    }
+              insert_ t
+              notify NotifyTag_PeriodTesting $ Just t
+        VotingPeriodKind_TestingVote -> votingPeriod blk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_PromotionVote -> votingPeriod blk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+    votingPeriod :: PersistEntity a => Block -> (PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    votingPeriod blk f n = do
+      mpv <- runMaybe $ do
+        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
+        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
+        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
+        totalRolls <- foldl' (\x d -> _delegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
+        pure $ flip fmap mProposal $ \proposal -> PeriodVote
+          { _periodVote_proposal = proposal
+          , _periodVote_ballots = ballots
+          , _periodVote_quorum = quorum
+          , _periodVote_totalRolls = totalRolls
+          }
+      for_ mpv $ \pv -> runDb (Identity db) $ do
+        insert_ $ f pv
+        notify n $ Just $ f pv
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker
