@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+*April 16, 2019*
+
+  * New settings for missed bake/endorsement notification frequency
+  * New button to resolve all notifications
+  * A new "You will be deactivated" notification
+  * Installation via Debian package
+  * UI updates and bug fixes
+
+
 ## 0.5.0
 *March 29, 2019*
 

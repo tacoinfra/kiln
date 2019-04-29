@@ -27,7 +27,7 @@ import qualified Text.URI.QQ as Uri
 
 import Common.URI (Port)
 import ExtraPrelude
-import Tezos.Base58Check (toBase58Text, ChainId)
+import Tezos.Base58Check (toBase58Text, ChainId, ProtocolHash)
 import Tezos.Json
 
 data AppConfig = AppConfig
@@ -36,6 +36,8 @@ data AppConfig = AppConfig
   , _appConfig_kilnDataDir :: FilePath
   , _appConfig_kilnNodeConfig :: NodeConfigFile
   , _appConfig_chainId :: ChainId
+  , _appConfig_kilnNodeCustomArgs :: Maybe Text
+  , _appConfig_binaryPaths :: Maybe BinaryPaths
   }
 
 class HasAppConfig a where
@@ -176,6 +178,13 @@ data NodeConfigFile = NodeConfigFile
   , _nodeConfigFile_shell :: !(Maybe NodeConfigShell)
   }
 
+data BinaryPaths = BinaryPaths
+  { _binaryPaths_nodePath :: FilePath
+  , _binaryPaths_clientPath :: FilePath
+  , _binaryPaths_bakerEndorserPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
+  }
+  deriving (Show)
+
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
     = map (\case {'_' -> '-'; x -> x})
@@ -191,4 +200,5 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   , ''NodeConfigShellChainValidator
   , ''NodeConfigShellPeerValidator
   , ''NodeConfigShellPrevalidator
+  , ''BinaryPaths
   ]

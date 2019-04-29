@@ -68,7 +68,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir)
+import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..))
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -152,8 +152,17 @@ backendImpl cfg serve = do
     (pure $ _opts_kilnDataDir cfg)
     (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
+  !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
+
+  !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
+    (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
+    (getJSONConfigFromFile $ configPath Config.binaryPaths)
+
   let
     maybeNamedChain = either Just (const Nothing) chain
+    maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
+    maybeNamedChainOrPaths = either (Just . Left)
+      (const $ maybe Nothing (Just . Right) binaryPaths) chain
 
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
@@ -296,7 +305,7 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId
+        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId kilnNodeCustomArgs binaryPaths
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -343,11 +352,11 @@ backendImpl cfg serve = do
       when checkForUpgrade $
         addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< internalNodeWorker appConfig logger db namedChain
+      for_ maybeNamedChainOrPaths $ \v -> do
+        addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
-        addFinalizer =<< bakerDaemonProcess appConfig logger db
-        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db namedChain
+        addFinalizer =<< bakerDaemonProcess appConfig logger db v
+        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
@@ -422,6 +431,7 @@ data Opts = Opts
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   , _opts_kilnNodePort :: !(Maybe Port)
   , _opts_kilnDataDir :: !(Maybe FilePath)
+  , _opts_binaryPaths :: !(Maybe Text)
   }
 makeLenses ''Opts
 
@@ -442,13 +452,14 @@ instance Semigroup Opts where
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
+    , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -499,6 +510,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
       ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
+
+  , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
+      ("Custom paths to tezos binaries.")
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

@@ -37,10 +37,9 @@ let
 
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
-        src = ./.;
-        buildInputs = [ pkgs.dpkg pkgs.perl ];
+        src = ./CHANGELOG.md;
         exportReferencesGraph =
-          [ "closure" run-kiln-exe ];
+          [ "closure" obApp.exe ];
         builder = pkgs.writeScript "builder.sh" ''
           source "$stdenv/setup"
           mkdir -p $out
@@ -51,7 +50,7 @@ let
           mkdir -p $DEBDIR/DEBIAN
           cp ${control} $DEBDIR/DEBIAN/control
           cp ${deb-copyright} $DEBDIR/DEBIAN/copyright
-          cp $src/CHANGELOG.md $DEBDIR/DEBIAN/changelog
+          cp $src $DEBDIR/DEBIAN/changelog
           cp ${deb-pre-install}  $DEBDIR/DEBIAN/preinst
           cp ${deb-post-install}  $DEBDIR/DEBIAN/postinst
           cp ${deb-pre-rm}  $DEBDIR/DEBIAN/prerm
@@ -60,22 +59,23 @@ let
           # make install file structure
           mkdir -p $DEBDIR/usr/bin
           mkdir -p $DEBDIR/etc/${pkgName}
+          mkdir -p $DEBDIR/etc/sysctl.d
           mkdir -p $DEBDIR/lib/systemd/system/
           mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
           mkdir -p $DEBDIR/${exe-dir}
 
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
 
-          cp ${run-kiln-exe}/bin/run-kiln $DEBDIR/usr/bin/
-          sed -i '1s;^;#!/bin/bash\n;' $DEBDIR/usr/bin/run-kiln
+          cp ${run-kiln-exe}/bin/* $DEBDIR/usr/bin/
 
           cp ${serviceFiles} $DEBDIR/lib/systemd/system/${pkgName}.service
+          echo 'kernel.unprivileged_userns_clone=1' > $DEBDIR/etc/sysctl.d/10-kiln-userns.conf
 
           # User can modify this to specify optional args like --network, --port
           echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
 
           # copy nix closure
-          storePaths=$(perl ${pkgs.pathsFromGraph} closure)
+          storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
           cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
@@ -103,6 +103,7 @@ let
          adduser --system --quiet --ingroup kiln --no-create-home --home /var/lib/kiln kiln
          adduser --quiet kiln plugdev
          chown -R kiln /var/lib/kiln
+         service procps start
     esac
     if [ -d /run/systemd/system ]; then
         systemctl --system daemon-reload >/dev/null
@@ -172,11 +173,11 @@ let
   run-kiln-exe =
     let
       # Not using writeScriptBin here, as we want to use /bin/bash
-      run-backend = pkgs.writeTextFile { name = "run-backend"; executable = true; text = ''
-        #!/bin/bash
+      run-backend = ''
+        #!/usr/bin/env bash
         cd '${exe-dir}'
-        ./backend --kiln-data-dir='${data-dir}' $@
-      ''; };
+        ./backend --kiln-data-dir='${data-dir}' \$@
+      '';
 
       # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
       # We need to do a nested unshare (after doing mount) to change to a non-root shell
@@ -184,8 +185,8 @@ let
       # (see error EPERM, in man 2 unshare)
       # 
       # So in order to do a nested unshare we instead do 'pivot_root'
-      do-mount-and-pivot = pkgs.writeTextFile { name = "do-mount-and-pivot"; executable = true; text = ''
-        #!/bin/bash
+      do-mount-and-pivot = ''
+        #!/usr/bin/env bash
         mount --bind '${root-dir}'  '${root-dir}'
         mount --rbind /proc  '${root-dir}/proc'
         mount --rbind --make-unbindable '${nix-store-root}/nix'   '${root-dir}/nix'
@@ -203,29 +204,30 @@ let
         cd '${root-dir}'
         pivot_root . oldroot
         cd /
-        exec '${do-umount-and-unshare}' $@
-      ''; };
-
-      do-umount-and-unshare = pkgs.writeTextFile { name = "do-umount-and-unshare"; executable = true; text = ''
-        #!/bin/bash
-        umount -l oldroot
-        exec unshare --user '${run-backend}' $@
-      ''; };
-
-      # not putting #!/bin/bash here as it gets replaced by /nix/store during nix-build
-      mainScript = pkgs.writeTextFile { name = "run-kiln-mainScript"; executable = true; text = ''
-        exec unshare --mount --map-root-user '${nix-store-root}/${do-mount-and-pivot}' $@
-      ''; };
-
-    in pkgs.stdenv.mkDerivation {
-      name = "run-kiln-exe";
-      src = ./.;
-      propagatedBuildInputs = [ obApp.exe ];
-      installPhase = ''
-        mkdir -p $prefix/bin
-        cp ${mainScript} $prefix/bin/run-kiln
+        exec do-umount-and-unshare \$@
       '';
-    };
+
+      do-umount-and-unshare = ''
+        #!/usr/bin/env bash
+        umount -l oldroot
+        exec unshare --user run-backend \$@
+      '';
+
+      mainScript = ''
+        #!/usr/bin/env bash
+        exec unshare --mount --map-root-user do-mount-and-pivot \$@
+      '';
+
+    in pkgs.runCommand "run-kiln-exe" {
+        dontPatchShebangs = true;
+      } ''
+        mkdir -p $prefix/bin
+        echo -n "${mainScript}" > $prefix/bin/run-kiln
+        echo -n "${do-mount-and-pivot}" > $prefix/bin/do-mount-and-pivot
+        echo -n "${do-umount-and-unshare}" > $prefix/bin/do-umount-and-unshare
+        echo -n "${run-backend}" > $prefix/bin/run-backend
+        chmod +x $prefix/bin/*
+      '';
 
   # Also see obelisk/default.nix systemd.services, ideally these two should be in sync somehow
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''

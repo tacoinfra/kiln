@@ -215,15 +215,13 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         Right () -> do
           getInternalNode >>= \case
             Nothing -> pure ()
-            Just (nid, _nodeData) -> do
+            Just (nid, nodeData) -> do
               update
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
                 ]
                 CondEmpty
-              _ <- [executeQ|
-                UPDATE "ProcessData" p SET running = False
-                  FROM "NodeInternal" n
-                WHERE p.id = n."data#data"|]
+              let pid = _deletableRow_data nodeData
+              update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
         where
