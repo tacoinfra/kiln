@@ -113,8 +113,8 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
       ++ (if hasUserConfigFile then [] else [ "--config-file", configPath]) ++
       [
         "--data-dir", dataDir,
-        "--rpc-addr", ":" <> nodeRpcPort,
-        "--net-addr", ":" <> nodeNetPort
+        "--rpc-addr", "127.0.0.1:" <> nodeRpcPort,
+        "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
       ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
       ++ nodeExtraArgs
