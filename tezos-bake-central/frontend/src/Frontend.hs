@@ -75,6 +75,7 @@ import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
 import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
+import Common.Alerts (isUserResolvable)
 import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
@@ -477,6 +478,7 @@ networkUpdateAlert elua = do
   let namedChain = _errorLogNetworkUpdate_namedChain elua
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
+    (LogTag_NetworkUpdate :=> pure elua)
     (icon "icon-alert-badge big blue")
     header
     Nothing
@@ -486,7 +488,6 @@ networkUpdateAlert elua = do
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
-    (Just $ LogTag_NetworkUpdate :=> pure elua)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -1588,8 +1589,11 @@ bakersTab =
          resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
            icon "icon-check"
            text "Resolve All"
-         let toLogTag (f :=> k) = let g = LogTag_Baker f in g :=> Const (errorLogIdForErrorLogView $ g :=> k)
-             alerts = concatMap (fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+         let
+           toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
+             then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
+             else Nothing
+           alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
          _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
          elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1686,20 +1690,21 @@ bakersTab =
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \errorView@(bTag :=> Identity log) ->
       let
         pkh = bakerIdForBakerErrorLogView errorView
+        ev = LogTag_Baker bTag :=> Identity log
       in case bTag of
         -- TODO
         BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-        BakerLogTag_BakerMissed -> renderBakerError (bakerMissedDescriptions log) pkh
-        BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
-        BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
-        BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
-        BakerLogTag_InsufficientFunds -> renderBakerError (bakerInsufficientFundsDescriptions log) pkh
+        BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
+        BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
+        BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
+        BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
+        BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
 
       where
-        renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
-        renderBakerError dsc pkh = do
+        renderBakerError :: ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
+        renderBakerError ev dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
-          renderResolvableSplashAlert
+          renderResolvableSplashAlert ev
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
             (_bakerErrorDescriptions_title dsc <> ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
@@ -1712,7 +1717,6 @@ bakersTab =
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)
-            (_bakerErrorDescriptions_userResolvable dsc)
 
     tile
       :: m () -- ^ Title
@@ -1831,20 +1835,20 @@ bakersTab =
               *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
-  => m () -- ^ Alert icon
+  => ErrorLogView
+  -> m () -- ^ Alert icon
   -> Text -- ^ Title
   -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
-  -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
   -> m ()
-renderResolvableSplashAlert splashIcon title entity desc mReq = do
+renderResolvableSplashAlert e@(etag :=> _) splashIcon title entity desc = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
-    for_ mReq $ \resolveReq -> do
+    when (isUserResolvable etag) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"
-      requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+      void $ requestingIdentity $ public (PublicRequest_ResolveAlert e) <$ resolve
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
