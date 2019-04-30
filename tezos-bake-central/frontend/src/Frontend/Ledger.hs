@@ -32,10 +32,14 @@ import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
+import qualified Reflex.Dom.Form.Validators as Validator
+import qualified Reflex.Dom.TextField as Txt
+import Reflex.Dom.Form.Widgets (formItem')
+import Reflex.Dom.Form.Widgets (validatedInput)
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
-
+import Data.Char (isDigit)
 import Tezos.Types
 
 import Common.Api
@@ -319,7 +323,13 @@ selectAddress ledger = divClass "select-address" $ mdo
           Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
       derivation <- divClass "ui field" $ do
         el "label" $ text "Derivation Path"
-        fmap DerivationPath . value <$> inputElement (def & inputElementConfig_initialValue .~ unDerivationPath (head derivs))
+        let initVal = unDerivationPath (head derivs)
+        dp <- formItem' "required" $ validatedInput validateBIP32 $ def
+          & Txt.setInitial initVal
+        let mDerivPath = ffor dp $ \case
+              Right t -> Just t
+              Left _ -> Nothing
+        fmap DerivationPath <$> holdDyn initVal (fmapMaybe id $ updated mDerivPath)
       pure $ SecretKey ledger . runIdentity <$> value curve <*> derivation
 
     specificRequest <- debounce 1 $ leftmost [updated manualSk, tag (current manualSk) pb]
@@ -345,6 +355,31 @@ selectAddress ledger = divClass "select-address" $ mdo
     ]
   let register = fmapMaybe id $ tag (current selection) submitted
   pure register
+
+validateBIP32 :: Validator.Validator t m Text
+validateBIP32 = Validator.Validator isValidBIP32 id
+
+-- Proper format [num]'/[num]'
+-- eg. "0'/0'"
+-- eg. "0'/2147483647'"
+-- eg. "2147483647'/2147483647'"
+isValidBIP32 :: Text -> Either Text Text
+isValidBIP32 t = parseDigit t >>= middle >>= parseDigit >>= \case
+  "'" -> Right t
+  _ -> errFormat
+  where
+    errFormat = Left "Incorrect format"
+    middle t1 = case T.stripPrefix "'/" t1 of
+      Nothing -> errFormat
+      Just t2 -> Right t2
+    maxVal = 2147483647 :: Int
+    parseDigit vt = case T.takeWhile isDigit vt of
+      "" -> errFormat
+      dt -> case readMaybe (T.unpack dt) of
+        Just v -> if v >= 0 && v <= maxVal
+          then Right $ T.dropWhile isDigit vt
+          else Left "Numerical value should be between 0 and 2,147,483,647"
+        Nothing -> errFormat
 
 setupComplete
   :: MonadRhyoliteFrontendWidget Bake t m
