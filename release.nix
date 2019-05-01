@@ -22,7 +22,8 @@ let
     dockerImage = root.dockerImage;
     kilnVM = root.kilnVM;
     kiln-debian = root.kiln-debian;
-    appAll = root.all;
+    app = root.exe;
+    all = root.all;
   });
 
 in perPlatform.x86_64-linux
