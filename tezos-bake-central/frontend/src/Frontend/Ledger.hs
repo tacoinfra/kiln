@@ -22,6 +22,7 @@
 module Frontend.Ledger (ledgerSetupSteps) where
 
 import Data.Bifunctor (bimap)
+import Data.Char (isDigit)
 import Data.Dependent.Sum (DSum(..), (==>))
 import Data.GADT.Compare.TH
 import qualified Data.Map as Map
@@ -361,24 +362,27 @@ validateBIP32 = Validator.Validator isValidBIP32 id
 
 -- Proper format [num]'/[num]'
 -- eg. "0'/0'"
--- eg. "0'/2147483647'"
+-- eg. "0'/2147483647'/3424'/23134'"
 -- eg. "2147483647'/2147483647'"
 isValidBIP32 :: Text -> Either Text Text
-isValidBIP32 t = parseDigit t >>= middle >>= parseDigit >>= \case
-  "'" -> Right t
-  _ -> errFormat
+isValidBIP32 t
+  | T.null t = Right t -- Empty string selects root path
+  | otherwise = go (8 :: Int) t -- Can have upto 8 numbers
   where
+    go n t1 = parseDigit t1 >>= \case
+      "'" -> Right t -- return the original
+      t2 -> parseMiddle t2 >>= (\t3 -> if n > 1 then go (n - 1) t3 else errFormat)
     errFormat = Left "Incorrect format"
-    middle t1 = case T.stripPrefix "'/" t1 of
+    parseMiddle t1 = case T.stripPrefix "'/" t1 of
       Nothing -> errFormat
       Just t2 -> Right t2
-    maxVal = 2147483647 :: Int
-    parseDigit vt = case T.takeWhile isDigit vt of
+    maxVal = 2 ^ (31 :: Int) - 1 :: Int
+    parseDigit t1 = case T.takeWhile isDigit t1 of
       "" -> errFormat
       dt -> case readMaybe (T.unpack dt) of
         Just v -> if v >= 0 && v <= maxVal
-          then Right $ T.dropWhile isDigit vt
-          else Left "Numerical value should be between 0 and 2,147,483,647"
+          then Right $ T.dropWhile isDigit t1
+          else Left $ "Numerical value should be between 0 and " <> tshow maxVal
         Nothing -> errFormat
 
 setupComplete
