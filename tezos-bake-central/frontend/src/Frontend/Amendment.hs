@@ -32,9 +32,11 @@ import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Time as Time
 
+import Tezos.Operation
 import Tezos.Types
 
 import Common.App
+import Common.Config
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Common
@@ -45,6 +47,12 @@ currentCyclePosition a info = fromIntegral $ _amendment_position a `div` _protoI
 
 cyclesPerPeriod :: ProtoInfo -> Cycle
 cyclesPerPeriod info = fromIntegral $ _protoInfo_blocksPerVotingPeriod info `div` _protoInfo_blocksPerCycle info
+
+textBallot :: Ballot -> Text
+textBallot = \case
+  Ballot_Yay -> "Yea"
+  Ballot_Nay -> "Nay"
+  Ballot_Pass -> "Pass"
 
 textPeriod :: VotingPeriodKind -> Text
 textPeriod = \case
@@ -262,3 +270,230 @@ progressDots currentCycle' maxCycle' = do
       GT -> "completed"
       EQ -> "current"
       LT -> "upcoming"
+
+-- TODO remove and replace with watchProposals
+watchFakeProposals :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe [PeriodProposal]))
+watchFakeProposals = pure $ pure $ Just
+  [ PeriodProposal
+    { _periodProposal_hash = "PtRCTVieQf6hJhuMc1JvhAf5FJhsA9x7x3RGZrHN6SfeDZgdTnm"
+    , _periodProposal_votes = 1324
+    , _periodProposal_chainId = chainId
+    , _periodProposal_votingPeriod = vp
+    }
+  , PeriodProposal
+    { _periodProposal_hash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+    , _periodProposal_votes = 584
+    , _periodProposal_chainId = chainId
+    , _periodProposal_votingPeriod = vp
+    }
+  ]
+  where !chainId = "NetXNFsYDkaZwwD"
+        !vp = 100
+
+watchFakePeriodTestingVote :: (Applicative m, Reflex t) => m (Dynamic t (Maybe PeriodTestingVote))
+watchFakePeriodTestingVote = pure $ pure $ Just $ PeriodTestingVote $ PeriodVote
+  { _periodVote_proposal = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  , _periodVote_ballots = Ballots 0 0 0
+  , _periodVote_quorum = 0
+  , _periodVote_totalRolls = 0
+  , _periodVote_chainId = "NetXNFsYDkaZwwD"
+  , _periodVote_votingPeriod = 0
+  }
+
+watchFakePeriodPromotionVote :: (Applicative m, Reflex t) => m (Dynamic t (Maybe PeriodPromotionVote))
+watchFakePeriodPromotionVote = pure $ pure $ Just $ PeriodPromotionVote $ PeriodVote
+  { _periodVote_proposal = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  , _periodVote_ballots = Ballots 0 0 0
+  , _periodVote_quorum = 0
+  , _periodVote_totalRolls = 0
+  , _periodVote_chainId = "NetXNFsYDkaZwwD"
+  , _periodVote_votingPeriod = 0
+  }
+
+-- | Modal for voting
+voteModal :: forall r t m.
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadReader r m, HasFrontendConfig r
+  , MonadJSM (Performable m)
+  )
+  => Dynamic t VotingPeriodKind -> Event t () -> m (Event t ())
+voteModal votingPeriodKind' close = do
+  --- TODO holdUniqDyn votingPeriodKind'
+  vpk <- sample $ current votingPeriodKind'
+  choice <- value <$> dropdown vpk (pure $ Map.fromList $ (\x -> (x, tshow x)) <$> [minBound .. maxBound])
+    (def & dropdownConfig_attributes .~ pure ("class" =: "ui selection dropdown"))
+  next <- uiDynButton (pure "purple") $ text "Set period"
+  votingPeriodKind <- holdDyn vpk $ tag (current choice) next
+  ---
+  pb <- getPostBuild
+  rec
+    (_, replaced) <- runWithReplace blank $ leftmost
+      [ newPeriod <$> updated votingPeriodKind
+      , attachWith (\p () -> selectPeriod p) (current votingPeriodKind) pb
+      , attachWith (\p () -> selectPeriod p) (current votingPeriodKind) replaces
+      ]
+    (replaces, closes) <- fanEither <$> switchHold never replaced
+  pure $ close <> closes
+  where
+
+    -- | When a new period arrives, we display this interstitial to inform the
+    -- user why they were redirected
+    newPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
+    newPeriod p = do
+      divClass "ui header" $ text "The period has changed."
+      el "p" $ text $ "The period is now " <> textPeriod p
+      (fmap . fmap) Left $ uiDynButton (pure "primary") $ text "Continue"
+
+    selectPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
+    selectPeriod = fmap (fmap Right . switchDyn) . \case
+      VotingPeriodKind_Proposal -> workflow proposalFlow
+      VotingPeriodKind_TestingVote -> workflow explorationFlow
+      VotingPeriodKind_Testing -> pure <$> getPostBuild -- close immediately
+      VotingPeriodKind_PromotionVote -> workflow promotionFlow
+
+    proposalFlow :: Workflow t m (Event t ())
+    proposalFlow = Workflow $ do
+      divClass "ui header" $ text "Proposal Period"
+      mProposals <- maybeDyn =<< watchFakeProposals
+      vote <- el "table" $ do
+        el "thead" $ el "tr" $ do
+          el "th" $ text "Proposal Hash"
+          el "th" $ text "Votes"
+          el "th" $ text "Cast Vote"
+        el "tbody" $ switchHold never <=< dyn $ ffor mProposals $ \case
+          Nothing -> divClass "ui active loader" $ pure never
+          -- TODO handle empty list gracefully
+          Just proposals -> fmap (switchDyn . fmap leftmost) $ simpleList proposals $ \pp -> el "tr" $ do
+            el "td" $ do
+              let protocolHash = toBase58Text . _periodProposal_hash <$> pp
+              copyButton $ current protocolHash
+              dynText protocolHash
+            el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> pp
+            el "td" $ do
+              pending <- holdDyn False never -- TODO
+              voted <- holdDyn False never -- TODO
+              vote <- uiDynButton (ffor2 pending voted $ \p v -> if p then "pending" else if v then "voted" else "primary horizontal label") $ text "Vote"
+              pure $ attachWith (\p () -> _periodProposal_hash p) (current pp) vote
+      pure (never, waitForWalletAppFlow . castProposalVoteFlow <$> vote)
+
+    explorationFlow :: Workflow t m (Event t ())
+    explorationFlow = someVotingPeriodFlow "Exploration Period" "exploration explanation" (pure "Test Period")
+      (maybeDyn . (fmap . fmap) _periodTestingVote_periodVote =<< watchFakePeriodTestingVote)
+
+    promotionFlow :: Workflow t m (Event t ())
+    promotionFlow = someVotingPeriodFlow "Promotion Period" "promotion explanation"
+      (asks $ showChain . _frontendConfig_chain . view frontendConfig)
+      (maybeDyn . (fmap . fmap) _periodPromotionVote_periodVote =<< watchFakePeriodPromotionVote)
+
+    someVotingPeriodFlow
+      :: Text -- ^ Header
+      -> Text -- ^ Explanation
+      -> m Text -- ^ Promote to <X>
+      -> m (Dynamic t (Maybe (Dynamic t PeriodVote))) -- ^ Watch relevant vote
+      -> Workflow t m (Event t ())
+    someVotingPeriodFlow header explanation promote getPeriodVote = Workflow $ do
+      mPeriodVote <- getPeriodVote
+      divClass "ui header" $ text header >> text " Cycles " -- TODO
+      divClass "detail" $ text explanation
+      el "div" $ text "Votes will be cast as your Kiln Baker."
+      vote <- switchHold never <=< dyn $ ffor mPeriodVote $ \case
+        Nothing -> divClass "ui active loader" $ pure never
+        Just pv -> do
+          divClass "detail" $ text "Proposal Hash"
+          let proposal = _periodVote_proposal <$> pv
+              hashText = toBase58Text <$> proposal
+          el "div" $ do
+            copyButton $ current hashText
+            dynText hashText
+          el "p" $ do
+            text $ "Promote this proposal to "
+            text =<< promote
+          let voteButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
+          vote <- leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
+          pure $ attachWith castBallotFlow (current proposal) vote
+      pure (never, vote)
+
+    waitForWalletAppFlow
+      :: Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
+      -> Workflow t m (Event t ())
+    waitForWalletAppFlow nextFlow = Workflow $ do
+      divClass "ui header" $ text "Looking for Tezos Wallet app on Ledger device..."
+      el "p" $ text "Voting requires the Tezos Wallet app version 1.5.0 or higher to be open. Voting cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
+      divClass "ui warning message" $ text "TODO: Next baking opportunity"
+      divClass "detail" $ do
+        text "To install the Tezos Wallet app:"
+        el "ol" $ do
+          el "li" $ text "Install and open Ledger Live: https://www.ledger.com/pages/ledger-live"
+          el "li" $ text "Go to Manager and search for “Tezos”"
+          el "li" $ text "Install the “Tezos Wallet” app"
+          el "li" $ text "Open the Tezos Wallet app on your ledger"
+      walletOpen <- uiDynButton (pure "orange") $ text "Connect Ledger"
+      pure (never, nextFlow <$ walletOpen)
+
+    castBallotFlow :: ProtocolHash -> Ballot -> Workflow t m (Event t ())
+    castBallotFlow proposal ballot = Workflow $ do
+      divClass "ui header" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
+      el "p" $ text $ toBase58Text proposal
+      cast <- uiDynButton (pure "primary") $ text "Cast Vote"
+      let prompt = text $ T.unlines
+            [ "Submit Proposal"
+            , ""
+            , "Protocol"
+            , toBase58Text proposal
+            , ""
+            , "Source"
+            , "tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" -- TODO
+            , ""
+            , "Period"
+            , "Proposal" -- TODO
+            ]
+      pure (never, respondToPromptFlow (Right $ castBallotFlow proposal ballot) prompt <$ cast)
+
+    castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
+    castProposalVoteFlow proposal = Workflow $ do
+      divClass "ui header" $ text "Cast a vote for this proposal?"
+      el "p" $ text $ toBase58Text proposal
+      cast <- uiDynButton (pure "primary") $ text "Cast Vote"
+      let prompt = text $ T.unlines
+            [ "Submit Proposal"
+            , ""
+            , "Protocol"
+            , toBase58Text proposal
+            , ""
+            , "Source"
+            , "tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" -- TODO
+            , ""
+            , "Period"
+            , "Proposal"
+            ]
+      pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ cast)
+
+    respondToPromptFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> m () -- ^ Prompt to show
+      -> Workflow t m (Event t ())
+    respondToPromptFlow whereToGo prompt = Workflow $ do
+      divClass "ui header" $ text "Respond to the prompt on your Ledger Device..."
+      divClass "detail" $ text "Your Ledger Device should show the following prompt:"
+      _ <- el "p" prompt
+      declined <- uiDynButton (pure "red") $ text "Decline"
+      accepted <- uiDynButton (pure "green") $ text "Accept"
+      pure (never, leftmost [voteCastSuccessfullyFlow whereToGo <$ accepted, ledgerDeclinedFlow (respondToPromptFlow whereToGo prompt) <$ declined])
+
+    ledgerDeclinedFlow
+      :: Workflow t m (Event t ()) -- ^ Retry using this workflow
+      -> Workflow t m (Event t ())
+    ledgerDeclinedFlow retryFlow = Workflow $ do
+      divClass "ui header" $ text "The request was declined by the Ledger Device."
+      text "The Ledger prompt was rejected or timed out. Please try again."
+      retry <- uiDynButton (pure "primary") $ text "Retry"
+      pure (never, retryFlow <$ retry)
+
+    voteCastSuccessfullyFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> Workflow t m (Event t ())
+    voteCastSuccessfullyFlow whereToGo = Workflow $ do
+      divClass "ui header" $ text "Your vote has been cast."
+      text "Kiln will confirm when your vote has been included in the blockchain."
+      continue <- uiDynButton (pure "primary") $ text "Continue"
+      pure $ fanEither $ whereToGo <$ continue
