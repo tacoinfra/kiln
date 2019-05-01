@@ -40,7 +40,6 @@ import Reflex.Dom.Form.Widgets (validatedInput)
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
-import Data.Char (isDigit)
 import Tezos.Types
 
 import Common.Api
@@ -283,7 +282,8 @@ selectAddress
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]
-      derivs = [DerivationPath "0'/0'", DerivationPath ""]
+      derivs = [primaryDeriv, DerivationPath ""]
+      primaryDeriv = DerivationPath "0'/0'"
       secretKeys = SecretKey ledger <$> curves <*> derivs
   elClass "h5" "ui header" $ text "Select an account to bake with."
   let submitted = domEvent Submit formEl
@@ -324,7 +324,7 @@ selectAddress ledger = divClass "select-address" $ mdo
           Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
       derivation <- divClass "ui field" $ do
         el "label" $ text "Derivation Path"
-        let initVal = unDerivationPath (head derivs)
+        let initVal = unDerivationPath primaryDeriv
         dp <- formItem' "required" $ validatedInput validateBIP32 $ def
           & Txt.setInitial initVal
         let mDerivPath = ffor dp $ \case
