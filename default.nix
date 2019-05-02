@@ -374,8 +374,24 @@ let
     };
   });
 
+  installKiln = pkgs.writeScriptBin "install-kiln" ''
+    #!/usr/bin/env bash
+    set -e
+    if [[ $# -eq 0 ]] ; then
+       echo "Installing Kiln in directory : 'app'"
+       export KILN_INSTALL_PATH=app
+    else
+       echo "Installing Kiln in directory : $1"
+       export KILN_INSTALL_PATH=$1
+    fi
+    mkdir -p $KILN_INSTALL_PATH
+    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    echo "Install Complete!"
+    echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
+  '';
+
 in (obApp null) // {
-  inherit pkgs dockerExe kilnVMConfig dockerImage;
+  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =
