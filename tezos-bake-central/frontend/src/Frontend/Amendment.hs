@@ -98,7 +98,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
             text " - "
             dynText $ showDate <$> endTime
           uncurry progressDots $ splitDynPure $ ffor2 amendment protoInfo $ \a i -> case compare p (_amendment_period a) of
-            LT -> (cyclesPerPeriod i, cyclesPerPeriod i)
+            LT -> (cyclesPerPeriod i + 1, cyclesPerPeriod i)
             EQ -> (currentCyclePosition a i, cyclesPerPeriod i)
             GT -> (0, cyclesPerPeriod i)
           elAttr "img" ("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") blank
