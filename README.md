@@ -89,7 +89,7 @@ For more information, see notes on configuring [Telegram](#configuring-telegram-
 
 ### Running a node
 
-Click *Add Node* in the left panel. Then click *Start Node* on the left side of the modal. Kiln will generate an identity for a local node with the RPC port 8732 and immediately begin syncing with the blockchain. If this port is already in use, Kiln will have difficulty monitoring this node (the port can be modified by [command line options](#command-line-options)). The Kiln Node can be stopped or restarted through the options menu on the Node's tile on the Dashboard.
+Click *Add Node* in the left panel. Then click *Start Node* on the left side of the modal. Kiln will generate an identity for a local node with the RPC port 8733 and immediately begin syncing with the blockchain. If this port is already in use, Kiln will have difficulty monitoring this node (the port can be modified by [command line options](#command-line-options)). The Kiln Node can be stopped or restarted through the options menu on the Node's tile on the Dashboard.
 
 ### Adding monitored nodes
 

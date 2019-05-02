@@ -144,15 +144,21 @@ backendImpl cfg serve = do
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
-  !(kilnNodePort :: Port) <- fmap (fromMaybe Config.defaultKilnNodePort) $ liftA2 (<|>)
-    (pure $ _opts_kilnNodePort cfg)
-    (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodePort)
+  !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ liftA2 (<|>)
+    (pure $ _opts_kilnNodeRpcPort cfg)
+    (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeRpcPort)
+
+  !(kilnNodeNetPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeNetPort) $ liftA2 (<|>)
+    (pure $ _opts_kilnNodeNetPort cfg)
+    (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeNetPort)
 
   !(kilnDataDir :: FilePath) <- fmap (fromMaybe Config.defaultKilnDataDir) $ liftA2 (<|>)
     (pure $ _opts_kilnDataDir cfg)
     (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
-  !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
+  !(kilnNodeCustomArgs :: Maybe Text) <- liftA2 (<|>)
+    (pure $ _opts_kilnNodeCustomArgs cfg)
+    (getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs)
 
   !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
     (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
@@ -305,7 +311,16 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig emailFromAddress kilnNodePort kilnDataDir defaultNodeConfigFile chainId kilnNodeCustomArgs binaryPaths
+        appConfig = AppConfig
+          { _appConfig_emailFromAddress = emailFromAddress
+          , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
+          , _appConfig_kilnNodeNetPort = kilnNodeNetPort
+          , _appConfig_kilnDataDir = kilnDataDir
+          , _appConfig_kilnNodeConfig = defaultNodeConfigFile
+          , _appConfig_chainId = chainId
+          , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
+          , _appConfig_binaryPaths = binaryPaths
+          }
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
@@ -429,7 +444,9 @@ data Opts = Opts
   , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
-  , _opts_kilnNodePort :: !(Maybe Port)
+  , _opts_kilnNodeRpcPort :: !(Maybe Port)
+  , _opts_kilnNodeNetPort :: !(Maybe Port)
+  , _opts_kilnNodeCustomArgs :: !(Maybe Text)
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   }
@@ -450,7 +467,9 @@ instance Semigroup Opts where
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
-    , _opts_kilnNodePort = rightBiased (<|>) _opts_kilnNodePort
+    , _opts_kilnNodeRpcPort = rightBiased (<|>) _opts_kilnNodeRpcPort
+    , _opts_kilnNodeNetPort = rightBiased (<|>) _opts_kilnNodeNetPort
+    , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     }
@@ -459,7 +478,7 @@ instance Semigroup Opts where
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -505,11 +524,17 @@ optsArgDescr =
   , mkReqArg Config.networkGitLabProjectId "PROJECTID" (set opts_networkGitLabProjectId . Just)
       "The GitLab project id to query for network updates. Defaults to off." -- TODO default
 
-  , mkReqArg Config.kilnNodePort "PORT" (set opts_kilnNodePort . Just . Config.parsePortUnsafe)
-      ("The port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodePort <> ".")
+  , mkReqArg Config.kilnNodeRpcPort "PORT" (set opts_kilnNodeRpcPort . Just . Config.parsePortUnsafe)
+      ("The RPC port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodeRpcPort <> ".")
+
+  , mkReqArg Config.kilnNodeNetPort "PORT" (set opts_kilnNodeNetPort . Just . Config.parsePortUnsafe)
+      ("The net-addr port to use for the kiln node. Defaults to " <> show Config.defaultKilnNodeNetPort <> ".")
 
   , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
       ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
+
+  , mkReqArg Config.kilnNodeCustomArgs "ARGS" (set opts_kilnNodeCustomArgs . Just)
+      ("Custom arguments for the Kiln Node.")
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
       ("Custom paths to tezos binaries.")

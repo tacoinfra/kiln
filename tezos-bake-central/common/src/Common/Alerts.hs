@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -8,7 +9,6 @@ module Common.Alerts where
 
 import Prelude hiding (cycle)
 import Data.Aeson
-import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (sequenceA_)
 import Data.String (IsString(..))
 import qualified Data.Text as T
@@ -120,8 +120,24 @@ data BakerErrorDescriptions = BakerErrorDescriptions
   , _bakerErrorDescriptions_warning :: !(Maybe Text)
   , _bakerErrorDescriptions_fix :: !Text
   , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
-  , _bakerErrorDescriptions_userResolvable :: !(Maybe (DSum LogTag Identity))
   }
+
+isUserResolvable :: LogTag t -> Bool
+isUserResolvable = \case
+  LogTag_Node nlt -> case nlt of
+    NodeLogTag_InaccessibleNode -> False
+    NodeLogTag_NodeWrongChain -> False
+    NodeLogTag_BadNodeHead -> False
+    NodeLogTag_NodeInvalidPeerCount -> True
+  LogTag_Baker blt -> case blt of
+    BakerLogTag_MultipleBakersForSameBaker -> True
+    BakerLogTag_BakerMissed -> True
+    BakerLogTag_BakerDeactivated -> False
+    BakerLogTag_BakerDeactivationRisk -> False
+    BakerLogTag_BakerAccused -> True
+    BakerLogTag_InsufficientFunds -> False
+  LogTag_BakerNoHeartbeat -> True
+  LogTag_NetworkUpdate -> True
 
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
@@ -136,7 +152,6 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
       in ("Resolved: Baker no longer at risk of being marked as inactive."
          , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " is no longer at risk of being marked as inactive."
          )
-  , _bakerErrorDescriptions_userResolvable = Nothing
   }
   where
     preserved = unCycle $ _errorLogBakerDeactivationRisk_preservedCycles elog
@@ -156,7 +171,6 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
       in ("Resolved: Baker no longer inactive"
          , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " has been re-registered. The earliest signing operation may be assigned to this baker is " <> tshow (preserved + 2) <> " cycles."
          )
-  , _bakerErrorDescriptions_userResolvable = Nothing
   }
   where
     preserved = unCycle $ _errorLogBakerDeactivated_preservedCycles elog
@@ -172,7 +186,6 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
-  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_Baker BakerLogTag_BakerMissed :=> pure elog
   }
   where
     lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
@@ -193,7 +206,6 @@ bakerInsufficientFundsDescriptions _{-elog-} = BakerErrorDescriptions
   , _bakerErrorDescriptions_resolved = \_ ->
       ( "Resolved: Baker has sufficient funds to receive rights"
       , "This baker now has a large enough staking balance to receive baking rights.")
-  , _bakerErrorDescriptions_userResolvable = Nothing
   }
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
@@ -229,7 +241,6 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       turnOffShort
       accusedInSameCycle
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
-  , _bakerErrorDescriptions_userResolvable = Just $ LogTag_Baker BakerLogTag_BakerAccused :=> pure elog
   }
   where
     firstParagraph =

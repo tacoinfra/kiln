@@ -4,7 +4,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -22,9 +21,11 @@ import Text.URI (URI)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
+import qualified Language.Haskell.TH.Quote as QQ
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
+import Common.Config (defaultKilnNodeRpcPort)
 import Common.URI (Port)
 import ExtraPrelude
 import Tezos.Base58Check (toBase58Text, ChainId, ProtocolHash)
@@ -32,7 +33,8 @@ import Tezos.Json
 
 data AppConfig = AppConfig
   { _appConfig_emailFromAddress :: Address
-  , _appConfig_kilnNodePort :: Port
+  , _appConfig_kilnNodeRpcPort :: Port
+  , _appConfig_kilnNodeNetPort :: Port
   , _appConfig_kilnDataDir :: FilePath
   , _appConfig_kilnNodeConfig :: NodeConfigFile
   , _appConfig_chainId :: ChainId
@@ -49,9 +51,9 @@ instance HasAppConfig AppConfig where
 askAppConfig :: (HasAppConfig a, MonadReader a m) => m AppConfig
 askAppConfig = asks $ view getAppConfig
 
-kilnNodeURI :: AppConfig -> URI
-kilnNodeURI appConfig = fromRight [Uri.uri|http://127.0.0.1:8732|] $
-  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodePort appConfig))
+kilnNodeRpcURI :: AppConfig -> URI
+kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
+  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig

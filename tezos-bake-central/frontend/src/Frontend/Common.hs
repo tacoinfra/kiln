@@ -186,7 +186,7 @@ copyButton content = mdo
   let conf = ffor state $ ("class" =:) . \case
         Nothing -> "blue icon-copy link icon"
         Just True -> "green icon-check icon"
-        Just False -> "red icon-cross icon"
+        Just False -> "red icon-x icon"
   copy <- fmap fst $ elDynAttr' "i" conf blank
   result <- copyToClipboard $ tag content $ domEvent Click copy
   delayed <- delay 1 result

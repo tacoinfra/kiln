@@ -22,6 +22,7 @@
 module Frontend.Ledger (ledgerSetupSteps) where
 
 import Data.Bifunctor (bimap)
+import Data.Char (isDigit)
 import Data.Dependent.Sum (DSum(..), (==>))
 import Data.GADT.Compare.TH
 import qualified Data.Map as Map
@@ -32,10 +33,13 @@ import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
+import qualified Reflex.Dom.Form.Validators as Validator
+import qualified Reflex.Dom.TextField as Txt
+import Reflex.Dom.Form.Widgets (formItem')
+import Reflex.Dom.Form.Widgets (validatedInput)
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
-
 import Tezos.Types
 
 import Common.Api
@@ -278,7 +282,8 @@ selectAddress
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]
-      derivs = [DerivationPath "0'/0'", DerivationPath ""]
+      derivs = [primaryDeriv, DerivationPath ""]
+      primaryDeriv = DerivationPath "0'/0'"
       secretKeys = SecretKey ledger <$> curves <*> derivs
   elClass "h5" "ui header" $ text "Select an account to bake with."
   let submitted = domEvent Submit formEl
@@ -319,7 +324,13 @@ selectAddress ledger = divClass "select-address" $ mdo
           Map.fromList $ ffor curves $ \c -> (c, text $ toSigningCurveText c)
       derivation <- divClass "ui field" $ do
         el "label" $ text "Derivation Path"
-        fmap DerivationPath . value <$> inputElement (def & inputElementConfig_initialValue .~ unDerivationPath (head derivs))
+        let initVal = unDerivationPath primaryDeriv
+        dp <- formItem' "required" $ validatedInput validateBIP32 $ def
+          & Txt.setInitial initVal
+        let mDerivPath = ffor dp $ \case
+              Right t -> Just t
+              Left _ -> Nothing
+        fmap DerivationPath <$> holdDyn initVal (fmapMaybe id $ updated mDerivPath)
       pure $ SecretKey ledger . runIdentity <$> value curve <*> derivation
 
     specificRequest <- debounce 1 $ leftmost [updated manualSk, tag (current manualSk) pb]
@@ -345,6 +356,34 @@ selectAddress ledger = divClass "select-address" $ mdo
     ]
   let register = fmapMaybe id $ tag (current selection) submitted
   pure register
+
+validateBIP32 :: Validator.Validator t m Text
+validateBIP32 = Validator.Validator isValidBIP32 id
+
+-- Proper format [num]'/[num]'
+-- eg. "0'/0'"
+-- eg. "0'/2147483647'/3424'/23134'"
+-- eg. "2147483647'/2147483647'"
+isValidBIP32 :: Text -> Either Text Text
+isValidBIP32 t
+  | T.null t = Right t -- Empty string selects root path
+  | otherwise = go (8 :: Int) t -- Can have upto 8 numbers
+  where
+    go n t1 = parseDigit t1 >>= \case
+      "'" -> Right t -- return the original
+      t2 -> parseMiddle t2 >>= (\t3 -> if n > 1 then go (n - 1) t3 else errFormat)
+    errFormat = Left "Incorrect format"
+    parseMiddle t1 = case T.stripPrefix "'/" t1 of
+      Nothing -> errFormat
+      Just t2 -> Right t2
+    maxVal = 2 ^ (31 :: Int) - 1 :: Int
+    parseDigit t1 = case T.takeWhile isDigit t1 of
+      "" -> errFormat
+      dt -> case readMaybe (T.unpack dt) of
+        Just v -> if v >= 0 && v <= maxVal
+          then Right $ T.dropWhile isDigit t1
+          else Left $ "Numerical value should be between 0 and " <> tshow maxVal
+        Nothing -> errFormat
 
 setupComplete
   :: MonadRhyoliteFrontendWidget Bake t m

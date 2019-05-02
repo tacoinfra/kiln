@@ -101,7 +101,8 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
 
   let
     nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
-    nodePort = show $ _appConfig_kilnNodePort appConfig
+    nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
+    nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
     -- (19/04/03) after zeronet reset, now it no longer supports archive mode
     useArchiveMode = False
@@ -112,7 +113,8 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
       ++ (if hasUserConfigFile then [] else [ "--config-file", configPath]) ++
       [
         "--data-dir", dataDir,
-        "--rpc-addr", ":" <> nodePort
+        "--rpc-addr", "127.0.0.1:" <> nodeRpcPort,
+        "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
       ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
       ++ nodeExtraArgs
@@ -193,13 +195,13 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
     epid1 = _bakerDaemonInternalData_endorserProcessData bdid
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
     epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
-    nodePort = show $ _appConfig_kilnNodePort appConfig
+    nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     alias = T.unpack aliasT
-    bakerArgs = [ "--port", nodePort
+    bakerArgs = [ "--port", nodeRpcPort
                 , "--base-dir", tezosClientDataDir appConfig
                 , "run", "with", "local", "node", nodeDataDir appConfig
                 , alias]
-    endorserArgs = ["--port", nodePort
+    endorserArgs = ["--port", nodeRpcPort
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
