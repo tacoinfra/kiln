@@ -9,13 +9,14 @@ preceding periods, if we are in a period after proposal).
 ## Tests
 
   1. Build the version of kiln to be tested
-  2. Run kiln as such:
-    ./backend --nodes=http://127.0.0.1:20000
+  2. Run kiln as such: `./backend --nodes=http://127.0.0.1:20000`
   3. Open the monitor in the browser
   4. From another terminal window, navigate to tezos-bake-monitor and run:
+  ```
     ob thunk unpack dep/tezos-baking-platform
     ob thunk unpack dep/tezos-baking-platform/tezos/master
     nix-shell -A tezos.master.sandbox dep/tezos-baking-platform --run 'flextesa voting dep/tezos-baking-platform/tezos/master/src/bin_client/test/proto_test_injection --base-port=20000 --interactive=true --pause-on-error=true'
+  ```
   5. Enter `q` in the interactive shell from the previous step. The node should be updated in kiln and show the first block.
   6. Enter `q` again. The top bar should be updated with the block and amendment period data. Verify that we are in the proposal period.
   7. After some time, flextesa will run up to block 41. You should see the popup updated as the proposal period resets, ending on the last proposal period in cycle 5-6.
