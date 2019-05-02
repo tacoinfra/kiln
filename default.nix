@@ -278,7 +278,7 @@ let
            export KILN_VM_STORE_PATH=`curl '${resultStorePathFile}'`
         else
            echo "Using the user supplied store path: $1"
-           export KILN_VM_STORE_PATH='$1'
+           export KILN_VM_STORE_PATH=$1
         fi
         echo "Downloading Kiln"
         nix copy --from 's3://tezos-nix-cache?region=eu-west-3' $KILN_VM_STORE_PATH
