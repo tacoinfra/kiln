@@ -365,7 +365,6 @@ let
         '';
         serviceConfig = {
           User = "kiln";
-          KillMode = "process";
           WorkingDirectory = "/home/kiln/app";
           Restart = "always";
           RestartSec = 5;
