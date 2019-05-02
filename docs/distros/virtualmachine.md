@@ -60,5 +60,19 @@ In order to do baking with Kiln you need to enable the Ledger device from its US
 
 `tezos-client`, `tezos-admin-client` and other `tezos-*` binaries are available to use from the terminal.
 
+## Moving chain data to separate disk
+
+The VM uses two virtual disks; one for the operating system, and another to store the Kiln data (including the chain data).
+The capacity of primary disk is 64 gb out of which about 8gb is used by the operating system.
+The capacity of data disk is 500gb and it stores all the chain data. The data disk is mounted on `/home/kiln/app` directory
+
+Since it is a separate file it can be conviniently copied in case your disk becomes full, or you want to get the chain data from another location.
+
+To change the location of the disk, first turn off the VM, then go to "File" -> "Virtual Media Manager"
+
+In the "HDD" tab right click "kiln-vm-disk002.vmdk" and select "Move..."
+Specify the target location in the next dialog.
+
+
 [1]: https://www.virtualbox.org/wiki/Downloads
 [2]: https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md
