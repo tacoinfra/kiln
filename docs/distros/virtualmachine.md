@@ -1,7 +1,7 @@
 # Virtual Machine
 
-Obsidian Systems provides Kiln virtual machine releases as a .ova file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with v0.5.2.
-This VM has been tested on VirtualBox only, on the host OS Windows, Mac and Ubuntu.
+Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with `v0.5.2`.
+The VM has been tested on VirtualBox only, on the host OS: Windows, Mac and Ubuntu.
 But this might work with other VM software like VMWare, and other hosts.
 
 ## Installation
@@ -14,9 +14,9 @@ But this might work with other VM software like VMWare, and other hosts.
 
 ## Running
 
-- After successfull import, run the "Kiln VM" by clicking the "Start"/ "Normal Start" button on menu
+- After successful import, run the "Kiln VM" by clicking the "Start"/ "Normal Start" button on menu
 
-- Once the VM is running, open http://localhost:8000 from the browser (FireFox) in the VM
+- Once the VM is running, Kiln will run automatically. Open http://localhost:8000 from the browser (FireFox) in the VM to access Kiln.
 
 ## Configuration
 
@@ -54,9 +54,9 @@ In order to do baking with Kiln you need to enable the Ledger device from its US
  
 - After enabling this reconnect the Ledger device, and enter the passcode again. Then restart the VM.
 
-- After restarting you can check if the device is detected properly by the `tezos-client list connected ledgers` command.
+- After restarting VM you can check if the device is detected properly by the `tezos-client list connected ledgers` command.
 
-## Use tezos binaries
+## Using tezos binaries
 
 `tezos-client`, `tezos-admin-client` and other `tezos-*` binaries are available to use from the terminal.
 
