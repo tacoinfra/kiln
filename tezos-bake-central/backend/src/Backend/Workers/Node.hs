@@ -492,7 +492,14 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
         else pure latestBlock
       updateTo predOrLatest latestBlock p
-    GT -> wipe p
+    GT -> runDb (Identity db) $ do
+      wipe p
+      notify NotifyTag_Amendment (p, Nothing)
+      case p of
+        VotingPeriodKind_Proposal -> notify NotifyTag_Proposals ()
+        VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
+        VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
+        VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
 
   where
     getBlock = nodeQueryDataSource . NodeQuery_Block
@@ -500,20 +507,18 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
-    wipe p = runDb (Identity db) $ do
+    wipe p = do
       delete $ Amendment_periodField ==. p
-      -- TODO notify
       case p of
         VotingPeriodKind_Proposal -> deleteAll (undefined :: PeriodProposal)
         VotingPeriodKind_TestingVote -> deleteAll (undefined :: PeriodTestingVote)
         VotingPeriodKind_Testing -> deleteAll (undefined :: PeriodTesting)
         VotingPeriodKind_PromotionVote -> deleteAll (undefined :: PeriodPromotionVote)
     updateTo predBlk blk p = do
-      wipe p
       let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
           votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
           chainId = _nodeDataSource_chain nds
-      let amendment = Amendment
+          amendment = Amendment
             { _amendment_period = p
             , _amendment_chainId = chainId
             , _amendment_votingPeriod = votingPeriod
@@ -522,6 +527,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
             , _amendment_position = position'
             }
       runDb (Identity db) $ do
+        wipe p
         insert_ amendment
         notify NotifyTag_Amendment (p, Just amendment)
       case p of
