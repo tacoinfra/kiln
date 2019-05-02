@@ -156,7 +156,9 @@ backendImpl cfg serve = do
     (pure $ _opts_kilnDataDir cfg)
     (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
-  !(kilnNodeCustomArgs :: Maybe Text) <- getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs
+  !(kilnNodeCustomArgs :: Maybe Text) <- liftA2 (<|>)
+    (pure $ _opts_kilnNodeCustomArgs cfg)
+    (getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs)
 
   !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
     (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
@@ -443,6 +445,7 @@ data Opts = Opts
   , _opts_networkGitLabProjectId :: !(Maybe Text)
   , _opts_kilnNodeRpcPort :: !(Maybe Port)
   , _opts_kilnNodeNetPort :: !(Maybe Port)
+  , _opts_kilnNodeCustomArgs :: !(Maybe Text)
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   }
@@ -465,6 +468,7 @@ instance Semigroup Opts where
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
     , _opts_kilnNodeRpcPort = rightBiased (<|>) _opts_kilnNodeRpcPort
     , _opts_kilnNodeNetPort = rightBiased (<|>) _opts_kilnNodeNetPort
+    , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     }
@@ -473,7 +477,7 @@ instance Semigroup Opts where
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing
   mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -527,6 +531,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnDataDir "DIRECTORY" (set opts_kilnDataDir . Just . T.unpack)
       ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
+
+  , mkReqArg Config.kilnNodeCustomArgs "ARGS" (set opts_kilnNodeCustomArgs . Just)
+      ("Custom arguments for the Kiln Node.")
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
       ("Custom paths to tezos binaries.")

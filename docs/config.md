@@ -85,3 +85,6 @@ The net-addr port to use for the kiln node. Defaults to 8733.
 The data directory used by the kiln node and tezos-client. Defaults to
 "./.kiln".
 
+## kiln-node-custom-args ARGS
+
+Custom arguments for the Kiln Node.
