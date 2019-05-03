@@ -12,11 +12,35 @@ But this might work with other VM software like VMWare, and other hosts.
     - During import step you can configure the number of processors and memory for the VM
     - It is recommended to increase the processor value to at least 2.
 
-## Running
+## Running VM / Kiln
 
 - After successful import, run the "Kiln VM" by clicking the "Start"/ "Normal Start" button on menu
 
-- Once the VM is running, Kiln will run automatically. Open http://localhost:8000 from the browser (FireFox) in the VM to access Kiln.
+- Once the VM is running, Kiln will run automatically. Open http://localhost:8000 from the browser (Firefox) in the VM to access Kiln.
+
+## Using host browser
+
+Using the browser inside the VM can slowdown the VM considerably, and affect the performance of the node and baker.
+Therefore it is recommended to use the browser of the host operating system to operate Kiln.
+
+To use the host browser you need to change the network settings of the VM to expose the port `8000`
+
+- Go to "Machine" -> "Settings" -> "Network"
+  There you will see tab of "Adapter 1"
+  Click on "Advanced" and then "Port Forwarding"
+
+- This would open a table (which would be empty first time)
+  Click the "+" button ("Adds new port forwarding rule") to add a row to the table
+
+  | Field | Value |
+  | Name | Choose anything like "Kiln app" or keep it the default value of "Rule 1"|
+  | Protocol | default value "TCP" |
+  | Host IP | empty |
+  | Host Port | 8000 (or you can choose some other value like 8001, etc)
+  | Guest IP | empty |
+  | Guest Port | 8000 |
+
+After setting this, open the http://localhost:8000 in your host OS browser
 
 ## Configuration
 
@@ -60,6 +84,8 @@ In order to do baking with Kiln you need to enable the Ledger device from its US
 
 `tezos-client`, `tezos-admin-client` and other `tezos-*` binaries are available to use from the terminal.
 
+Since the default port of Kiln node is 8733, you will have to specify the `-P 8733` argument to all these commands to work properly with Kiln node.
+
 ## Moving chain data to separate disk
 
 The VM uses two virtual disks; one for the operating system, and another to store the Kiln data (including the chain data).
@@ -72,7 +98,6 @@ To change the location of the disk, first turn off the VM, then go to "File" -> 
 
 In the "HDD" tab right click "kiln-vm-disk002.vmdk" and select "Move..."
 Specify the target location in the next dialog.
-
 
 [1]: https://www.virtualbox.org/wiki/Downloads
 [2]: https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md
