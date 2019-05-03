@@ -18,12 +18,7 @@ let
       inherit (root.ghcjs) frontend common;
     };
   } // root.pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-    dockerExe = root.dockerExe;
-    dockerImage = root.dockerImage;
-    kilnVM = root.kilnVM;
-    kiln-debian = root.kiln-debian;
-    app = root.exe;
-    all = root.all;
+    inherit (root) dockerExe dockerImage kilnVM kilnVMSystem kiln-debian exe all;
   });
 
 in perPlatform.x86_64-linux
