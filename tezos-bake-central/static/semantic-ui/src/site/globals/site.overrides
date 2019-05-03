@@ -126,6 +126,100 @@ h6.ui.header {
   vertical-align: middle;
 }
 
+.vote-modal {
+  .detail {
+    font-size: @12px;
+    color: #6a6a6a;
+  }
+  .header {
+    margin-bottom: @10px;
+    font-size: @24px;
+    font-weight: bold;
+    > .icon {
+      vertical-align: -@2px;
+      margin-right: @8px;
+    }
+    > .detail {
+      font-weight: normal;
+      margin-left: @20px;
+    }
+  }
+  .vote-cast-as {
+    margin: @21px 0 @40px 0;
+    display: flex;
+    flex-direction: row;
+    align-items: start;
+    .kiln-icon { margin: @2px @12px 0 0; }
+    > .item {
+      margin-right: @47px;
+      > .title {
+        font-size: @16px;
+        font-weight: bold;
+      }
+    }
+  }
+  .proposals {
+    margin: 0 -@10px;
+    table {
+      margin-top: @20px;
+      width: 100%;
+      text-align: center;
+      border-spacing: @8px;
+      th:first-child, td:first-child { text-align: left; }
+      thead {
+        margin-bottom: @11px;
+        tr > th {
+          color: #6a6a6a;
+          font-size: @12px;
+          font-weight: normal;
+        }
+      }
+      tbody {
+        font-weight: bold;
+        > tr {
+          vertical-align: middle;
+          &.filtered { display: none; }
+          .ui.button {
+            width: unit(76 / @emSize, rem);
+            height: @24px;
+            line-height: @24px;
+            padding: 0;
+            margin: 0;
+            background-color: @blue;
+            color: @white;
+            &.pending, &.voted { cursor: auto; }
+            &.pending { background-color: #aabfe1; }
+            &.voted {
+              background-color: @white;
+              box-shadow: none;
+              color: #98a0ad;
+            }
+          }
+        }
+      }
+    }
+  }
+  .vote-buttons {
+    text-align: center;
+    button {
+      margin: 0 @10px;
+      width: unit(166 / @emSize, rem);
+    }
+  }
+  .proposal-hash {
+    font-weight: bold;
+    margin-top: @14px;
+  }
+  .promote { text-align: center; }
+  label {
+    display: block;
+    margin-bottom: @4px;
+  }
+  .ui.input > input {
+    background-color: #fcfcfc;
+  }
+}
+
 .amendment-popup {
   width: unit(528 / @emSize, rem);
   padding: @20px 0;

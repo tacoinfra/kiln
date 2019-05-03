@@ -311,21 +311,34 @@ watchFakePeriodPromotionVote = pure $ pure $ Just $ PeriodPromotionVote $ Period
   , _periodVote_votingPeriod = 0
   }
 
+watchFakeVotes :: (Applicative m, Reflex t) => m (Dynamic t (Map.Map ProtocolHash Bool))
+watchFakeVotes = pure $ pure $ Map.fromList
+  [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
+  , ("Pt1jF6oZY7EQBuqETjoa7gjgWdV7rRwTPRbHXcxRQQDs4EHNb8n", False)
+  ]
+
 -- | Modal for voting
 voteModal :: forall r t m.
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadReader r m, HasFrontendConfig r
   , MonadJSM (Performable m)
   )
-  => Dynamic t VotingPeriodKind -> Event t () -> m (Event t ())
-voteModal votingPeriodKind' close = do
-  --- TODO holdUniqDyn votingPeriodKind'
+  => Dynamic t ProtoInfo
+  -- ^ Protocol info
+  -> Dynamic t PublicKeyHash
+  -- ^ Baker to vote with
+  -> Dynamic t Amendment
+  -- ^ Curent amendment period
+  -> Event t () -> m (Event t ())
+voteModal protoInfo bakerPkh amendment close = do
+  votingPeriodKind <- holdUniqDyn $ _amendment_period <$> amendment
+    {-
   vpk <- sample $ current votingPeriodKind'
   choice <- value <$> dropdown vpk (pure $ Map.fromList $ (\x -> (x, tshow x)) <$> [minBound .. maxBound])
     (def & dropdownConfig_attributes .~ pure ("class" =: "ui selection dropdown"))
   next <- uiDynButton (pure "purple") $ text "Set period"
   votingPeriodKind <- holdDyn vpk $ tag (current choice) next
-  ---
+    -}
   pb <- getPostBuild
   rec
     (_, replaced) <- runWithReplace blank $ leftmost
@@ -352,65 +365,107 @@ voteModal votingPeriodKind' close = do
       VotingPeriodKind_Testing -> pure <$> getPostBuild -- close immediately
       VotingPeriodKind_PromotionVote -> workflow promotionFlow
 
+    headerWithCycles header detail extras = do
+      divClass "header" $ do
+        elClass "i" "blue icon-vote-badge icon" blank
+        text header
+        elClass "span" "detail" $ do
+          text "Cycles "
+          dynText $ ffor2 amendment protoInfo $ \a info ->
+            let startLevel = _amendment_startLevel a
+                endLevel = startLevel + _protoInfo_blocksPerVotingPeriod info
+                toCycle n = fromIntegral $ n `div` _protoInfo_blocksPerCycle info
+            in textWithCommas (toCycle startLevel) <> " - " <> textWithCommas (toCycle endLevel - 1)
+      divClass "detail" $ text detail
+      divClass "vote-cast-as" $ do
+        elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
+        divClass "item" $ do
+          divClass "title" $ text "Votes will be cast as your Kiln Baker."
+          divClass "detail" $ dynText $ toPublicKeyHashText <$> bakerPkh
+        extras
+
     proposalFlow :: Workflow t m (Event t ())
     proposalFlow = Workflow $ do
-      divClass "ui header" $ text "Proposal Period"
-      mProposals <- maybeDyn =<< watchFakeProposals
-      vote <- el "table" $ do
-        el "thead" $ el "tr" $ do
-          el "th" $ text "Proposal Hash"
-          el "th" $ text "Votes"
-          el "th" $ text "Cast Vote"
-        el "tbody" $ switchHold never <=< dyn $ ffor mProposals $ \case
-          Nothing -> divClass "ui active loader" $ pure never
-          -- TODO handle empty list gracefully
-          Just proposals -> fmap (switchDyn . fmap leftmost) $ simpleList proposals $ \pp -> el "tr" $ do
-            el "td" $ do
+      headerWithCycles
+        "Proposal Period"
+        "During the Proposal Period a baker may upvote up to 20 proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested."
+        (divClass "item" $ do
+          divClass "title" $ text "2 / 20"
+          divClass "detail" $ text "Votes Cast")
+      mProposals <- maybeDyn =<< watchProposals
+      votes <- watchFakeVotes
+      divClass "proposals" $ do
+        el "label" $ text "Filter Proposals by Hash"
+        hashFilter <- divClass "ui fluid input" $ fmap value $ inputElement $ def
+            & initialAttributes .~ "placeholder" =: "Proposal Hash"
+        vote <- el "table" $ do
+          el "thead" $ el "tr" $ do
+            el "th" $ text "Proposal Hash"
+            el "th" $ text "Votes"
+            el "th" $ text "Cast Vote"
+          el "tbody" $ switchHold never <=< dyn $ ffor mProposals $ \case
+            Nothing -> divClass "ui active loader" $ pure never
+            -- TODO handle empty list gracefully
+            Just proposals -> fmap (switchDyn . fmap leftmost) $ simpleList proposals $ \pp -> do
               let protocolHash = toBase58Text . _periodProposal_hash <$> pp
-              copyButton $ current protocolHash
-              dynText protocolHash
-            el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> pp
-            el "td" $ do
-              pending <- holdDyn False never -- TODO
-              voted <- holdDyn False never -- TODO
-              vote <- uiDynButton (ffor2 pending voted $ \p v -> if p then "pending" else if v then "voted" else "primary horizontal label") $ text "Vote"
-              pure $ attachWith (\p () -> _periodProposal_hash p) (current pp) vote
-      pure (never, waitForWalletAppFlow . castProposalVoteFlow <$> vote)
+                  attrs = ffor2 protocolHash hashFilter $ \h h' ->
+                    if (T.strip $ T.toCaseFold h') `T.isInfixOf` (T.toCaseFold h)
+                    then mempty
+                    else "class" =: "filtered"
+              elDynAttr "tr" attrs $ do
+                el "td" $ do
+                  copyButton $ current protocolHash
+                  dynText protocolHash
+                el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> pp
+                el "td" $ do
+                  let lookuped = ffor2 pp votes $ \p vs -> let ph = _periodProposal_hash p in (ph, Map.lookup ph vs)
+                      classes = ffor lookuped $ \(_, l) -> case l of
+                        Nothing -> ""
+                        Just True -> "voted"
+                        Just False -> "pending"
+                  vote <- uiDynButton classes $ dynText $ ffor lookuped $ \(_, l) -> case l of
+                    Nothing -> "Vote"
+                    Just True -> "Voted"
+                    Just False -> "Pending"
+                  pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
+        pure (never, waitForWalletAppFlow . castProposalVoteFlow <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
-    explorationFlow = someVotingPeriodFlow "Exploration Period" "exploration explanation" (pure "Test Period")
-      (maybeDyn . (fmap . fmap) _periodTestingVote_periodVote =<< watchFakePeriodTestingVote)
+    explorationFlow = someVotingPeriodFlow "Exploration Period"
+      "Votes in this period will decide if the proposal under consideration should be tested in an immediately following Test Period. If it does not pass, Promotion Period will begin again."
+      "Test Period"
+      (maybeDyn . (fmap . fmap) _periodTestingVote_periodVote =<< watchPeriodTestingVote)
 
     promotionFlow :: Workflow t m (Event t ())
-    promotionFlow = someVotingPeriodFlow "Promotion Period" "promotion explanation"
-      (asks $ showChain . _frontendConfig_chain . view frontendConfig)
-      (maybeDyn . (fmap . fmap) _periodPromotionVote_periodVote =<< watchFakePeriodPromotionVote)
+    promotionFlow = Workflow $ do
+      chainText <- asks $ showChain . _frontendConfig_chain . view frontendConfig
+      unWorkflow $ someVotingPeriodFlow "Promotion Period"
+        ("Votes in this period will decide if the proposal under consideration should be promoted to " <> chainText <> ". If it does not pass the current protocol will remain in place. If it passes, the proposed protocol will take affect at the end of this Promotion Period.")
+        chainText
+        (maybeDyn . (fmap . fmap) _periodPromotionVote_periodVote =<< watchPeriodPromotionVote)
 
     someVotingPeriodFlow
       :: Text -- ^ Header
       -> Text -- ^ Explanation
-      -> m Text -- ^ Promote to <X>
+      -> Text -- ^ Promote to <X>
       -> m (Dynamic t (Maybe (Dynamic t PeriodVote))) -- ^ Watch relevant vote
       -> Workflow t m (Event t ())
     someVotingPeriodFlow header explanation promote getPeriodVote = Workflow $ do
       mPeriodVote <- getPeriodVote
-      divClass "ui header" $ text header >> text " Cycles " -- TODO
-      divClass "detail" $ text explanation
-      el "div" $ text "Votes will be cast as your Kiln Baker."
+      headerWithCycles header explanation blank
       vote <- switchHold never <=< dyn $ ffor mPeriodVote $ \case
         Nothing -> divClass "ui active loader" $ pure never
         Just pv -> do
           divClass "detail" $ text "Proposal Hash"
           let proposal = _periodVote_proposal <$> pv
               hashText = toBase58Text <$> proposal
-          el "div" $ do
+          divClass "proposal-hash" $ do
             copyButton $ current hashText
             dynText hashText
-          el "p" $ do
-            text $ "Promote this proposal to "
-            text =<< promote
+          elAttr "p" ("class" =: "promote") $ do
+            text $ "Promote this proposal to " <> promote <> "?"
           let voteButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
-          vote <- leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
+          vote <- divClass "vote-buttons" $ leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
           pure $ attachWith castBallotFlow (current proposal) vote
       pure (never, vote)
 
@@ -436,18 +491,21 @@ voteModal votingPeriodKind' close = do
       divClass "ui header" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
       el "p" $ text $ toBase58Text proposal
       cast <- uiDynButton (pure "primary") $ text "Cast Vote"
-      let prompt = text $ T.unlines
-            [ "Submit Proposal"
-            , ""
-            , "Protocol"
-            , toBase58Text proposal
-            , ""
-            , "Source"
-            , "tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" -- TODO
-            , ""
-            , "Period"
-            , "Proposal" -- TODO
-            ]
+      let prompt = do
+            text $ T.unlines
+              [ "Submit Proposal"
+              , ""
+              , "Protocol"
+              , toBase58Text proposal
+              , ""
+              , "Source"
+              ]
+            dynText $ toPublicKeyHashText <$> bakerPkh
+            text $ T.unlines
+              [ ""
+              , "Period"
+              , "Proposal" -- TODO
+              ]
       pure (never, respondToPromptFlow (Right $ castBallotFlow proposal ballot) prompt <$ cast)
 
     castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
@@ -455,18 +513,21 @@ voteModal votingPeriodKind' close = do
       divClass "ui header" $ text "Cast a vote for this proposal?"
       el "p" $ text $ toBase58Text proposal
       cast <- uiDynButton (pure "primary") $ text "Cast Vote"
-      let prompt = text $ T.unlines
-            [ "Submit Proposal"
-            , ""
-            , "Protocol"
-            , toBase58Text proposal
-            , ""
-            , "Source"
-            , "tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5" -- TODO
-            , ""
-            , "Period"
-            , "Proposal"
-            ]
+      let prompt = do
+            text $ T.unlines
+              [ "Submit Proposal"
+              , ""
+              , "Protocol"
+              , toBase58Text proposal
+              , ""
+              , "Source"
+              ]
+            dynText $ toPublicKeyHashText <$> bakerPkh
+            text $ T.unlines
+              [ ""
+              , "Period"
+              , "Proposal"
+              ]
       pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ cast)
 
     respondToPromptFlow

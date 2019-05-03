@@ -234,9 +234,30 @@ appMain = do
       $ do
         e <- appHeader
         appContentArea
+
+        -- TODO this is temporary, for testing the voting modal
+        mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
+        mProtoInfo <- maybeDyn =<< watchProtoInfo
+        mBaker <- maybeDyn . (fmap . fmap) fst =<< watchFakeInternalBaker
+        let xs = ffor3 (current mProtoInfo) (current mBaker) (current mAmendment) (\x y z -> ffor3 x y z (,,))
+        openVoteModal <- SemUi.button def $ text "Open vote modal"
+        tellModal $ attachWithMaybe (\ma () -> ffor ma $ \a -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . uncurry3 voteModal a) xs openVoteModal
         pure e
     pure ()
 
+-- TODO this is temporary, for testing the voting modal
+watchFakeVotes :: (Applicative m, Reflex t) => m (Dynamic t (Map.Map ProtocolHash Bool))
+watchFakeVotes = pure $ pure $ Map.fromList
+  [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
+  , ("Pt1jF6oZY7EQBuqETjoa7gjgWdV7rRwTPRbHXcxRQQDs4EHNb8n", False)
+  ]
+
+-- TODO this is temporary, for testing the voting modal
+watchFakeInternalBaker :: (Applicative m, Reflex t) => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
+watchFakeInternalBaker = pure $ pure $ Just ("tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5", undefined)
+
+uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
+uncurry3 f (a, b, c) = f a b c
 
 appName :: Text
 appName = "Kiln"
@@ -971,7 +992,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         Nothing -> uiButton "primary fluid" "Start Baking"
         Just bid -> do
           kilnLogo
-          dynText $ ffor (_bakerInternalData_running <$> bid) $ \case
+          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ \case
             True -> "A Kiln baker is running."
             False -> "A Kiln baker is configured, but is stopped."
           pure never
@@ -1387,7 +1408,7 @@ nodesTab =
                       "Stop Node"
 
                   runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                  bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                     (True, bRunning) ->
