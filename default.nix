@@ -312,6 +312,7 @@ let
       };
 
       security.sudo.wheelNeedsPassword = false;
+      networking.firewall.enable = false;
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox tezos.mainnet.kit ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
