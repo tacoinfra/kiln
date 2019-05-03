@@ -11,6 +11,7 @@ But this might work with other VM software like VMWare, and other hosts.
 
     - During import step you can configure the number of processors and memory for the VM
     - It is recommended to increase the processor value to at least 2.
+    - The minimum memory required for VM to do baking is 8gb, and recommended is 12gb.
 
 ## Running VM / Kiln
 
