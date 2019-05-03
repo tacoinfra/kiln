@@ -51,7 +51,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr '0.0.0.0:${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
         '';
         serviceConfig = {
           User = user;
