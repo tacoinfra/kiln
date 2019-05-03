@@ -26,15 +26,21 @@ Therefore it is recommended to use the browser of the host operating system to o
 To use the host browser you need to change the network settings of the VM to expose the port `8000`
 
 - Go to "Machine" -> "Settings" -> "Network"
+
   There you will see tab of "Adapter 1"
+  
   Click on "Advanced" and then "Port Forwarding"
 
 - This would open a table (which would be empty first time)
+
   Click the "+" button ("Adds new port forwarding rule") to add a row to the table
 
+  Enter the following values in the row
+
   | Field | Value |
-  | Name | Choose anything like "Kiln app" or keep it the default value of "Rule 1"|
-  | Protocol | default value "TCP" |
+  | ------| ------|
+  | Name | "Kiln app" |
+  | Protocol | "TCP" |
   | Host IP | empty |
   | Host Port | 8000 (or you can choose some other value like 8001, etc)
   | Guest IP | empty |
