@@ -91,7 +91,7 @@ In order to do baking with Kiln you need to enable the Ledger device from its US
 
 `tezos-client`, `tezos-admin-client` and other `tezos-*` binaries are available to use from the terminal.
 
-Since the default port of Kiln node is 8733, you will have to specify the `-P 8733` argument to all these commands to work properly with Kiln node.
+Since the default port of Kiln node is 9733, you will have to specify the `-P 9733` argument to all these commands to work properly with Kiln node.
 
 ## Moving chain data to separate disk
 
