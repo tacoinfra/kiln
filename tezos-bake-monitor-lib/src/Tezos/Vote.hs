@@ -29,11 +29,11 @@ makeLenses 'Ballots
 newtype ProposalVotes = ProposalVotes { unProposalVotes :: (ProtocolHash, Int) }
   deriving (Eq, Ord, Read, Show, Typeable, Generic, FromJSON, ToJSON)
 
-data Delegate = Delegate
-  { _delegate_pkh :: PublicKeyHash
-  , _delegate_rolls :: Int
+data VoterDelegate = VoterDelegate
+  { _voterDelegate_pkh :: PublicKeyHash
+  , _voterDelegate_rolls :: Int
   } deriving (Eq, Ord, Read, Show, Typeable, Generic)
 
-deriveTezosJson ''Delegate
-makeLenses 'Delegate
+deriveTezosJson ''VoterDelegate
+makeLenses 'VoterDelegate
 

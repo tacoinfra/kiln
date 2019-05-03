@@ -129,7 +129,7 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
-  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq Delegate)
+  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int

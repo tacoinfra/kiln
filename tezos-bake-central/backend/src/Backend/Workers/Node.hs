@@ -574,7 +574,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
         ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
         quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
-        totalRolls <- foldl' (\x d -> _delegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
+        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
         pure $ flip fmap mProposal $ \proposal -> PeriodVote
           { _periodVote_proposal = proposal
           , _periodVote_chainId = chainId
