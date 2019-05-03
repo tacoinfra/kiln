@@ -106,7 +106,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
             text " - "
             dynText $ showDate <$> endTime
           uncurry progressDots $ splitDynPure $ ffor2 amendment protoInfo $ \a i -> case compare p (_amendment_period a) of
-            LT -> (cyclesPerPeriod i, cyclesPerPeriod i)
+            LT -> (cyclesPerPeriod i + 1, cyclesPerPeriod i)
             EQ -> (currentCyclePosition a i, cyclesPerPeriod i)
             GT -> (0, cyclesPerPeriod i)
           elAttr "img" ("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") blank
@@ -213,7 +213,8 @@ periodVote promote vote = el "dl" $ do
     text " | "
     let supermajority = ffor vote $ \pv ->
           let v = _periodVote_ballots pv
-          in (10000 * _ballots_yay v) `div` (_ballots_yay v + _ballots_nay v)
+              total = _ballots_yay v + _ballots_nay v
+          in if total <= 0 then 0 else (10000 * _ballots_yay v) `div` total
     indicator supermajority (pure required) $ dynText $ intPercentage <$> supermajority
   el "dt" $ text "Quorum Needed | Current"
   el "dd" $ do
@@ -222,7 +223,7 @@ periodVote promote vote = el "dl" $ do
     text " | "
     let participation = ffor vote $ \pv ->
           let v = _periodVote_ballots pv
-          in (10000 * (_ballots_yay v + _ballots_nay v + _ballots_pass v)) `div` _periodVote_totalRolls pv
+          in if _periodVote_totalRolls pv <= 0 then 0 else (10000 * (_ballots_yay v + _ballots_nay v + _ballots_pass v)) `div` _periodVote_totalRolls pv
     indicator participation quorum $ dynText $ intPercentage <$> participation
 
 -- | Display tezos style 'Int' percentages (e.g. 5500) as percentages (55.00%)

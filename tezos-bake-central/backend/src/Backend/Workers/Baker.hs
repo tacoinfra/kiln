@@ -384,7 +384,9 @@ getWantedAction protoInfo headBlock baker details isInternal = do
         deactivationAlerts :: mCommit ()
         deactivationAlerts =
           if _cacheDelegateInfo_deactivated di
-            then reportBakerDeactivated delegatePkh protoInfo headFitness
+            then do
+              clearBakerDeactivationRisk delegatePkh headFitness
+              reportBakerDeactivated delegatePkh protoInfo headFitness
             else do
               clearBakerDeactivated delegatePkh headFitness
               if (1 >= gracePeriod - headCycle)
