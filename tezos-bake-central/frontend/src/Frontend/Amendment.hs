@@ -386,14 +386,17 @@ voteModal protoInfo bakerPkh amendment close = do
 
     proposalFlow :: Workflow t m (Event t ())
     proposalFlow = Workflow $ do
+      mProposals <- maybeDyn =<< watchProposals
+      votes <- watchFakeVotes
       headerWithCycles
         "Proposal Period"
         "During the Proposal Period a baker may upvote up to 20 proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested."
         (divClass "item" $ do
-          divClass "title" $ text "2 / 20"
+          divClass "title" $ dynText $ join $ ffor mProposals $ \case
+            Nothing -> constDyn "- / -"
+            Just proposals -> ffor2 proposals (Map.size <$> votes) $ \ps c ->
+              (tshow c <> " / " <> (tshow $ length ps))
           divClass "detail" $ text "Votes Cast")
-      mProposals <- maybeDyn =<< watchProposals
-      votes <- watchFakeVotes
       divClass "proposals" $ do
         el "label" $ text "Filter Proposals by Hash"
         hashFilter <- divClass "ui fluid input" $ fmap value $ inputElement $ def
