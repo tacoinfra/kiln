@@ -140,13 +140,13 @@ kilnNodeNetPort :: FilePath
 kilnNodeNetPort = "kiln-node-net-port"
 
 defaultKilnNodeNetPort :: Port
-defaultKilnNodeNetPort = 8733
+defaultKilnNodeNetPort = 9733
 
 kilnNodeRpcPort :: FilePath
 kilnNodeRpcPort = "kiln-node-rpc-port"
 
 defaultKilnNodeRpcPort :: Port
-defaultKilnNodeRpcPort = 9733
+defaultKilnNodeRpcPort = 8733
 
 kilnDataDir :: FilePath
 kilnDataDir = "kiln-data-dir"
