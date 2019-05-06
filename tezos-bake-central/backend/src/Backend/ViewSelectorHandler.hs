@@ -194,6 +194,20 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  let amendmentVS = _bakeViewSelector_amendment vs
+  amendment <- whenM (not $ null amendmentVS) $ do
+    as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
+    pure $ toRangeView amendmentVS $ flip fmap as $ \a -> (_amendment_period a, First $ Just a)
+
+  periodProposals <- maybeViewHandler _bakeViewSelector_proposals $ Just <$>
+    select (PeriodProposal_chainIdField ==. _nodeDataSource_chain nds)
+  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$>
+    selectSingle (PeriodTestingVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
+  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$>
+    selectSingle (PeriodTesting_chainIdField ==. _nodeDataSource_chain nds)
+  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$>
+    selectSingle (PeriodPromotionVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
+
   connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
 
   let showLedgerVS = _bakeViewSelector_showLedger vs
@@ -243,6 +257,11 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
+    , _bakeView_amendment = amendment
+    , _bakeView_proposals = periodProposals
+    , _bakeView_periodTestingVote = periodTestingVote
+    , _bakeView_periodTesting = periodTesting
+    , _bakeView_periodPromotionVote = periodPromotionVote
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients

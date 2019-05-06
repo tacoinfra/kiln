@@ -15,6 +15,7 @@ library
     Frontend
 
   other-modules:
+    Frontend.Amendment
     Frontend.Common
     Frontend.Ledger
     Frontend.Modal.Base

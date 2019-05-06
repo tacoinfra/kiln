@@ -23,6 +23,7 @@ import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErr
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
+import Data.Foldable (foldl')
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
@@ -51,6 +52,7 @@ import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, 
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
+import qualified Tezos.TestChainStatus as Tezos
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -444,6 +446,146 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
 
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
+
+safePred :: (Eq a, Enum a, Bounded a) => a -> a
+safePred a = if a /= minBound then pred a else minBound
+
+-- Monitors the amendment process
+amendmentProcessWorker
+  :: NodeDataSource
+  -> Pool Postgresql
+  -> IO (IO ())
+amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
+  latestBlock <- throwing $ getBlock (latestHead ^. hash)
+  blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
+    readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+  -- The RPCs under /votes/ return the information for the *next block*, not the current block.
+  -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
+  -- (the last block of the period), but /votes/current_period_kind for that block will return
+  -- the *next* period kind.
+  let currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+      isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
+      -- The period of the *current* block, not the next one
+      currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
+        $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+
+  -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
+  -- Current period should be updated to the values of the latest block.
+  -- Any *greater* periods should be blanked out.
+
+  for_ [minBound..maxBound] $ \p -> case compare p currentPeriodKind of
+    LT -> do
+      let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
+      (periodEndBlockPred, periodEndBlock) <- throwing $ do
+        endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get block") $
+          -- Calc the blockLevel at the start of the current voting period, move
+          -- back by periodDiff voting periods, and move to the end of that period
+          levelAncestor history (latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod + blocksPerVotingPeriod - 1) (latestBlock ^. hash)
+        predBlock <- getBlock $ endBlock ^. predecessor
+        pure (predBlock, endBlock)
+      updateTo periodEndBlockPred periodEndBlock p
+    EQ -> do
+      predOrLatest <-
+        if isLastBlockOfPeriod latestBlock
+        then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
+        else pure latestBlock
+      updateTo predOrLatest latestBlock p
+    GT -> runDb (Identity db) $ do
+      wipe p
+      notify NotifyTag_Amendment (p, Nothing)
+      case p of
+        VotingPeriodKind_Proposal -> notify NotifyTag_Proposals ()
+        VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
+        VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
+        VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
+
+  where
+    getBlock = nodeQueryDataSource . NodeQuery_Block
+    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
+    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
+    runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
+    wipe p = do
+      delete $ Amendment_periodField ==. p
+      case p of
+        VotingPeriodKind_Proposal -> deleteAll (undefined :: PeriodProposal)
+        VotingPeriodKind_TestingVote -> deleteAll (undefined :: PeriodTestingVote)
+        VotingPeriodKind_Testing -> deleteAll (undefined :: PeriodTesting)
+        VotingPeriodKind_PromotionVote -> deleteAll (undefined :: PeriodPromotionVote)
+    updateTo predBlk blk p = do
+      let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+          chainId = _nodeDataSource_chain nds
+          amendment = Amendment
+            { _amendment_period = p
+            , _amendment_chainId = chainId
+            , _amendment_votingPeriod = votingPeriod
+            , _amendment_start = blk ^. timestamp
+            , _amendment_startLevel = blk ^. level
+            , _amendment_position = position'
+            }
+      runDb (Identity db) $ do
+        wipe p
+        insert_ amendment
+        notify NotifyTag_Amendment (p, Just amendment)
+      case p of
+        VotingPeriodKind_Proposal -> do
+          proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
+          runDb (Identity db) $ do
+            for_ proposals $ \(ProposalVotes (phash, votes)) -> do
+              insert_ $ PeriodProposal
+                { _periodProposal_hash = phash
+                , _periodProposal_chainId = chainId
+                , _periodProposal_votingPeriod = votingPeriod
+                , _periodProposal_votes = votes
+                }
+            notify NotifyTag_Proposals ()
+        VotingPeriodKind_Testing -> do
+          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash) (predBlk ^. level)
+          for_ mProposal $ \proposal -> do
+            let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+                  Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
+                  Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
+                  Tezos.TestChainStatus_Running
+                    { Tezos._testChainStatusRunning_chainId = c
+                    , Tezos._testChainStatusRunning_genesis = b
+                    } -> (TestChainStatus_Running, Just c, Just b)
+            tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
+            runDb (Identity db) $ do
+              let t = PeriodTesting
+                    { _periodTesting_proposal = proposal
+                    , _periodTesting_chainId = chainId
+                    , _periodTesting_testChainId = testChainId
+                    , _periodTesting_votingPeriod = votingPeriod
+                    , _periodTesting_startingLevel = (^. level) <$> tcStartBlock
+                    , _periodTesting_status = status
+                    }
+              insert_ t
+              notify NotifyTag_PeriodTesting $ Just t
+        VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+    handleVotingPeriod :: PersistEntity a => Block -> (PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    handleVotingPeriod blk f n = do
+      let chainId = _nodeDataSource_chain nds
+          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+      mpv <- runMaybe $ do
+        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
+        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
+        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
+        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
+        pure $ flip fmap mProposal $ \proposal -> PeriodVote
+          { _periodVote_proposal = proposal
+          , _periodVote_chainId = chainId
+          , _periodVote_votingPeriod = votingPeriod
+          , _periodVote_ballots = ballots
+          , _periodVote_quorum = quorum
+          , _periodVote_totalRolls = totalRolls
+          }
+      for_ mpv $ \pv -> runDb (Identity db) $ do
+        insert_ $ f pv
+        notify n $ Just $ f pv
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker

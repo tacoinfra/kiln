@@ -78,7 +78,7 @@ import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
@@ -129,8 +129,10 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
+  NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -511,8 +513,6 @@ withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
 withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
 
 -}
-calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
-calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
@@ -678,8 +678,10 @@ getKey params hist = \case
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
+  NodeQuery_Listings ctx -> pure (ctx, NodeQuery_Listings ctx)
   NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
   NodeQuery_CurrentProposal ctx lvl -> pure (ctx, NodeQuery_CurrentProposal ctx lvl)
+  NodeQuery_CurrentQuorum ctx -> pure (ctx, NodeQuery_CurrentQuorum ctx)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
@@ -842,8 +844,10 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
+  NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
+  NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch

@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -223,17 +224,16 @@ data TooltipPos
   | TooltipPos_BottomRight
 
 tooltipped
-  :: forall a m t.
-    ( DomBuilder t m
-    , PostBuild t m
-    , MonadHold t m
-    , MonadFix m
-    , PerformEvent t m
-    , MonadIO (Performable m)
-    , TriggerEvent t m
-    )
+  :: SemUi.UI t m
   => TooltipPos -> m () -> m a -> m a
-tooltipped pos tip w = mdo
+tooltipped = tooltippedWrapper $ elAttr' "span" ("style" =: "position:relative")
+
+tooltippedWrapper
+  :: SemUi.UI t m
+  => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
+  -- ^ Wrapper (used to determine mouse events)
+  -> TooltipPos -> m () -> m a -> m a
+tooltippedWrapper wrapper pos tip w = mdo
   let (cls, x, y, transform) = case pos of
         TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
         TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
@@ -244,7 +244,7 @@ tooltipped pos tip w = mdo
         TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
         TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
 
-  (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
+  (wEl, a) <- wrapper $ do
     a' <- w
     let mouseenter = True <$ domEvent Mouseenter wEl
         mouseleave = False <$ domEvent Mouseleave wEl

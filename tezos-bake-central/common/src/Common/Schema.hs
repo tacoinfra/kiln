@@ -479,6 +479,54 @@ data Accusation = Accusation
 instance HasId Accusation where
   type IdData Accusation = (OperationHash, BlockHash)
 
+data Amendment = Amendment
+  { _amendment_period :: !VotingPeriodKind
+  , _amendment_chainId :: !ChainId
+  , _amendment_votingPeriod :: !RawLevel
+  , _amendment_start :: !UTCTime -- ^ Start time
+  , _amendment_startLevel :: !RawLevel -- ^ Start level
+  , _amendment_position :: !RawLevel -- ^ Blocks passed in this period
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodProposal = PeriodProposal
+  { _periodProposal_hash :: !ProtocolHash
+  , _periodProposal_chainId :: !ChainId
+  , _periodProposal_votingPeriod :: !RawLevel
+  , _periodProposal_votes :: !Int
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodVote = PeriodVote
+  { _periodVote_proposal :: !ProtocolHash
+  , _periodVote_chainId :: !ChainId
+  , _periodVote_votingPeriod :: !RawLevel
+  , _periodVote_ballots :: !Ballots
+  , _periodVote_quorum :: !Int -- Percent * 100, e.g. 80.02% would be 8002
+  , _periodVote_totalRolls :: !Int -- Total number of rolls of delegates who are eligible to vote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodTestingVote = PeriodTestingVote
+  { _periodTestingVote_periodVote :: PeriodVote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+-- | Like Tezos.TestChainStatus, but for a single column
+data TestChainStatus = TestChainStatus_NotRunning | TestChainStatus_Forking | TestChainStatus_Running
+  deriving (Eq, Ord, Generic, Typeable, Read, Show, Enum, Bounded)
+instance Aeson.ToJSON TestChainStatus
+instance Aeson.FromJSON TestChainStatus
+
+data PeriodTesting = PeriodTesting
+  { _periodTesting_proposal :: !ProtocolHash
+  , _periodTesting_chainId :: !ChainId
+  , _periodTesting_testChainId :: !(Maybe ChainId)
+  , _periodTesting_votingPeriod :: !RawLevel
+  , _periodTesting_startingLevel :: !(Maybe RawLevel)
+  , _periodTesting_status :: !TestChainStatus
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodPromotionVote = PeriodPromotionVote
+  { _periodPromotionVote_periodVote :: PeriodVote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
 data BlockTodo = BlockTodo
   { _blockTodo_hash :: !BlockHash
   , _blockTodo_level :: !Int
@@ -912,6 +960,8 @@ deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
+  , ''Amendment
+  , ''AlertNotificationMethod
   , ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
@@ -937,37 +987,41 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
-  , ''ErrorLogBakerMissed
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
-  , ''ErrorLogInsufficientFunds
+  , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogMultipleBakersForSameBaker
-  , ''ErrorLogNodeWrongChain
-  , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
   , ''Event
   , ''MailServerConfig
   , ''Node
+  , ''NodeDetails
+  , ''NodeDetailsData
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
+  , ''Parameters
+  , ''PeriodTestingVote
+  , ''PeriodPromotionVote
+  , ''PeriodProposal
+  , ''PeriodTesting
+  , ''PeriodVote
+  , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''ProcessControl
-  , ''NodeDetails
-  , ''NodeDetailsData
-  , ''RightNotificationLimit
-  , ''RightNotificationSettings
-  , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
   , ''RightKind
+  , ''RightNotificationLimit
+  , ''RightNotificationSettings
   , ''SeenEvent
-  , ''AlertNotificationMethod
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -976,6 +1030,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpstreamVersion
   ] ++ map makeLenses
   [ 'Accusation
+  , 'Amendment
   , 'BakeEfficiency
   , 'BakedEvent
   , 'BakedEventOperation
@@ -1002,10 +1057,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
-  , 'ErrorLogInsufficientFunds
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
+  , 'ErrorLogInsufficientFunds
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
@@ -1013,18 +1068,23 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'Event
   , 'MailServerConfig
   , 'Node
+  , 'NodeDetails
+  , 'NodeDetailsData
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'RightNotificationLimit
-  , 'RightNotificationSettings
-  , 'ProcessData
-  , 'NodeDetails
-  , 'NodeDetailsData
   , 'Parameters
+  , 'PeriodTestingVote
+  , 'PeriodPromotionVote
+  , 'PeriodProposal
+  , 'PeriodTesting
+  , 'PeriodVote
+  , 'ProcessData
   , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report
+  , 'RightNotificationLimit
+  , 'RightNotificationSettings
   , 'SeenEvent
   , 'TelegramConfig
   , 'TelegramMessageQueue

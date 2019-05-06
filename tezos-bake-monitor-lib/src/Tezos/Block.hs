@@ -66,9 +66,12 @@ data VotingPeriodKind
   | VotingPeriodKind_TestingVote --  { "type": "string", "enum": [ "testing_vote" ] },
   | VotingPeriodKind_Testing --  { "type": "string", "enum": [ "testing" ] },
   | VotingPeriodKind_PromotionVote --  { "type": "string", "enum": [ "promotion_vote" ] }
-  deriving (Eq, Ord, Show, Generic, Typeable)
+  deriving (Eq, Ord, Read, Show, Generic, Typeable, Bounded, Enum)
 instance Hashable VotingPeriodKind
 instance NFData VotingPeriodKind
+
+instance Aeson.ToJSONKey VotingPeriodKind
+instance Aeson.FromJSONKey VotingPeriodKind
 
 -- | "block_header_metadata": {
 data BlockMetadata = BlockMetadata

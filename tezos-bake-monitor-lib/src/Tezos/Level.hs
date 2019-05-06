@@ -4,6 +4,7 @@
 
 module Tezos.Level where
 
+import Control.Lens.TH (makeLenses)
 import Control.DeepSeq (NFData)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import Data.Hashable (Hashable)
@@ -36,3 +37,4 @@ instance Hashable Level
 instance NFData Level
 
 deriveTezosJson ''Level
+makeLenses 'Level

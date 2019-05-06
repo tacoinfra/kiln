@@ -390,8 +390,21 @@ let
     echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
   '';
 
+  votingTest = pkgs.writeScriptBin "voting-test" ''
+    #!/usr/bin/env bash
+    set -e
+    echo 'Starting flextesa voting test... monitor a node via kiln at http://127.0.0.1:20000'
+    rm -rf /tmp/kiln_voting_test
+    cp -r ${(import ./dep/tezos-baking-platform {}).tezos.master.tezos-src}/src/bin_client/test/proto_test_injection /tmp/kiln_voting_test
+    chmod -R +w /tmp/kiln_voting_test
+    nix-shell -A tezos.master.sandbox dep/tezos-baking-platform --run \
+      'flextesa voting \
+      /tmp/kiln_voting_test \
+      --base-port=20000 --interactive=true --pause-on-error=true'
+  '';
+
 in (obApp null) // {
-  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln;
+  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
     let
       network =

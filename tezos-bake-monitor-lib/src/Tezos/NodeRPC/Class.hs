@@ -45,8 +45,10 @@ class QueryHistory repr where -- blockscale
   rContract :: ContractId -> ChainId -> BlockHash -> repr Account
 
   rBallots :: ChainId -> BlockHash -> repr Ballots
+  rListings :: ChainId -> BlockHash -> repr (Seq VoterDelegate)
   rProposals :: ChainId -> BlockHash -> repr (Seq ProposalVotes)
   rCurrentProposal :: ChainId -> BlockHash -> repr (Maybe ProtocolHash)
+  rCurrentQuorum :: ChainId -> BlockHash -> repr Int
 
   rManagerKey :: ContractId -> ChainId -> BlockHash -> repr ManagerKey
 
@@ -98,8 +100,10 @@ instance QueryHistory RpcQuery where
   rAnyConstants = chainAPI "/blocks/head/context/constants"
   rContract contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId)
   rBallots = blockAPI "/votes/ballots/"
+  rListings = blockAPI "/votes/listings/"
   rProposals = blockAPI "/votes/proposals/"
   rCurrentProposal = blockAPI "/votes/current_proposal/"
+  rCurrentQuorum = blockAPI "/votes/current_quorum/"
   rManagerKey contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId <> "/manager_key")
   rBakingRights params = blockAPI $ "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
