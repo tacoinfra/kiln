@@ -551,7 +551,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
                   Tezos.TestChainStatus_Running
                     { Tezos._testChainStatusRunning_chainId = c
                     , Tezos._testChainStatusRunning_genesis = b
-                    } -> (TestChainStatus_Forking, Just c, Just b)
+                    } -> (TestChainStatus_Running, Just c, Just b)
             tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
             runDb (Identity db) $ do
               let t = PeriodTesting
