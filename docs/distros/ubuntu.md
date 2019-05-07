@@ -26,8 +26,8 @@ This sets Kiln to run on zeronet and use the port 8080. Note the `--` before `--
 Kiln's logs can be found in journal control. Some useful commands for viewing logs include:
 
 * `journalctl -u kiln` - View all of Kiln’s logs since inception
-* `journalctl -u kiln --S YYYY-MM-DD` - View Kiln's logs since the date provided
-* `journalctl -u kiln --S "YYYY-MM-DD HH:MM"` - View Kiln's logs since the date and time provided
+* `journalctl -u kiln -S YYYY-MM-DD` - View Kiln's logs since the date provided
+* `journalctl -u kiln -S "YYYY-MM-DD HH:MM"` - View Kiln's logs since the date and time provided
 * `journalctl -u kiln -ef` - View and follow Kiln's most recent logs
 * `Shift + G` - Jump to the most recent logs
 * `Ctrl + C` - Exit journal control
