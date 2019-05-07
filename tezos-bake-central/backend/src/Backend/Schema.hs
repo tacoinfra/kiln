@@ -655,6 +655,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     autoKey: null
   - entity: PeriodPromotionVote
     autoKey: null
+  - entity: Vote
+    autoKey: null
+    constructors:
+      - name: Vote
+        uniques:
+          - name: Vote_period
+            type: primary
+            fields: [_vote_period, _vote_chainId, _vote_proposal]
 
   - primitive: SigningCurve
   - entity: ConnectedLedger

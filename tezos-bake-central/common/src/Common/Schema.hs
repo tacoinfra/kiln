@@ -527,6 +527,13 @@ data PeriodPromotionVote = PeriodPromotionVote
   { _periodPromotionVote_periodVote :: PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+data Vote = Vote
+  { _vote_period :: !VotingPeriodKind
+  , _vote_chainId :: !ChainId
+  , _vote_proposal :: !ProtocolHash
+  , _vote_ballot :: !(Maybe Bool) -- Not relevant for proposals period
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
 data BlockTodo = BlockTodo
   { _blockTodo_hash :: !BlockHash
   , _blockTodo_level :: !Int
@@ -1028,6 +1035,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''TelegramRecipient
   , ''UpgradeCheckError
   , ''UpstreamVersion
+  , ''Vote
   ] ++ map makeLenses
   [ 'Accusation
   , 'Amendment

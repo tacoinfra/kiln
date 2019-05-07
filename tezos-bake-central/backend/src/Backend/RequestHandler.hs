@@ -509,6 +509,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             Just _ -> update [RightNotificationSettings_limitField =. limit] pk
         notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
+      PublicRequest_SetupLedgerToVote -> pure ()
+      PublicRequest_DoVote v -> inDb $ void $ insert v
+
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
