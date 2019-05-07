@@ -569,13 +569,14 @@ voteModal protoInfo bakerPkh amendment close = do
     ledgerDeviceIcon expectedLedgerIdentifier = divClass "ledger-device-status" $ do
       connectedLedger <- watchConnectedLedger
       ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
+      isWalletApp <- holdUniqDyn $ fmap _connectedLedger_isWalletApp <$> connectedLedger
       -- searching / wrong device found : only identifier, no marks
       -- found : show green tick mark
       -- not found : show red cross mark
       let
         iconType :: Dynamic t (Maybe Text)
-        iconType = ffor ledgerIdentifier $ fmap $ \li ->
-          if li == expectedLedgerIdentifier
+        iconType = ffor2 isWalletApp ledgerIdentifier $ \wApp -> fmap $ \li ->
+          if li == expectedLedgerIdentifier && wApp == Just True
             then "icon-check"
             else "icon-x-thick"
       divClass "" $ do

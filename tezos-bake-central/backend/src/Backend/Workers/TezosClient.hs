@@ -177,6 +177,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   { _connectedLedger_ledgerIdentifier = fmap fst mliv
                   , _connectedLedger_bakingAppVersion = fmap snd mliv
                   , _connectedLedger_updated = Just now
+                  , _connectedLedger_isWalletApp = False
                   }
             deleteAll connectedLedger
             insert connectedLedger
