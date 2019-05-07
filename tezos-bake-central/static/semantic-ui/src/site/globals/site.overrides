@@ -158,6 +158,24 @@ h6.ui.header {
       }
     }
   }
+  .ledger-device-status {
+    text-align: center;
+    color: #898989;
+    .mark {
+      position: relative;
+      right: @12px;
+      top: -@15px;
+      > .icon {
+        background-color: #ffffff;
+      }
+      .icon.icon-check {
+        color: #1269f3;
+      }
+      .icon.icon-x-thick {
+        color: #d00101;
+      }
+    }
+  }
   .proposals {
     margin: 0 -@10px;
     table {

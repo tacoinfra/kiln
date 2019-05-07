@@ -513,6 +513,9 @@ voteModal protoInfo bakerPkh amendment close = do
 
     castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
     castProposalVoteFlow proposal = Workflow $ do
+      let
+        expectedLI = LedgerIdentifier "crouching-tiger-hidden-dragon"
+      ledgerDeviceIcon expectedLI
       divClass "ui header" $ text "Cast a vote for this proposal?"
       el "p" $ text $ toBase58Text proposal
       cast <- uiDynButton (pure "primary") $ text "Cast Vote"
@@ -562,3 +565,21 @@ voteModal protoInfo bakerPkh amendment close = do
       text "Kiln will confirm when your vote has been included in the blockchain."
       continue <- uiDynButton (pure "primary") $ text "Continue"
       pure $ fanEither $ whereToGo <$ continue
+
+    ledgerDeviceIcon expectedLedgerIdentifier = divClass "ledger-device-status" $ do
+      connectedLedger <- watchConnectedLedger
+      ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
+      -- searching / wrong device found : only identifier, no marks
+      -- found : show green tick mark
+      -- not found : show red cross mark
+      let
+        iconType :: Dynamic t (Maybe Text)
+        iconType = ffor ledgerIdentifier $ fmap $ \li ->
+          if li == expectedLedgerIdentifier
+            then "icon-check"
+            else "icon-x-thick"
+      divClass "" $ do
+        elAttr "img" ("src" =: static @"images/ledger.svg") blank
+        dyn_ $ ffor iconType $ mapM $ \it ->
+          elClass "span" "mark" $ icon $ "small circular " <> it
+      divClass "" $ text $ unLedgerIdentifier expectedLedgerIdentifier
