@@ -15,13 +15,14 @@ But this might work with other VM software like VMWare, and other hosts.
 
 ## Running VM / Kiln
 
-- After successful import, run the "Kiln VM" by clicking the "Start"/ "Normal Start" button on menu
+- After successful import, run the "Kiln VM" by clicking the "Start" / "Normal Start" button on menu
 
-- Once the VM is running, Kiln will run automatically. Open http://localhost:8000 from the browser (Firefox) in the VM to access Kiln.
+- Once the VM is running, Kiln will run automatically. 
+  You can use the browser (Firefox) in the VM to access Kiln by opening http://localhost:8000, but it is recommended that you use the browser of the host OS as described below.
 
 ## Using host browser
 
-Using the browser inside the VM can slowdown the VM considerably, and affect the performance of the node and baker.
+Using the browser inside the VM can slow down the VM considerably, and affect the performance of the node and baker.
 Therefore it is recommended to use the browser of the host operating system to operate Kiln.
 
 To use the host browser you need to change the network settings of the VM to expose the port `8000`
@@ -43,7 +44,7 @@ To use the host browser you need to change the network settings of the VM to exp
   | Name | "Kiln app" |
   | Protocol | "TCP" |
   | Host IP | |
-  | Host Port | 8000 (or you can choose some other value like 8001, etc)
+  | Host Port | 8000 (or you can choose some other value like 8001, etc) |
   | Guest IP | |
   | Guest Port | 8000 |
 
