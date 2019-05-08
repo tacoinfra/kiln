@@ -11,8 +11,7 @@ To bake with Kiln, the Kiln Node must be fully synced with the blockchain. Rathe
 3. Remove the Kiln Node’s existing context and store
 
 ```shell
-rm -rf app/.kiln/tezos-node/[chain-id]/context
-rm -rf app/.kiln/tezos-node/[chain-id]/store
+rm -rf app/.kiln/tezos-node/[chain-id]/{context,store}
 ```
 
 _Note: The chainId for mainnet is `NetXdQprcVkpaWU`_
@@ -37,8 +36,7 @@ cp -r ~/.tezos-node/context ~/.tezos-node/store app/.kiln/tezos-node/[chain-id]/
 3. Remove the Kiln Node's existing context and store:
 
 ```shell
-sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chain-id]/context
-sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chain-id]/store
+sudo rm -rf /var/lib/kiln/data-dir/tezos-node/[chain-id]/{context,store}
 ```
 
 4. Stop the node whose data you are copying.
@@ -61,8 +59,7 @@ sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chain-id]
 3. Remove the Kiln Node's existing context and store:
 
 ```shell
-sudo rm -rf /home/kiln/app/.kiln/tezos-node/[chain-id]/context
-sudo rm -rf /home/kiln/app/.kiln/tezos-node/[chain-id]/store
+sudo rm -rf /home/kiln/app/.kiln/tezos-node/[chain-id]/{context,store}
 ```
 
 4. Stop the node whose data you are copying.
