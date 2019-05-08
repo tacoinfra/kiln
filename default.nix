@@ -7,6 +7,7 @@ let
   obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
 
   distroMethods = {
+    source = null;
     docker = "docker";
     linuxPackage = "linux-package";
   };
@@ -87,7 +88,7 @@ let
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = (obApp null).linuxExeConfigurable appConfig version;
+          exe = (obApp distroMethods.source).linuxExeConfigurable version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -356,7 +357,7 @@ let
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
         preStart = ''
-          ln -sft . '${(obAppGargoyle null).exe}'/*
+          ln -sft . '${(obAppGargoyle distroMethods.source).exe}'/*
           mkdir -p log
         '';
         script = ''
@@ -383,7 +384,7 @@ let
        export KILN_INSTALL_PATH=$1
     fi
     mkdir -p $KILN_INSTALL_PATH
-    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    ln -sf ${(obAppGargoyle distroMethods.source).exe}/* $KILN_INSTALL_PATH
     echo "Install Complete!"
     echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
   '';
@@ -401,7 +402,7 @@ let
       --base-port=20000 --interactive=true --pause-on-error=true'
   '';
 
-in (obApp null) // {
+in (obApp distroMethods.source) // {
   inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
