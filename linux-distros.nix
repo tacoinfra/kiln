@@ -1,5 +1,6 @@
 { pkgs
 , obApp
+, nodeKit
 , pkgName
 , version
 }:
@@ -189,10 +190,31 @@ let
   run-kiln-exe =
     let
       # Not using writeScriptBin here, as we want to use /bin/bash
-      run-backend = ''
+      run-kiln-backend-script = ''
         #!/usr/bin/env bash
         cd '${exe-dir}'
         ./backend --kiln-data-dir='${data-dir}' \$@
+      '';
+
+      run-kiln-shell = ''
+        #!/usr/bin/env bash
+        cd /tmp/kiln-shell-home
+        HOME=/tmp/kiln-shell-home bash
+      '';
+
+      mainnet-bashrc = ''
+        alias tezos-client=${nodeKit}/bin/mainnet-tezos-client
+        alias tezos-admin-client=${nodeKit}/bin/mainnet-tezos-admin-client
+      '';
+
+      zeronet-bashrc = ''
+        alias tezos-client=${nodeKit}/bin/zeronet-tezos-client
+        alias tezos-admin-client=${nodeKit}/bin/zeronet-tezos-admin-client
+      '';
+
+      alphanet-bashrc = ''
+        alias tezos-client=${nodeKit}/bin/alphanet-tezos-client
+        alias tezos-admin-client=${nodeKit}/bin/alphanet-tezos-admin-client
       '';
 
       # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
@@ -201,7 +223,7 @@ let
       # (see error EPERM, in man 2 unshare)
       # 
       # So in order to do a nested unshare we instead do 'pivot_root'
-      do-mount-and-pivot = ''
+      kiln-do-mount-and-pivot = ''
         #!/usr/bin/env bash
         mount --bind '${root-dir}'  '${root-dir}'
         mount --rbind /proc  '${root-dir}/proc'
@@ -220,28 +242,55 @@ let
         cd '${root-dir}'
         pivot_root . oldroot
         cd /
-        exec do-umount-and-unshare \$@
-      '';
-
-      do-umount-and-unshare = ''
-        #!/usr/bin/env bash
         umount -l oldroot
-        exec unshare --user run-backend \$@
+        exec unshare --user \$1 ${argStr}
+      '';
+      argStr = pkgs.lib.strings.escapeNixString "\${@:2}";
+
+      run-kiln-backend = ''
+        #!/usr/bin/env bash
+        exec unshare --mount --map-root-user kiln-do-mount-and-pivot run-kiln-backend-script \$@
       '';
 
-      mainScript = ''
+      kiln-shell = ''
         #!/usr/bin/env bash
-        exec unshare --mount --map-root-user do-mount-and-pivot \$@
+        mkdir -p /tmp/kiln-shell-home
+        if [[ \$# -eq 0 ]] ; then
+        	echo \"Starting kiln-shell for mainnet.\"
+        	echo \"To run kiln-shell for other network, please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'.\"
+          echo '${mainnet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+        else
+        	case \$1 in
+        		mainnet)
+        			echo \"Starting kiln-shell for mainnet.\"
+              echo '${mainnet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+        			;;
+        		zeronet)
+        			echo \"Starting kiln-shell for zeronet.\"
+              echo '${zeronet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+        			;;
+        		alphanet)
+        			echo \"Starting kiln-shell for alphanet.\"
+              echo '${alphanet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+        			;;
+        		*)
+        			echo \"Unknown argument, specify mainnet, zeronet or alphanet\"
+        			exit 1
+        			;;
+        	esac
+        fi
+        exec unshare --mount --map-root-user kiln-do-mount-and-pivot run-kiln-shell
       '';
 
     in pkgs.runCommand "run-kiln-exe" {
         dontPatchShebangs = true;
       } ''
         mkdir -p $prefix/bin
-        echo -n "${mainScript}" > $prefix/bin/run-kiln
-        echo -n "${do-mount-and-pivot}" > $prefix/bin/do-mount-and-pivot
-        echo -n "${do-umount-and-unshare}" > $prefix/bin/do-umount-and-unshare
-        echo -n "${run-backend}" > $prefix/bin/run-backend
+        echo -n "${kiln-do-mount-and-pivot}" > $prefix/bin/kiln-do-mount-and-pivot
+        echo -n "${run-kiln-backend}" > $prefix/bin/run-kiln-backend
+        echo -n "${kiln-shell}" > $prefix/bin/kiln-shell
+        echo -n "${run-kiln-shell}" > $prefix/bin/run-kiln-shell
+        echo -n "${run-kiln-backend-script}" > $prefix/bin/run-kiln-backend-script
         chmod +x $prefix/bin/*
       '';
 
@@ -253,7 +302,7 @@ let
     [Service]
     Type=simple
     EnvironmentFile=/etc/${pkgName}/args
-    ExecStart=/usr/bin/run-kiln $KILNARGS
+    ExecStart=/usr/bin/run-kiln-backend $KILNARGS
     Restart=always
     RestartSec=5
     User=kiln

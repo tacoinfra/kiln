@@ -13,6 +13,7 @@ let
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
+  kilnNodeKit = (import tezos-bake-central/scoped-tzkits.nix {}).kits;
 
   nodeConfigOptions = {
     zeronet = {
@@ -442,6 +443,7 @@ in (obApp null) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
+    nodeKit = kilnNodeKit;
     pkgName = "kiln"; version = "0.5.1";
   }).kiln-debian;
 }
