@@ -42,9 +42,9 @@ To use the host browser you need to change the network settings of the VM to exp
   | ------| ------|
   | Name | "Kiln app" |
   | Protocol | "TCP" |
-  | Host IP | empty |
+  | Host IP | |
   | Host Port | 8000 (or you can choose some other value like 8001, etc)
-  | Guest IP | empty |
+  | Guest IP | |
   | Guest Port | 8000 |
 
 After setting this, open the http://localhost:8000 in your host OS browser
