@@ -52,7 +52,8 @@ For the most complete list of options while starting Kiln, run `./backend --help
     *   Example: `--nodes http://localhost:8732,http://localhost:8733@SecondNode`
 * `--baker` or `--bakers` - Adds monitored bakers to Kiln at startup. Entries should be comma separated, and can optionally take an alias.
     *   Example: `--bakers tz3RDC3Jdn4j15J7bBHZd29EUee9gVB1CxD9@FirstBaker,tz3NExpXn9aPNZPorRE4SdjJ2RGrfbJgMAaV@SecondBaker,tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r`
-* `--kiln-node-port=PORT` - Configures the RPC port of the Kiln Node. Default is `8732`
+* `--kiln-node-rpc-port=PORT` - Configures the RPC port of the Kiln Node. Default is `8733`
+* `--kiln-node-net-port=PORT` - Configures the Net port of the Kiln Node. Default is `9733`
 
 ### Updating from an older source build
 
