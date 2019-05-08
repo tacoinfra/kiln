@@ -32,3 +32,9 @@ Kiln's logs can be found in journal control. Some useful commands for viewing lo
 * `Shift + G` - Jump to the most recent logs
 * `Ctrl + C` - Exit journal control
 
+## Running tezos-client and tezos-admin-client
+
+Use the command `kiln-shell` to create a shell from where you can use the `tezos-client` and `tezos-admin-client` for mainnet.
+For other networks specify the network like `kiln-shell alphanet` or `kiln-shell zeronet`.
+
+Note: This shell uses a temporary directory `/tmp/kiln-shell-home` to store the data created by `tezos-client`.
