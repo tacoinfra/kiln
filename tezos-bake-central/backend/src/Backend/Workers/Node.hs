@@ -62,7 +62,7 @@ import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', worke
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
-import Backend.STM (atomicallyWith)
+import Backend.STM (atomicallyWith, atomicallyWithTime)
 import Common.Schema
 import ExtraPrelude
 
@@ -255,9 +255,6 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
     let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address appConfig nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
-    -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
-    _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
-
     thoseNodes <- liftIO $ readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
     let staleNodes = thoseNodes `Map.difference` theseNodes
@@ -319,7 +316,7 @@ publicNodesWorker nds = foldMap workerForSource
         mLastBlock <- project1 PublicNodeHead_headBlockField $
           PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
         pure (now, mLastBlock)
-      timeBetweenBlocks <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+      timeBetweenBlocks <- maybe 5 calcTimeBetweenBlocks <$> atomicallyWithTime (getLatestProtocol nds)
       let secsSinceLastBlock = maybe 0 (\v -> _veryBlockLike_timestamp v `diffUTCTime` now) mLastBlock
           secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
               -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
@@ -333,10 +330,7 @@ updateDataSource
   => NodeDataSource -> DataSource -> m ()
 updateDataSource nds (pn, chain, uri) = do
   enabled <- publicNodeEnabled
-  -- TODO: prefer to get this from the database, or from private nodes before
-  when enabled $ do
-    _ <- liftIO $ initParams nds (Identity (Just pn, uri))
-    updatePublicNodeInDb
+  when enabled updatePublicNodeInDb
 
   where
     db = _nodeDataSource_pool nds
@@ -455,11 +449,12 @@ amendmentProcessWorker
   -> Pool Postgresql
   -> IO (IO ())
 amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
-  latestBlock <- throwing $ getBlock (latestHead ^. hash)
-  blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
-    readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
-  history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+  $(logDebug) "amendmentProcessWorker: Started"
+  (latestBlock, blocksPerVotingPeriod) <- throwing $ liftA2 (,)
+    (getBlock (latestHead ^. hash))
+    (fmap _protoInfo_blocksPerVotingPeriod $ nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash)
+
+  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
   -- The RPCs under /votes/ return the information for the *next block*, not the current block.
   -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
   -- (the last block of the period), but /votes/current_period_kind for that block will return
@@ -595,7 +590,7 @@ protocolMonitorWorker
   -> Pool Postgresql
   -> IO (IO ())
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  protoInfo <- liftIO $ atomically $ waitForParams nds
+  protoInfo <- throwing $ nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case
@@ -678,3 +673,6 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
 
+  where
+    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
+    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError

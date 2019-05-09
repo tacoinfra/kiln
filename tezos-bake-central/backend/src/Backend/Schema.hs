@@ -126,7 +126,6 @@ data NotifyTag a where
   NotifyTag_NodeInternal :: NotifyTag (Id Node, Maybe ProcessData)
   NotifyTag_NodeDetails :: NotifyTag (Id Node, Maybe NodeDetailsData)
   NotifyTag_Notificatee :: NotifyTag (Id Notificatee)
-  NotifyTag_Parameters :: NotifyTag (Id Parameters, Parameters)
   NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
   NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
   NotifyTag_TelegramConfig :: NotifyTag (Id TelegramConfig, TelegramConfig)
@@ -790,13 +789,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
-  - entity: Parameters
-    constructors:
-      - name: Parameters
-        uniques:
-          - name: _parameters_uniqueness
-            type: constraint
-            fields: [_parameters_chain]
   - embedded: ProtoInfo
   - entity: Baker
     autoKey: null
@@ -1038,7 +1030,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
-  , (''Parameters, 'ParametersKey)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
@@ -1259,7 +1250,6 @@ instance ArgDict NotifyTag where
     , c (Id Node, Maybe ProcessData)
     , c (Id Node, Maybe NodeDetailsData)
     , c (Id Notificatee)
-    , c (Id Parameters, Parameters)
     , c (Id PublicNodeConfig, PublicNodeConfig)
     , c (Id PublicNodeHead, Maybe PublicNodeHead)
     , c (Id TelegramConfig, TelegramConfig)
@@ -1300,7 +1290,6 @@ instance ArgDict NotifyTag where
     NotifyTag_NodeInternal -> Dict
     NotifyTag_NodeDetails -> Dict
     NotifyTag_Notificatee -> Dict
-    NotifyTag_Parameters -> Dict
     NotifyTag_PublicNodeConfig -> Dict
     NotifyTag_PublicNodeHead -> Dict
     NotifyTag_TelegramConfig -> Dict

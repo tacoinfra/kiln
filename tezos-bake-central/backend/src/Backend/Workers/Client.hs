@@ -46,6 +46,7 @@ import Backend.CachedNodeRPC
 import Backend.ChainHealth (scanForkInfo)
 import Backend.Common (worker')
 import Backend.Schema
+import Backend.STM (atomicallyWithTime, retry')
 
 data ClientWorkerContext = ClientWorkerContext
   { _clientWorkerContext_appConfig :: !AppConfig
@@ -62,10 +63,10 @@ clientWorker
   -> NodeDataSource
   -> IO (IO ())
 clientWorker appCfg nds =
-  worker' $ (*> waitForNewHeadWithTimeout nds) $
-    withParams nds $ \protoInfo ->
-      runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
-        runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
+  worker' $ (*> waitForNewHeadWithTimeout nds) $ do
+    protoInfo <- atomicallyWithTime (maybe retry' pure =<< getLatestProtocol nds)
+    runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
+      runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 
   where
     doUpdate protoInfo = do

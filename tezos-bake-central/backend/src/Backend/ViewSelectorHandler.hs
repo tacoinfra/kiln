@@ -77,7 +77,7 @@ import Tezos.Types
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
-import Backend.STM (atomicallyWith)
+import Backend.STM (atomicallyWithTime)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -118,8 +118,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   --         (cid, report, config) <- rs
   --         return (cid, First (ClientInfo cid <$> report <*> config))
   --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
-  parameters <- maybeViewHandler _bakeViewSelector_parameters $
-    fmap _parameters_protoInfo <$> selectSingle (Parameters_chainField ==. _nodeDataSource_chain nds)
+  parameters <- maybeViewHandler _bakeViewSelector_parameters $ pure Nothing
+    -- fmap _parameters_protoInfo <$> selectSingle (Parameters_chainField ==. _nodeDataSource_chain nds)
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
@@ -488,11 +488,10 @@ getBakerAddresses nds bid = do
   -- we need to do this *here* instead of, say, on bakerdetails, because we
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
-  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- flip runReaderT nds $ atomicallyWith $
-    withCache nds (Nothing, Nothing, []) $ \protoInfo -> do
-      nds' <- ask
-      headM <- dataSourceHead nds'
-      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes . view hash) headM
+  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- atomicallyWithTime $
+    withLatestProtocol nds (Nothing, Nothing, []) $ \protoInfo -> do
+      headM <- dataSourceHead nds
+      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes nds protoInfo . view hash) headM
 
       return (view level <$> headM, Just (firstLevelInCycle protoInfo (_protoInfo_preservedCycles protoInfo + 1) - 1), rightsInfo)
 

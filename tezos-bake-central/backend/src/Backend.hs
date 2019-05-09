@@ -299,9 +299,7 @@ backendImpl cfg serve = do
               }
             }
 
-    params <- runLoggingEnv logger $ runDb (Identity db) $
-      listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger
+    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -359,7 +357,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
-      addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig db
+      addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.

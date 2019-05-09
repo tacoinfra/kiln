@@ -407,12 +407,6 @@ data PublicNodeHead = PublicNodeHead
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
-data Parameters = Parameters
-  { _parameters_chain :: !ChainId
-  , _parameters_protoInfo :: !ProtoInfo
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Parameters
-
 data BakedEventOperation = BakedEventOperation
   { _bakedEventOperation_branch :: !BlockHash
   , _bakedEventOperation_data :: !Operation
@@ -998,11 +992,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
-  , ''Parameters
-  , ''PeriodTestingVote
   , ''PeriodPromotionVote
   , ''PeriodProposal
   , ''PeriodTesting
+  , ''PeriodTestingVote
   , ''PeriodVote
   , ''ProcessControl
   , ''ProcessData
@@ -1064,11 +1057,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'Parameters
-  , 'PeriodTestingVote
   , 'PeriodPromotionVote
   , 'PeriodProposal
   , 'PeriodTesting
+  , 'PeriodTestingVote
   , 'PeriodVote
   , 'ProcessData
   , 'PublicNodeConfig

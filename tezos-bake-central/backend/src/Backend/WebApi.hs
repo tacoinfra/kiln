@@ -9,7 +9,7 @@
 
 module Backend.WebApi where
 
-import Control.Concurrent.STM (atomically, readTVarIO)
+import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
@@ -28,7 +28,7 @@ import Tezos.Block (VeryBlockLike (..))
 import Tezos.Types
 
 import Backend.CachedNodeRPC
-import Backend.STM (atomicallyWith)
+import Backend.STM (atomicallyWith, atomicallyWithTime)
 import Common.Schema (BlockBaker, CacheDelegateInfo, CacheError)
 import ExtraPrelude
 
@@ -59,7 +59,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
 
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
-      liftIO (readTVarIO (_nodeDataSource_parameters dataSrc)) >>= \case
+      liftIO (atomicallyWithTime $ getLatestProtocol dataSrc) >>= \case
         Nothing -> Snap.modifyResponse (Snap.setResponseCode 503) *> Snap.writeLBS "Cache Not Ready"
         Just ps -> either sulk (Snap.writeLBS . Aeson.encode) =<< runReaderT (x ps) dataSrc
 
@@ -187,5 +187,5 @@ withCacheIO
   => a -> (ProtoInfo -> m a) -> m a
 withCacheIO dft action = do
   dsrc <- asks (^. nodeDataSource)
-  protoInfo <- liftIO $ readTVarIO $ _nodeDataSource_parameters dsrc
+  protoInfo <- liftIO $ atomicallyWithTime $ getLatestProtocol dsrc
   fromMaybe dft <$> traverse action protoInfo

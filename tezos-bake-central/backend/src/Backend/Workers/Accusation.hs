@@ -15,15 +15,9 @@
 
 module Backend.Workers.Accusation where
 
-import Control.Concurrent.STM (atomically)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug)
-import Control.Monad.Reader (ReaderT)
-import Data.Pool (Pool)
+import Control.Monad.Logger (LoggingT, logDebug, logErrorSH)
+import Control.Monad.Except (runExceptT)
 import Data.Time (NominalDiffTime)
-import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql)
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
@@ -40,26 +34,28 @@ accusationWorker
   :: NominalDiffTime -- delay between checking for updates, in microseconds
   -> NodeDataSource
   -> AppConfig
-  -> Pool Postgresql
   -> IO (IO ())
-accusationWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ do
+accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let chainId = _nodeDataSource_chain nds
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Check accusations cycle."
 
-    params <- liftIO $ atomically $ waitForParams nds
+    either $(logErrorSH) pure <=< flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+      alertData <- [queryQ|
+        select a.hash, a."blockHash", a."isBake", a.baker, a."occurredLevel", a.level
+        from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker
+        where a.chain = ?chainId
+        order by a.level asc
+      |]
 
-    inDb $ do
-      alertsNeeded <-
-        [queryQ|
-          select a.hash, a."blockHash", a."isBake", a.baker, a."occurredLevel", a.level
-          from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker
-          where a.chain = ?chainId
-          order by a.level asc
-          |] <&> fmap (\(a,b,c,d,e,f) -> reportAccusation a b (bool RightKind_Endorsing RightKind_Baking c) d e (levelToCycle params e) f (levelToCycle params f))
-
-      flip runReaderT appConfig $ sequence_ alertsNeeded
-
-  where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
-    inDb = runDb (Identity db) . flip runReaderT appConfig
+      for_ alertData $ \(aHash, aBlockHash, aIsBake, aBaker, aOccurredLevel, aLevel) -> do
+        params <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants aBlockHash
+        flip runReaderT appConfig $ reportAccusation
+          aHash
+          aBlockHash
+          (bool RightKind_Endorsing RightKind_Baking aIsBake)
+          aBaker
+          aOccurredLevel
+          (levelToCycle params aOccurredLevel) -- TODO: This assumes that even some variables are actually constant
+          aLevel
+          (levelToCycle params aLevel) -- TODO: This assumes that even some variables are actually constant

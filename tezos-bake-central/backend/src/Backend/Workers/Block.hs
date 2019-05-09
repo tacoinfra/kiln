@@ -15,7 +15,6 @@
 
 module Backend.Workers.Block where
 
-import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH)
 import Control.Monad.Logger (logWarnSH)
@@ -41,6 +40,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
+import Backend.STM (atomicallyWithTime, retry')
 import Common.Schema hiding (blockLevel)
 import ExtraPrelude
 
@@ -54,8 +54,8 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
   let chainId = _nodeDataSource_chain nds
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
-    (params, dsh) <- liftIO $ atomically $
-      (,) <$> waitForParams nds <*> dataSourceHead nds
+    (params, dsh) <- liftIO $ atomicallyWithTime $
+      (,) <$> (maybe retry' pure =<< getLatestProtocol nds) <*> dataSourceHead nds
     let headLevelMay = (^. level) <$> dsh
     let cutoffLevel = maybe 0 (rightsContextLevel params) headLevelMay
 

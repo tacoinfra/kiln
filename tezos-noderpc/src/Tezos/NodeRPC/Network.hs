@@ -227,18 +227,6 @@ getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v2/head/"
     Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v1/chain"
 
-getProtoConstants :: forall e r m.
-  ( MonadIO m, MonadLogger m
-  , MonadReader r m, HasPublicNodeContext r
-  , MonadError e m, AsPublicNodeError e
-  )
-  => ChainId -> m ProtoInfo
-getProtoConstants chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ rAnyConstants chain
-  Just PublicNode_Blockscale -> nodeRPC $ rAnyConstants chain
-  Just PublicNode_TzScan     -> throwFeatureNotSupported
-  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet $ "/v1/" <> toBase58Text chain <> "/params"
-
 getCurrentHead :: forall e r m.
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e

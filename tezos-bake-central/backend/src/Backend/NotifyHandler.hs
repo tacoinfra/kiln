@@ -62,7 +62,6 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_NodeInternal :=> Identity (eid, ent) -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
     NotifyTag_NodeDetails :=> Identity (eid, ent) -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
     NotifyTag_Notificatee :=> _eid -> handleNotificatee
-    NotifyTag_Parameters :=> Identity (_eid, ent) -> handleParameters ent
     NotifyTag_PublicNodeConfig :=> Identity (_eid, ent) -> handlePublicNodeConfig ent
     NotifyTag_PublicNodeHead :=> Identity (eid, ent) -> handlePublicNodeHead eid ent
     NotifyTag_TelegramConfig :=> Identity (_eid, ent) -> handleTelegramConfig ent
@@ -128,17 +127,19 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
       return $ clientsPatch <> summaryPatch
 
-    paramsVS = _bakeViewSelector_parameters aggVS
+    -- TODO: PUT BACK
+    --paramsVS = _bakeViewSelector_parameters aggVS
 
-    handleParameters :: Applicative m' => Parameters -> m' (BakeView a)
-    handleParameters params =
+    --handleParameters :: Applicative m' => Parameters -> m' (BakeView a)
+    --handleParameters params =
       -- bakerStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
       --   calculateBakerStats (_bakeViewSelector_bakerStats aggVS)
-      whenM (viewSelects () paramsVS) $
-        pure $ mempty
-          { _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
-          -- , _bakeView_bakerStats = bakerStatsView
-          }
+    --  whenM (viewSelects () paramsVS) $
+    --    pure $ mempty
+          --{ _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
+          ---- , _bakeView_bakerStats = bakerStatsView
+          --}
+          -- TODO PUT THIS BACK
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
