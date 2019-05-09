@@ -7,6 +7,7 @@ let
   obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
 
   distroMethods = {
+    source = null;
     docker = "docker";
     linuxPackage = "linux-package";
   };
@@ -21,7 +22,6 @@ let
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
-      histMode = "archive";
     };
     alphanet = {
       network = "alphanet";
@@ -84,12 +84,11 @@ let
     , user ? monitorName
     , rpcPort
     , monitorPort
-    , appConfig
     , version
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = (obApp null).linuxExeConfigurable appConfig version;
+          exe = (obApp distroMethods.source).linuxExeConfigurable version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -358,7 +357,7 @@ let
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
         preStart = ''
-          ln -sft . '${(obAppGargoyle null).exe}'/*
+          ln -sft . '${(obAppGargoyle distroMethods.source).exe}'/*
           mkdir -p log
         '';
         script = ''
@@ -385,7 +384,7 @@ let
        export KILN_INSTALL_PATH=$1
     fi
     mkdir -p $KILN_INSTALL_PATH
-    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    ln -sf ${(obAppGargoyle distroMethods.source).exe}/* $KILN_INSTALL_PATH
     echo "Install Complete!"
     echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
   '';
@@ -403,9 +402,9 @@ let
       --base-port=20000 --interactive=true --pause-on-error=true'
   '';
 
-in (obApp null) // {
+in (obApp distroMethods.source) // {
   inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
@@ -419,11 +418,7 @@ in (obApp null) // {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
           (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig // {
-              appConfig = config;
-              version = version;
-            })
-          )
+          (mkMonitorModule (args // nodeConfig // { inherit version; }))
           (syslog-ngModule {
             opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
           })
