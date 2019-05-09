@@ -377,17 +377,12 @@ let
   installKiln = pkgs.writeScriptBin "install-kiln" ''
     #!/usr/bin/env bash
     set -e
-    if [[ $# -eq 0 ]] ; then
-       echo "Installing Kiln in directory : 'app'"
-       export KILN_INSTALL_PATH=app
-    else
-       echo "Installing Kiln in directory : $1"
-       export KILN_INSTALL_PATH=$1
-    fi
-    mkdir -p $KILN_INSTALL_PATH
-    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    KILN_INSTALL_PATH="''${1:?app}"
+    echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
+    mkdir -p "$KILN_INSTALL_PATH"
+    ln -sf '${(obAppGargoyle null).exe}'/* "$KILN_INSTALL_PATH"
     echo "Install Complete!"
-    echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
+    echo "'cd \"$KILN_INSTALL_PATH\"' and run './backend' to run kiln with default settings."
   '';
 
   votingTest = pkgs.writeScriptBin "voting-test" ''
