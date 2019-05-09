@@ -2,6 +2,7 @@
 , supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
 , profiling ? false
 , distMethod ? null
+, tezosScopedKit ? null
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -10,7 +11,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
     rhyolite = import (hackGet dep/rhyolite);
-    nodeKit = (import ./scoped-tzkits.nix {}).kits;
+    nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
+      inherit pkgs;
+      tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
+    };
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
