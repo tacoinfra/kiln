@@ -848,14 +848,6 @@ data ErrorLog = ErrorLog
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
-data CachedProtocolConstants = CachedProtocolConstants
-  { _cachedProtocolConstants_chainId :: !ChainId
-  , _cachedProtocolConstants_protocol :: !ProtocolHash
-  , _cachedProtocolConstants_blocksPerCycle :: !RawLevel
-  , _cachedProtocolConstants_preservedCycles :: !Cycle
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CachedProtocolConstants
-
 data GenericCacheEntry = GenericCacheEntry
   { _genericCacheEntry_chainId :: !ChainId
   , _genericCacheEntry_key :: !(Json Aeson.Value)
@@ -1047,7 +1039,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
-  , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent
   , 'Error

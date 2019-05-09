@@ -999,15 +999,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerMissedId
             type: primary
             fields: [_errorLogBakerMissed_log]
-
-  - entity: CachedProtocolConstants
-    constructors:
-     - name: CachedProtocolConstants
-       uniques:
-        - name: _cachedprotocolconstants_uniqueness
-          type: constraint
-          fields:
-           - _cachedProtocolConstants_protocol
   - entity: GenericCacheEntry
     constructors:
      - name: GenericCacheEntry
@@ -1039,8 +1030,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
-  [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''BakerDaemon, 'BakerDaemonKey)
+  [ (''BakerDaemon, 'BakerDaemonKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)

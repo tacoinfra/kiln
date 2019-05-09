@@ -68,6 +68,7 @@ preMigrate =
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "CachedProtocolConstants")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
