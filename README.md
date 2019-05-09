@@ -129,10 +129,6 @@ Click *Settings* from the left panel and provide the SMTP configuration for your
 
 There are instances where Kiln’s front end will stop updating, but the backend will continue functioning properly. For instance, resolving a notification will not cause the notification to disappear until the page is refreshed. Stopping and restarting Kiln fixes this issue.
 
-### Known Issue: Ubuntu package may not recognize Ledger device
-
-v0.5.1 of Kiln assumes you have previously used the ledger device on your machine, and thus your udev rules have been set. If Kiln does not recognize your ledger, [set your udev rules](https://github.com/obsidiansystems/ledger-app-tezos#udev-rules-linux-only), then restart Kiln.
-
 # Contact Us
 
 We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!

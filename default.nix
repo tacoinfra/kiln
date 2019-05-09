@@ -437,6 +437,7 @@ in (obApp distroMethods.source) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
-    pkgName = "kiln"; version = "0.5.1";
+    pkgName = "kiln";
+    version = "0.5.2";
   }).kiln-debian;
 }
