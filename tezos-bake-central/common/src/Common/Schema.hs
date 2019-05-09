@@ -253,7 +253,7 @@ kilnLedgerAlias :: Text
 kilnLedgerAlias = "ledger_kiln"
 
 data BakerDaemonInternalData = BakerDaemonInternalData
-  { _bakerDaemonInternalData_alias :: !(Text)
+  { _bakerDaemonInternalData_alias :: !Text
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_insufficientFunds :: !Bool
   , _bakerDaemonInternalData_protocol :: !ProtocolHash
@@ -685,7 +685,7 @@ data AlertNotificationMethod
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
 
 instance Aeson.ToJSONKey AlertNotificationMethod where
-  toJSONKey = Aeson.ToJSONKeyText (tshow) (AesonE.text . tshow)
+  toJSONKey = Aeson.ToJSONKeyText tshow (AesonE.text . tshow)
 
 -- show match show!
 instance Aeson.FromJSONKey AlertNotificationMethod where

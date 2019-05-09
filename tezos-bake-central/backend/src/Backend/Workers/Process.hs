@@ -97,13 +97,13 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         state = ProcessState_Stopped
         {-# INLINE claim #-}
         claim = do
-          now <- liftIO $ getCurrentTime
+          now <- liftIO getCurrentTime
           let nowMinus5min = addUTCTime (-600) now
           pd <- runDb (Identity db) $ do
             update [state_ =. state, updated_ =. Just now, backend_ =. Just lockId]
-              ((AutoKeyField ==. (fromId pid))
+              ((AutoKeyField ==. fromId pid)
                &&. (backend_ ==. (Nothing :: Maybe Int) ||. updated_ <. Just nowMinus5min))
-            project backend_ (AutoKeyField ==. (fromId pid))
+            project backend_ (AutoKeyField ==. fromId pid)
           case pd of
             [] -> error "ProcessData not found in DB"
             (lockId':_) -> do
@@ -116,13 +116,13 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
 
     freeLock _ = runLoggingEnv logger $ do
       $(logDebugSH) ("Freeing lock for process:" :: Text, pid)
-      now <- liftIO $ getCurrentTime
+      now <- liftIO getCurrentTime
       void $ runDb (Identity db) $
         update [updated_ =. Just now, backend_ =. (Nothing :: Maybe Int)]
-          (AutoKeyField ==. (fromId pid))
+          (AutoKeyField ==. fromId pid)
 
     procMonitor _ _ _ ph = do
-      runLoggingEnv logger $ go
+      runLoggingEnv logger go
       where
         {-# INLINE go #-}
         go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
@@ -131,14 +131,14 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
                 [] -> ProcessControl_Stop
                 (c:_) -> c
           procControl <- runDb (Identity db)
-            (getPC <$> project control_ (AutoKeyField ==. (fromId pid)))
-          (liftIO $ getProcessExitCode ph) >>= \case
+            (getPC <$> project control_ (AutoKeyField ==. fromId pid))
+          liftIO (getProcessExitCode ph) >>= \case
             Nothing -> do
               updateState ProcessState_Running
               case procControl of
                 ProcessControl_Run -> return ()
                 _ -> liftIO $ terminateProcess ph
-              (threadDelay' 1) *> go
+              threadDelay' 1 *> go
             Just _ -> case procControl of
               ProcessControl_Stop -> do
                 updateState ProcessState_Stopped
@@ -146,7 +146,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
               ProcessControl_Restart -> do
                 updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
-                runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. (fromId pid))
+                runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
               ProcessControl_Run -> do
                 updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
@@ -160,7 +160,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
           when (_processData_state p /= state) $ do
             now <- liftIO getCurrentTime
             update [state_ =. state, updated_ =. Just now]
-              (AutoKeyField ==. (fromId pid))
+              (AutoKeyField ==. fromId pid)
             for_ makeNotify $ \f -> do
               uncurry notify $ f $ Just $ p
                     { _processData_state = state
@@ -169,6 +169,6 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
 withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
-  (LBS.hPut nodeConfigHandle $ Aeson.encode $ _appConfig_kilnNodeConfig appConfig)
-  (hFlush nodeConfigHandle)
+  LBS.hPut nodeConfigHandle $ Aeson.encode $ _appConfig_kilnNodeConfig appConfig
+  hFlush nodeConfigHandle
   f nodeConfigPath

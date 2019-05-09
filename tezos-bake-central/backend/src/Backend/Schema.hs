@@ -1074,7 +1074,7 @@ instance DefaultKeyId NodeInternal where
   fromIdData _ = NodeInternalIdKey
 
 instance DefaultKeyId ErrorLogBakerMissed where
-  toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
+  toIdData _ (ErrorLogBakerMissedIdKey eid) = eid :: Id ErrorLog
   fromIdData _ = ErrorLogBakerMissedIdKey :: Id ErrorLog -> Key ErrorLogBakerMissed (Unique ErrorLogBakerMissedId)
 instance DefaultKeyId ErrorLogBadNodeHead where
   toIdData _ (ErrorLogBadNodeHeadIdKey eid) = eid
@@ -1230,7 +1230,7 @@ bakerLogDep = \case
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   where
-    depBakerAlert' f = Related f $ ForeignKey_UniqueId
+    depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
 
 embeddedSecretKeyEquals

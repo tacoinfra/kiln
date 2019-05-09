@@ -106,7 +106,7 @@ clientWorker appCfg nds =
             else
               clearNoBakerHeartbeatError cid
 
-          let bakerDaemonInfo = (BakerDaemonInfo cid (BakerDaemonInfoData reportJson clientConfigJson))
+          let bakerDaemonInfo = BakerDaemonInfo cid (BakerDaemonInfoData reportJson clientConfigJson)
           insertByAll bakerDaemonInfo
             >>= either (const $ replaceBy BakerDaemonInfoId bakerDaemonInfo) (const $ return ())
           forkInfo <- scanForkInfo now report

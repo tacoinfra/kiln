@@ -35,7 +35,6 @@ import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPa
 import Backend.Schema
 import Common.Schema
 
--- TODO XXX OBVIOUSLY BAD
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
@@ -108,7 +107,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     useArchiveMode = False
     -- use the user supplied config file if specified
     -- we can only specify this option once
-    hasUserConfigFile = any (== "--config-file") nodeExtraArgs
+    hasUserConfigFile = "--config-file" `elem` nodeExtraArgs
     nodeArgs configPath dataDir = [ "run" ]
       ++ (if hasUserConfigFile then [] else [ "--config-file", configPath]) ++
       [
