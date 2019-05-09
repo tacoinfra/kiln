@@ -39,8 +39,8 @@ let
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
         src = ./CHANGELOG.md;
-        exportReferencesGraph =
-          [ "closure" obApp.exe ];
+        exportReferencesGraph = [ "closure" run-kiln-exe ];
+
         builder = pkgs.writeScript "builder.sh" ''
           source "$stdenv/setup"
           mkdir -p $out
@@ -63,7 +63,7 @@ let
           mkdir -p $DEBDIR/etc/sysctl.d
           mkdir -p $DEBDIR/etc/udev/rules.d
           mkdir -p $DEBDIR/lib/systemd/system/
-          mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,tmp}
+          mkdir -p $DEBDIR/${root-dir}/{nix,dev,proc,sys,etc,run,usr,var,bin,lib,lib64,home,tmp}
           mkdir -p $DEBDIR/${exe-dir}
 
           ln -s ${obApp.exe}/* $DEBDIR/${exe-dir}/
@@ -189,32 +189,40 @@ let
 
   run-kiln-exe =
     let
+      # The 'ln obApp.exe' is redundant, but added here to force obApp to be in closure of
+      # run-kiln-exe. Without this we dont get obApp in deb
       # Not using writeScriptBin here, as we want to use /bin/bash
       run-kiln-backend-script = ''
         #!/usr/bin/env bash
         cd '${exe-dir}'
+        ln -s ${obApp.exe}/* .
         ./backend --kiln-data-dir='${data-dir}' \$@
       '';
 
-      run-kiln-shell = ''
-        #!/usr/bin/env bash
-        cd /tmp/kiln-shell-home
-        HOME=/tmp/kiln-shell-home bash
+      kiln-shell-mainnet-rc = pkgs.writeText "bashrc" ''
+        function tezos-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-client $@
+        }
+        function tezos-admin-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-admin-client $@
+        }
       '';
 
-      mainnet-bashrc = ''
-        alias tezos-client=${nodeKit}/bin/mainnet-tezos-client
-        alias tezos-admin-client=${nodeKit}/bin/mainnet-tezos-admin-client
+      kiln-shell-alphanet-rc = pkgs.writeText "bashrc" ''
+        function tezos-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/alphanet-tezos-client $@
+        }
+        function tezos-admin-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/alphanet-tezos-admin-client $@
+        }
       '';
-
-      zeronet-bashrc = ''
-        alias tezos-client=${nodeKit}/bin/zeronet-tezos-client
-        alias tezos-admin-client=${nodeKit}/bin/zeronet-tezos-admin-client
-      '';
-
-      alphanet-bashrc = ''
-        alias tezos-client=${nodeKit}/bin/alphanet-tezos-client
-        alias tezos-admin-client=${nodeKit}/bin/alphanet-tezos-admin-client
+      kiln-shell-zeronet-rc = pkgs.writeText "bashrc" ''
+        function tezos-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-client $@
+        }
+        function tezos-admin-client {
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-admin-client $@
+        }
       '';
 
       # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
@@ -237,6 +245,7 @@ let
         mount --rbind --make-unbindable /bin   '${root-dir}/bin'
         mount --rbind --make-unbindable /lib   '${root-dir}/lib'
         mount --rbind --make-unbindable /lib64 '${root-dir}/lib64'
+        mount --rbind --make-unbindable /home   '${root-dir}/home'
         mount --rbind --make-unbindable /tmp   '${root-dir}/tmp'
         mkdir -p '${root-dir}/oldroot'
         cd '${root-dir}'
@@ -258,20 +267,20 @@ let
         if [[ \$# -eq 0 ]] ; then
         	echo \"Starting kiln-shell for mainnet.\"
         	echo \"To run kiln-shell for other network, please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'.\"
-          echo '${mainnet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+          bash --rcfile ${nix-store-root}/${kiln-shell-mainnet-rc}
         else
         	case \$1 in
         		mainnet)
         			echo \"Starting kiln-shell for mainnet.\"
-              echo '${mainnet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+              bash --rcfile ${nix-store-root}/${kiln-shell-mainnet-rc}
         			;;
         		zeronet)
         			echo \"Starting kiln-shell for zeronet.\"
-              echo '${zeronet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+              bash --rcfile ${nix-store-root}/${kiln-shell-zeronet-rc}
         			;;
         		alphanet)
         			echo \"Starting kiln-shell for alphanet.\"
-              echo '${alphanet-bashrc}' > /tmp/kiln-shell-home/.bashrc
+              bash --rcfile ${nix-store-root}/${kiln-shell-alphanet-rc}
         			;;
         		*)
         			echo \"Unknown argument, specify mainnet, zeronet or alphanet\"
@@ -279,7 +288,6 @@ let
         			;;
         	esac
         fi
-        exec unshare --mount --map-root-user kiln-do-mount-and-pivot run-kiln-shell
       '';
 
     in pkgs.runCommand "run-kiln-exe" {
@@ -289,7 +297,6 @@ let
         echo -n "${kiln-do-mount-and-pivot}" > $prefix/bin/kiln-do-mount-and-pivot
         echo -n "${run-kiln-backend}" > $prefix/bin/run-kiln-backend
         echo -n "${kiln-shell}" > $prefix/bin/kiln-shell
-        echo -n "${run-kiln-shell}" > $prefix/bin/run-kiln-shell
         echo -n "${run-kiln-backend-script}" > $prefix/bin/run-kiln-backend-script
         chmod +x $prefix/bin/*
       '';
