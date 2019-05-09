@@ -377,7 +377,7 @@ let
   installKiln = pkgs.writeScriptBin "install-kiln" ''
     #!/usr/bin/env bash
     set -e
-    KILN_INSTALL_PATH="''${1:?app}"
+    KILN_INSTALL_PATH="''${1:-app}"
     echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
     mkdir -p "$KILN_INSTALL_PATH"
     ln -sf '${(obAppGargoyle null).exe}'/* "$KILN_INSTALL_PATH"
