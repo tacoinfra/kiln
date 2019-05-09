@@ -256,6 +256,10 @@ type EntityWithIdBy u a = (DefaultKeyId a, DefaultKey a ~ Key a (Unique u), Pers
 getIdBy :: (PersistBackend m, EntityWithIdBy u a) => Id a -> m (Maybe a)
 getIdBy = getBy . fromId
 
+-- Version of 'deleteAll' that doesn't entice you to use 'undefined'.
+deleteAll' :: forall v m proxy. (PersistBackend m, PersistEntity v) => proxy v -> m ()
+deleteAll' _ = deleteAll (error "deleteAll argument was demanded" :: v)
+
 updateId
   :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
   => Id a

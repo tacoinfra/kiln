@@ -512,10 +512,10 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     wipe p = do
       delete $ Amendment_periodField ==. p
       case p of
-        VotingPeriodKind_Proposal -> deleteAll (undefined :: PeriodProposal)
-        VotingPeriodKind_TestingVote -> deleteAll (undefined :: PeriodTestingVote)
-        VotingPeriodKind_Testing -> deleteAll (undefined :: PeriodTesting)
-        VotingPeriodKind_PromotionVote -> deleteAll (undefined :: PeriodPromotionVote)
+        VotingPeriodKind_Proposal -> deleteAll' @PeriodProposal Proxy
+        VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
+        VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
+        VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
     updateTo predBlk blk p = do
       let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
           votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
