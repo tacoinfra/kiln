@@ -54,21 +54,21 @@ getPath f paths = \case
     where
       e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
 
-zeronetPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-zeronetPaths = ( psdd
-    , $(staticWhich "zeronet-tezos-baker-003-PsddFKi3")
-    , $(staticWhich "zeronet-tezos-endorser-003-PsddFKi3")
-    ) :|
-    [ ( pt24
-      , $(staticWhich "zeronet-tezos-baker-004-Pt24m4xi")
-      , $(staticWhich "zeronet-tezos-endorser-004-Pt24m4xi")
+tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
+tezosBinaryPaths =
+  ( "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+  , $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
+  , $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
+  ) :|
+    [ ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+      , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
+      , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
+      )
+    , ( "PtG6cmhhWF8AY5gVQhCaUASbgu8CGebkGPdNSX26m3CSnxvih9v"
+      , $(staticWhich "zeronet-tezos-baker-alpha")
+      , $(staticWhich "zeronet-tezos-endorser-alpha")
       )
     ]
-  where
-    psdd :: ProtocolHash
-    psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
-    -- alpha = "ProtoALphaALphaALphaALphaALphaALphaALphaALphaDdp3zK"
-    pt24 = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
 
 -- TODO: use postgres for "process-id's"
 
@@ -211,7 +211,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
       Nothing
     bakerPw = pw (bakerPath paths, bakerArgs)
     endorserPw = pw (endorserPath paths, endorserArgs)
-    paths = either (const zeronetPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
+    paths = either (const tezosBinaryPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
