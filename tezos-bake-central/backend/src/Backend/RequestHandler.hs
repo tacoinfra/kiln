@@ -66,7 +66,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_PollLedgerDevice -> inDb $ do
+      PublicRequest_PollLedgerDevice walletApp -> inDb $ do
         deleteAll (undefined :: ConnectedLedger)
         -- Deliberately don't notify here: let the worker pick it up and notify
         -- as required
@@ -74,7 +74,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           { _connectedLedger_bakingAppVersion = Nothing
           , _connectedLedger_ledgerIdentifier = Nothing
           , _connectedLedger_updated = Nothing
-          , _connectedLedger_isWalletApp = False
+          , _connectedLedger_isWalletApp = walletApp
           }
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
@@ -89,6 +89,8 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldSetupToBake = False
             , _ledgerAccount_shouldRegisterFee = Nothing
             , _ledgerAccount_shouldSetHWM = Nothing
+            , _ledgerAccount_shouldDoVoteProtocol = Nothing
+            , _ledgerAccount_shouldDoVoteBallot = Nothing
             }
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -510,8 +512,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             Just _ -> update [RightNotificationSettings_limitField =. limit] pk
         notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
-      PublicRequest_SetupLedgerToVote -> pure ()
-      PublicRequest_DoVote v -> inDb $ void $ insert v
+      PublicRequest_DoVote sk p b -> inDb $
+        update
+          [ LedgerAccount_shouldDoVoteProtocolField =. Just p
+          , LedgerAccount_shouldDoVoteBallotField =. b
+          ]
+          (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

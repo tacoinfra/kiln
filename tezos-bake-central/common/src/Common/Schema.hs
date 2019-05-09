@@ -246,6 +246,8 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetupToBake :: !Bool
   , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
+  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe ProtocolHash)
+  , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Bool)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -526,13 +528,6 @@ data PeriodTesting = PeriodTesting
 
 data PeriodPromotionVote = PeriodPromotionVote
   { _periodPromotionVote_periodVote :: PeriodVote
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-
-data Vote = Vote
-  { _vote_period :: !VotingPeriodKind
-  , _vote_chainId :: !ChainId
-  , _vote_proposal :: !ProtocolHash
-  , _vote_ballot :: !(Maybe Bool) -- Not relevant for proposals period
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo

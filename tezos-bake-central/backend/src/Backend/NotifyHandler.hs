@@ -33,7 +33,7 @@ import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
-                   NodeSummary (..), BakerSummary (..), SetupState (..),
+                   NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
                    mailServerConfigToView, Deletable, BakerSummary)
 import Common.App (bakerErrorViewOnly)
@@ -73,6 +73,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_ConnectedLedger :=> Identity mli -> handleConnectedLedger mli
     NotifyTag_ShowLedger :=> Identity (sk, mpkh) -> handleShowLedger sk mpkh
     NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
+    NotifyTag_VotePrompting :=> Identity (sk, step) -> handleVotePrompting sk step
     NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
     NotifyTag_Amendment :=> Identity (k, ma) -> handleAmendment k ma
     NotifyTag_Proposals :=> Identity () -> handleProposals
@@ -106,6 +107,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handlePrompting sk step
       | viewSelects sk promptingVS = pure $ mempty
         { _bakeView_prompting = toRangeView1 promptingVS sk $ Just $ First step
+        }
+      | otherwise = pure mempty
+
+    votePromptingVS = _bakeViewSelector_votePrompting aggVS
+    handleVotePrompting :: Applicative m' => SecretKey -> Maybe VoteState -> m' (BakeView a)
+    handleVotePrompting sk step
+      | viewSelects sk votePromptingVS = pure $ mempty
+        { _bakeView_votePrompting = toRangeView1 votePromptingVS sk $ Just $ First step
         }
       | otherwise = pure mempty
 

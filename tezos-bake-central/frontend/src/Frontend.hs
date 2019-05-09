@@ -238,10 +238,11 @@ appMain = do
         -- TODO this is temporary, for testing the voting modal
         mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
         mProtoInfo <- maybeDyn =<< watchProtoInfo
-        mBaker <- maybeDyn . (fmap . fmap) fst =<< watchFakeInternalBaker
-        let xs = ffor3 (current mProtoInfo) (current mBaker) (current mAmendment) (\x y z -> ffor3 x y z (,,))
+        let baker = ("tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5"
+                    , SecretKey (LedgerIdentifier "frilly-elephant-alienated-hippopotamus") SigningCurve_Ed25519 (DerivationPath ""))
+        let xs = ffor2 (current mProtoInfo) (current mAmendment) (\x y -> ffor2 x y (,))
         openVoteModal <- SemUi.button def $ text "Open vote modal"
-        tellModal $ attachWithMaybe (\ma () -> ffor ma $ \a -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . uncurry3 voteModal a) xs openVoteModal
+        tellModal $ attachWithMaybe (\ma () -> ffor ma $ \a -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . uncurry (voteModal baker) a) xs openVoteModal
         pure e
     pure ()
 
@@ -251,13 +252,6 @@ watchFakeVotes = pure $ pure $ Map.fromList
   [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
   , ("Pt1jF6oZY7EQBuqETjoa7gjgWdV7rRwTPRbHXcxRQQDs4EHNb8n", False)
   ]
-
--- TODO this is temporary, for testing the voting modal
-watchFakeInternalBaker :: (Applicative m, Reflex t) => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
-watchFakeInternalBaker = pure $ pure $ Just ("tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5", undefined)
-
-uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
-uncurry3 f (a, b, c) = f a b c
 
 appName :: Text
 appName = "Kiln"

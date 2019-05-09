@@ -107,7 +107,7 @@ import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
-import Common.App (SetupState)
+import Common.App (SetupState, VoteState)
 import Common.Schema
 import ExtraPrelude
 
@@ -134,6 +134,7 @@ data NotifyTag a where
   NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
   NotifyTag_ShowLedger :: NotifyTag (SecretKey, Maybe (PublicKeyHash, Tez))
   NotifyTag_Prompting :: NotifyTag (SecretKey, Maybe SetupState)
+  NotifyTag_VotePrompting :: NotifyTag (SecretKey, Maybe VoteState)
   NotifyTag_RightNotificationSettings :: NotifyTag (RightKind, Maybe RightNotificationLimit)
   NotifyTag_Amendment :: NotifyTag (VotingPeriodKind, Maybe Amendment)
   NotifyTag_Proposals :: NotifyTag ()
@@ -655,15 +656,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     autoKey: null
   - entity: PeriodPromotionVote
     autoKey: null
-  - entity: Vote
-    autoKey: null
-    constructors:
-      - name: Vote
-        uniques:
-          - name: Vote_period
-            type: primary
-            fields: [_vote_period, _vote_chainId, _vote_proposal]
-
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
@@ -1281,6 +1273,7 @@ instance ArgDict NotifyTag where
     , c (Maybe ConnectedLedger)
     , c (SecretKey, Maybe (PublicKeyHash, Tez))
     , c (SecretKey, Maybe SetupState)
+    , c (SecretKey, Maybe VoteState)
     , c (RightKind, Maybe RightNotificationLimit)
     , c (VotingPeriodKind, Maybe Amendment)
     , c ()
@@ -1322,6 +1315,7 @@ instance ArgDict NotifyTag where
     NotifyTag_ConnectedLedger -> Dict
     NotifyTag_ShowLedger -> Dict
     NotifyTag_Prompting -> Dict
+    NotifyTag_VotePrompting -> Dict
     NotifyTag_RightNotificationSettings -> Dict
     NotifyTag_Amendment -> Dict
     NotifyTag_Proposals -> Dict

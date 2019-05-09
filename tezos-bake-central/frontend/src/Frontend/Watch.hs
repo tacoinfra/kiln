@@ -296,11 +296,11 @@ watchAlertCount =
     { _bakeViewSelector_alertCount = viewJust 1
     }
 
-watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))
-watchConnectedLedger = do
+watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => Bool -> m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedger walletApp = do
   -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
   poll <- tickLossyFromPostBuildTime 5
-  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
+  _ <- requestingIdentity $ public (PublicRequest_PollLedgerDevice walletApp) <$ poll
   (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_connectedLedger = viewJust 1
     }
@@ -345,6 +345,12 @@ watchPrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynami
 watchPrompting sk = do
   (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_prompting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
+    }
+
+watchVotePrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynamic t (Maybe VoteState))
+watchVotePrompting sk = do
+  (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_votePrompting) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_votePrompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
     }
 
 watchRightNotificationLimit :: MonadRhyoliteFrontendWidget Bake t m => RightKind -> m (Dynamic t (Maybe RightNotificationLimit))

@@ -24,7 +24,7 @@ import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (ErrorLog, LogTag, RightKind, RightNotificationLimit, Vote)
+import Common.Schema (ErrorLog, LogTag, RightKind, RightNotificationLimit)
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -51,7 +51,7 @@ instance HasRequest Bake where
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
-    PublicRequest_PollLedgerDevice :: PublicRequest Bake ()
+    PublicRequest_PollLedgerDevice :: Bool -> PublicRequest Bake ()
     PublicRequest_ShowLedger :: SecretKey -> PublicRequest Bake ()
     PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest Bake ()
     PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest Bake ()
@@ -87,8 +87,11 @@ instance HasRequest Bake where
       :: RightKind
       -> Maybe RightNotificationLimit
       -> PublicRequest Bake ()
-    PublicRequest_SetupLedgerToVote :: PublicRequest Bake ()
-    PublicRequest_DoVote :: Vote -> PublicRequest Bake ()
+    PublicRequest_DoVote
+      :: SecretKey
+      -> ProtocolHash
+      -> Maybe Bool
+      -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where
     PrivateRequest_NoOp :: PrivateRequest Bake ()

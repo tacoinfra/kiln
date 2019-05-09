@@ -230,6 +230,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           )
     pure rangeView
 
+  let votePromptingVS = _bakeViewSelector_votePrompting vs
+  votePrompting <- whenM (not $ null votePromptingVS) $ do
+    las <- select CondEmpty
+    let rangeView = toRangeView votePromptingVS $ flip fmap las $ \la ->
+          ( _ledgerAccount_secretKey la
+          , First $ Just $ mempty
+          )
+    pure rangeView
+
   let rnsVS = _bakeViewSelector_rightNotificationSettings vs
   rightNotificationSettings <- whenM (not $ null rnsVS) $ do
     rnss <- select CondEmpty
@@ -269,6 +278,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_connectedLedger = connectedLedger
     , _bakeView_showLedger = showLedger
     , _bakeView_prompting = prompting
+    , _bakeView_votePrompting = votePrompting
     , _bakeView_rightNotificationSettings = rightNotificationSettings
     }
 

@@ -44,10 +44,10 @@ import qualified System.Process as Process
 
 import Tezos.Types
 
-import Backend.Common (workerWithDelay)
+import Backend.Common (workerWithDelay, threadDelay')
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
-import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..))
+import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
 import ExtraPrelude
 
@@ -164,9 +164,40 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
+          inDb (selectSingle $ LedgerAccount_shouldDoVoteProtocolField /=. (Nothing :: Maybe ProtocolHash)) >>= \mla ->
+            for_ mla $ \la -> case _ledgerAccount_shouldDoVoteProtocol la of
+              Nothing -> pure () -- shouldn't happen
+              Just _ -> do
+                let sk = _ledgerAccount_secretKey la
+                    -- b = _ledgerAccount_shouldDoVoteBallot la
+                inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
+                threadDelay' 5
+                inDb $ do
+                  update
+                    [ LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe ProtocolHash)
+                    , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: (Maybe Bool))
+                    ] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+                  notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Done })
+
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
-        | isNothing (_connectedLedger_updated cl) -> runClientT (getConnectedLedger appConfig chain) >>= \case
+        | isNothing (_connectedLedger_updated cl) && (_connectedLedger_isWalletApp cl) -> do
+          threadDelay' 5
+          inDb $ do
+            $(logWarn) "updating connectedledger walletApp"
+            now <- getTime
+            let connectedLedger = ConnectedLedger
+                  { _connectedLedger_ledgerIdentifier = fmap fst mliv
+                  , _connectedLedger_bakingAppVersion = fmap snd mliv
+                  , _connectedLedger_updated = Just now
+                  , _connectedLedger_isWalletApp = True
+                  }
+                mliv = Just (LedgerIdentifier "frilly-elephant-alienated-hippopotamus", "1.5.1")
+            deleteAll connectedLedger
+            insert connectedLedger
+            notify NotifyTag_ConnectedLedger $ Just connectedLedger
+        | isNothing (_connectedLedger_updated cl) ->
+          runClientT (getConnectedLedger appConfig chain) >>= \case
         Left err -> $(logError) (T.pack (show err))
         Right mliv -> do
           liftIO $ print mliv

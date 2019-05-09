@@ -27,6 +27,7 @@ import Data.Ord (Down (..), comparing)
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
+import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Data.Map as Map
 import qualified Data.Text as T
@@ -35,6 +36,7 @@ import qualified Data.Time as Time
 import Tezos.Operation
 import Tezos.Types
 
+import Common.Api
 import Common.App
 import Common.Config
 import Common.Schema hiding (Event)
@@ -323,14 +325,14 @@ voteModal :: forall r t m.
   , MonadReader r m, HasFrontendConfig r
   , MonadJSM (Performable m)
   )
-  => Dynamic t ProtoInfo
-  -- ^ Protocol info
-  -> Dynamic t PublicKeyHash
+  => (PublicKeyHash, SecretKey)
   -- ^ Baker to vote with
+  -> Dynamic t ProtoInfo
+  -- ^ Protocol info
   -> Dynamic t Amendment
   -- ^ Curent amendment period
   -> Event t () -> m (Event t ())
-voteModal protoInfo bakerPkh amendment close = do
+voteModal (bakerPkh, sk) protoInfo amendment close = do
   votingPeriodKind <- holdUniqDyn $ _amendment_period <$> amendment
     {-
   vpk <- sample $ current votingPeriodKind'
@@ -381,7 +383,7 @@ voteModal protoInfo bakerPkh amendment close = do
         elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
         divClass "item" $ do
           divClass "title" $ text "Votes will be cast as your Kiln Baker."
-          divClass "detail" $ dynText $ toPublicKeyHashText <$> bakerPkh
+          divClass "detail" $ text $ toPublicKeyHashText $ bakerPkh
         extras
 
     proposalFlow :: Workflow t m (Event t ())
@@ -472,10 +474,12 @@ voteModal protoInfo bakerPkh amendment close = do
           pure $ attachWith castBallotFlow (current proposal) vote
       pure (never, vote)
 
+    expectedLI = LedgerIdentifier "frilly-elephant-alienated-hippopotamus"
     waitForWalletAppFlow
       :: Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
       -> Workflow t m (Event t ())
     waitForWalletAppFlow nextFlow = Workflow $ do
+      devFound <- ledgerDeviceIcon expectedLI
       divClass "ui header" $ text "Looking for Tezos Wallet app on Ledger device..."
       el "p" $ text "Voting requires the Tezos Wallet app version 1.5.0 or higher to be open. Voting cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
       divClass "ui warning message" $ text "TODO: Next baking opportunity"
@@ -486,8 +490,9 @@ voteModal protoInfo bakerPkh amendment close = do
           el "li" $ text "Go to Manager and search for “Tezos”"
           el "li" $ text "Install the “Tezos Wallet” app"
           el "li" $ text "Open the Tezos Wallet app on your ledger"
-      walletOpen <- uiDynButton (pure "orange") $ text "Connect Ledger"
-      pure (never, nextFlow <$ walletOpen)
+      let walletReady = updated $ (==) (Just True) <$> devFound
+        -- uiDynButton (pure "orange") $ text "Connect Ledger"
+      pure (never, nextFlow <$ walletReady)
 
     castBallotFlow :: ProtocolHash -> Ballot -> Workflow t m (Event t ())
     castBallotFlow proposal ballot = Workflow $ do
@@ -503,7 +508,7 @@ voteModal protoInfo bakerPkh amendment close = do
               , ""
               , "Source"
               ]
-            dynText $ toPublicKeyHashText <$> bakerPkh
+            text $ toPublicKeyHashText $ bakerPkh
             text $ T.unlines
               [ ""
               , "Period"
@@ -513,8 +518,6 @@ voteModal protoInfo bakerPkh amendment close = do
 
     castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
     castProposalVoteFlow proposal = Workflow $ do
-      let
-        expectedLI = LedgerIdentifier "crouching-tiger-hidden-dragon"
       ledgerDeviceIcon expectedLI
       divClass "ui header" $ text "Cast a vote for this proposal?"
       el "p" $ text $ toBase58Text proposal
@@ -528,25 +531,38 @@ voteModal protoInfo bakerPkh amendment close = do
               , ""
               , "Source"
               ]
-            dynText $ toPublicKeyHashText <$> bakerPkh
+            text $ toPublicKeyHashText $ bakerPkh
             text $ T.unlines
               [ ""
               , "Period"
               , "Proposal"
               ]
-      pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ cast)
+      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal Nothing) <$ cast
+      pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ d)
 
     respondToPromptFlow
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
       -> m () -- ^ Prompt to show
       -> Workflow t m (Event t ())
     respondToPromptFlow whereToGo prompt = Workflow $ do
+      pb <- getPostBuild
+      promptStep <- watchVotePrompting sk
+      display promptStep
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just vs | Just (First step) <- _voteState_step vs -> case step of
+              VoteStep_Done -> Just $ voteCastSuccessfullyFlow whereToGo
+              VoteStep_Disconnected -> undefined
+              VoteStep_Declined -> Just $ ledgerDeclinedFlow (respondToPromptFlow whereToGo prompt)
+              VoteStep_Failed e -> undefined
+              VoteStep_Prompting -> Nothing
+            _ -> Nothing
       divClass "ui header" $ text "Respond to the prompt on your Ledger Device..."
       divClass "detail" $ text "Your Ledger Device should show the following prompt:"
       _ <- el "p" prompt
-      declined <- uiDynButton (pure "red") $ text "Decline"
-      accepted <- uiDynButton (pure "green") $ text "Accept"
-      pure (never, leftmost [voteCastSuccessfullyFlow whereToGo <$ accepted, ledgerDeclinedFlow (respondToPromptFlow whereToGo prompt) <$ declined])
+      -- declined <- uiDynButton (pure "red") $ text "Decline"
+      -- accepted <- uiDynButton (pure "green") $ text "Accept"
+      pure (never, next)
 
     ledgerDeclinedFlow
       :: Workflow t m (Event t ()) -- ^ Retry using this workflow
@@ -567,16 +583,18 @@ voteModal protoInfo bakerPkh amendment close = do
       pure $ fanEither $ whereToGo <$ continue
 
     ledgerDeviceIcon expectedLedgerIdentifier = divClass "ledger-device-status" $ do
-      connectedLedger <- watchConnectedLedger
+      connectedLedger <- watchConnectedLedger True
       ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
       isWalletApp <- holdUniqDyn $ fmap _connectedLedger_isWalletApp <$> connectedLedger
       -- searching / wrong device found : only identifier, no marks
       -- found : show green tick mark
       -- not found : show red cross mark
       let
+        devFound :: Dynamic t (Maybe Bool)
+        devFound = ffor2 isWalletApp ledgerIdentifier $ \wApp -> fmap $ \li ->
+          li == expectedLedgerIdentifier && wApp == Just True
         iconType :: Dynamic t (Maybe Text)
-        iconType = ffor2 isWalletApp ledgerIdentifier $ \wApp -> fmap $ \li ->
-          if li == expectedLedgerIdentifier && wApp == Just True
+        iconType = ffor devFound $ fmap $ \b -> if b
             then "icon-check"
             else "icon-x-thick"
       divClass "" $ do
@@ -584,3 +602,4 @@ voteModal protoInfo bakerPkh amendment close = do
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
       divClass "" $ text $ unLedgerIdentifier expectedLedgerIdentifier
+      pure $ devFound
