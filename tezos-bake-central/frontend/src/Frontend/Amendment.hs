@@ -478,9 +478,11 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     waitForWalletAppFlow
       :: Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
       -> Workflow t m (Event t ())
-    waitForWalletAppFlow nextFlow = Workflow $ do
+    waitForWalletAppFlow nextFlow = Workflow $ divClass "looking-tezos-wallet" $ do
       devFound <- ledgerDeviceIcon expectedLI
-      divClass "ui header" $ text "Looking for Tezos Wallet app on Ledger device..."
+      divClass "ui header centered" $ do
+        elClass "span" "ui active inline loader small blue" blank
+        elClass "span" "" $ text "Looking for Tezos Wallet app on Ledger device..."
       el "p" $ text "Voting requires the Tezos Wallet app version 1.5.0 or higher to be open. Voting cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
       divClass "ui warning message" $ text "TODO: Next baking opportunity"
       divClass "detail" $ do

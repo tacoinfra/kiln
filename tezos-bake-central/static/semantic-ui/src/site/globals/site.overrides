@@ -144,6 +144,15 @@ h6.ui.header {
       margin-left: @20px;
     }
   }
+  .looking-tezos-wallet {
+    .header {
+      font-size: @20px;
+      padding: @10px;
+    }
+    .ui.active.inline.loader {
+      margin-right: @20px;
+    }
+  }
   .vote-cast-as {
     margin: @21px 0 @40px 0;
     display: flex;

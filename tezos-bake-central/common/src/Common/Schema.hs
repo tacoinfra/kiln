@@ -1031,7 +1031,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''TelegramRecipient
   , ''UpgradeCheckError
   , ''UpstreamVersion
-  , ''Vote
   ] ++ map makeLenses
   [ 'Accusation
   , 'Amendment
