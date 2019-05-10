@@ -8,14 +8,13 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', iso, (^.))
+import Control.Lens (Lens', coerced, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
-import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import qualified Data.Text as T
@@ -204,12 +203,17 @@ class BlockLike b where
   fitness :: Lens' b Fitness
   timestamp :: Lens' b UTCTime
 
+class HasProtocolHash a where
+  protocolHash :: Lens' a ProtocolHash
+
 instance BlockLike Block where
   hash = block_hash
   predecessor = block_header . blockHeader_predecessor
   level = block_header . blockHeader_level
   fitness = block_header . blockHeader_fitness
   timestamp = block_header . blockHeader_timestamp
+instance HasProtocolHash Block where
+  protocolHash = block_protocol
 
 instance BlockLike MonitorBlock where
   hash = monitorBlock_hash
@@ -222,8 +226,10 @@ instance BlockLike TzScanBlock where
   hash = tzScanBlock_hash
   predecessor = tzScanBlock_predecessorHash
   level = tzScanBlock_level
-  fitness = tzScanBlock_fitness . iso coerce coerce
+  fitness = tzScanBlock_fitness . coerced
   timestamp = tzScanBlock_timestamp
+instance HasProtocolHash TzScanBlock where
+  protocolHash = tzScanBlock_protocol . coerced
 
 instance BlockLike VeryBlockLike where
   hash = veryBlockLike_hash
@@ -232,6 +238,8 @@ instance BlockLike VeryBlockLike where
   level = veryBlockLike_level
   timestamp = veryBlockLike_timestamp
 
+instance HasProtocolHash BlockMetadata where
+  protocolHash = blockMetadata_protocol
 
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'

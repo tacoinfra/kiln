@@ -120,6 +120,7 @@ data NotifyTag a where
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
   NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
+  NotifyTag_KnownProtocol :: NotifyTag (Id KnownProtocol)
   NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
   NotifyTag_MailServerConfig :: NotifyTag (Id MailServerConfig, MailServerConfig)
   NotifyTag_NodeExternal :: NotifyTag (Id Node, Maybe NodeExternalData)
@@ -632,6 +633,19 @@ instance Field2 (a :. b) (a :. b') b b' where
 --          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - embedded: ProtoInfo
+  - entity: KnownProtocol
+    autoKey: null
+    keys:
+      - name: KnownProtocolKey
+        default: true
+    constructors:
+      - name: KnownProtocol
+        uniques:
+          - name: KnownProtocolKey
+            type: primary
+            fields: [_knownProtocol_hash]
+
   - primitive: VotingPeriodKind
   - embedded: Ballots
   - entity: Amendment
@@ -789,7 +803,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
-  - embedded: ProtoInfo
   - entity: Baker
     autoKey: null
     keys:
@@ -1039,6 +1052,10 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
 
+instance DefaultKeyId KnownProtocol where
+  toIdData _ (KnownProtocolKeyKey h) = h
+  fromIdData _ = KnownProtocolKeyKey
+
 instance DefaultKeyId Accusation where
   toIdData _ (Accusation_hashKey oh bh) = (oh,bh)
   fromIdData _ = uncurry Accusation_hashKey
@@ -1246,6 +1263,7 @@ instance ArgDict NotifyTag where
     , c (Id ErrorLogInsufficientFunds)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
+    , c (Id KnownProtocol)
     , c (Id Node, Maybe NodeExternalData)
     , c (Id Node, Maybe ProcessData)
     , c (Id Node, Maybe NodeDetailsData)
@@ -1284,6 +1302,7 @@ instance ArgDict NotifyTag where
         BakerLogTag_BakerDeactivationRisk -> Dict
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
+    NotifyTag_KnownProtocol -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict
     NotifyTag_NodeExternal -> Dict

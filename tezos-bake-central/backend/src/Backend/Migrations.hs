@@ -69,6 +69,7 @@ preMigrate =
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CachedProtocolConstants")
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "Parameters")
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do

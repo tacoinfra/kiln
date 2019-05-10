@@ -50,10 +50,10 @@ watchFrontendConfig =
     { _bakeViewSelector_config = viewJust 1
     }
 
-watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
-watchProtoInfo =
-  (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_parameters = viewJust 1
+watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => ProtocolHash -> m (Dynamic t (Maybe KnownProtocol))
+watchProtoInfo protocol =
+  (fmap . fmap) (MMap.lookup protocol . getRangeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_parameters = viewRangeExactly protocol 1
     }
 
 watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))

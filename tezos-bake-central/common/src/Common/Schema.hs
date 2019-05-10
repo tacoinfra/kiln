@@ -392,6 +392,15 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
+data KnownProtocol = KnownProtocol
+  { _knownProtocol_hash :: !ProtocolHash
+  , _knownProtocol_constants :: !ProtoInfo
+  , _knownProtocol_firstBlock :: !VeryBlockLike
+  , _knownProtocol_firstCycle :: !Cycle
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId KnownProtocol where
+  type IdData KnownProtocol = ProtocolHash
+
 data PublicNodeConfig = PublicNodeConfig
   { _publicNodeConfig_source :: !PublicNode
   , _publicNodeConfig_enabled :: !Bool
@@ -404,6 +413,7 @@ data PublicNodeHead = PublicNodeHead
   , _publicNodeHead_chain :: !NamedChainOrChainId
   , _publicNodeHead_headBlock :: !VeryBlockLike
   , _publicNodeHead_updated :: !UTCTime
+  , _publicNodeHead_protocolHash :: !ProtocolHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
@@ -693,7 +703,6 @@ data SmtpProtocol
   | SmtpProtocol_Ssl
   | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
-
 instance Universe SmtpProtocol where universe = universeDef
 instance Finite SmtpProtocol
 
@@ -985,6 +994,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''Event
+  , ''KnownProtocol
   , ''MailServerConfig
   , ''Node
   , ''NodeDetails
@@ -1050,6 +1060,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
   , 'Event
+  , 'KnownProtocol
   , 'MailServerConfig
   , 'Node
   , 'NodeDetails
@@ -1130,6 +1141,8 @@ instance BlockLike PublicNodeHead where
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
 
+instance HasProtocolHash PublicNodeHead where
+  protocolHash = publicNodeHead_protocolHash
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =

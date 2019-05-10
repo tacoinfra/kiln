@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -43,7 +42,6 @@ import qualified Data.Time as Time
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
-import GHCJS.DOM.Element (setInnerHTML)
 import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
@@ -518,64 +516,6 @@ welcomeScreen = do
     el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
     el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
     el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
-
-summaryTab
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadJSM m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => m ()
-summaryTab = divClass "ui grid" $ do
-  dparameters <- watchProtoInfo
-  summaryReport <- watchSummary
-
-  divClass "six wide column" $ do
-    divClass "ui medium header" $ text "Summary"
-    text "These are the totals of various events across all monitored bakers."
-    let -- bakedCount = fmap (length . _report_baked . fst) <$> summaryReport
-        errorCount = fmap (length . _report_errors . fst) <$> summaryReport
-        waitingCount = fmap snd <$> summaryReport
-    divClass "counts" $ el "ul" $ do
-      {-
-      whenJustDyn bakedCount $ \n -> do
-        tooltipPos "right center" "The number of blocks that have been baked." $ do
-          text $ "Blocks baked: " <> T.pack (show n)
-      -}
-      whenJustDyn errorCount $ \n -> do
-        tooltipPos "right center" "The number of errors that have occurred." $ do
-          text $ "Errors: " <> T.pack (show n)
-      whenJustDyn waitingCount $ \n ->
-        tooltipPos "right center" "This is the number of bakers from which we're still awaiting any response." $ do
-          text $ "Waiting: " <> tshow n
-
-    mGraph <- watchSummaryGraph
-    (graphEl, _) <- el' "div" blank
-    dyn_ . ffor mGraph $ \case
-      Nothing -> blank
-      Just (total, graphText) -> do
-        setInnerHTML (_element_raw graphEl) graphText
-        text $ "Total rewards earned: " <> tez (Tez total)
-
-  whenJustDyn (fmap fst <$> summaryReport) $ \report -> do
-    let baked = sortBy (flip (comparing _event_time)) (_report_baked report)
-    divClass "ten wide column" $ do
-      divClass "ui medium header" $ text "Activity"
-      elAttr "table" ("class" =: "ui celled striped table") $ do
-        el "thead" . el "tr" $ do
-          elClass "th" "four wide" $ text "Time"
-          el "th" $ text "Level"
-          el "th" $ text "Block Hash"
-          el "th" $ text "Reward"
-        for_ baked $ \b -> el "tr" $ do
-          el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
-          el "td" . text . T.pack . show . blockLevel $ b
-          el "td" . blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
-          el "td" . dyn . ffor dparameters $ \case
-            Nothing -> text "N/A"
-            Just protoInfo -> text . tez $ blockRewards b protoInfo
-
-  return ()
 
 radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
 radioLabels k0 ks = divClass "ui buttons" $ mdo

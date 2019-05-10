@@ -15,7 +15,7 @@ import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
 import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..), select)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, selectMap')
+import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -57,6 +57,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_BakerRightsProgress :=> Identity (_x, y, _z) -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
+    NotifyTag_KnownProtocol :=> Identity eid -> handleParameters eid
     NotifyTag_MailServerConfig :=> Identity (_eid, cfg) -> handleMailServer cfg
     NotifyTag_NodeExternal :=> Identity (eid, ent) -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
     NotifyTag_NodeInternal :=> Identity (eid, ent) -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
@@ -127,19 +128,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
       return $ clientsPatch <> summaryPatch
 
-    -- TODO: PUT BACK
-    --paramsVS = _bakeViewSelector_parameters aggVS
+    paramsVS = _bakeViewSelector_parameters aggVS
 
-    --handleParameters :: Applicative m' => Parameters -> m' (BakeView a)
-    --handleParameters params =
-      -- bakerStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
-      --   calculateBakerStats (_bakeViewSelector_bakerStats aggVS)
-    --  whenM (viewSelects () paramsVS) $
-    --    pure $ mempty
-          --{ _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
-          ---- , _bakeView_bakerStats = bakerStatsView
-          --}
-          -- TODO PUT THIS BACK
+    handleParameters :: PersistBackend m' => Id KnownProtocol -> m' (BakeView a)
+    handleParameters (Id protocolHash) = whenM (viewSelects protocolHash paramsVS) $ do
+      newProto :: Maybe KnownProtocol <- selectSingle (KnownProtocol_hashField ==. protocolHash)
+      pure mempty
+        { _bakeView_parameters = toRangeView1 paramsVS protocolHash newProto
+        }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS

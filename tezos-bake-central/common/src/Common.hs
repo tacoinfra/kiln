@@ -33,10 +33,10 @@ humanizeTimestampGen withTz tz now ts = if diff > 0 then futureMoment else human
     futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> format) $ Time.utcToZonedTime tz ts
 
 humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestamp tz now ts = humanizeTimestampGen True tz now ts
+humanizeTimestamp = humanizeTimestampGen True
 
 humanizeTimestampWithoutTZ :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestampWithoutTZ tz now ts = humanizeTimestampGen False tz now ts
+humanizeTimestampWithoutTZ = humanizeTimestampGen False
 
 humanizeDiffTime :: Time.NominalDiffTime -> Text
 humanizeDiffTime t = T.unwords elems <> " ago"
@@ -51,7 +51,7 @@ humanizeDiffTime t = T.unwords elems <> " ago"
     take2 (xy@(x, _y):xys)
       | x >= 2 = [xy]
       | otherwise = xy:take 1 xys
-    take2 xys = take 2 $ xys
+    take2 xys = take 2 xys
 
     putBack x [] = [x]
     putBack _ xs = xs

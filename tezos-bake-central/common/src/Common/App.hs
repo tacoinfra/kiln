@@ -199,7 +199,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
-  , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
+  , _bakeViewSelector_parameters :: !(RangeSelector ProtocolHash KnownProtocol a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
@@ -236,7 +236,7 @@ data BakeView a = BakeView
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
-  , _bakeView_parameters :: !(MaybeView ProtoInfo a)
+  , _bakeView_parameters :: !(RangeView ProtocolHash KnownProtocol a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)

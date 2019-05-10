@@ -664,7 +664,7 @@ dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe VeryBlockLike)
 dataSourceHead nds =
-  fittestBranchInHistory <$> readTVar' (_nodeDataSource_history $ nds ^. nodeDataSource)
+  fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
 
 {-
 -- | extrats the fittest known node from cache
