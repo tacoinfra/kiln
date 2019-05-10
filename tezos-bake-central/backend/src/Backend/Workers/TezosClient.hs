@@ -210,7 +210,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   , _connectedLedger_updated = Just now
                   , _connectedLedger_isWalletApp = False
                   }
-            deleteAll connectedLedger
+            deleteAll' @ConnectedLedger Proxy
             insert connectedLedger
             notify NotifyTag_ConnectedLedger $ Just connectedLedger
       _ -> pure ()

@@ -8,8 +8,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -470,7 +468,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
-            formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
+            formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
         (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
           queueAlert (Just logId) $ Alert Unresolved heading $
             heading <> ": " <> nodeName <> "\n\n" <> message
@@ -490,9 +488,9 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids notifyDefault
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
-  let formatExtNodeName alias address = (maybe "" (\x -> "Node " <> x <> " at ") alias) <> address
-  when (any (\e -> isJust $ _errorLog_noticeSentAt e) errs) $
-    (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+  let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
+  when (any (isJust . _errorLog_noticeSentAt) errs) $
+    (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
       queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> nodeName <> " is now in sync."
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.2
+*May 10, 2019*
+
+  * New governance status popup showing current votes, proposals, etc.
+  * Debian package installer now works on *Debian* (not just Ubuntu)!
+  * Debian installer now automatically configures all udev rules necessary for ledger communication.
+  * Minor improvements:
+      * Input validation on ledger BIP32 paths
+      * Improved documentation
+      * Updated Kiln logo
+      * New public-facing Nix cache for Kiln and all tezos executables (`tezos-client`, etc.). Refer to [Setting up Nix Caching](https://gitlab.com/obsidian.systems/tezos-baking-platform#setting-up-nix-caching-recommended) for details.
+  * Bug Fixes:
+    * Improved accuracy surrounding data for nodes that are having connectivity issues
+    * Improved correctness surrounding notifications for inactive bakers
+
 ## 0.5.1
 *April 16, 2019*
 

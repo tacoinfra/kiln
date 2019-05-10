@@ -67,7 +67,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
       PublicRequest_PollLedgerDevice walletApp -> inDb $ do
-        deleteAll (undefined :: ConnectedLedger)
+        deleteAll' @ConnectedLedger Proxy
         -- Deliberately don't notify here: let the worker pick it up and notify
         -- as required
         insert $ ConnectedLedger

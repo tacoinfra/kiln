@@ -7,6 +7,7 @@ let
   obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
 
   distroMethods = {
+    source = null;
     docker = "docker";
     linuxPackage = "linux-package";
   };
@@ -21,7 +22,6 @@ let
       rpcPort = 28732;
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
-      histMode = "archive";
     };
     alphanet = {
       network = "alphanet";
@@ -51,7 +51,7 @@ let
           if [ ! -f "${dataDir}/identity.json" ]; then
             ${tzKit}/bin/tezos-node identity generate --data-dir "${dataDir}"
           fi
-          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr ':${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
+          exec ${tzKit}/bin/tezos-node run --rpc-addr '127.0.0.1:${toString rpcPort}' --net-addr '0.0.0.0:${toString p2pPort}' --data-dir "${dataDir}" ${if histMode == null then "" else "--history-mode ${histMode}"}
         '';
         serviceConfig = {
           User = user;
@@ -84,12 +84,11 @@ let
     , user ? monitorName
     , rpcPort
     , monitorPort
-    , appConfig
     , version
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = (obApp null).linuxExeConfigurable appConfig version;
+          exe = (obApp distroMethods.source).linuxExeConfigurable version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -312,6 +311,7 @@ let
       };
 
       security.sudo.wheelNeedsPassword = false;
+      networking.firewall.enable = false;
       environment.systemPackages = [ upgradeKilnVM pkgs.firefox tezos.mainnet.kit ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
@@ -357,7 +357,7 @@ let
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
         preStart = ''
-          ln -sft . '${(obAppGargoyle null).exe}'/*
+          ln -sft . '${(obAppGargoyle distroMethods.source).exe}'/*
           mkdir -p log
         '';
         script = ''
@@ -376,17 +376,12 @@ let
   installKiln = pkgs.writeScriptBin "install-kiln" ''
     #!/usr/bin/env bash
     set -e
-    if [[ $# -eq 0 ]] ; then
-       echo "Installing Kiln in directory : 'app'"
-       export KILN_INSTALL_PATH=app
-    else
-       echo "Installing Kiln in directory : $1"
-       export KILN_INSTALL_PATH=$1
-    fi
-    mkdir -p $KILN_INSTALL_PATH
-    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    KILN_INSTALL_PATH="''${1:-app}"
+    echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
+    mkdir -p "$KILN_INSTALL_PATH"
+    ln -sf '${(obAppGargoyle distroMethods.source).exe}'/* "$KILN_INSTALL_PATH"
     echo "Install Complete!"
-    echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
+    echo "'cd \"$KILN_INSTALL_PATH\"' and run './backend' to run kiln with default settings."
   '';
 
   votingTest = pkgs.writeScriptBin "voting-test" ''
@@ -402,9 +397,9 @@ let
       --base-port=20000 --interactive=true --pause-on-error=true'
   '';
 
-in (obApp null) // {
+in (obApp distroMethods.source) // {
   inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
@@ -418,11 +413,7 @@ in (obApp null) // {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
           (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig // {
-              appConfig = config;
-              version = version;
-            })
-          )
+          (mkMonitorModule (args // nodeConfig // { inherit version; }))
           (syslog-ngModule {
             opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
           })
@@ -441,6 +432,7 @@ in (obApp null) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
-    pkgName = "kiln"; version = "0.5.1";
+    pkgName = "kiln";
+    version = "0.5.2";
   }).kiln-debian;
 }

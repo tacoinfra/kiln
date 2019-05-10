@@ -1379,6 +1379,7 @@ nodesTab =
               externalNodeMenu
               (>>= getNodeHeadBlock)
               (Just errors)
+              (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
@@ -1443,6 +1444,10 @@ nodesTab =
                     internalNodeMenu
                     ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
+                    (Just $ ffor2 ebn nodeData $ \es nd -> and
+                      [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
+                      , _processData_state nd == ProcessState_Running
+                      ])
                     (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                     (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
@@ -1484,6 +1489,7 @@ nodesTab =
               blank
               publicNodeMenu
               (Just . mkVeryBlockLike)
+              Nothing
               Nothing
               Nothing
               Nothing
@@ -1536,20 +1542,20 @@ nodesTab =
           el "dd" $ do
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
-    tileConnectionStats getPeerCount' getNetworkStats' node =
-      if isNothing getPeerCount' && isNothing getNetworkStats'
+    tileConnectionStats connected' getPeerCount' getNetworkStats' node =
+      if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'
       then Nothing
       else Just $ do
-        for_ getPeerCount' $ \getPeerCount -> do
-          peerCount <- maybeDyn <=< holdUniqDyn $ getPeerCount <$> node
-          elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
+        for_ (liftA2 (,) connected' getPeerCount') $ \(connected, getPeerCount) -> do
+          peerCount <- holdUniqDyn $ getPeerCount <$> node
+          elClass "span" "peer-count" $ dynText $ ffor2 peerCount connected $ \p c -> if c then maybe "-" tshow p else "-"
           text " connected peers"
 
-        for_ getNetworkStats' $ \getNetworKStats -> do
+        for_ (liftA2 (,) connected' getNetworkStats') $ \(connected, getNetworkStats) -> do
           let
-            stat = getNetworKStats <$> node
-            showSpeed n = dynText <=< holdUniqDyn $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
-            showTotal n = dynText <=< holdUniqDyn $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
+            stat = getNetworkStats <$> node
+            showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do
@@ -1557,12 +1563,12 @@ nodesTab =
               divClass "cell" $ text "Total"
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-up" *> showSpeed (_networkStat_currentOutflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-up" *> showTotal (_networkStat_totalSent <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showSpeed connected (_networkStat_currentOutflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showTotal connected (_networkStat_totalSent <$> stat)
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showSpeed connected (_networkStat_currentInflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showTotal connected (_networkStat_totalRecv <$> stat)
 
     -- TODO: errors' is a Maybe because we statically state that public nodes
     -- don't display a status icon, but I don't think that's a good way to
@@ -1574,18 +1580,19 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t Bool) -- ^ (Optional) Are we connected to the node?
       -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    standardNodeTile title subtitle menuContents getBlock errors' internalState getPeerCount' getNetworkStats' node = do
+    standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
         [ tileHeader title subtitle menuContents badge errors'
         , tileBlockStats getBlock node
         ]
-        <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
+        <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
 
     nodeTileWithSections :: [m ()] -> m ()
     nodeTileWithSections = divClass "ui card dashboard-tile node-tile" . divClass "content" .

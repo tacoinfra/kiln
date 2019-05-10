@@ -115,7 +115,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     let newHash = headBlockInfo ^. hash
         newLevel = headBlockInfo ^. level
         chainId = _nodeDataSource_chain nds
-     in void $ [executeQ|
+     in void [executeQ|
           insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
           values (?newHash, ?newLevel, ?chainId, null, null, false, false)
           on conflict do nothing
@@ -173,7 +173,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       minPeerCount = nodeData_minPeerConnections node
     for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
       flip runReaderT appConfig $
-        if (peerCount < fromIntegral minPeerCount)
+        if peerCount < fromIntegral minPeerCount
           then reportNodeInvalidPeerCountError nid minPeerCount peerCount
           else clearNodeInvalidPeerCountError nid
 
@@ -184,7 +184,6 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       ]
       (NodeDetails_idField ==. nid)
     project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
-  pure ()
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
@@ -214,7 +213,7 @@ getNodes db constraints = do
                                , Map (Id Node) NodeDetailsData
                                )
     <- runDb (Identity db) $ (,,,)
-      <$> (selectMap NodeConstructor CondEmpty)
+      <$> selectMap NodeConstructor CondEmpty
       <*> (Map.fromList <$> project
             ( NodeExternal_idField
             , NodeExternal_dataField ~> DeletableRow_dataSelector)
@@ -366,7 +365,7 @@ updateDataSource nds (pn, chain, uri) = do
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
-           in void $ [executeQ|
+           in void [executeQ|
                 insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
                 values (?newHash, ?newLevel, ?chainId, null, null, false, false)
                 on conflict do nothing
@@ -503,17 +502,20 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
 
   where
     getBlock = nodeQueryDataSource . NodeQuery_Block
+
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
+
     wipe p = do
       delete $ Amendment_periodField ==. p
       case p of
-        VotingPeriodKind_Proposal -> deleteAll (undefined :: PeriodProposal)
-        VotingPeriodKind_TestingVote -> deleteAll (undefined :: PeriodTestingVote)
-        VotingPeriodKind_Testing -> deleteAll (undefined :: PeriodTesting)
-        VotingPeriodKind_PromotionVote -> deleteAll (undefined :: PeriodPromotionVote)
+        VotingPeriodKind_Proposal -> deleteAll' @PeriodProposal Proxy
+        VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
+        VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
+        VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
     updateTo predBlk blk p = do
       let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
           votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
@@ -551,7 +553,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
                   Tezos.TestChainStatus_Running
                     { Tezos._testChainStatusRunning_chainId = c
                     , Tezos._testChainStatusRunning_genesis = b
-                    } -> (TestChainStatus_Forking, Just c, Just b)
+                    } -> (TestChainStatus_Running, Just c, Just b)
             tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
             runDb (Identity db) $ do
               let t = PeriodTesting
@@ -608,13 +610,13 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
       tp <- if vp == VotingPeriodKind_PromotionVote
         then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)
         else return Nothing
-      return $ ( blk ^. block_metadata . blockMetadata_protocol, tp)
+      return (blk ^. block_metadata . blockMetadata_protocol, tp)
 
   (mainProto, altProto) <- getProtocol
 
   let
     inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
-    inDb m = runDb (Identity db) m
+    inDb = runDb (Identity db)
     setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
@@ -629,15 +631,15 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         epid = _bakerDaemonInternalData_endorserProcessData bdid
         tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
         tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
-      isRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId bpid))
+      isRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId bpid)
       let
         setMainProto = unless (mp == mainProto) $ do
           update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
           when isRunning $ setControl ProcessControl_Restart [bpid, epid]
         setAltProto p = do
-          isAltRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId tbpid))
+          isAltRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId tbpid)
           if tp == Just p
-            then when (isRunning && (not isAltRunning)) $ setControl ProcessControl_Restart [tbpid, tepid]
+            then when (isRunning && not isAltRunning) $ setControl ProcessControl_Restart [tbpid, tepid]
             else do
               update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
               when isRunning $ setControl ProcessControl_Restart [tbpid, tepid]
@@ -675,4 +677,4 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
-  return ()
+

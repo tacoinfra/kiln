@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -162,7 +160,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeExternalV <- case mNodeExternalData of
         Nothing -> pure [(Bounded nid, First Nothing)]
-        Just _ -> getNodeAddresses (Just $ nid)
+        Just _ -> getNodeAddresses (Just nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
 
     {-# INLINE handleNodeInternal #-}
@@ -172,7 +170,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleNodeInternal nid mProcessData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeInternalV <- case mProcessData of
         Nothing -> pure [(Bounded nid, First Nothing)]
-        Just _ -> getNodeAddresses (Just $ nid)
+        Just _ -> getNodeAddresses (Just nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }
 
     handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
@@ -205,7 +203,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
                        => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
-      bakerV <- getBakerAddresses nds (Just $ pkh)
+      bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
 
     -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
@@ -240,7 +238,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
       notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
       pure $ (mempty :: BakeView a)
-        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ mailServerConfigToView mailServer notificatees
         }
 
     handleErrorLog

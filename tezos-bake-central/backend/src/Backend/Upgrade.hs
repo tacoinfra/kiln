@@ -95,13 +95,12 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
         notifyDefault (Id eid :: Id ErrorLogNetworkUpdate)
         -- Only send an email when we get a new value, not when we initially
         -- populate the cache.
-        when (mLastCommit /= Nothing) $ do
+        when (isJust mLastCommit) $ do
           let (header, bodyFirstPara) = networkUpdateDescription namedChain
           flip runReaderT appConfig $ queueAlert (Just eid) $ Alert Unresolved header $ T.unlines
             [ bodyFirstPara
             , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
             ]
-        return ()
 
 getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, Text))
 getLatestNamedChainUpgradeLog namedChain =

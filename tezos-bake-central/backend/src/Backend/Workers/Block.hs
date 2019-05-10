@@ -87,7 +87,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
           $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
-        Left (CacheError_NoSuitableNode) ->
+        Left CacheError_NoSuitableNode ->
           $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left e -> nqThrowError e
         Right block -> do
@@ -95,14 +95,14 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
 
           let parentHash = block ^. predecessor
               parentLevel = block ^. level - 1
-           in void $ [executeQ|
+           in void [executeQ|
                 insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
                 values (?parentHash, ?parentLevel, ?chainId, null, null, false, false)
                 on conflict do nothing
                 |]
           -- Operations into a block are divided into 4 subsections.  Accusations
           -- are always in the third of these sections.
-          let mightBeAccusations = foldMap id $ Seq.lookup 2 $ _block_operations block
+          let mightBeAccusations = fold $ Seq.lookup 2 $ _block_operations block
           for_ mightBeAccusations $ \op -> do
             let
               opHash = _operation_hash op
@@ -113,7 +113,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
                   accusedLevel = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_level
                   accusedPriority = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_priority
                 baker <- fmap _bakingRights_delegate $ nodeQueryDataSourceSafe $ NodeQuery_BakingRights1 blockHash accusedLevel accusedPriority
-                void $ [executeQ|
+                void [executeQ|
                   insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
                   values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, true)
                   on conflict do nothing
@@ -134,7 +134,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
                   |]
               _ -> return ()
 
-          void $ [executeQ|
+          void [executeQ|
             update "BlockTodo"
             set "claimedBy" = null,
                 "claimedAt" = null,
@@ -142,7 +142,6 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
                 "parsedAccusations" = true
             where chain = ?chainId and hash = ?blockHash
             |]
-    return ()
 
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a

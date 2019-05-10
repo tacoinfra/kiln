@@ -99,7 +99,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
             tz <- asks (^. timeZone)
             let startTime = getStartTimeForPeriod p <$> amendment <*> amendments <*> protoInfo
                 endTime = getEndTimeForPeriod p <$> amendment <*> amendments <*> protoInfo
-                dateOnly = "%m/%d/%y" -- TODO this is a strange format outside the US
+                dateOnly = "%b %d, %Y"
                 showDate (t, isEstimated) = T.concat
                   [ T.pack $ Time.formatTime Time.defaultTimeLocale dateOnly $ Time.utcToZonedTime tz t
                   , if isEstimated then "*" else ""
