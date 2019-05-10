@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.5.2
-*May 10, 2019*
+*May 13, 2019*
 
   * New governance status popup showing current votes, proposals, etc.
   * Debian package installer now works on *Debian* (not just Ubuntu)!
@@ -14,6 +14,11 @@
   * Bug Fixes:
     * Improved accuracy surrounding data for nodes that are having connectivity issues
     * Improved correctness surrounding notifications for inactive bakers
+
+### Known Issues
+
+  * This version of Kiln **does not support** the most recent version of zeronet as of the release date (chain ID `NetXkaRXbyeogSM`).
+
 
 ## 0.5.1
 *April 16, 2019*
