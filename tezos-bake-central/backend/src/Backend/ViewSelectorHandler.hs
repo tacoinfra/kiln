@@ -299,7 +299,7 @@ traceQuery :: (MonadLogger f, PersistBackend f) => Utf8 -> ([PersistValue] -> [P
 traceQuery sql params f = do
   $(logDebugS) "SQL" (tshow sql)
   $(logDebugS) "SQL" (tshow $ params [])
-  queryRaw False (T.unpack $ decodeUtf8 $ fromUtf8 sql) (params []) $ mapAllRows $ f
+  queryRaw False (T.unpack $ decodeUtf8 $ fromUtf8 sql) (params []) $ mapAllRows f
 
 getErrorLogsImpl
   :: forall m a.
@@ -336,7 +336,7 @@ getErrorLogsImpl flt intervalMap = do
           eLog :: ErrorLog <- StateT fromEntityPersistValues
           modify (toPrimitivePersistValue pg constrNum:)
           extras :: b <- StateT fromEntityPersistValues
-          pure $ (elId, (eLog, extras))
+          pure (elId, (eLog, extras))
         entityD = entityDef pg (undefined :: b)
         constrNum = entityConstrNum (Proxy @b) ctor
         constrD = constructors entityD !! constrNum
@@ -345,7 +345,7 @@ getErrorLogsImpl flt intervalMap = do
         qCond :: [Utf8]
         qCond = flip map related $ \case
           This r@(Related fld fk) ->
-            let ctor2 = singleConstructor $ proxify $ r
+            let ctor2 = singleConstructor $ proxify r
                 entityD2 = entityDef pg $ phantomize $ Compose ctor2
                 constrNum2 = entityConstrNum (Compose ctor2) ctor2
                 constrD2 = constructors entityD2 !! constrNum2
@@ -355,10 +355,10 @@ getErrorLogsImpl flt intervalMap = do
                   ForeignKey_AutoId -> fieldChain pg $ (const AutoKeyField :: d (ConstructorMarker r) -> AutoKeyField r d) ctor2
                   ForeignKey_UniqueId -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
                   ForeignKey_UniqueIdData -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
-                  ForeignKey_Field fld2 -> fieldChain pg $ fld2
+                  ForeignKey_Field fld2 -> fieldChain pg fld2
             in
               "EXISTS (SELECT 1 FROM \"" <> relatedTbl
-              <> "\" n WHERE " <> (mconcat $ intersperse " AND " $ "NOT n.\"data#deleted\"" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+              <> "\" n WHERE " <> mconcat (intersperse " AND " $ "NOT n.\"data#deleted\"" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
         qBase :: Utf8
         qBase =
           "SELECT \
@@ -394,11 +394,11 @@ getErrorLogsImpl flt intervalMap = do
         qBase <>
           " AND tsrange(el.started, el.\"lastSeen\", '[]') && " <> qWindow <> " \
           \ ORDER BY el.id ASC") -- this ORDER BY justifies the 'MMap.fromDistinctAscList' above.
-        (qWindowArgs) build
+        qWindowArgs build
 
     runQuery :: LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQuery lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
-      logAssume lTag (queryAlert (singleConstructor $ proxify $ lTag) (logDep lTag) window)
+      logAssume lTag (queryAlert (singleConstructor $ proxify lTag) (logDep lTag) window)
 
     runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries window = do
@@ -423,29 +423,29 @@ getAlertCount =
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)
   => NodeDataSource
-  -> Maybe (PublicKeyHash)
+  -> Maybe PublicKeyHash
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
   let qCount :: [Utf8]
       qCount = flip map universe $ \(This bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
         r@(Related fld fk) ->
-          let ctor = singleConstructor $ proxify $ bTag
+          let ctor = singleConstructor $ proxify bTag
               entityD = entityDef pg $ phantomize $ Compose ctor
               constrNum = entityConstrNum (Compose ctor) ctor
               constrD = constructors entityD !! constrNum
               extraTbl = tableName id entityD constrD
-              ctor2 = singleConstructor $ proxify $ r
+              ctor2 = singleConstructor $ proxify r
               tColumns = renderQualifiedField "elbm" $ fieldChain pg fld
               relatedColumns = renderQualifiedField "b" $ case fk of
                 ForeignKey_UniqueId -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
                 ForeignKey_UniqueIdData -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
-                ForeignKey_Field fld2 -> fieldChain pg $ fld2
+                ForeignKey_Field fld2 -> fieldChain pg fld2
           in
             "(SELECT COUNT(e.id) FROM \"" <> extraTbl
-            <> "\" elbm JOIN \"ErrorLog\" e on e.id = elbm.log WHERE " <> (mconcat $ intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+            <> "\" elbm JOIN \"ErrorLog\" e on e.id = elbm.log WHERE " <> mconcat (intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
       qFull = "\
         \ SELECT b.\"publicKeyHash\", b.\"data#data#alias\", "
-        <> (mconcat $ intersperse " + " $ qCount) <> " \
+        <> mconcat (intersperse " + " qCount) <> " \
         \ FROM \"Baker\" b \
         \ WHERE NOT b.\"data#deleted\" \
         \   AND COALESCE(?,b.\"publicKeyHash\") = b.\"publicKeyHash\" \
@@ -455,7 +455,7 @@ getBakerAddresses nds bid = do
         pkh :: PublicKeyHash <- StateT fromPersistValues
         alias :: Maybe Text <- StateT fromPersistValues
         errorCount :: Int <- StateT fromPersistValues
-        pure $ (pkh, (alias, errorCount))
+        pure (pkh, (alias, errorCount))
   rs <- Map.fromAscList <$> traceQuery
       qFull
       (toPrimitivePersistValue pg bid :)
@@ -538,7 +538,7 @@ getBakerAddresses nds bid = do
           Nothing -> BakerNextRight_GatheringData
         -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
-    nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) $ nextBakeRightsL
+    nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) nextBakeRightsL
     result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
         (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
@@ -558,7 +558,7 @@ getNodeAddresses nid = do
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', uri, alias, mpc) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', uri, alias, mpc) -> (Bounded nid',
     NodeExternalData
       { _nodeExternalData_address = uri
       , _nodeExternalData_alias = alias
@@ -570,7 +570,7 @@ getNodeAddresses nid = do
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . (fmap $ \(nid', control, state, updated, backend) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', control, state, updated, backend) -> (Bounded nid',
       ProcessData
       { _processData_control = control
       , _processData_state = state
@@ -580,20 +580,20 @@ getNodeAddresses nid = do
   let qCount :: [Utf8]
       qCount = flip map universe $ \(This nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
         r@(Related fld fk) ->
-          let ctor = singleConstructor $ proxify $ nTag
+          let ctor = singleConstructor $ proxify nTag
               entityD = entityDef pg $ phantomize $ Compose ctor
               constrNum = entityConstrNum (Compose ctor) ctor
               constrD = constructors entityD !! constrNum
               extraTbl = tableName id entityD constrD
-              ctor2 = singleConstructor $ proxify $ r
+              ctor2 = singleConstructor $ proxify r
               tColumns = renderQualifiedField "ein" $ fieldChain pg fld
               relatedColumns = renderQualifiedField "n" $ case fk of
                 ForeignKey_AutoId -> fieldChain pg $ (const AutoKeyField :: d (ConstructorMarker r) -> AutoKeyField r d) ctor2
-                ForeignKey_Field fld2 -> fieldChain pg $ fld2
+                ForeignKey_Field fld2 -> fieldChain pg fld2
           in
             "(SELECT COUNT(ein.log) FROM \"" <> extraTbl
-            <> "\" ein JOIN \"ErrorLog\" e on e.id = ein.log WHERE " <> (mconcat $ intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
-      qCounts = "SELECT n.id, " <> (mconcat $ intersperse " + " $ qCount) <> " \
+            <> "\" ein JOIN \"ErrorLog\" e on e.id = ein.log WHERE " <> mconcat (intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
+      qCounts = "SELECT n.id, " <> mconcat (intersperse " + " qCount) <> " \
         \ FROM ( \
         \   SELECT n1.id FROM \"NodeExternal\" n1 \
         \   WHERE NOT n1.\"data#deleted\" \
@@ -606,7 +606,7 @@ getNodeAddresses nid = do
       buildCounts = evalStateT $ do
         nodeId :: Id Node <- StateT fromPersistValues
         errorCount :: Int <- StateT fromPersistValues
-        pure $ (Bounded nodeId, errorCount)
+        pure (Bounded nodeId, errorCount)
   counts <- Map.fromAscList <$> traceQuery
       qCounts
       (toPrimitivePersistValue pg nid :)

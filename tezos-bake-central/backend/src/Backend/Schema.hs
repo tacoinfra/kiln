@@ -256,6 +256,10 @@ type EntityWithIdBy u a = (DefaultKeyId a, DefaultKey a ~ Key a (Unique u), Pers
 getIdBy :: (PersistBackend m, EntityWithIdBy u a) => Id a -> m (Maybe a)
 getIdBy = getBy . fromId
 
+-- Version of 'deleteAll' that doesn't entice you to use 'undefined'.
+deleteAll' :: forall v m proxy. (PersistBackend m, PersistEntity v) => proxy v -> m ()
+deleteAll' _ = deleteAll (error "deleteAll argument was demanded" :: v)
+
 updateId
   :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
   => Id a
@@ -1074,7 +1078,7 @@ instance DefaultKeyId NodeInternal where
   fromIdData _ = NodeInternalIdKey
 
 instance DefaultKeyId ErrorLogBakerMissed where
-  toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
+  toIdData _ (ErrorLogBakerMissedIdKey eid) = eid :: Id ErrorLog
   fromIdData _ = ErrorLogBakerMissedIdKey :: Id ErrorLog -> Key ErrorLogBakerMissed (Unique ErrorLogBakerMissedId)
 instance DefaultKeyId ErrorLogBadNodeHead where
   toIdData _ (ErrorLogBadNodeHeadIdKey eid) = eid
@@ -1230,7 +1234,7 @@ bakerLogDep = \case
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   where
-    depBakerAlert' f = Related f $ ForeignKey_UniqueId
+    depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
 
 embeddedSecretKeyEquals

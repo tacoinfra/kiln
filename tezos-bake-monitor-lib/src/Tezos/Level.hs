@@ -4,8 +4,8 @@
 
 module Tezos.Level where
 
-import Control.Lens.TH (makeLenses)
 import Control.DeepSeq (NFData)
+import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import Data.Hashable (Hashable)
 import Data.Int (Int32)
