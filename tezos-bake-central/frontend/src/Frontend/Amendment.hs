@@ -501,24 +501,19 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     castBallotFlow :: ProtocolHash -> Ballot -> Workflow t m (Event t ())
     castBallotFlow proposal ballot = Workflow $ do
       ledgerDeviceIcon expectedLI
-      divClass "title" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
+      divClass "bigtitle" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
       divClass "cast-vote-protocol" $ text $ toBase58Text proposal
       cast <- voteButton "Cast Vote"
       let prompt = do
-            text $ T.unlines
-              [ "Submit Proposal"
-              , ""
-              , "Protocol"
-              , toBase58Text proposal
-              , ""
-              , "Source"
-              ]
-            text $ toPublicKeyHashText $ bakerPkh
-            text $ T.unlines
-              [ ""
-              , "Period"
-              , "Proposal" -- TODO
-              ]
+            divClass "confirm-title" $ text "Confirm Vote"
+            divClass "confirm-content" $ text $ textBallot ballot
+            divClass "confirm-title" $ text "Protocol"
+            divClass "confirm-content" $ text $ toBase58Text proposal
+            divClass "confirm-title" $ text "Source"
+            divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+            divClass "confirm-title" $ text "Period"
+            -- TODO : fix period
+            divClass "confirm-content" $ text $ "Promotion"
           mBool = case ballot of
             Ballot_Yay -> Just True
             Ballot_Nay -> Just False
@@ -529,24 +524,17 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
     castProposalVoteFlow proposal = Workflow $ do
       ledgerDeviceIcon expectedLI
-      divClass "title" $ text "Cast a vote for this proposal?"
+      divClass "bigtitle" $ text "Cast a vote for this proposal?"
       divClass "cast-vote-protocol" $ text $ toBase58Text proposal
       cast <- voteButton "Cast Vote"
       let prompt = do
-            text $ T.unlines
-              [ "Submit Proposal"
-              , ""
-              , "Protocol"
-              , toBase58Text proposal
-              , ""
-              , "Source"
-              ]
-            text $ toPublicKeyHashText $ bakerPkh
-            text $ T.unlines
-              [ ""
-              , "Period"
-              , "Proposal"
-              ]
+            divClass "confirm-title" $ text "Submit Proposal"
+            divClass "confirm-title" $ text "Protocol"
+            divClass "confirm-content" $ text $ toBase58Text proposal
+            divClass "confirm-title" $ text "Source"
+            divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+            divClass "confirm-title" $ text "Period"
+            divClass "confirm-content" $ text $ "Proposal"
       d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal Nothing) <$ cast
       pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ d)
 
@@ -555,43 +543,60 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       -> m () -- ^ Prompt to show
       -> Workflow t m (Event t ())
     respondToPromptFlow whereToGo prompt = Workflow $ do
+      ledgerDeviceIcon expectedLI
       pb <- getPostBuild
       promptStep <- watchVotePrompting sk
-      display promptStep
       let changed = leftmost [updated promptStep, tag (current promptStep) pb]
           next = fforMaybe changed $ \case
             Just vs | Just (First step) <- _voteState_step vs -> case step of
               VoteStep_Done -> Just $ voteCastSuccessfullyFlow whereToGo
-              VoteStep_Disconnected -> undefined
+              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow
               VoteStep_Declined -> Just $ ledgerDeclinedFlow (respondToPromptFlow whereToGo prompt)
               VoteStep_Failed e -> undefined
               VoteStep_Prompting -> Nothing
-            _ -> Nothing
-      divClass "ui header" $ text "Respond to the prompt on your Ledger Device..."
-      divClass "detail" $ text "Your Ledger Device should show the following prompt:"
+            _ -> Just $ voteCastSuccessfullyFlow whereToGo
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      divClass "centered-grey" $ text "Your Ledger Device should show the following prompt:"
       _ <- el "p" prompt
       -- declined <- uiDynButton (pure "red") $ text "Decline"
       -- accepted <- uiDynButton (pure "green") $ text "Accept"
-      pure (never, next)
+      pure (never, next )
 
     ledgerDeclinedFlow
       :: Workflow t m (Event t ()) -- ^ Retry using this workflow
       -> Workflow t m (Event t ())
     ledgerDeclinedFlow retryFlow = Workflow $ do
-      divClass "ui header" $ text "The request was declined by the Ledger Device."
-      text "The Ledger prompt was rejected or timed out. Please try again."
+      divClass "ui message" $ do
+        divClass "title" $ do
+          text "The Ledger prompt was rejected or timed out. Please try again."
       retry <- voteButton "Retry"
       pure (never, retryFlow <$ retry)
+
+    ledgerDisconnectedFlow ::  Workflow t m (Event t ())
+    ledgerDisconnectedFlow = Workflow $ do
+      divClass "bigtitle" $ text "Ledger Device was disconnected."
+      retry <- voteButton "Restart"
+      -- TODO: restart at proper workflow
+      pure (never, proposalFlow <$ retry)
 
     voteCastSuccessfullyFlow
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
       -> Workflow t m (Event t ())
     voteCastSuccessfullyFlow whereToGo = Workflow $ do
       ledgerDeviceIcon expectedLI
-      divClass "title" $ do
-        icon "icon-warning big orange"
+      divClass "bigtitle" $ do
+        icon "icon-check blue"
         text "Your vote has been cast."
-      text "Kiln will confirm when your vote has been included in the blockchain."
+      divClass "confirm-content" $ text "Kiln will confirm when your vote has been included in the blockchain."
+      divClass "ui message" $ do
+        el "div" $ do
+          icon "icon-warning big orange"
+        el "div" $ do
+          divClass "title" $ do
+            text "Reopen the Tezos Baking app."
+          divClass "description" $ text "You will not be able to sign blocks or endorsements while outside the Tezos Baking app."
       continue <- voteButton "Continue"
       pure $ fanEither $ whereToGo <$ continue
 
@@ -608,13 +613,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           li == expectedLedgerIdentifier && wApp == Just True
         iconType :: Dynamic t (Maybe Text)
         iconType = ffor devFound $ fmap $ \b -> if b
-            then "icon-check"
-            else "icon-x-thick"
+            then "icon-check blue"
+            else "icon-x-thick red"
       divClass "" $ do
         elAttr "img" ("src" =: static @"images/ledger.svg") blank
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
-      divClass "" $ text $ unLedgerIdentifier expectedLedgerIdentifier
+      divClass "centered-grey" $ text $ unLedgerIdentifier expectedLedgerIdentifier
       pure $ devFound
 
     nextBakingRights = do
@@ -631,7 +636,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           el "div" $ do
             icon "icon-warning big orange"
           el "div" $ do
-            divClass "title" $ do
+            divClass "bigtitle" $ do
               text "Your baker's next opportunity is "
               let eventDyn = constDyn (r, l)
               etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead

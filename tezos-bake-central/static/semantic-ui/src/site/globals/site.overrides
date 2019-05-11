@@ -145,14 +145,33 @@ h6.ui.header {
       margin-left: @20px;
     }
   }
-  .title {
+  .bigtitle {
+    .icon {
+      margin: 0 @20px @4px 0;
+    }
     padding: @20px;
     font-size: @20px;
     font-weight: bold;
     text-align: center;
   }
+  .centered-grey {
+    text-align: center;
+    color: @grey;
+  }
   .cast-vote-protocol {
     margin-bottom: @30px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .confirm-title {
+    margin-top: @30px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .confirm-content {
+    margin-top: @10px;
     font-size: @16px;
     font-weight: bold;
     text-align: center;
@@ -165,20 +184,21 @@ h6.ui.header {
     .ui.active.inline.loader {
       margin-right: @20px;
     }
-    .ui.message {
-      display: flex;
-      .icon {
-        margin-right: @24px;
-      }
-      .title {
-        font-size: @16px;
-        font-weight: bold;
-      }
-      .description {
-        margin-top: @13px;
-        font-size: @12px;
-        color: @grey;
-      }
+  }
+  .ui.message {
+    display: flex;
+    background: @white;
+    .icon {
+      margin-right: @24px;
+    }
+    .title {
+      font-size: @16px;
+      font-weight: bold;
+    }
+    .description {
+      margin-top: @13px;
+      font-size: @12px;
+      color: @grey;
     }
   }
   .vote-cast-as {
@@ -197,19 +217,12 @@ h6.ui.header {
   }
   .ledger-device-status {
     text-align: center;
-    color: @grey;
     .mark {
       position: relative;
       right: @12px;
       top: -@15px;
       > .icon {
-        background-color: #ffffff;
-      }
-      .icon.icon-check {
-        color: #1269f3;
-      }
-      .icon.icon-x-thick {
-        color: #d00101;
+        background-color: @white;
       }
     }
   }
