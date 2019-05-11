@@ -127,6 +127,7 @@ h6.ui.header {
 }
 
 .vote-modal {
+  min-width: 700px;
   .detail {
     font-size: @12px;
     color: #6a6a6a;
@@ -143,6 +144,18 @@ h6.ui.header {
       font-weight: normal;
       margin-left: @20px;
     }
+  }
+  .title {
+    padding: @20px;
+    font-size: @20px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .cast-vote-protocol {
+    margin-bottom: @30px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
   }
   .looking-tezos-wallet {
     .header {

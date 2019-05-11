@@ -353,7 +353,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     (replaces, closes) <- fanEither <$> switchHold never replaced
   pure $ close <> closes
   where
-
+    voteButton t = divClass "vote-buttons" $ uiDynButton (pure "primary") $ text t
     -- | When a new period arrives, we display this interstitial to inform the
     -- user why they were redirected
     newPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
@@ -500,9 +500,10 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     castBallotFlow :: ProtocolHash -> Ballot -> Workflow t m (Event t ())
     castBallotFlow proposal ballot = Workflow $ do
-      divClass "ui header" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
-      el "p" $ text $ toBase58Text proposal
-      cast <- uiDynButton (pure "primary") $ text "Cast Vote"
+      ledgerDeviceIcon expectedLI
+      divClass "title" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
+      divClass "cast-vote-protocol" $ text $ toBase58Text proposal
+      cast <- voteButton "Cast Vote"
       let prompt = do
             text $ T.unlines
               [ "Submit Proposal"
@@ -518,14 +519,19 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               , "Period"
               , "Proposal" -- TODO
               ]
+          mBool = case ballot of
+            Ballot_Yay -> Just True
+            Ballot_Nay -> Just False
+            Ballot_Pass -> Nothing
+      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBool) <$ cast
       pure (never, respondToPromptFlow (Right $ castBallotFlow proposal ballot) prompt <$ cast)
 
     castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
     castProposalVoteFlow proposal = Workflow $ do
       ledgerDeviceIcon expectedLI
-      divClass "ui header" $ text "Cast a vote for this proposal?"
-      el "p" $ text $ toBase58Text proposal
-      cast <- uiDynButton (pure "primary") $ text "Cast Vote"
+      divClass "title" $ text "Cast a vote for this proposal?"
+      divClass "cast-vote-protocol" $ text $ toBase58Text proposal
+      cast <- voteButton "Cast Vote"
       let prompt = do
             text $ T.unlines
               [ "Submit Proposal"
@@ -574,16 +580,19 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     ledgerDeclinedFlow retryFlow = Workflow $ do
       divClass "ui header" $ text "The request was declined by the Ledger Device."
       text "The Ledger prompt was rejected or timed out. Please try again."
-      retry <- uiDynButton (pure "primary") $ text "Retry"
+      retry <- voteButton "Retry"
       pure (never, retryFlow <$ retry)
 
     voteCastSuccessfullyFlow
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
       -> Workflow t m (Event t ())
     voteCastSuccessfullyFlow whereToGo = Workflow $ do
-      divClass "ui header" $ text "Your vote has been cast."
+      ledgerDeviceIcon expectedLI
+      divClass "title" $ do
+        icon "icon-warning big orange"
+        text "Your vote has been cast."
       text "Kiln will confirm when your vote has been included in the blockchain."
-      continue <- uiDynButton (pure "primary") $ text "Continue"
+      continue <- voteButton "Continue"
       pure $ fanEither $ whereToGo <$ continue
 
     ledgerDeviceIcon expectedLedgerIdentifier = divClass "ledger-device-status" $ do
@@ -615,7 +624,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           Just (BakerNextRight_KnownRights (r,l)) -> pure (r, l)
           _ -> Nothing
       dyn_ $ ffor mrl $ \case
-        Nothing -> text "No baking opportunity found"
+        Nothing -> blank
         Just (r, l) -> divClass "ui message" $ do
           latestHead <- watchLatestHead
           dparameters <- watchProtoInfo
