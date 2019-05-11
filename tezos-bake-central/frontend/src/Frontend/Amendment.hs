@@ -534,42 +534,26 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Failed e -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Prompting -> Nothing
-            _ -> Just $ ledgerDisconnectedFlow
+            _ -> Nothing
       divClass "bigtitle" $ do
         elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
         text "Respond to the prompt on your Ledger Device..."
       divClass "centered-grey" $ text "Your Ledger Device should show the following prompt:"
-      let prompt = do
-            promptHeader
-            divClass "confirm-title" $ text "Protocol"
-            divClass "confirm-content" $ text $ toBase58Text proposal
-            divClass "confirm-title" $ text "Source"
-            divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
-            divClass "confirm-title" $ text "Period"
-            -- TODO : fix period
-            divClass "confirm-content" $ text $ "Promotion"
-          promptHeader = case mBallot of
-            Nothing -> divClass "confirm-title" $ text "Submit Proposal"
-            Just ballot -> do
-              divClass "confirm-title" $ text "Confirm Vote"
-              divClass "confirm-content" $ text $ textBallot ballot
-      _ <- el "p" prompt
-      -- declined <- uiDynButton (pure "red") $ text "Decline"
-      -- accepted <- uiDynButton (pure "green") $ text "Accept"
+      el "div" $ do
+        case mBallot of
+          Nothing ->
+            divClass "confirm-title" $ text "Submit Proposal"
+          Just ballot -> do
+            divClass "confirm-title" $ text "Confirm Vote"
+            divClass "confirm-content" $ text $ textBallot ballot
+        divClass "confirm-title" $ text "Protocol"
+        divClass "confirm-content" $ text $ toBase58Text proposal
+        divClass "confirm-title" $ text "Source"
+        divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+        divClass "confirm-title" $ text "Period"
+        -- TODO : fix period
+        divClass "confirm-content" $ text $ "Promotion"
       pure (never, next )
-
-    ledgerDeclinedFlow
-      :: Workflow t m (Event t ()) -- ^ Retry using this workflow
-      -> Workflow t m (Event t ())
-    ledgerDeclinedFlow retryFlow = Workflow $ do
-      ledgerDeviceIcon expectedLI
-      divClass "ui message" $ do
-        el "div" $ do
-          icon "icon-x red"
-        divClass "title" $ do
-          text "The Ledger prompt was rejected or timed out. Please try again."
-      retry <- voteButton "Retry"
-      pure (never, retryFlow <$ retry)
 
     ledgerDisconnectedFlow ::  Workflow t m (Event t ())
     ledgerDisconnectedFlow = Workflow $ do
