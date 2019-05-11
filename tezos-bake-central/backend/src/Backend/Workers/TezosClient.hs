@@ -171,6 +171,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                 let sk = _ledgerAccount_secretKey la
                     -- b = _ledgerAccount_shouldDoVoteBallot la
                 inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
+                -- TODO: Do vote and gather the result
                 threadDelay' 5
                 inDb $ do
                   update
@@ -182,7 +183,7 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
         | isNothing (_connectedLedger_updated cl) && (_connectedLedger_isWalletApp cl) -> do
-          threadDelay' 5
+          threadDelay' 2
           inDb $ do
             $(logWarn) "updating connectedledger walletApp"
             now <- getTime
