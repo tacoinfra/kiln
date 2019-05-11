@@ -152,6 +152,21 @@ h6.ui.header {
     .ui.active.inline.loader {
       margin-right: @20px;
     }
+    .ui.message {
+      display: flex;
+      .icon {
+        margin-right: @24px;
+      }
+      .title {
+        font-size: @16px;
+        font-weight: bold;
+      }
+      .description {
+        margin-top: @13px;
+        font-size: @12px;
+        color: @grey;
+      }
+    }
   }
   .vote-cast-as {
     margin: @21px 0 @40px 0;
@@ -169,7 +184,7 @@ h6.ui.header {
   }
   .ledger-device-status {
     text-align: center;
-    color: #898989;
+    color: @grey;
     .mark {
       position: relative;
       right: @12px;

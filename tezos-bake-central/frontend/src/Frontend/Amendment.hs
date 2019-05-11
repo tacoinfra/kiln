@@ -30,6 +30,7 @@ import Reflex.Dom.Core
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Data.Map as Map
+import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import qualified Data.Time as Time
 
@@ -324,6 +325,7 @@ voteModal :: forall r t m.
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadReader r m, HasFrontendConfig r
   , MonadJSM (Performable m)
+  , HasTimer t r, HasTimeZone r
   )
   => (PublicKeyHash, SecretKey)
   -- ^ Baker to vote with
@@ -484,7 +486,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elClass "span" "ui active inline loader small blue" blank
         elClass "span" "" $ text "Looking for Tezos Wallet app on Ledger device..."
       el "p" $ text "Voting requires the Tezos Wallet app version 1.5.0 or higher to be open. Voting cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
-      divClass "ui warning message" $ text "TODO: Next baking opportunity"
+      nextBakingRights
       divClass "detail" $ do
         text "To install the Tezos Wallet app:"
         el "ol" $ do
@@ -605,3 +607,24 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           elClass "span" "mark" $ icon $ "small circular " <> it
       divClass "" $ text $ unLedgerIdentifier expectedLedgerIdentifier
       pure $ devFound
+
+    nextBakingRights = do
+      mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
+      let
+        mrl = ffor ((fmap _bakerSummary_nextRight) <$> mBakerDyn) $ \case
+          Just (BakerNextRight_KnownRights (r,l)) -> pure (r, l)
+          _ -> Nothing
+      dyn_ $ ffor mrl $ \case
+        Nothing -> text "No baking opportunity found"
+        Just (r, l) -> divClass "ui message" $ do
+          latestHead <- watchLatestHead
+          dparameters <- watchProtoInfo
+          el "div" $ do
+            icon "icon-warning big orange"
+          el "div" $ do
+            divClass "title" $ do
+              text "Your baker's next opportunity is "
+              let eventDyn = constDyn (r, l)
+              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+              dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
+            divClass "description" $ text "You will not be able to sign blocks or endorsements while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
