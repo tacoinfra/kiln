@@ -435,7 +435,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
                     Just True -> "Voted"
                     Just False -> "Pending"
                   pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
-        pure (never, waitForWalletAppFlow . castProposalVoteFlow <$> vote)
+        pure (never, waitForWalletAppFlow . (castVoteFlow False Nothing) <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
@@ -473,7 +473,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             text $ "Promote this proposal to " <> promote <> "?"
           let voteButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
-          pure $ attachWith castBallotFlow (current proposal) vote
+          pure $ attachWith (\p b -> castVoteFlow False (Just b) p) (current proposal) vote
       pure (never, vote)
 
     expectedLI = LedgerIdentifier "frilly-elephant-alienated-hippopotamus"
@@ -498,15 +498,49 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         -- uiDynButton (pure "orange") $ text "Connect Ledger"
       pure (never, nextFlow <$ walletReady)
 
-    castBallotFlow :: ProtocolHash -> Ballot -> Workflow t m (Event t ())
-    castBallotFlow proposal ballot = Workflow $ do
+    castVoteFlow :: Bool -> Maybe Ballot -> ProtocolHash -> Workflow t m (Event t ())
+    castVoteFlow isTimedOut mBallot proposal = Workflow $ do
       ledgerDeviceIcon expectedLI
-      divClass "bigtitle" $ text $ "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
+      when isTimedOut $ do
+        divClass "ui message" $ do
+          el "div" $ do
+            icon "icon-x red"
+          divClass "title" $ do
+            text "The Ledger prompt was rejected or timed out. Please try again."
+      divClass "bigtitle" $ text $ case mBallot of
+        Nothing -> "Cast a vote for this proposal?"
+        Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
       divClass "cast-vote-protocol" $ text $ toBase58Text proposal
       cast <- voteButton "Cast Vote"
+      let
+          mBool = mBallot >>= \case
+            Ballot_Yay -> Just True
+            Ballot_Nay -> Just False
+            Ballot_Pass -> Nothing
+      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBool) <$ cast
+      pure (never, respondToPromptFlow proposal mBallot <$ cast)
+
+    respondToPromptFlow
+      :: ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
+    respondToPromptFlow proposal mBallot = Workflow $ do
+      ledgerDeviceIcon expectedLI
+      pb <- getPostBuild
+      promptStep <- watchVotePrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just vs | Just (First step) <- _voteState_step vs -> case step of
+              VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Right proposalFlow
+              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow
+              VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
+              VoteStep_Failed e -> Just $ castVoteFlow True mBallot proposal
+              VoteStep_Prompting -> Nothing
+            _ -> Just $ ledgerDisconnectedFlow
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      divClass "centered-grey" $ text "Your Ledger Device should show the following prompt:"
       let prompt = do
-            divClass "confirm-title" $ text "Confirm Vote"
-            divClass "confirm-content" $ text $ textBallot ballot
+            promptHeader
             divClass "confirm-title" $ text "Protocol"
             divClass "confirm-content" $ text $ toBase58Text proposal
             divClass "confirm-title" $ text "Source"
@@ -514,51 +548,11 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             divClass "confirm-title" $ text "Period"
             -- TODO : fix period
             divClass "confirm-content" $ text $ "Promotion"
-          mBool = case ballot of
-            Ballot_Yay -> Just True
-            Ballot_Nay -> Just False
-            Ballot_Pass -> Nothing
-      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBool) <$ cast
-      pure (never, respondToPromptFlow (Right $ castBallotFlow proposal ballot) prompt <$ cast)
-
-    castProposalVoteFlow :: ProtocolHash -> Workflow t m (Event t ())
-    castProposalVoteFlow proposal = Workflow $ do
-      ledgerDeviceIcon expectedLI
-      divClass "bigtitle" $ text "Cast a vote for this proposal?"
-      divClass "cast-vote-protocol" $ text $ toBase58Text proposal
-      cast <- voteButton "Cast Vote"
-      let prompt = do
-            divClass "confirm-title" $ text "Submit Proposal"
-            divClass "confirm-title" $ text "Protocol"
-            divClass "confirm-content" $ text $ toBase58Text proposal
-            divClass "confirm-title" $ text "Source"
-            divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
-            divClass "confirm-title" $ text "Period"
-            divClass "confirm-content" $ text $ "Proposal"
-      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal Nothing) <$ cast
-      pure (never, respondToPromptFlow (Right proposalFlow) prompt <$ d)
-
-    respondToPromptFlow
-      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
-      -> m () -- ^ Prompt to show
-      -> Workflow t m (Event t ())
-    respondToPromptFlow whereToGo prompt = Workflow $ do
-      ledgerDeviceIcon expectedLI
-      pb <- getPostBuild
-      promptStep <- watchVotePrompting sk
-      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
-          next = fforMaybe changed $ \case
-            Just vs | Just (First step) <- _voteState_step vs -> case step of
-              VoteStep_Done -> Just $ voteCastSuccessfullyFlow whereToGo
-              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow
-              VoteStep_Declined -> Just $ ledgerDeclinedFlow (respondToPromptFlow whereToGo prompt)
-              VoteStep_Failed e -> undefined
-              VoteStep_Prompting -> Nothing
-            _ -> Just $ voteCastSuccessfullyFlow whereToGo
-      divClass "bigtitle" $ do
-        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
-        text "Respond to the prompt on your Ledger Device..."
-      divClass "centered-grey" $ text "Your Ledger Device should show the following prompt:"
+          promptHeader = case mBallot of
+            Nothing -> divClass "confirm-title" $ text "Submit Proposal"
+            Just ballot -> do
+              divClass "confirm-title" $ text "Confirm Vote"
+              divClass "confirm-content" $ text $ textBallot ballot
       _ <- el "p" prompt
       -- declined <- uiDynButton (pure "red") $ text "Decline"
       -- accepted <- uiDynButton (pure "green") $ text "Accept"
@@ -568,7 +562,10 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       :: Workflow t m (Event t ()) -- ^ Retry using this workflow
       -> Workflow t m (Event t ())
     ledgerDeclinedFlow retryFlow = Workflow $ do
+      ledgerDeviceIcon expectedLI
       divClass "ui message" $ do
+        el "div" $ do
+          icon "icon-x red"
         divClass "title" $ do
           text "The Ledger prompt was rejected or timed out. Please try again."
       retry <- voteButton "Retry"
@@ -576,6 +573,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     ledgerDisconnectedFlow ::  Workflow t m (Event t ())
     ledgerDisconnectedFlow = Workflow $ do
+      ledgerDeviceIcon expectedLI
       divClass "bigtitle" $ text "Ledger Device was disconnected."
       retry <- voteButton "Restart"
       -- TODO: restart at proper workflow
