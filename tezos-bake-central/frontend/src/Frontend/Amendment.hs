@@ -336,13 +336,6 @@ voteModal :: forall r t m.
   -> Event t () -> m (Event t ())
 voteModal (bakerPkh, sk) protoInfo amendment close = do
   votingPeriodKind <- holdUniqDyn $ _amendment_period <$> amendment
-    {-
-  vpk <- sample $ current votingPeriodKind'
-  choice <- value <$> dropdown vpk (pure $ Map.fromList $ (\x -> (x, tshow x)) <$> [minBound .. maxBound])
-    (def & dropdownConfig_attributes .~ pure ("class" =: "ui selection dropdown"))
-  next <- uiDynButton (pure "purple") $ text "Set period"
-  votingPeriodKind <- holdDyn vpk $ tag (current choice) next
-    -}
   pb <- getPostBuild
   rec
     (_, replaced) <- runWithReplace blank $ leftmost
@@ -366,7 +359,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     selectPeriod = fmap (fmap Right . switchDyn) . \case
       VotingPeriodKind_Proposal -> workflow proposalFlow
       VotingPeriodKind_TestingVote -> workflow explorationFlow
-      VotingPeriodKind_Testing -> pure <$> getPostBuild -- close immediately
+      VotingPeriodKind_Testing -> pure <$> getPostBuild -- TODO: close immediately
       VotingPeriodKind_PromotionVote -> workflow promotionFlow
 
     headerWithCycles header detail extras = do
@@ -474,14 +467,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           let voteButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
           pure $ attachWith (\p b -> castVoteFlow False (Just b) p) (current proposal) vote
-      pure (never, vote)
+      pure (never, waitForWalletAppFlow <$> vote)
 
-    expectedLI = LedgerIdentifier "frilly-elephant-alienated-hippopotamus"
     waitForWalletAppFlow
       :: Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
       -> Workflow t m (Event t ())
     waitForWalletAppFlow nextFlow = Workflow $ divClass "looking-tezos-wallet" $ do
-      devFound <- ledgerDeviceIcon expectedLI
+      devFound <- ledgerDeviceIcon
       divClass "ui header centered" $ do
         elClass "span" "ui active inline loader small blue" blank
         elClass "span" "" $ text "Looking for Tezos Wallet app on Ledger device..."
@@ -494,13 +486,12 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           el "li" $ text "Go to Manager and search for “Tezos”"
           el "li" $ text "Install the “Tezos Wallet” app"
           el "li" $ text "Open the Tezos Wallet app on your ledger"
-      let walletReady = updated $ (==) (Just True) <$> devFound
-        -- uiDynButton (pure "orange") $ text "Connect Ledger"
+      let walletReady = ffilter ((==) (Just True)) $ updated devFound
       pure (never, nextFlow <$ walletReady)
 
     castVoteFlow :: Bool -> Maybe Ballot -> ProtocolHash -> Workflow t m (Event t ())
     castVoteFlow isTimedOut mBallot proposal = Workflow $ do
-      ledgerDeviceIcon expectedLI
+      ledgerDeviceIcon
       when isTimedOut $ do
         divClass "ui message" $ do
           el "div" $ do
@@ -523,12 +514,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     respondToPromptFlow
       :: ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
     respondToPromptFlow proposal mBallot = Workflow $ do
-      ledgerDeviceIcon expectedLI
+      ledgerDeviceIcon
       pb <- getPostBuild
       promptStep <- watchVotePrompting sk
       let changed = leftmost [updated promptStep, tag (current promptStep) pb]
           next = fforMaybe changed $ \case
             Just vs | Just (First step) <- _voteState_step vs -> case step of
+              -- TODO: go to proper flow
               VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Right proposalFlow
               VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow
               VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
@@ -557,7 +549,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     ledgerDisconnectedFlow ::  Workflow t m (Event t ())
     ledgerDisconnectedFlow = Workflow $ do
-      ledgerDeviceIcon expectedLI
+      ledgerDeviceIcon
       divClass "bigtitle" $ text "Ledger Device was disconnected."
       retry <- voteButton "Restart"
       -- TODO: restart at proper workflow
@@ -567,7 +559,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
       -> Workflow t m (Event t ())
     voteCastSuccessfullyFlow whereToGo = Workflow $ do
-      ledgerDeviceIcon expectedLI
+      ledgerDeviceIcon
       divClass "bigtitle" $ do
         icon "icon-check blue"
         text "Your vote has been cast."
@@ -582,17 +574,18 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       continue <- voteButton "Continue"
       pure $ fanEither $ whereToGo <$ continue
 
-    ledgerDeviceIcon expectedLedgerIdentifier = divClass "ledger-device-status" $ do
+    -- searching device / wrong device found : show only identifier, no marks
+    -- found : show green tick mark
+    -- not found : show red cross mark
+    ledgerDeviceIcon = divClass "ledger-device-status" $ do
       connectedLedger <- watchConnectedLedger True
       ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
       isWalletApp <- holdUniqDyn $ fmap _connectedLedger_isWalletApp <$> connectedLedger
-      -- searching / wrong device found : only identifier, no marks
-      -- found : show green tick mark
-      -- not found : show red cross mark
       let
+        expectedLI = _secretKey_ledgerIdentifier sk
         devFound :: Dynamic t (Maybe Bool)
         devFound = ffor2 isWalletApp ledgerIdentifier $ \wApp -> fmap $ \li ->
-          li == expectedLedgerIdentifier && wApp == Just True
+          li == expectedLI && wApp == Just True
         iconType :: Dynamic t (Maybe Text)
         iconType = ffor devFound $ fmap $ \b -> if b
             then "icon-check blue"
@@ -601,18 +594,18 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elAttr "img" ("src" =: static @"images/ledger.svg") blank
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
-      divClass "centered-grey" $ text $ unLedgerIdentifier expectedLedgerIdentifier
+      divClass "centered-grey" $ text $ unLedgerIdentifier expectedLI
       pure $ devFound
 
     nextBakingRights = do
       mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
       let
-        mrl = ffor ((fmap _bakerSummary_nextRight) <$> mBakerDyn) $ \case
-          Just (BakerNextRight_KnownRights (r,l)) -> pure (r, l)
+        mLevel = ffor ((fmap _bakerSummary_nextRight) <$> mBakerDyn) $ \case
+          Just (BakerNextRight_KnownRights (_,l)) -> pure l
           _ -> Nothing
-      dyn_ $ ffor mrl $ \case
+      dyn_ $ ffor mLevel $ \case
         Nothing -> blank
-        Just (r, l) -> divClass "ui message" $ do
+        Just l -> divClass "ui message" $ do
           latestHead <- watchLatestHead
           dparameters <- watchProtoInfo
           el "div" $ do
@@ -620,7 +613,6 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           el "div" $ do
             divClass "bigtitle" $ do
               text "Your baker's next opportunity is "
-              let eventDyn = constDyn (r, l)
-              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
               dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
             divClass "description" $ text "You will not be able to sign blocks or endorsements while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
