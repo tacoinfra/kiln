@@ -73,6 +73,7 @@ library
     Common.Api
     Common.App
     Common.AppendIntervalMap
+    Common.Calculations
     Common.Config
     Common.Distribution
     Common.HeadTag

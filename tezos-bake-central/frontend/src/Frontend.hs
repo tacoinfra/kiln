@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -61,6 +62,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
 import Tezos.NodeRPC.Types
+import Tezos.ProtocolConstants (predictFutureTimestamp)
 import Tezos.Types
 
 import Common (humanBytes)
@@ -78,6 +80,7 @@ import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Calculations (levelToCycle)
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -355,7 +358,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
   divClass "ui stackable grid" $ do
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
-        latestHead <- watchLatestHead
+        (latestHead, knownProto) <- watchHeadWithProtocol
         let infoItem faded title body = divClass "item" $
               elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
                 divClass "header" $ text title
@@ -363,10 +366,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
         infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        protoInfo' <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle knownProto latestHead
         whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-          text $ tshow $ unCycle c
+          text $ either ("Error: " <>) (tshow . unCycle) c
 
         whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
           text $ tshow (unRawLevel $ b ^. level)
@@ -374,11 +376,12 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
         amendments <- watchAmendment
-        mProtoInfo <- maybeDyn protoInfo'
+        mKnownProto <- maybeDyn knownProto
         mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \(protoInfo, amendment) -> do
+        whenJustDyn ((liftA2 . liftA2) (,) mKnownProto mAmendment) $ \(proto, amendment) -> do
+          let protoInfo = view knownProtocol_constants <$> proto
           let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
-          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments proto) $ divClass "content" $ do
             kind <- holdUniqDyn $ _amendment_period <$> amendment
             divClass "header" $ text "Amendment Period"
             divClass "amendment-period" $ do
@@ -404,7 +407,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
-        el "p" $ ensureHealthyNodes
+        el "p" ensureHealthyNodes
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -412,7 +415,7 @@ headerBell = do
   let hasAlerts = fmap (> 0) alertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ((<>) "ui circular label link ") . bool "basic" "red")
+      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ("ui circular label link " <>) . bool "basic" "red")
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
@@ -422,7 +425,7 @@ headerBell = do
             & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
             & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
             & SemUi.iconConfig_link SemUi.|~ True
-            & SemUi.iconConfig_fitted .~ (SemUi.Dyn hasAlerts)
+            & SemUi.iconConfig_fitted .~ SemUi.Dyn hasAlerts
             )
   return $ domEvent Click e
 
@@ -497,7 +500,7 @@ networkUpdateAlert elua = do
     (icon "icon-alert-badge big blue")
     header
     Nothing
-    (do el "p" $ text $ bodyFirstPara
+    (do el "p" $ text bodyFirstPara
         el "p" $ do
           text "Get the new software here "
           elClass "i" "ui icon small icon-arrow-right" blank
@@ -533,8 +536,8 @@ newtype SynthError
   deriving (Eq, Ord, Show)
 
 -- | Meta info for alerts to customize their appearance/behaviour
-data AlertMetaData = AlertMetaData
-  { _alertMetaData_isEventBased :: !Bool
+newtype AlertMetaData = AlertMetaData
+  { _alertMetaData_isEventBased :: Bool
   }
 
 class HasAlertMetaData a where
@@ -633,7 +636,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ fmapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -685,9 +688,7 @@ liveErrorsWidget = void $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> "Last Detected"
             Just _ -> "Stopped"
-          localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> _errorLog_lastSeen log
-            Just x -> x
+          localTimestamp' $ ffor logDyn $ \log -> fromMaybe (_errorLog_lastSeen log) (_errorLog_stopped log)
   where
     localTimestamp' dt = do
       tz <- asks (^. timeZone)
@@ -739,7 +740,7 @@ liveErrorsWidget = void $ do
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header $ "Node has too few peers."
+              header "Node has too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -1066,7 +1067,7 @@ handleClientErrorWorkflow recover = \case
       elClass "h5" "ui header" $ do
         icon "red icon-x"
         text "The request was declined by the Ledger Device."
-      divClass "explanation" $ text $ "If you did not intend to reject the prompt on the Ledger Device you may click retry."
+      divClass "explanation" $ text "If you did not intend to reject the prompt on the Ledger Device you may click retry."
       retry <- uiButton "primary" "Retry"
       pure ((["ledger-declined"], never), tryAgain <$ retry)
 
@@ -1281,7 +1282,7 @@ nodesTab =
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
 
-          let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+          let partition = fmapMaybe (preview _Left) &&& fmapMaybe (preview _Right)
               (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
 
           void $ listWithKey external $ \nodeId vDyn -> do
@@ -1328,11 +1329,11 @@ nodesTab =
                       "Stop Node"
 
                   runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                  bakerRunning <- fmap ((== Just True) . fmap _bakerInternalData_running)
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                     (True, bRunning) ->
-                      tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                      tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
                     _ -> do
                       start <- tileMenuEntry "Start Node"
                       void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
@@ -1342,7 +1343,7 @@ nodesTab =
                       [preface, body running "Removing", epilogue]
                       "Stop and Remove Node"
                   dyn_ $ ffor bakerRunning $ \running ->
-                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running
                       (PublicRequest_RemoveNode (Right ()) <$)
 
                 title :: m ()
@@ -1375,11 +1376,11 @@ nodesTab =
                       ])
                     (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
-                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
+                    (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                     ((,) <$> nodeData <*> nodeDetails)
 
                 generatingTile :: m ()
-                generatingTile = nodeTileWithSections $
+                generatingTile = nodeTileWithSections
                   [ tileHeader title subtitle internalNodeMenu badge Nothing
                   , divClass "internal-node-tile-body" $ do
                       divClass "ui row" $ do
@@ -1446,7 +1447,7 @@ nodesTab =
     tileBadgeImpliedByErrors mErrors mInternalState = do
       let color = fmap statusColor $ nodeStatus
             <$> sequence mInternalState
-            <*> (maybe (pure 0) (fmap length) mErrors)
+            <*> maybe (pure 0) (fmap length) mErrors
       iconDyn $ ("tiny circle " <>) <$> color
 
     tileBlockStats getBlock node = do
@@ -1566,13 +1567,13 @@ bakersTab =
              fmap $ \bakerSummary ->
                bakerStatus $ bakerSummary <$ cns
            wantBakerData = (||)
-             <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
+             <$> (elem MonitoredStatus_Unknown <$> bakerStatus')
              <*> (any isNothing <$> joinDynThroughMap bakersDetails)
          (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
            holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
              Left _ -> \_ -> Just BakersBanner_CannotGather
              Right () -> \cond -> BakersBanner_Gathering <$ guard cond
-         dyn_ $ ffor bakersBanner $ mkBakersBanner
+         dyn_ $ ffor bakersBanner mkBakersBanner
 
          let notifications :: Dynamic t (Map.Map (Down (DSum BakerLogTag Identity)) ())
              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems <$> dEbb
@@ -1587,7 +1588,7 @@ bakersTab =
               renderBakerError = text . _bakerErrorDescriptions_tile
 
               connectivityAndUnresolvedAlerts = (++)
-                <$> (ffor dCollectiveNodesStatus $ \case
+                <$> ffor dCollectiveNodesStatus (\case
                         Left e -> [Left e]
                         Right _ -> [])
                 <*> (Right <$$> unresolvedAlerts)
@@ -1707,7 +1708,7 @@ bakersTab =
               latestHead <- maybeDyn =<< watchLatestHead
               dyn_ $ ffor latestHead $ \case
                 Nothing -> pure () -- no head to set high water mark
-                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
+                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
               if _bakerInternalData_running bid
               then do
                 let stopModal = warningModal "Stop Baker?"
@@ -1754,8 +1755,7 @@ bakersTab =
         divClass "divider" blank
 
         el "dl" $ do
-          latestHead <- watchLatestHead
-          dparameters <- watchProtoInfo
+          (latestHead, knownProto) <- watchHeadWithProtocol
           el "div" $ do
             el "dt" (text "Next")
             el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
@@ -1766,7 +1766,7 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view knownProtocol_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
@@ -1821,11 +1821,11 @@ renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   -> m () -- ^ Description body
   -> m ()
 renderSplashAlert splashIcon title entity desc = do
-  elClass "div" "dashboard-section-overview-icon" $ splashIcon
+  elClass "div" "dashboard-section-overview-icon" splashIcon
   elClass "div" "dashboard-section-overview-body" $ do
-    divClass "ui header" $ title
+    divClass "ui header" title
     for_ entity $ divClass "alert-entity"
-    divClass "description" $ desc
+    divClass "description" desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"
@@ -1872,9 +1872,9 @@ bakerTab
   -> m ()
 bakerTab pkh = do
   bakers <- watchBakerStats $ pure $ Set.singleton pkh
-  dparameters <- watchProtoInfo
+  (_, knownProto) <- watchHeadWithProtocol
     -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisBaker <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> bakers
+  thisBaker <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit) $ MMap.lookup pkh <$> bakers
   dyn_ $ ffor thisBaker $ \case
     Nothing -> waitingForResponse
     Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
@@ -1885,7 +1885,7 @@ bakerTab pkh = do
         elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
           text "Current Balance: "
           text (tez tz)
-        dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
+        dyn_ $ ffor knownProto $ traverse $ \(view knownProtocol_constants -> protoInfo) -> do
           let bSD = _protoInfo_blockSecurityDeposit protoInfo
               eSD = _protoInfo_endorsementSecurityDeposit protoInfo
               failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
@@ -1926,7 +1926,7 @@ clientTab cid addr = do
   dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
     Nothing -> waitingForResponse
     Just clientInfo -> divClass "ui grid" $ do
-      dparameters <- watchProtoInfo
+      (_, knownProto) <- watchHeadWithProtocol
       let report = unJson (_bakerDaemonInfoData_report clientInfo)
           baked = sortBy (flip (comparing _event_time)) (_report_baked report)
           errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
@@ -1965,7 +1965,7 @@ clientTab cid addr = do
             el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
             el "td" $ text $ tshow $ blockLevel b
             el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
-            el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
+            el "td" $ dyn_ $ ffor knownProto $ traverse $ \(view knownProtocol_constants -> protoInfo) ->
               text $ tez $ blockRewards b protoInfo
 
 waitingForResponse :: DomBuilder t m => m ()

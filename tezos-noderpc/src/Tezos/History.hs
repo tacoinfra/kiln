@@ -39,22 +39,6 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Network
 import Tezos.Types
 
-data WithProtocolHash a = WithProtocolHash
-  { _withProtocolHash_value :: !a
-  , _withProtocolHash_protocolHash :: !ProtocolHash
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance NFData a => NFData (WithProtocolHash a)
-makeLenses ''WithProtocolHash
-instance BlockLike a => BlockLike (WithProtocolHash a) where
-  hash = withProtocolHash_value . hash
-  predecessor = withProtocolHash_value . predecessor
-  fitness = withProtocolHash_value . fitness
-  level = withProtocolHash_value . level
-  timestamp = withProtocolHash_value . timestamp
-instance HasProtocolHash (WithProtocolHash a) where
-  protocolHash = withProtocolHash_protocolHash
-
-
 data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
   -- a plausible alternative is to only keep the fittest n branches

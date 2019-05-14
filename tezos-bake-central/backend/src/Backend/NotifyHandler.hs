@@ -131,10 +131,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     paramsVS = _bakeViewSelector_parameters aggVS
 
     handleParameters :: PersistBackend m' => Id KnownProtocol -> m' (BakeView a)
-    handleParameters (Id protocolHash) = whenM (viewSelects protocolHash paramsVS) $ do
-      newProto :: Maybe KnownProtocol <- selectSingle (KnownProtocol_hashField ==. protocolHash)
+    handleParameters (Id protoHash) = whenM (viewSelects protoHash paramsVS) $ do
+      newProto :: Maybe KnownProtocol <- selectSingle (KnownProtocol_hashField ==. protoHash)
       pure mempty
-        { _bakeView_parameters = toRangeView1 paramsVS protocolHash newProto
+        { _bakeView_parameters = toRangeView1 paramsVS protoHash newProto
         }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a

@@ -1088,8 +1088,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''UpgradeCheckError
   ])
 
-return []
-
 fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
   , deriveArgDict t
@@ -1143,6 +1141,16 @@ instance BlockLike PublicNodeHead where
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
+
+instance BlockLike KnownProtocol where
+  hash = knownProtocol_firstBlock . hash
+  predecessor = knownProtocol_firstBlock . predecessor
+  fitness = knownProtocol_firstBlock . fitness
+  level = knownProtocol_firstBlock . level
+  timestamp = knownProtocol_firstBlock . timestamp
+
+instance HasProtocolHash KnownProtocol where
+  protocolHash = knownProtocol_hash
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =

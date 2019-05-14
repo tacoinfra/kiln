@@ -232,12 +232,19 @@ getCurrentHead :: forall e r m.
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   )
-  => ChainId -> m VeryBlockLike
+  => ChainId -> m (WithProtocolHash VeryBlockLike)
 getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead chain
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead chain
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
-  Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v1/" <> toBase58Text chain <> "/head"
+  Nothing                    -> nodeRPC $ mk <$> rHead chain
+  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rHead chain
+  Just PublicNode_TzScan     -> nodeRPC $ mk <$> plainNodeRequest @TzScanBlock Http.methodGet "/v2/head/"
+  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet $ "/v1/" <> toBase58Text chain <> "/head"
+  where
+    mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
+    mk blk = WithProtocolHash
+      { _withProtocolHash_value = mkVeryBlockLike blk
+      , _withProtocolHash_protocolHash = blk ^. protocolHash
+      }
+
 
 canGetHistory :: PublicNode -> Bool
 canGetHistory PublicNode_Blockscale = True
@@ -285,11 +292,16 @@ getBlock ::
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
-  ) => ChainId -> BlockHash -> m VeryBlockLike
+  ) => ChainId -> BlockHash -> m (WithProtocolHash VeryBlockLike)
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash)
-
+  Nothing                    -> nodeRPC $ mk <$> rBlock chainId blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlock chainId blockHash
+  Just PublicNode_TzScan     -> nodeRPC $ mk <$> plainNodeRequest @TzScanBlock Http.methodGet ("/v2/block/" <> toBase58Text blockHash)
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
     ("/v1/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
+  where
+    mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
+    mk blk = WithProtocolHash
+      { _withProtocolHash_value = mkVeryBlockLike blk
+      , _withProtocolHash_protocolHash = blk ^. protocolHash
+      }

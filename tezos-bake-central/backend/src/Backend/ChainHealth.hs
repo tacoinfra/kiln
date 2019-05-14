@@ -39,7 +39,7 @@ checkChainHealth _now _delay seenBaked = do
     -- try really hard to get seenBaked into history
     seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
     -- look for the head to give the newly seen block a chance to become the head
-    headBlock :: VeryBlockLike
+    headBlock :: WithProtocolHash VeryBlockLike
       <- maybe (throwError $ ForkStatus_BadNode CacheError_NotEnoughHistory) pure
          =<< liftIO (atomically $ dataSourceHead nds)
     ancestor <- maybe (throwError ForkStatus_Forked) pure =<< atomicallyWith (branchPoint (headBlock ^. hash) (seenBaked ^. hash))
@@ -47,7 +47,6 @@ checkChainHealth _now _delay seenBaked = do
     if (seen ^. predecessor) == (ancestor ^. predecessor)
       then return () -- ForkStatus_Good
       else throwError ForkStatus_Forked
-  -- let node = either (const $ mkNode addr) id status'
   return $ ForkInfo seen (seenBaked ^. timestamp) (seenBaked ^. hash)
 
 scanForkInfo :: forall m r.

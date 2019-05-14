@@ -11,8 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -22,8 +20,8 @@
 module Frontend.Amendment where
 
 import Control.Monad.Fix (MonadFix)
-import Data.List (sortBy)
-import Data.Ord (Down (..), comparing)
+import Data.List (sortOn)
+import Data.Ord (Down (..))
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
@@ -66,11 +64,10 @@ amendmentPopup
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
   -- ^ All periods we know about (past + current)
-  -> Dynamic t ProtoInfo
+  -> Dynamic t KnownProtocol
   -- ^ Protocol information
   -> m ()
-amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
-  let periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
+amendmentPopup amendment amendments knownProto = divClass "amendment-popup" $ do
   rec
     chosenPeriod <- holdDyn Nothing $ Just <$> choosePeriod
     selectedPeriod <- holdUniqDyn $ fromMaybe . _amendment_period <$> amendment <*> chosenPeriod
@@ -123,6 +120,9 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet" . fmap _periodPromotionVote_periodVote) =<< watchPeriodPromotionVote
 
   pure ()
+  where
+    periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
+    protoInfo = view knownProtocol_constants <$> knownProto
 
 -- | Display a natural number with comma separation
 textWithCommas :: Int -> Text
@@ -147,11 +147,11 @@ periodProposals proposals = el "table" $ do
     el "tr" $ do
       el "th" $ text "Proposal Hash"
       el "th" $ text "Votes"
-  el "tbody" $ void $ simpleList (sortBy (comparing $ Down . _periodProposal_votes) <$> proposals) $ \proposal -> el "tr" $ do
+  el "tbody" $ void $ simpleList (sortOn (Down . _periodProposal_votes) <$> proposals) $ \proposal -> el "tr" $ do
     el "td" $ do
-      let protocolHash = toBase58Text . _periodProposal_hash <$> proposal
-      copyButton $ current protocolHash
-      dynText protocolHash
+      let protoHash = toBase58Text . _periodProposal_hash <$> proposal
+      copyButton $ current protoHash
+      dynText protoHash
     el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> proposal
 
 periodTest

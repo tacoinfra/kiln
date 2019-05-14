@@ -12,6 +12,7 @@ import qualified Data.Time as Time
 import Data.Time.Clock (NominalDiffTime)
 import qualified Text.URI as Uri
 import Data.Maybe (mapMaybe)
+
 import ExtraPrelude
 
 nominalDiffTimeToSeconds :: NominalDiffTime -> Integer

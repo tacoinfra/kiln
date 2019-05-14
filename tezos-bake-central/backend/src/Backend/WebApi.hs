@@ -32,7 +32,7 @@ import Backend.STM (atomicallyWith, atomicallyWithTime)
 import Common.Schema (BlockBaker, CacheDelegateInfo, CacheError)
 import ExtraPrelude
 
-snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
+snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text (WithProtocolHash VeryBlockLike))
 snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds

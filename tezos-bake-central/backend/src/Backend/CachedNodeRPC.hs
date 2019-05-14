@@ -585,7 +585,7 @@ withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. no
 -}
 
 -- | Retries in STM until there is at least one fittest head in the history.
-waitForAnyHead :: (HasNodeDataSource nds, MonadSTM m) => nds -> m VeryBlockLike
+waitForAnyHead :: (HasNodeDataSource nds, MonadSTM m) => nds -> m (WithProtocolHash VeryBlockLike)
 waitForAnyHead nds = do
   hist <- readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
   maybe retry' pure $ fittestBranchInHistory hist
@@ -655,14 +655,14 @@ updateNodeDataSource nds nodeAddr blk = do
   modifyTVar_' nodesVar $ pure . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
 
 
-fittestBranchInHistory :: CachedHistory a -> Maybe VeryBlockLike
+fittestBranchInHistory :: CachedHistory a -> Maybe (WithProtocolHash VeryBlockLike)
 fittestBranchInHistory hist =
   maximumByMay (comparing $ view fitness) (Map.elems $ _cachedHistory_branches hist)
 
 -- | extrats the fittest known branch from cache
 dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> m (Maybe VeryBlockLike)
+  => nds -> m (Maybe (WithProtocolHash VeryBlockLike))
 dataSourceHead nds =
   fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
 
@@ -920,7 +920,7 @@ nodeQueryDataSourceImpl
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggingEnv logger ($(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
-  NodeQuery_ProtocolFirstBlock protocolHash -> do
+  NodeQuery_ProtocolFirstBlock protoHash -> do
     hist <- liftIO $ readTVarIO $ dsrc ^. nodeDataSource_history
     let
       ancestorOf blk lvls = levelAncestor hist
@@ -933,7 +933,7 @@ nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggin
       go blkHash = do
         let votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
         blk <- self $ NodeQuery_Block blkHash
-        case blk ^. block_protocol == protocolHash of
+        case blk ^. block_protocol == protoHash of
           False -> pure $ ancestorOf blk (blk ^. votingPeriodPosition)
           True -> maybe (pure Nothing) go $ ancestorOf blk (blk ^. votingPeriodPosition - 1)
 

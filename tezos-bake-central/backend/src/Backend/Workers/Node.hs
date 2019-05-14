@@ -18,7 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
-import Control.Monad.Except (ExceptT, runExceptT, unless)
+import Control.Monad.Except (ExceptT, runExceptT, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -70,35 +70,51 @@ import ExtraPrelude
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
-haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
+haveNewHead
+  :: (MonadIO m, BlockLike blk)
+  => NodeDataSource
+  -> Maybe PublicNode
+  -> URI
+  -> blk
+  -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
     historyVar = _nodeDataSource_history nds
   (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
-  newBlock <- do
-    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
-    newStateRsp :: Either PublicNodeError () <- runExceptT $
-      flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
-        accumHistory chainId (const ()) headBlockInfo
-        $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+  res <- do
+    -- TODO: Why do we accumHistory if it's not a new block?
+    let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+    newStateRsp :: Either (Either PublicNodeError CacheError) Block <- runExceptT $ do
+      -- TODO: We need to query the same node that gave us this block!!!
+      headBlockFull <- withExceptT Right $
+        flip runReaderT nds $
+          nodeQueryDataSource $ NodeQuery_Block $ headBlockInfo ^. hash
+
+      withExceptT Left $
+        flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+          accumHistory chainId (const ()) headBlockFull
+          $(logInfoSH) (if isNewBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+
+      pure headBlockFull
 
     case newStateRsp of
       Left e -> $(logWarnSH) e $> Left e
-      Right () -> pure $ Right newBlock
+      Right headBlockFull -> pure $ Right (isNewBlock, headBlockFull)
 
-  when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-    updatedLevel <- liftIO $ atomically $ do
-      let latestHeadTVar = _nodeDataSource_latestHead nds
-      latestHead <- readTVar latestHeadTVar
-      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness
-        then do
-          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-          pure $ Just $ headBlockInfo ^. level
-        else
-          pure Nothing
-    for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
+  for_ res $ \(isNewBlock, headBlockFull) ->
+    when (isNewBlock && Just (headBlockFull ^. fitness) > oldHead ^? _Just . fitness) $ do
+      updatedLevel <- liftIO $ atomically $ do
+        let latestHeadTVar = _nodeDataSource_latestHead nds
+        latestHead <- readTVar latestHeadTVar
+        if Just (headBlockFull ^. fitness) > latestHead ^? _Just . fitness
+          then do
+            writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockFull
+            pure $ Just $ headBlockFull ^. level
+          else
+            pure Nothing
+      for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
@@ -343,7 +359,7 @@ updateDataSource nds (pn, chain, uri) = do
       runReaderT k $
         PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
-    getHeadFromSource :: m (Either PublicNodeError VeryBlockLike)
+    getHeadFromSource :: m (Either PublicNodeError (WithProtocolHash VeryBlockLike))
     getHeadFromSource = queryPublicNode $ runLoggingEnv (_nodeDataSource_logger nds) $ getCurrentHead chainId
 
     publicNodeEnabled :: m Bool
@@ -374,13 +390,15 @@ updateDataSource nds (pn, chain, uri) = do
                 pnh = PublicNodeHead
                   { _publicNodeHead_source = pn
                   , _publicNodeHead_chain = chainField
-                  , _publicNodeHead_headBlock = b
+                  , _publicNodeHead_headBlock = b ^. withProtocolHash_value
+                  , _publicNodeHead_protocolHash = b ^. protocolHash
                   , _publicNodeHead_updated = now
                   }
               notify NotifyTag_PublicNodeHead . (, Just pnh) =<< insert' pnh
             Just eid -> do
               updateId eid
-                [ PublicNodeHead_headBlockField =. b
+                [ PublicNodeHead_headBlockField =. b ^. withProtocolHash_value
+                , PublicNodeHead_protocolHashField =. b ^. protocolHash
                 , PublicNodeHead_updatedField =. now
                 ]
               notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid

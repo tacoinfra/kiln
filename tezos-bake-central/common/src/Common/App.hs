@@ -108,7 +108,7 @@ instance ToJSON NodeSummary
 
 bakerSummaryIdentification :: (IdData BakerData, BakerSummary) -> (Text, Maybe Text)
 bakerSummaryIdentification = aliasedIdentification
-  ((either _bakerData_alias (const $ Just "Kiln Baker")) . _bakerSummary_baker . snd)
+  (either _bakerData_alias (const $ Just "Kiln Baker") . _bakerSummary_baker . snd)
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
@@ -117,7 +117,7 @@ nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
 nodeDataIdentification :: Either NodeExternalData ProcessData -> (Text, Maybe Text)
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
-    (_nodeExternalData_alias)
+    _nodeExternalData_alias
     (uriHostPortPath . _nodeExternalData_address)
     e
   Right _ -> ("Kiln Node", Nothing)
@@ -201,7 +201,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_parameters :: !(RangeSelector ProtocolHash KnownProtocol a)
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
-  , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
+  , _bakeViewSelector_latestHead :: !(MaybeSelector (WithProtocolHash VeryBlockLike) a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
   , _bakeViewSelector_proposals :: !(MaybeSelector [PeriodProposal] a)
   , _bakeViewSelector_periodTestingVote :: !(MaybeSelector (Maybe PeriodTestingVote) a)
@@ -238,7 +238,7 @@ data BakeView a = BakeView
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
   , _bakeView_parameters :: !(RangeView ProtocolHash KnownProtocol a)
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
-  , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
+  , _bakeView_latestHead :: !(MaybeView (WithProtocolHash VeryBlockLike) a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
   , _bakeView_proposals :: !(MaybeView [PeriodProposal] a)
   , _bakeView_periodTestingVote :: !(MaybeView (Maybe PeriodTestingVote) a)

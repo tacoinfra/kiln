@@ -3,11 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -50,13 +47,30 @@ watchFrontendConfig =
     { _bakeViewSelector_config = viewJust 1
     }
 
-watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => ProtocolHash -> m (Dynamic t (Maybe KnownProtocol))
-watchProtoInfo protocol =
-  (fmap . fmap) (MMap.lookup protocol . getRangeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_parameters = viewRangeExactly protocol 1
-    }
+watchProtocolConstants :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe KnownProtocol))
+watchProtocolConstants protocol = do
+  mmap <- (fmap . fmap) (getRangeView . _bakeView_parameters) $
+    watchViewSelector $
+      ffor protocol $ \protoHash -> mempty
+        { _bakeViewSelector_parameters = viewRangeExactly protoHash 1
+        }
+  pure $ liftA2 MMap.lookup protocol mmap
 
-watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))
+watchHeadWithProtocol
+  :: forall t m. MonadRhyoliteFrontendWidget Bake t m
+  => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe KnownProtocol))
+watchHeadWithProtocol = do
+  latestHead <- watchLatestHead
+  protoHash' <- maybeDyn $ (fmap.fmap) (^. protocolHash) latestHead
+  protoConstantsEvt :: Event t (Dynamic t (Maybe KnownProtocol)) <- dyn $ ffor protoHash' $ \case
+    Nothing -> pure $ pure Nothing
+    Just protoHash -> do
+      protoHashUniq <- holdUniqDyn protoHash
+      watchProtocolConstants protoHashUniq
+  protoConstants <- join <$> holdDyn (pure Nothing) protoConstantsEvt
+  pure (latestHead, protoConstants)
+
+watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
 watchLatestHead =
   (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_latestHead = viewJust 1
