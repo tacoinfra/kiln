@@ -464,7 +464,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
       divClass "cast-vote-protocol" $ text $ toBase58Text proposal
       cast <- voteButton "Cast Vote"
-      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBallot) <$ cast
+      _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBallot) <$ cast
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
           retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot proposal
       pure (never, leftmost [respondToPromptFlow retryFlow proposal mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
@@ -484,8 +484,9 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Right proposalFlow
               VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
               VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
-              VoteStep_Failed e -> Just $ castVoteFlow True mBallot proposal
+              VoteStep_Failed _ -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Prompting -> Nothing
+              VoteStep_WrongPeriod -> Just $ castVoteFlow True mBallot proposal -- This case should be caught by the outer runWithReplace
             _ -> Nothing
       divClass "bigtitle" $ do
         elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
