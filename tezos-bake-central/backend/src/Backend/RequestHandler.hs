@@ -66,7 +66,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_PollLedgerDevice walletApp -> inDb $ do
+      PublicRequest_PollLedgerDevice -> inDb $ do
         deleteAll' @ConnectedLedger Proxy
         -- Deliberately don't notify here: let the worker pick it up and notify
         -- as required
@@ -74,7 +74,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
           { _connectedLedger_bakingAppVersion = Nothing
           , _connectedLedger_ledgerIdentifier = Nothing
           , _connectedLedger_updated = Nothing
-          , _connectedLedger_isWalletApp = walletApp
+          , _connectedLedger_walletAppVersion = Nothing
           }
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk

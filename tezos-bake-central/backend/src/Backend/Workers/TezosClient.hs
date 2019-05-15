@@ -42,9 +42,10 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as TE
 import qualified System.Process as Process
 
+import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
-import Backend.Common (workerWithDelay, threadDelay')
+import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
@@ -164,39 +165,25 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
+          -- do any voting
           inDb (selectSingle $ LedgerAccount_shouldDoVoteProtocolField /=. (Nothing :: Maybe ProtocolHash)) >>= \mla ->
             for_ mla $ \la -> case _ledgerAccount_shouldDoVoteProtocol la of
               Nothing -> pure () -- shouldn't happen
-              Just _ -> do
+              Just proposal -> do
                 let sk = _ledgerAccount_secretKey la
-                    -- b = _ledgerAccount_shouldDoVoteBallot la
                 inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
-                -- TODO: Do vote and gather the result
-                threadDelay' 5
+                vs <- case _ledgerAccount_shouldDoVoteBallot la of
+                  Nothing -> submitProposals appConfig chain [proposal]
+                  Just ballot -> submitBallot appConfig chain proposal ballot
                 inDb $ do
                   update
                     [ LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe ProtocolHash)
-                    , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: (Maybe Bool))
+                    , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: (Maybe Ballot))
                     ] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                  notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Done })
+                  notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
 
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
-        | isNothing (_connectedLedger_updated cl) && (_connectedLedger_isWalletApp cl) -> do
-          threadDelay' 2
-          inDb $ do
-            $(logWarn) "updating connectedledger walletApp"
-            now <- getTime
-            let connectedLedger = ConnectedLedger
-                  { _connectedLedger_ledgerIdentifier = fmap fst mliv
-                  , _connectedLedger_bakingAppVersion = fmap snd mliv
-                  , _connectedLedger_updated = Just now
-                  , _connectedLedger_isWalletApp = True
-                  }
-                mliv = Just (LedgerIdentifier "frilly-elephant-alienated-hippopotamus", "1.5.1")
-            deleteAll connectedLedger
-            insert connectedLedger
-            notify NotifyTag_ConnectedLedger $ Just connectedLedger
         | isNothing (_connectedLedger_updated cl) ->
           runClientT (getConnectedLedger appConfig chain) >>= \case
         Left err -> $(logError) (T.pack (show err))
@@ -206,10 +193,10 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             $(logWarn) "updating connectedledger"
             now <- getTime
             let connectedLedger = ConnectedLedger
-                  { _connectedLedger_ledgerIdentifier = fmap fst mliv
-                  , _connectedLedger_bakingAppVersion = fmap snd mliv
+                  { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
+                  , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
+                  , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
                   , _connectedLedger_updated = Just now
-                  , _connectedLedger_isWalletApp = False
                   }
             deleteAll' @ConnectedLedger Proxy
             insert connectedLedger
@@ -237,22 +224,30 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
  tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/P-256/0'/0'"
 -}
 
-getConnectedLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, Text))
+data LedgerApp
+  = LedgerApp_Baking
+  | LedgerApp_Wallet
+  deriving (Show, Eq)
+
+getConnectedLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, LedgerApp, Text))
 getConnectedLedger appConfig chain = do
   stdout <- runClientCommand appConfig chain ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
   getKungFuName (T.lines stdout)
   where
-    getVersion = fmap (T.takeWhile (/= ' ')) . T.stripPrefix "Found a Tezos Baking "
+    getVersion t = do
+      appAndVersion <- T.stripPrefix "Found a Tezos " t
+      let checkApp x app = (,) app . T.takeWhile (/= ' ') <$> T.stripPrefix x appAndVersion
+      checkApp "Baking " LedgerApp_Baking <|> checkApp "Wallet " LedgerApp_Wallet
     getKungFuName = \case
       foundApp : _blank : useKeys : keyExample : _
-        | Just version <- getVersion foundApp
+        | Just (app, version) <- getVersion foundApp
         , "To use keys at BIP32 path" `T.isPrefixOf` useKeys -- sanity check
         , Just ledger' <- T.stripPrefix "\"ledger://" (T.dropWhile (/= '"') keyExample)
         , ledger <- T.takeWhile (/= '/') ledger'
         , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
-        -> pure $ Just (LedgerIdentifier ledger, version)
+        -> pure $ Just (LedgerIdentifier ledger, app, version)
       xs -> do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
@@ -391,6 +386,36 @@ setHighWaterMark appConfig chain sk bl = do
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
     | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
   pure $ either id (const SetHWMStep_Done) e
+
+submitProposals :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> [ProtocolHash] -> m VoteStep
+submitProposals appConfig chain proposals = do
+  e <- runExceptT $ runClientCommand appConfig chain (["submit", "proposals", "for", "ledger_kiln"] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
+    | "Submission failed because of invalid proposals." : _ <- errors -> Left $ VoteStep_Failed "Invalid proposals"
+    | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
+    | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
+    | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"
+    | "Not in a proposal period" : _ <- errors -> Left VoteStep_WrongPeriod
+    | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
+    | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
+    | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
+  pure $ either id (const VoteStep_Done) e
+
+submitBallot :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> ProtocolHash -> Ballot -> m VoteStep
+submitBallot appConfig chain proposal ballot = do
+  e <- runExceptT $ runClientCommand appConfig chain ["submit", "ballot", "for", "ledger_kiln", T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
+    | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
+    | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
+    | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"
+    | "Not in a Testing_vote or Promotion_vote period" : _ <- errors -> Left VoteStep_WrongPeriod
+    | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
+    | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
+    | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
+  pure $ either id (const VoteStep_Done) e
+  where
+    ballotText = \case
+      Ballot_Yay -> "yay"
+      Ballot_Nay -> "nay"
+      Ballot_Pass -> "pass"
 
 -- This is moved from RequestHandler to here. But perhaps this should belong to a common module
 addBakerImpl :: (Monad m, PersistBackend m) => PublicKeyHash -> Maybe Text -> m ()

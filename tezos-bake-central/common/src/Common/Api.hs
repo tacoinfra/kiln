@@ -21,6 +21,7 @@ import Rhyolite.Schema (Email, Id)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.Operation(Ballot)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
@@ -51,7 +52,7 @@ instance HasRequest Bake where
     PublicRequest_SendTestEmail
       :: Email
       -> PublicRequest Bake ()
-    PublicRequest_PollLedgerDevice :: Bool -> PublicRequest Bake ()
+    PublicRequest_PollLedgerDevice :: PublicRequest Bake ()
     PublicRequest_ShowLedger :: SecretKey -> PublicRequest Bake ()
     PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest Bake ()
     PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest Bake ()
@@ -90,7 +91,7 @@ instance HasRequest Bake where
     PublicRequest_DoVote
       :: SecretKey
       -> ProtocolHash
-      -> Maybe Bool
+      -> Maybe Ballot -- ^ When 'Nothing', vote for proposal rather than submitting a ballot
       -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where

@@ -275,45 +275,6 @@ progressDots currentCycle' maxCycle' = do
       EQ -> "current"
       LT -> "upcoming"
 
--- TODO remove and replace with watchProposals
-watchFakeProposals :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe [PeriodProposal]))
-watchFakeProposals = pure $ pure $ Just
-  [ PeriodProposal
-    { _periodProposal_hash = "PtRCTVieQf6hJhuMc1JvhAf5FJhsA9x7x3RGZrHN6SfeDZgdTnm"
-    , _periodProposal_votes = 1324
-    , _periodProposal_chainId = chainId
-    , _periodProposal_votingPeriod = vp
-    }
-  , PeriodProposal
-    { _periodProposal_hash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-    , _periodProposal_votes = 584
-    , _periodProposal_chainId = chainId
-    , _periodProposal_votingPeriod = vp
-    }
-  ]
-  where !chainId = "NetXNFsYDkaZwwD"
-        !vp = 100
-
-watchFakePeriodTestingVote :: (Applicative m, Reflex t) => m (Dynamic t (Maybe PeriodTestingVote))
-watchFakePeriodTestingVote = pure $ pure $ Just $ PeriodTestingVote $ PeriodVote
-  { _periodVote_proposal = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-  , _periodVote_ballots = Ballots 0 0 0
-  , _periodVote_quorum = 0
-  , _periodVote_totalRolls = 0
-  , _periodVote_chainId = "NetXNFsYDkaZwwD"
-  , _periodVote_votingPeriod = 0
-  }
-
-watchFakePeriodPromotionVote :: (Applicative m, Reflex t) => m (Dynamic t (Maybe PeriodPromotionVote))
-watchFakePeriodPromotionVote = pure $ pure $ Just $ PeriodPromotionVote $ PeriodVote
-  { _periodVote_proposal = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-  , _periodVote_ballots = Ballots 0 0 0
-  , _periodVote_quorum = 0
-  , _periodVote_totalRolls = 0
-  , _periodVote_chainId = "NetXNFsYDkaZwwD"
-  , _periodVote_votingPeriod = 0
-  }
-
 watchFakeVotes :: (Applicative m, Reflex t) => m (Dynamic t (Map.Map ProtocolHash Bool))
 watchFakeVotes = pure $ pure $ Map.fromList
   [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
@@ -352,7 +313,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     newPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
     newPeriod p = do
       divClass "ui header" $ text "The period has changed."
-      el "p" $ text $ "The period is now " <> textPeriod p
+      el "p" $ text $ "The network is now in the " <> textPeriod p <> " Period."
       (fmap . fmap) Left $ uiDynButton (pure "primary") $ text "Continue"
 
     selectPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
@@ -464,8 +425,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             dynText hashText
           elAttr "p" ("class" =: "promote") $ do
             text $ "Promote this proposal to " <> promote <> "?"
-          let voteButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
-          vote <- divClass "vote-buttons" $ leftmost <$> traverse voteButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
+          let ballotButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
+          vote <- divClass "vote-buttons" $ leftmost <$> traverse ballotButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
           pure $ attachWith (\p b -> castVoteFlow False (Just b) p) (current proposal) vote
       pure (never, waitForWalletAppFlow <$> vote)
 
@@ -491,7 +452,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     castVoteFlow :: Bool -> Maybe Ballot -> ProtocolHash -> Workflow t m (Event t ())
     castVoteFlow isTimedOut mBallot proposal = Workflow $ do
-      ledgerDeviceIcon
+      ledgerStatus <- ledgerDeviceIcon
       when isTimedOut $ do
         divClass "ui message" $ do
           el "div" $ do
@@ -503,18 +464,17 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
       divClass "cast-vote-protocol" $ text $ toBase58Text proposal
       cast <- voteButton "Cast Vote"
-      let
-          mBool = mBallot >>= \case
-            Ballot_Yay -> Just True
-            Ballot_Nay -> Just False
-            Ballot_Pass -> Nothing
-      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBool) <$ cast
-      pure (never, respondToPromptFlow proposal mBallot <$ cast)
+      d <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBallot) <$ cast
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot proposal
+      pure (never, leftmost [respondToPromptFlow retryFlow proposal mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
 
     respondToPromptFlow
-      :: ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
-    respondToPromptFlow proposal mBallot = Workflow $ do
-      ledgerDeviceIcon
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow proposal mBallot = Workflow $ do
+      ledgerStatus <- ledgerDeviceIcon
       pb <- getPostBuild
       promptStep <- watchVotePrompting sk
       let changed = leftmost [updated promptStep, tag (current promptStep) pb]
@@ -522,7 +482,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             Just vs | Just (First step) <- _voteState_step vs -> case step of
               -- TODO: go to proper flow
               VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Right proposalFlow
-              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow
+              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
               VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Failed e -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Prompting -> Nothing
@@ -534,32 +494,34 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       el "div" $ do
         case mBallot of
           Nothing ->
-            divClass "confirm-title" $ text "Submit Proposal"
+            divClass "confirm-title" $ text "Confirm Proposal"
           Just ballot -> do
             divClass "confirm-title" $ text "Confirm Vote"
             divClass "confirm-content" $ text $ textBallot ballot
-        divClass "confirm-title" $ text "Protocol"
-        divClass "confirm-content" $ text $ toBase58Text proposal
         divClass "confirm-title" $ text "Source"
         divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+        divClass "confirm-title" $ text "Protocol"
+        divClass "confirm-content" $ text $ toBase58Text proposal
         divClass "confirm-title" $ text "Period"
-        -- TODO : fix period
-        divClass "confirm-content" $ text $ "Promotion"
-      pure (never, next )
+        divClass "confirm-content" $ display $ unRawLevel . _amendment_votingPeriod <$> amendment
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+      pure (never, leftmost [next, ledgerDisconnectedFlow retryFlow <$ appLost])
 
-    ledgerDisconnectedFlow ::  Workflow t m (Event t ())
-    ledgerDisconnectedFlow = Workflow $ do
-      ledgerDeviceIcon
+    ledgerDisconnectedFlow
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> Workflow t m (Event t ())
+    ledgerDisconnectedFlow retryFlow = Workflow $ do
+      _ <- ledgerDeviceIcon
       divClass "bigtitle" $ text "Ledger Device was disconnected."
       retry <- voteButton "Restart"
-      -- TODO: restart at proper workflow
-      pure (never, proposalFlow <$ retry)
+      pure (never, retryFlow <$ retry)
 
     voteCastSuccessfullyFlow
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
       -> Workflow t m (Event t ())
     voteCastSuccessfullyFlow whereToGo = Workflow $ do
-      ledgerDeviceIcon
+      _ <- ledgerDeviceIcon
       divClass "bigtitle" $ do
         icon "icon-check blue"
         text "Your vote has been cast."
@@ -578,14 +540,11 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     -- found : show green tick mark
     -- not found : show red cross mark
     ledgerDeviceIcon = divClass "ledger-device-status" $ do
-      connectedLedger <- watchConnectedLedger True
-      ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
-      isWalletApp <- holdUniqDyn $ fmap _connectedLedger_isWalletApp <$> connectedLedger
+      connectedLedger <- watchConnectedLedger
       let
-        expectedLI = _secretKey_ledgerIdentifier sk
         devFound :: Dynamic t (Maybe Bool)
-        devFound = ffor2 isWalletApp ledgerIdentifier $ \wApp -> fmap $ \li ->
-          li == expectedLI && wApp == Just True
+        devFound = ffor connectedLedger (>>= \cl -> ffor (_connectedLedger_ledgerIdentifier cl) $ \li ->
+          li == _secretKey_ledgerIdentifier sk && isJust (_connectedLedger_walletAppVersion cl))
         iconType :: Dynamic t (Maybe Text)
         iconType = ffor devFound $ fmap $ \b -> if b
             then "icon-check blue"
@@ -594,7 +553,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elAttr "img" ("src" =: static @"images/ledger.svg") blank
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
-      divClass "centered-grey" $ text $ unLedgerIdentifier expectedLI
+      divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
       pure $ devFound
 
     nextBakingRights = do

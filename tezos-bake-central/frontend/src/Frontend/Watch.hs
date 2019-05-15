@@ -296,11 +296,11 @@ watchAlertCount =
     { _bakeViewSelector_alertCount = viewJust 1
     }
 
-watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => Bool -> m (Dynamic t (Maybe ConnectedLedger))
-watchConnectedLedger walletApp = do
+watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedger = do
   -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
   poll <- tickLossyFromPostBuildTime 5
-  _ <- requestingIdentity $ public (PublicRequest_PollLedgerDevice walletApp) <$ poll
+  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
   (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_connectedLedger = viewJust 1
     }

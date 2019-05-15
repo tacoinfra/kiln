@@ -192,6 +192,7 @@ data VoteStep
   | VoteStep_Done
   | VoteStep_Declined
   | VoteStep_Disconnected
+  | VoteStep_WrongPeriod
   | VoteStep_Failed Text -- Anything else
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON VoteStep

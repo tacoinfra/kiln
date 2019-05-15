@@ -231,8 +231,8 @@ instance HasId BakerDaemonInternal where
 data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
   , _connectedLedger_bakingAppVersion :: !(Maybe Text)
+  , _connectedLedger_walletAppVersion :: !(Maybe Text)
   , _connectedLedger_updated :: !(Maybe UTCTime)
-  , _connectedLedger_isWalletApp :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
 instance Aeson.FromJSON ConnectedLedger
@@ -246,8 +246,8 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetupToBake :: !Bool
   , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
-  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe ProtocolHash)
-  , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Bool)
+  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe ProtocolHash) -- ^ Proposal to vote for
+  , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one

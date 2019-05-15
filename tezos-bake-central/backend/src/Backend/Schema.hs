@@ -103,6 +103,7 @@ import qualified Text.URI as Uri
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
 import Tezos.NodeRPC.Sources (PublicNode (..))
 import Tezos.NodeRPC.Types
+import Tezos.Operation (Ballot)
 import Tezos.Types
 
 import Backend.Version (parseVersion)
@@ -635,6 +636,7 @@ instance Field2 (a :. b) (a :. b') b b' where
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: VotingPeriodKind
+  - primitive: Ballot
   - embedded: Ballots
   - entity: Amendment
     autoKey: null
