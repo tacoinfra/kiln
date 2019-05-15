@@ -342,7 +342,8 @@ let
       };
       systemd.services.setupkiln = {
         wantedBy = [ "multi-user.target" ];
-        after = [ "home-kiln-app.mount" ];
+        after = [ "home-kiln-app.mount" "network-online.target" ];
+        wants = [ "network-online.target" ];
         # Change the ownership of the kiln folder (root of the other disk)
         script = ''
           chown -R kiln:users /home/kiln/app
