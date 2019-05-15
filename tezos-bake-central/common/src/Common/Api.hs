@@ -91,7 +91,7 @@ instance HasRequest Bake where
     PublicRequest_DoVote
       :: SecretKey
       -> ProtocolHash
-      -> Maybe Ballot -- ^ When 'Nothing', vote for proposal rather than submitting a ballot
+      -> Maybe Ballot -- When 'Nothing', vote for proposal rather than submitting a ballot
       -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where
