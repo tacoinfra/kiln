@@ -283,9 +283,9 @@ getConnectedLedger appConfig chain = do
     getKungFuNameZeronet = \case
       ledgerName : foundApp : _blank : _ : _ : _
         | Just ledger <- getLedgerZeronet ledgerName
-        , Just version <- getVersion foundApp
+        , Just (app, version) <- getVersion foundApp
         , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
-        -> pure $ Just (LedgerIdentifier ledger, version)
+        -> pure $ Just (LedgerIdentifier ledger, app, version)
       xs -> do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
