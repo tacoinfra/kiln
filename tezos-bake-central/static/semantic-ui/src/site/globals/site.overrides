@@ -1166,6 +1166,9 @@ img.credits-obsidian {
   }
 }
 
+.pushable, .pusher, .app-content {
+  overflow: visible !important;
+}
 
 .dashboard-section > .ui.cards {
   margin-left: 0;
@@ -1241,6 +1244,7 @@ img.credits-obsidian {
         .baker-vote-popup {
           display: inline-block;
           margin-left: @15px;
+          .detail { color: #898989; }
         }
         text-overflow: ellipsis;
         white-space: nowrap;
