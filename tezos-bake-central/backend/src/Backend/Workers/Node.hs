@@ -518,20 +518,25 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   for_ [minBound..maxBound] $ \p -> case compare p currentPeriodKind of
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
-      (periodEndBlockPred, periodEndBlock) <- throwing $ do
-        endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get block") $
+      (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
+        let startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+        startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
+          levelAncestor history startBlockLevel (latestBlock ^. hash)
+        endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
           -- Calc the blockLevel at the start of the current voting period, move
           -- back by periodDiff voting periods, and move to the end of that period
-          levelAncestor history (latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod + blocksPerVotingPeriod - 1) (latestBlock ^. hash)
+          levelAncestor history (startBlockLevel + blocksPerVotingPeriod - 1) (latestBlock ^. hash)
         predBlock <- getBlock $ endBlock ^. predecessor
-        pure (predBlock, endBlock)
-      updateTo periodEndBlockPred periodEndBlock p
+        pure (startBlock, predBlock, endBlock)
+      updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
+      startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
+        levelAncestor history (latestBlock ^. level - currentVotingPosition) (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
         else pure latestBlock
-      updateTo predOrLatest latestBlock p
+      updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
       notify NotifyTag_Amendment (p, Nothing)
@@ -557,7 +562,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
         VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
-    updateTo predBlk blk p = do
+    updateTo startBlock predBlk blk p = do
       let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
           votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
           chainId = _nodeDataSource_chain nds
@@ -565,8 +570,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
             { _amendment_period = p
             , _amendment_chainId = chainId
             , _amendment_votingPeriod = votingPeriod
-            , _amendment_start = blk ^. timestamp
-            , _amendment_startLevel = blk ^. level
+            , _amendment_start = startBlock ^. timestamp
+            , _amendment_startLevel = startBlock ^. level
             , _amendment_position = position'
             }
       runDb (Identity db) $ do

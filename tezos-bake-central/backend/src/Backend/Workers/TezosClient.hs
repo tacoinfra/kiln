@@ -260,7 +260,9 @@ getConnectedLedger appConfig chain = do
   stdout <- runClientCommand appConfig chain ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
-  getKungFuName (T.lines stdout)
+  case chain of
+    Left NamedChain_Zeronet -> getKungFuNameZeronet (T.lines stdout)
+    _ -> getKungFuName (T.lines stdout)
   where
     getVersion t = do
       appAndVersion <- T.stripPrefix "Found a Tezos " t
@@ -274,6 +276,16 @@ getConnectedLedger appConfig chain = do
         , ledger <- T.takeWhile (/= '/') ledger'
         , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
         -> pure $ Just (LedgerIdentifier ledger, app, version)
+      xs -> do
+        $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
+        pure $ Nothing
+    getLedgerZeronet = fmap (T.takeWhile (/= '`')) . T.stripPrefix "## Ledger `"
+    getKungFuNameZeronet = \case
+      ledgerName : foundApp : _blank : _ : _ : _
+        | Just ledger <- getLedgerZeronet ledgerName
+        , Just version <- getVersion foundApp
+        , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
+        -> pure $ Just (LedgerIdentifier ledger, version)
       xs -> do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
@@ -301,10 +313,19 @@ showLedger appConfig chain sk = do
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
-  let pkh = getPublicKeyHash (T.lines stdout)
+  let pkh = case chain of
+        Left NamedChain_Zeronet -> getPublicKeyHashZeronet (T.lines stdout)
+        _ -> getPublicKeyHash (T.lines stdout)
   when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
   pure pkh
   where
+    getPublicKeyHashZeronet = \case
+      foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _
+        | T.isPrefixOf "Found ledger corresponding to " foundApp
+        , Just pkht <- T.stripPrefix "* Public Key Hash: " pkh'
+        , Right pkh <- tryReadPublicKeyHashText pkht
+        -> Just pkh
+      _ -> Nothing
     getPublicKeyHash = \case
       foundApp : pkh' : _
         | T.isPrefixOf "Found a Tezos Baking " foundApp
