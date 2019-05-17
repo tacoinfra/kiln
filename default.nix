@@ -398,8 +398,45 @@ let
       --base-port=20000 --interactive=true --pause-on-error=true'
   '';
 
+  protocolTest = pkgs.writeScriptBin "protocol-test" ''
+    #!/usr/bin/env bash
+    set -ve
+    echo 'Starting flextesa protocol test... monitor a node via kiln at http://127.0.0.1:20000'
+
+    export tezos_co=$PWD/dep/tezos-baking-platform/tezos/zeronet
+    export propto=$tezos_co/src/proto_004_Pt24m4xi/lib_protocol/
+    export old_suffix=003-PsddFKi3
+    export new_suffix=004-Pt24m4xi
+    export dpu_root_path=$PWD/dpu_root_path
+    export tezos_bin=$(nix-build -A tezos.zeronet.kit ./dep/tezos-baking-platform)/bin
+    export ledger="ledger://odd-himalayan-lustrous-falcon/ed25519/0'/0'"
+    export pkh=tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
+
+    nix-shell -A tezos.master.sandbox dep/tezos-baking-platform --run \
+      'flextesa daemons-upgrade $propto \
+           --add-bootstrap LBK,edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM,$pkh,$ledger@200_000_000_000 \
+           --no-daemons-for LBK \
+           --add-external 10000 \
+           --generate-kiln ./tezos-bake-central/config/,10000 \
+           --clean-kiln-config \
+           --time 4,4 \
+           --blocks-per-vot 40 \
+           --pause-on-error true \
+           --root-path $dpu_root_path \
+           --tezos-node-binary $tezos_bin/tezos-node \
+           --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
+           --first-baker-alpha-binary        $tezos_bin/tezos-baker-$old_suffix \
+           --first-endorser-alpha-binary  $tezos_bin/tezos-endorser-$old_suffix \
+           --first-accuser-alpha-binary    $tezos_bin/tezos-accuser-$old_suffix \
+           --second-baker-alpha-binary       $tezos_bin/tezos-baker-$new_suffix \
+           --second-endorser-alpha-binary $tezos_bin/tezos-endorser-$new_suffix \
+           --second-accuser-alpha-binary   $tezos_bin/tezos-accuser-$new_suffix \
+           --tezos-client-binary $tezos_bin/tezos-client \
+           --tezos-admin-client-binary $tezos_bin/tezos-admin-client'
+  '';
+
 in (obApp distroMethods.source) // {
-  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
+  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest protocolTest;
   server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
       network =
