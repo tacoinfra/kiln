@@ -29,6 +29,7 @@ import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import Rhyolite.Schema
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
@@ -128,10 +129,10 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
               calcCycle n = fromIntegral $ (_amendment_startLevel a + _protoInfo_blocksPerVotingPeriod info * n) `div` _protoInfo_blocksPerCycle info
            in textWithCommas (calcCycle coeff) <> " - " <> textWithCommas (calcCycle (succ coeff) - 1)
     dyn_ $ ffor selectedPeriod $ \case
-      VotingPeriodKind_Proposal -> withLoader periodProposals =<< watchProposals
-      VotingPeriodKind_TestingVote -> withLoader (periodVote "Test Period" . fmap _periodTestingVote_periodVote) =<< watchPeriodTestingVote
+      VotingPeriodKind_Proposal -> periodProposals =<< watchProposals
+      VotingPeriodKind_TestingVote -> withLoader (periodVote "Test Period") =<< watchPeriodTestingVote
       VotingPeriodKind_Testing -> withLoader periodTest =<< watchPeriodTesting
-      VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet" . fmap _periodPromotionVote_periodVote) =<< watchPeriodPromotionVote
+      VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
 
   pure ()
 
@@ -152,61 +153,62 @@ withLoader f d = maybeDyn d >>= \m -> dyn_ $ ffor m $ \case
 -- TODO: do we display *all* proposals? what to display when there are no proposals?
 periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m))
-  => Dynamic t [PeriodProposal] -> m ()
-periodProposals proposals = el "table" $ do
+  => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
+periodProposals proposals' = el "table" $ do
   el "thead" $ do
     el "tr" $ do
       el "th" $ text "Proposal Hash"
       el "th" $ text "Votes"
-  el "tbody" $ void $ simpleList (sortBy (comparing $ Down . _periodProposal_votes) <$> proposals) $ \proposal -> el "tr" $ do
+  let proposals = sortBy (comparing $ Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
+  el "tbody" $ void $ simpleList proposals $ \proposal -> el "tr" $ do
     el "td" $ do
-      let protocolHash = toBase58Text . _periodProposal_hash <$> proposal
+      let protocolHash = toBase58Text . _periodProposal_hash . fst <$> proposal
       copyButton $ current protocolHash
       dynText protocolHash
-    el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> proposal
+    el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> proposal
 
 periodTest
   :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
-  => Dynamic t PeriodTesting -> m ()
+  => Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodTesting) -> m ()
 periodTest test = el "dl" $ do
   el "dt" $ text "Proposal Hash"
   el "dd" $ do
-    let proposalHash = toBase58Text . _periodTesting_proposal <$> test
+    let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> test
     copyButton $ current proposalHash
     dynText proposalHash
-  mChain <- maybeDyn $ _periodTesting_testChainId <$> test
+  mChain <- maybeDyn $ _periodTesting_testChainId . snd <$> test
   whenJustDyn mChain $ \chainId -> do
     el "dt" $ text "Chain ID"
     el "dd" $ dynText $ toBase58Text <$> chainId
-  mBlockLevel <- maybeDyn $ _periodTesting_startingLevel <$> test
+  mBlockLevel <- maybeDyn $ _periodTesting_startingLevel . snd <$> test
   whenJustDyn mBlockLevel $ \lvl -> do
     el "dt" $ text "Starting Block Level"
     el "dd" $ dynText $ textWithCommas . fromIntegral . unRawLevel <$> lvl
   el "dt" $ text "Chain Status"
-  el "dd" $ dynText $ ffor test $ \t -> case _periodTesting_status t of
+  el "dd" $ dynText $ ffor test $ \(_,t) -> case _periodTesting_status t of
     TestChainStatus_Running -> "Running"
     TestChainStatus_Forking -> "Forking"
     TestChainStatus_NotRunning -> "Not yet started"
 
 periodVote
   :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
-  => Text -> Dynamic t PeriodVote -> m ()
+  => Text -> Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodVote) -> m ()
 periodVote promote vote = el "dl" $ do
   el "dt" $ text "Proposal Hash"
   el "dd" $ do
-    let proposalHash = toBase58Text . _periodVote_proposal <$> vote
+    let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> vote
     copyButton $ current proposalHash
     dynText proposalHash
   el "dt" $ text $ "Promote to " <> promote <> " Vote Breakdown"
   el "dd" $ el "table" $ el "tbody" $ el "tr" $ do
     el "td" $ do
-      dynText $ textWithCommas . _ballots_yay . _periodVote_ballots <$> vote
+      dynText $ textWithCommas . _ballots_yay . _periodVote_ballots . snd <$> vote
       text " Yea"
     el "td" $ do
-      dynText $ textWithCommas . _ballots_nay . _periodVote_ballots <$> vote
+      dynText $ textWithCommas . _ballots_nay . _periodVote_ballots . snd <$> vote
       text " Nay"
     el "td" $ do
-      dynText $ textWithCommas . _ballots_pass . _periodVote_ballots <$> vote
+      dynText $ textWithCommas . _ballots_pass . _periodVote_ballots . snd <$> vote
       text " Pass"
   el "dt" $ text "Supermajority Needed | Current"
   let indicator dv dx = elDynAttr "span" (ffor2 dv dx $ \v x -> "class" =: (if v >= x then "positive" else "negative"))
@@ -214,17 +216,17 @@ periodVote promote vote = el "dl" $ do
     let required = 8000
     text $ intPercentage required
     text " | "
-    let supermajority = ffor vote $ \pv ->
+    let supermajority = ffor vote $ \(_, pv) ->
           let v = _periodVote_ballots pv
               total = _ballots_yay v + _ballots_nay v
           in if total <= 0 then 0 else (10000 * _ballots_yay v) `div` total
     indicator supermajority (pure required) $ dynText $ intPercentage <$> supermajority
   el "dt" $ text "Quorum Needed | Current"
   el "dd" $ do
-    let quorum = fromIntegral . _periodVote_quorum <$> vote
+    let quorum = fromIntegral . _periodVote_quorum . snd <$> vote
     dynText $ intPercentage <$> quorum
     text " | "
-    let participation = ffor vote $ \pv ->
+    let participation = ffor vote $ \(_, pv) ->
           let v = _periodVote_ballots pv
           in if _periodVote_totalRolls pv <= 0 then 0 else (10000 * (_ballots_yay v + _ballots_nay v + _ballots_pass v)) `div` _periodVote_totalRolls pv
     indicator participation quorum $ dynText $ intPercentage <$> participation
@@ -274,12 +276,6 @@ progressDots currentCycle' maxCycle' = do
       GT -> "completed"
       EQ -> "current"
       LT -> "upcoming"
-
-watchFakeVotes :: (Applicative m, Reflex t) => m (Dynamic t (Map.Map ProtocolHash Bool))
-watchFakeVotes = pure $ pure $ Map.fromList
-  [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
-  , ("Pt1jF6oZY7EQBuqETjoa7gjgWdV7rRwTPRbHXcxRQQDs4EHNb8n", False)
-  ]
 
 -- | Modal for voting
 voteModal :: forall r t m.
@@ -344,16 +340,12 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     proposalFlow :: Workflow t m (Event t ())
     proposalFlow = Workflow $ do
-      mProposals <- maybeDyn =<< watchProposals
-      votes <- watchFakeVotes
+      proposals <- watchProposals
       headerWithCycles
         "Proposal Period"
         "During the Proposal Period a baker may upvote up to 20 proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested."
         (divClass "item" $ do
-          divClass "title" $ dynText $ join $ ffor mProposals $ \case
-            Nothing -> constDyn "- / -"
-            Just proposals -> ffor2 proposals (Map.size <$> votes) $ \ps c ->
-              (tshow c <> " / " <> (tshow $ length ps))
+          divClass "title" $ dynText $ ffor proposals $ \ps -> tshow (Map.size $ Map.filter (isJust . snd) ps) <> " / 20"
           divClass "detail" $ text "Votes Cast")
       divClass "proposals" $ do
         el "label" $ text "Filter Proposals by Hash"
@@ -364,38 +356,37 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             el "th" $ text "Proposal Hash"
             el "th" $ text "Votes"
             el "th" $ text "Cast Vote"
-          el "tbody" $ switchHold never <=< dyn $ ffor mProposals $ \case
-            Nothing -> divClass "ui active loader" $ pure never
-            -- TODO handle empty list gracefully
-            Just proposals -> fmap (switchDyn . fmap leftmost) $ simpleList proposals $ \pp -> do
-              let protocolHash = toBase58Text . _periodProposal_hash <$> pp
-                  attrs = ffor2 protocolHash hashFilter $ \h h' ->
-                    if (T.strip $ T.toCaseFold h') `T.isInfixOf` (T.toCaseFold h)
-                    then mempty
-                    else "class" =: "filtered"
-              elDynAttr "tr" attrs $ do
-                el "td" $ do
-                  copyButton $ current protocolHash
-                  dynText protocolHash
-                el "td" $ dynText $ textWithCommas . _periodProposal_votes <$> pp
-                el "td" $ do
-                  let lookuped = ffor2 pp votes $ \p vs -> let ph = _periodProposal_hash p in (ph, Map.lookup ph vs)
-                      classes = ffor lookuped $ \(_, l) -> case l of
-                        Nothing -> ""
-                        Just True -> "voted"
-                        Just False -> "pending"
-                  vote <- uiDynButton classes $ dynText $ ffor lookuped $ \(_, l) -> case l of
-                    Nothing -> "Vote"
-                    Just True -> "Voted"
-                    Just False -> "Pending"
-                  pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
+          -- TODO handle empty list gracefully
+          voteE <- el "tbody" $ listViewWithKey proposals $ \_ pp -> do
+            let protocolHash = toBase58Text . _periodProposal_hash . fst <$> pp
+                attrs = ffor2 protocolHash hashFilter $ \h h' ->
+                  if (T.strip $ T.toCaseFold h') `T.isInfixOf` (T.toCaseFold h)
+                  then mempty
+                  else "class" =: "filtered"
+            elDynAttr "tr" attrs $ do
+              el "td" $ do
+                copyButton $ current protocolHash
+                dynText protocolHash
+              el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> pp
+              el "td" $ do
+                let lookuped = ffor pp $ \(p, included) -> let ph = _periodProposal_hash p in (ph, included)
+                    classes = ffor lookuped $ \(_, l) -> case l of
+                      Nothing -> ""
+                      Just True -> "voted"
+                      Just False -> "pending"
+                vote <- uiDynButton classes $ dynText $ ffor lookuped $ \(_, l) -> case l of
+                  Nothing -> "Vote"
+                  Just True -> "Voted"
+                  Just False -> "Pending"
+                pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
+          pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
         pure (never, waitForWalletAppFlow . (castVoteFlow False Nothing) <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
       "Votes in this period will decide if the proposal under consideration should be tested in an immediately following Test Period. If it does not pass, Promotion Period will begin again."
       "Test Period"
-      (maybeDyn . (fmap . fmap) _periodTestingVote_periodVote =<< watchPeriodTestingVote)
+      (maybeDyn =<< watchPeriodTestingVote)
 
     promotionFlow :: Workflow t m (Event t ())
     promotionFlow = Workflow $ do
@@ -403,13 +394,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       unWorkflow $ someVotingPeriodFlow "Promotion Period"
         ("Votes in this period will decide if the proposal under consideration should be promoted to " <> chainText <> ". If it does not pass the current protocol will remain in place. If it passes, the proposed protocol will take affect at the end of this Promotion Period.")
         chainText
-        (maybeDyn . (fmap . fmap) _periodPromotionVote_periodVote =<< watchPeriodPromotionVote)
+        (maybeDyn =<< watchPeriodPromotionVote)
 
     someVotingPeriodFlow
       :: Text -- ^ Header
       -> Text -- ^ Explanation
       -> Text -- ^ Promote to <X>
-      -> m (Dynamic t (Maybe (Dynamic t PeriodVote))) -- ^ Watch relevant vote
+      -> m (Dynamic t (Maybe (Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodVote)))) -- ^ Watch relevant vote
       -> Workflow t m (Event t ())
     someVotingPeriodFlow header explanation promote getPeriodVote = Workflow $ do
       mPeriodVote <- getPeriodVote
@@ -418,7 +409,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         Nothing -> divClass "ui active loader" $ pure never
         Just pv -> do
           divClass "detail" $ text "Proposal Hash"
-          let proposal = _periodVote_proposal <$> pv
+          let proposal = _periodProposal_hash . snd . fst <$> pv
               hashText = toBase58Text <$> proposal
           divClass "proposal-hash" $ do
             copyButton $ current hashText
@@ -427,7 +418,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             text $ "Promote this proposal to " <> promote <> "?"
           let ballotButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse ballotButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
-          pure $ attachWith (\p b -> castVoteFlow False (Just b) p) (current proposal) vote
+          pure $ attachWith (\((pid, pp), _) b -> castVoteFlow False (Just b) (pid, _periodProposal_hash pp)) (current pv) vote
       pure (never, waitForWalletAppFlow <$> vote)
 
     waitForWalletAppFlow
@@ -450,8 +441,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       let walletReady = ffilter ((==) (Just True)) $ updated devFound
       pure (never, nextFlow <$ walletReady)
 
-    castVoteFlow :: Bool -> Maybe Ballot -> ProtocolHash -> Workflow t m (Event t ())
-    castVoteFlow isTimedOut mBallot proposal = Workflow $ do
+    castVoteFlow :: Bool -> Maybe Ballot -> (Id PeriodProposal, ProtocolHash) -> Workflow t m (Event t ())
+    castVoteFlow isTimedOut mBallot (proposalId, proposalHash) = Workflow $ do
       ledgerStatus <- ledgerDeviceIcon
       when isTimedOut $ do
         divClass "ui message" $ do
@@ -462,17 +453,17 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       divClass "bigtitle" $ text $ case mBallot of
         Nothing -> "Cast a vote for this proposal?"
         Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
-      divClass "cast-vote-protocol" $ text $ toBase58Text proposal
+      divClass "cast-vote-protocol" $ text $ toBase58Text proposalHash
       cast <- voteButton "Cast Vote"
-      _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposal mBallot) <$ cast
+      _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposalId mBallot) <$ cast
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
-          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot proposal
-      pure (never, leftmost [respondToPromptFlow retryFlow proposal mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
+          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot (proposalId, proposalHash)
+      pure (never, leftmost [respondToPromptFlow retryFlow (proposalId, proposalHash) mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
 
     respondToPromptFlow
       :: Workflow t m (Event t ())
       -- ^ Workflow to return to after retry
-      -> ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
+      -> (Id PeriodProposal, ProtocolHash) -> Maybe Ballot -> Workflow t m (Event t ())
     respondToPromptFlow retryFlow proposal mBallot = Workflow $ do
       ledgerStatus <- ledgerDeviceIcon
       pb <- getPostBuild
@@ -481,7 +472,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           next = fforMaybe changed $ \case
             Just vs | Just (First step) <- _voteState_step vs -> case step of
               -- TODO: go to proper flow
-              VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Right proposalFlow
+              VoteStep_Done -> Just $ voteCastSuccessfullyFlow $ Left ()
               VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
               VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
               VoteStep_Failed _ -> Just $ castVoteFlow True mBallot proposal
@@ -502,7 +493,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         divClass "confirm-title" $ text "Source"
         divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
         divClass "confirm-title" $ text "Protocol"
-        divClass "confirm-content" $ text $ toBase58Text proposal
+        divClass "confirm-content" $ text $ toBase58Text $ snd proposal
         divClass "confirm-title" $ text "Period"
         divClass "confirm-content" $ display $ unRawLevel . _amendment_votingPeriod <$> amendment
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus

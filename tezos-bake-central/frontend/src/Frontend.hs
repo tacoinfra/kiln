@@ -234,15 +234,6 @@ appMain = do
       $ do
         e <- appHeader
         appContentArea
-
-        -- TODO this is temporary, for testing the voting modal
-        mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
-        mProtoInfo <- maybeDyn =<< watchProtoInfo
-        let baker = ("tz3bvNMQ95vfAYtG8193ymshqjSvmxiCUuR5"
-                    , SecretKey (LedgerIdentifier "frilly-elephant-alienated-hippopotamus") SigningCurve_Ed25519 (DerivationPath ""))
-        let xs = ffor2 (current mProtoInfo) (current mAmendment) (\x y -> ffor2 x y (,))
-        openVoteModal <- SemUi.button def $ text "Open vote modal"
-        tellModal $ attachWithMaybe (\ma () -> ffor ma $ \a -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . uncurry (voteModal baker) a) xs openVoteModal
         pure e
     pure ()
 
@@ -450,6 +441,7 @@ appContentArea
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m), HasFrontendConfig r
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     , Routed t (R AppRoute) m
@@ -466,6 +458,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1608,6 +1601,7 @@ bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1770,6 +1764,25 @@ bakersTab =
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
+
+        -- Calculate what we should show in the voting icon. Maybe Bool
+        -- indicates if the vote has taken place, and if so, if it has been included
+        voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
+          damendment <- watchAmendment
+          dmBakerVote <- watchBakerVote
+          dproposals <- watchProposals
+          let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+          maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
+            Nothing -> Nothing
+            Just (k, a) -> case k of
+              VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
+                n | n == 0 -> bakerNotVoted
+                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
+              VotingPeriodKind_Testing -> Nothing
+              _ -> Just $ case mBakerVote of
+                Nothing -> bakerNotVoted
+                Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
+
         tileMenu $ do
           let
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
@@ -1777,6 +1790,17 @@ bakersTab =
             Left _ -> do -- not a kiln baker
               removeEntry $ removeItemModal "baker"
             Right bid -> do
+
+              whenJustDyn voteState $ \vs -> dyn_ $ ffor vs $ \(_, included) -> case included of
+                Nothing -> do
+                  open <- tileMenuEntry "Vote"
+                  mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
+                  mProtoInfo <- maybeDyn =<< watchProtoInfo
+                  let baker = ffor (current bakerDyn) $ \bs -> case _bakerSummary_baker bs of
+                        Left _ -> Nothing
+                        Right bid -> Just (pkh, _bakerInternalData_secretKey bid)
+                      xs = ffor3 (current mProtoInfo) (current mAmendment) baker (\x y b -> ffor3 x y b (,,))
+                  tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
               latestHead <- maybeDyn =<< watchLatestHead
@@ -1805,13 +1829,27 @@ bakersTab =
             iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
-          dyn_ $ ffor isInternal $ \i -> when i $ divClass "internal-subtitle" $ do
-            kilnLogo
-            divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
-              MonitoredStatus_Stopped -> "Stopped"
-              MonitoredStatus_Healthy -> "Running"
-              MonitoredStatus_Unhealthy -> "Unhealthy"
-              MonitoredStatus_Unknown -> "Unknown"
+          dyn_ $ ffor isInternal $ \i -> when i $ do
+            divClass "baker-vote-popup" $ do
+              let accessVoting = divClass "detail" $ text "Access Voting from the extras menu on this baker tile." -- TODO ...
+              whenJustDyn voteState $ \dc -> do
+                let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
+                      Nothing -> accessVoting
+                      Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
+                tooltipped TooltipPos_TopCenter tt $ do
+                  let attrs = ffor dc $ \(_, included) -> "class" =: case included of
+                        Nothing -> "large blue icon-vote-badge icon"
+                        Just False -> "large grey icon-ellipsis icon" -- TODO badge version
+                        Just True -> "large grey icon-check icon" -- TODO badge version
+                  elDynAttr "i" attrs blank
+
+            divClass "internal-subtitle" $ do
+              kilnLogo
+              divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
+                MonitoredStatus_Stopped -> "Stopped"
+                MonitoredStatus_Healthy -> "Running"
+                MonitoredStatus_Unhealthy -> "Unhealthy"
+                MonitoredStatus_Unknown -> "Unknown"
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do

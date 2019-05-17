@@ -25,7 +25,7 @@ import Tezos.Operation(Ballot)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (ErrorLog, LogTag, RightKind, RightNotificationLimit)
+import Common.Schema (ErrorLog, LogTag, PeriodProposal, RightKind, RightNotificationLimit)
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -90,7 +90,7 @@ instance HasRequest Bake where
       -> PublicRequest Bake ()
     PublicRequest_DoVote
       :: SecretKey
-      -> ProtocolHash
+      -> Id PeriodProposal
       -> Maybe Ballot -- When 'Nothing', vote for proposal rather than submitting a ballot
       -> PublicRequest Bake ()
 

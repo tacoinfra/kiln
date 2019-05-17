@@ -199,14 +199,97 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
     pure $ toRangeView amendmentVS $ flip fmap as $ \a -> (_amendment_period a, First $ Just a)
 
-  periodProposals <- maybeViewHandler _bakeViewSelector_proposals $ Just <$>
-    select (PeriodProposal_chainIdField ==. _nodeDataSource_chain nds)
-  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$>
-    selectSingle (PeriodTestingVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
-  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$>
-    selectSingle (PeriodTesting_chainIdField ==. _nodeDataSource_chain nds)
-  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$>
-    selectSingle (PeriodPromotionVote_periodVoteField ~> PeriodVote_chainIdSelector ==. _nodeDataSource_chain nds)
+  let periodProposalsVS = _bakeViewSelector_proposals vs
+  periodProposals <- whenM (not $ null periodProposalsVS) $ do
+    results :: [(Id PeriodProposal, ProtocolHash, ChainId, RawLevel, Int, Bool, Bool)] <- [queryQ|
+      SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
+      FROM "PeriodProposal" pp
+      LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
+      JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
+      WHERE NOT b."data#deleted"
+    |]
+    pure $ toRangeView periodProposalsVS $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (Bounded pid, First $ Just (PeriodProposal
+      { _periodProposal_hash = phash
+      , _periodProposal_chainId = chain
+      , _periodProposal_votingPeriod = vp
+      , _periodProposal_votes = votes
+      }, if voted then Just included else Nothing))
+
+  bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
+    let chainId = _nodeDataSource_chain nds
+    results <- [queryQ|
+      SELECT v.pkh, v.proposal, v.ballot, v.included
+      FROM "BakerVote" v
+      JOIN "PeriodProposal" p ON p.id = v.proposal
+      WHERE p."chainId" = ?chainId
+      LIMIT 1
+    |]
+    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included) -> BakerVote
+      { _bakerVote_pkh = pkh
+      , _bakerVote_proposal = proposal
+      , _bakerVote_ballot = ballot
+      , _bakerVote_included = included
+      }
+
+  periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
+    let chainId = _nodeDataSource_chain nds
+    results <- [queryQ|
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      FROM "PeriodTestingVote" v
+      JOIN "PeriodProposal" p ON p.id = v.proposal
+      WHERE p."chainId" = ?chainId
+      LIMIT 1
+    |]
+    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodTestingVote
+      { _periodTestingVote_proposal = p
+      , _periodTestingVote_periodVote = PeriodVote
+        { _periodVote_ballots = Ballots
+          { _ballots_yay = by
+          , _ballots_nay = bn
+          , _ballots_pass = bp
+          }
+        , _periodVote_quorum = q
+        , _periodVote_totalRolls = t
+        }
+      }
+
+  periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> do
+    let chainId = _nodeDataSource_chain nds
+    results <- [queryQ|
+      SELECT t.proposal, t."testChainId", t."startingLevel", t.status
+      FROM "PeriodTesting" t
+      JOIN "PeriodProposal" p ON p.id = t.proposal
+      WHERE p."chainId" = ?chainId
+      LIMIT 1
+    |]
+    pure $ listToMaybe $ results <&> \(p,t,l,s) -> PeriodTesting
+      { _periodTesting_proposal = p
+      , _periodTesting_testChainId = t
+      , _periodTesting_startingLevel = l
+      , _periodTesting_status = s
+      }
+
+  periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
+    let chainId = _nodeDataSource_chain nds
+    results <- [queryQ|
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      FROM "PeriodPromotionVote" v
+      JOIN "PeriodProposal" p ON p.id = v.proposal
+      WHERE p."chainId" = ?chainId
+      LIMIT 1
+    |]
+    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodPromotionVote
+      { _periodPromotionVote_proposal = p
+      , _periodPromotionVote_periodVote = PeriodVote
+        { _periodVote_ballots = Ballots
+          { _ballots_yay = by
+          , _ballots_nay = bn
+          , _ballots_pass = bp
+          }
+        , _periodVote_quorum = q
+        , _periodVote_totalRolls = t
+        }
+      }
 
   connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
 
@@ -268,6 +351,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_latestHead = latestHead
     , _bakeView_amendment = amendment
     , _bakeView_proposals = periodProposals
+    , _bakeView_bakerVote = bakerVote
     , _bakeView_periodTestingVote = periodTestingVote
     , _bakeView_periodTesting = periodTesting
     , _bakeView_periodPromotionVote = periodPromotionVote

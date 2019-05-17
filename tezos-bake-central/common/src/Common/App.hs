@@ -227,7 +227,8 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
-  , _bakeViewSelector_proposals :: !(MaybeSelector [PeriodProposal] a)
+  , _bakeViewSelector_proposals :: !(RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
+  , _bakeViewSelector_bakerVote :: !(MaybeSelector (Maybe BakerVote) a)
   , _bakeViewSelector_periodTestingVote :: !(MaybeSelector (Maybe PeriodTestingVote) a)
   , _bakeViewSelector_periodTesting :: !(MaybeSelector (Maybe PeriodTesting) a)
   , _bakeViewSelector_periodPromotionVote :: !(MaybeSelector (Maybe PeriodPromotionVote) a)
@@ -265,7 +266,8 @@ data BakeView a = BakeView
   , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
-  , _bakeView_proposals :: !(MaybeView [PeriodProposal] a)
+  , _bakeView_proposals :: !(RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
+  , _bakeView_bakerVote :: !(MaybeView (Maybe BakerVote) a)
   , _bakeView_periodTestingVote :: !(MaybeView (Maybe PeriodTestingVote) a)
   , _bakeView_periodTesting :: !(MaybeView (Maybe PeriodTesting) a)
   , _bakeView_periodPromotionVote :: !(MaybeView (Maybe PeriodPromotionVote) a)
@@ -380,6 +382,7 @@ cropBakeView vs v = BakeView
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
   , _bakeView_amendment = cropView (_bakeViewSelector_amendment vs) (_bakeView_amendment v)
   , _bakeView_proposals = cropView (_bakeViewSelector_proposals vs) (_bakeView_proposals v)
+  , _bakeView_bakerVote = cropView (_bakeViewSelector_bakerVote vs) (_bakeView_bakerVote v)
   , _bakeView_periodTestingVote = cropView (_bakeViewSelector_periodTestingVote vs) (_bakeView_periodTestingVote v)
   , _bakeView_periodTesting = cropView (_bakeViewSelector_periodTesting vs) (_bakeView_periodTesting v)
   , _bakeView_periodPromotionVote = cropView (_bakeViewSelector_periodPromotionVote vs) (_bakeView_periodPromotionVote v)
@@ -413,6 +416,7 @@ instance FunctorMaybe BakeViewSelector where
     , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_amendment = fmapMaybe f $ _bakeViewSelector_amendment a
     , _bakeViewSelector_proposals = fmapMaybe f $ _bakeViewSelector_proposals a
+    , _bakeViewSelector_bakerVote = fmapMaybe f $ _bakeViewSelector_bakerVote a
     , _bakeViewSelector_periodTestingVote = fmapMaybe f $ _bakeViewSelector_periodTestingVote a
     , _bakeViewSelector_periodTesting = fmapMaybe f $ _bakeViewSelector_periodTesting a
     , _bakeViewSelector_periodPromotionVote = fmapMaybe f $ _bakeViewSelector_periodPromotionVote a
@@ -446,6 +450,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_latestHead = nil
     , _bakeViewSelector_amendment = nil
     , _bakeViewSelector_proposals = nil
+    , _bakeViewSelector_bakerVote = nil
     , _bakeViewSelector_periodTestingVote = nil
     , _bakeViewSelector_periodTesting = nil
     , _bakeViewSelector_periodPromotionVote = nil
@@ -479,6 +484,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
     , _bakeViewSelector_amendment = f' _bakeViewSelector_amendment
     , _bakeViewSelector_proposals = f' _bakeViewSelector_proposals
+    , _bakeViewSelector_bakerVote = f' _bakeViewSelector_bakerVote
     , _bakeViewSelector_periodTestingVote = f' _bakeViewSelector_periodTestingVote
     , _bakeViewSelector_periodTesting = f' _bakeViewSelector_periodTesting
     , _bakeViewSelector_periodPromotionVote = f' _bakeViewSelector_periodPromotionVote
@@ -515,6 +521,7 @@ instance FunctorMaybe BakeView where
     , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
     , _bakeView_amendment = fmapMaybe f $ _bakeView_amendment a
     , _bakeView_proposals = fmapMaybe f $ _bakeView_proposals a
+    , _bakeView_bakerVote = fmapMaybe f $ _bakeView_bakerVote a
     , _bakeView_periodTestingVote = fmapMaybe f $ _bakeView_periodTestingVote a
     , _bakeView_periodTesting = fmapMaybe f $ _bakeView_periodTesting a
     , _bakeView_periodPromotionVote = fmapMaybe f $ _bakeView_periodPromotionVote a
@@ -556,6 +563,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
     , _bakeViewSelector_amendment = (<>) (_bakeViewSelector_amendment u) (_bakeViewSelector_amendment v)
     , _bakeViewSelector_proposals = (<>) (_bakeViewSelector_proposals u) (_bakeViewSelector_proposals v)
+    , _bakeViewSelector_bakerVote = (<>) (_bakeViewSelector_bakerVote u) (_bakeViewSelector_bakerVote v)
     , _bakeViewSelector_periodTestingVote = (<>) (_bakeViewSelector_periodTestingVote u) (_bakeViewSelector_periodTestingVote v)
     , _bakeViewSelector_periodTesting = (<>) (_bakeViewSelector_periodTesting u) (_bakeViewSelector_periodTesting v)
     , _bakeViewSelector_periodPromotionVote = (<>) (_bakeViewSelector_periodPromotionVote u) (_bakeViewSelector_periodPromotionVote v)
@@ -589,6 +597,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_latestHead = mempty
     , _bakeViewSelector_amendment = mempty
     , _bakeViewSelector_proposals = mempty
+    , _bakeViewSelector_bakerVote = mempty
     , _bakeViewSelector_periodTestingVote = mempty
     , _bakeViewSelector_periodTesting = mempty
     , _bakeViewSelector_periodPromotionVote = mempty
@@ -631,6 +640,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_latestHead = mempty
     , _bakeView_amendment = mempty
     , _bakeView_proposals = mempty
+    , _bakeView_bakerVote = mempty
     , _bakeView_periodTestingVote = mempty
     , _bakeView_periodTesting = mempty
     , _bakeView_periodPromotionVote = mempty
@@ -667,6 +677,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
     , _bakeView_amendment = _bakeView_amendment u <> _bakeView_amendment v
     , _bakeView_proposals = _bakeView_proposals u <> _bakeView_proposals v
+    , _bakeView_bakerVote = _bakeView_bakerVote u <> _bakeView_bakerVote v
     , _bakeView_periodTestingVote = _bakeView_periodTestingVote u <> _bakeView_periodTestingVote v
     , _bakeView_periodTesting = _bakeView_periodTesting u <> _bakeView_periodTesting v
     , _bakeView_periodPromotionVote = _bakeView_periodPromotionVote u <> _bakeView_periodPromotionVote v

@@ -246,7 +246,7 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetupToBake :: !Bool
   , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
-  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe ProtocolHash) -- ^ Proposal to vote for
+  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
   , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
@@ -497,18 +497,17 @@ data PeriodProposal = PeriodProposal
   , _periodProposal_votingPeriod :: !RawLevel
   , _periodProposal_votes :: !Int
   } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId PeriodProposal
 
 data PeriodVote = PeriodVote
-  { _periodVote_proposal :: !ProtocolHash
-  , _periodVote_chainId :: !ChainId
-  , _periodVote_votingPeriod :: !RawLevel
-  , _periodVote_ballots :: !Ballots
+  { _periodVote_ballots :: !Ballots
   , _periodVote_quorum :: !Int -- Percent * 100, e.g. 80.02% would be 8002
   , _periodVote_totalRolls :: !Int -- Total number of rolls of delegates who are eligible to vote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodTestingVote = PeriodTestingVote
-  { _periodTestingVote_periodVote :: !PeriodVote
+  { _periodTestingVote_proposal :: !(Id PeriodProposal)
+  , _periodTestingVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- | Like Tezos.TestChainStatus, but for a single column
@@ -518,16 +517,28 @@ instance Aeson.ToJSON TestChainStatus
 instance Aeson.FromJSON TestChainStatus
 
 data PeriodTesting = PeriodTesting
-  { _periodTesting_proposal :: !ProtocolHash
-  , _periodTesting_chainId :: !ChainId
+  { _periodTesting_proposal :: !(Id PeriodProposal)
   , _periodTesting_testChainId :: !(Maybe ChainId)
-  , _periodTesting_votingPeriod :: !RawLevel
   , _periodTesting_startingLevel :: !(Maybe RawLevel)
   , _periodTesting_status :: !TestChainStatus
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodPromotionVote = PeriodPromotionVote
-  { _periodPromotionVote_periodVote :: !PeriodVote
+  { _periodPromotionVote_proposal :: !(Id PeriodProposal)
+  , _periodPromotionVote_periodVote :: !PeriodVote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data BakerProposal = BakerProposal
+  { _bakerProposal_pkh :: !PublicKeyHash
+  , _bakerProposal_proposal :: !(Id PeriodProposal)
+  , _bakerProposal_included :: !(Maybe BlockHash)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data BakerVote = BakerVote
+  { _bakerVote_pkh :: !PublicKeyHash
+  , _bakerVote_proposal :: !(Id PeriodProposal)
+  , _bakerVote_ballot :: !Ballot
+  , _bakerVote_included :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
@@ -977,8 +988,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
+  , ''BakerProposal
   , ''BakerRight
   , ''BakerRightsCycleProgress
+  , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
   , ''CacheDelegateInfo

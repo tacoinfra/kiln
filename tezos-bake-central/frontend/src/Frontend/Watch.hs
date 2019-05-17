@@ -317,29 +317,69 @@ watchAmendment =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_amendment = viewRangeAll 1 }
 
-watchProposals :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe [PeriodProposal]))
+watchProposals :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)))
 watchProposals =
-  (fmap . fmap) (getMaybeView . _bakeView_proposals) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_proposals = viewJust 1
+  (fmap . fmap) (MMap.getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_proposals = viewRangeAll 1
     }
 
-watchPeriodTestingVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodTestingVote))
-watchPeriodTestingVote =
-  (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
+watchProposal :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t (Id PeriodProposal) -> m (Dynamic t (Maybe (PeriodProposal, Maybe Bool)))
+watchProposal pid = do
+  m <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor pid $ \p -> mempty
+    { _bakeViewSelector_proposals = viewRangeExactly (Bounded p) 1
+    }
+  pure $ ffor2 pid m MMap.lookup
+
+watchBakerVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe BakerVote))
+watchBakerVote =
+  (fmap . fmap) (join . getMaybeView . _bakeView_bakerVote) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_bakerVote = viewJust 1
+    }
+
+watchPeriodTestingVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodTestingVote = do
+  vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTestingVote = viewJust 1
     }
+  mId <- holdUniqDyn $ fmap _periodTestingVote_proposal <$> vote
+  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
+    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
+    }
+  pure $ ffor2 vote dm $ \mv m -> do
+    v <- mv
+    let pid = _periodTestingVote_proposal v
+    (pp, _) <- MMap.lookup pid m
+    pure ((pid, pp), _periodTestingVote_periodVote v)
 
-watchPeriodTesting :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodTesting))
-watchPeriodTesting =
-  (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
+watchPeriodTesting :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodTesting)))
+watchPeriodTesting = do
+  test <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTesting = viewJust 1
     }
+  mId <- holdUniqDyn $ fmap _periodTesting_proposal <$> test
+  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
+    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
+    }
+  pure $ ffor2 test dm $ \mt m -> do
+    t <- mt
+    let pid = _periodTesting_proposal t
+    (pp, _) <- MMap.lookup pid m
+    pure ((pid, pp), t)
 
-watchPeriodPromotionVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe PeriodPromotionVote))
-watchPeriodPromotionVote =
-  (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
+watchPeriodPromotionVote :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodPromotionVote = do
+  vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodPromotionVote = viewJust 1
     }
+  mId <- holdUniqDyn $ fmap _periodPromotionVote_proposal <$> vote
+  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
+    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
+    }
+  pure $ ffor2 vote dm $ \mv m -> do
+    v <- mv
+    let pid = _periodPromotionVote_proposal v
+    (pp, _) <- MMap.lookup pid m
+    pure ((pid, pp), _periodPromotionVote_periodVote v)
 
 watchPrompting :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> m (Dynamic t (Maybe SetupState))
 watchPrompting sk = do

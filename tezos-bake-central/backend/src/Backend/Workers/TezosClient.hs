@@ -27,6 +27,7 @@ import Data.Time (NominalDiffTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, in_)
 import Rhyolite.Backend.DB
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id (..))
@@ -166,21 +167,46 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
           -- do any voting
-          inDb (selectSingle $ LedgerAccount_shouldDoVoteProtocolField /=. (Nothing :: Maybe ProtocolHash)) >>= \mla ->
-            for_ mla $ \la -> case _ledgerAccount_shouldDoVoteProtocol la of
-              Nothing -> pure () -- shouldn't happen
-              Just proposal -> do
-                let sk = _ledgerAccount_secretKey la
-                inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
-                vs <- case _ledgerAccount_shouldDoVoteBallot la of
-                  Nothing -> submitProposals appConfig chain [proposal]
-                  Just ballot -> submitBallot appConfig chain proposal ballot
-                inDb $ do
-                  update
-                    [ LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe ProtocolHash)
-                    , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: (Maybe Ballot))
-                    ] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                  notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
+          let selectProposal = [queryQ|
+                SELECT la."publicKeyHash", la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath", la."shouldDoVoteBallot", pp.id, pp.hash
+                FROM "PeriodProposal" pp
+                JOIN "LedgerAccount" la ON la."shouldDoVoteProtocol" = pp.id
+              |]
+          inDb selectProposal >>= \case
+            [(pkh :: PublicKeyHash, ledgerIdentifier, signingCurve, derivationPath, shouldDoVoteBallot, proposalId :: Id PeriodProposal, proposalHash)] -> do
+              let sk = SecretKey ledgerIdentifier signingCurve derivationPath
+              inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
+              vs <- case shouldDoVoteBallot of
+                Nothing -> do
+                  vs <- submitProposals appConfig chain [proposalHash]
+                  when (vs == VoteStep_Done) $ inDb $ do
+                    _ <- [executeQ|
+                      INSERT INTO "BakerProposal" (pkh, proposal, included)
+                      VALUES (?pkh, ?proposalId, null)
+                      ON CONFLICT DO NOTHING
+                    |]
+                    mpp <- selectSingle (AutoKeyField ==. fromId proposalId)
+                    for_ mpp $ \pp -> notify NotifyTag_Proposals (proposalId, Just (pp, Just False))
+                  pure vs
+                Just ballot -> do
+                  vs <- submitBallot appConfig chain proposalHash ballot
+                  when (vs == VoteStep_Done) $ inDb $ do
+                    let bv = BakerVote
+                          { _bakerVote_pkh = pkh
+                          , _bakerVote_proposal = proposalId
+                          , _bakerVote_ballot = ballot
+                          , _bakerVote_included = Nothing
+                          }
+                    insert_ bv
+                    notify NotifyTag_BakerVote $ Just bv
+                  pure vs
+              inDb $ do
+                update
+                  [ LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
+                  , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: (Maybe Ballot))
+                  ] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+                notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
+            _ -> pure () -- shouldn't happen
 
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)

@@ -138,10 +138,11 @@ data NotifyTag a where
   NotifyTag_VotePrompting :: NotifyTag (SecretKey, Maybe VoteState)
   NotifyTag_RightNotificationSettings :: NotifyTag (RightKind, Maybe RightNotificationLimit)
   NotifyTag_Amendment :: NotifyTag (VotingPeriodKind, Maybe Amendment)
-  NotifyTag_Proposals :: NotifyTag ()
+  NotifyTag_Proposals :: NotifyTag (Id PeriodProposal, Maybe (PeriodProposal, Maybe Bool))
   NotifyTag_PeriodTestingVote :: NotifyTag (Maybe PeriodTestingVote)
   NotifyTag_PeriodTesting :: NotifyTag (Maybe PeriodTesting)
   NotifyTag_PeriodPromotionVote :: NotifyTag (Maybe PeriodPromotionVote)
+  NotifyTag_BakerVote :: NotifyTag (Maybe BakerVote)
   deriving Typeable
 
 mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
@@ -595,6 +596,16 @@ instance ToField SigningCurve where
 instance FromField SigningCurve where
   fromField f = maybe (fail "Invalid value for SigningCurve") pure . readMaybe <=< fromField f
 
+instance ToField Ballot where
+  toField = toField . show
+instance FromField Ballot where
+  fromField f = maybe (fail "Invalid value for Ballot") pure . readMaybe <=< fromField f
+
+instance ToField TestChainStatus where
+  toField = toField . show
+instance FromField TestChainStatus where
+  fromField f = maybe (fail "Invalid value for TestChainStatus") pure . readMaybe <=< fromField f
+
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
 instance FromField PublicKeyHash where
@@ -648,20 +659,66 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields: [_amendment_period, _amendment_chainId, _amendment_votingPeriod]
   - embedded: PeriodVote
   - entity: PeriodProposal
-    autoKey: null
     constructors:
       - name: PeriodProposal
         uniques:
           - name: PeriodProposal_hash
-            type: primary
+            type: constraint
             fields: [_periodProposal_hash, _periodProposal_chainId, _periodProposal_votingPeriod]
+  - entity: BakerProposal
+    autoKey: null
+    constructors:
+      - name: BakerProposal
+        fields:
+          - name: _bakerProposal_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+        uniques:
+          - name: BakerProposal_key
+            type: primary
+            fields: [_bakerProposal_pkh, _bakerProposal_proposal]
+  - entity: BakerVote
+    autoKey: null
+    constructors:
+      - name: BakerVote
+        fields:
+          - name: _bakerVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+        uniques:
+          - name: BakerVote_key
+            type: primary
+            fields: [_bakerVote_pkh, _bakerVote_proposal]
   - entity: PeriodTestingVote
     autoKey: null
+    constructors:
+      - name: PeriodTestingVote
+        fields:
+          - name: _periodTestingVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
   - primitive: TestChainStatus
   - entity: PeriodTesting
     autoKey: null
+    constructors:
+      - name: PeriodTesting
+        fields:
+          - name: _periodTesting_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
   - entity: PeriodPromotionVote
     autoKey: null
+    constructors:
+      - name: PeriodPromotionVote
+        fields:
+          - name: _periodPromotionVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
@@ -1051,6 +1108,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
+  , (''PeriodProposal, 'PeriodProposalKey)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
@@ -1282,10 +1340,11 @@ instance ArgDict NotifyTag where
     , c (SecretKey, Maybe VoteState)
     , c (RightKind, Maybe RightNotificationLimit)
     , c (VotingPeriodKind, Maybe Amendment)
-    , c ()
+    , c (Id PeriodProposal, Maybe (PeriodProposal, Maybe Bool))
     , c (Maybe PeriodTestingVote)
     , c (Maybe PeriodTesting)
     , c (Maybe PeriodPromotionVote)
+    , c (Maybe BakerVote)
     )
   argDict = \case
     NotifyTag_BakerDaemonExternal -> Dict
@@ -1328,6 +1387,7 @@ instance ArgDict NotifyTag where
     NotifyTag_PeriodTestingVote -> Dict
     NotifyTag_PeriodTesting -> Dict
     NotifyTag_PeriodPromotionVote -> Dict
+    NotifyTag_BakerVote -> Dict
 
 fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
