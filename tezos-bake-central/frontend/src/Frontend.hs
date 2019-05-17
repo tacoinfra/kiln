@@ -441,7 +441,7 @@ appContentArea
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , MonadReader r (ModalM m), HasFrontendConfig r
+    , MonadReader r (ModalM m)
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     , Routed t (R AppRoute) m
@@ -458,7 +458,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
+    , MonadReader r (ModalM m), MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1774,7 +1774,7 @@ bakersTab =
           let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
           maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
             Nothing -> Nothing
-            Just (k, a) -> case k of
+            Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
                 n | n == 0 -> bakerNotVoted
                   | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
@@ -1792,13 +1792,14 @@ bakersTab =
             Right bid -> do
 
               whenJustDyn voteState $ \vs -> dyn_ $ ffor vs $ \(_, included) -> case included of
+                Just _ -> pure ()
                 Nothing -> do
                   open <- tileMenuEntry "Vote"
                   mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
                   mProtoInfo <- maybeDyn =<< watchProtoInfo
-                  let baker = ffor (current bakerDyn) $ \bs -> case _bakerSummary_baker bs of
+                  let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
                         Left _ -> Nothing
-                        Right bid -> Just (pkh, _bakerInternalData_secretKey bid)
+                        Right b -> Just (pkh, _bakerInternalData_secretKey b)
                       xs = ffor3 (current mProtoInfo) (current mAmendment) baker (\x y b -> ffor3 x y b (,,))
                   tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
               let sk = _bakerInternalData_secretKey bid
@@ -1835,6 +1836,7 @@ bakersTab =
               whenJustDyn voteState $ \dc -> do
                 let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
                       Nothing -> accessVoting
+                      Just True -> pure ()
                       Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
                 tooltipped TooltipPos_TopCenter tt $ do
                   let attrs = ffor dc $ \(_, included) -> "class" =: case included of
