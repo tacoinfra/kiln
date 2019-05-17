@@ -1834,7 +1834,7 @@ bakersTab =
                       Nothing -> accessVoting
                       Just True -> pure ()
                       Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
-                tooltipped TooltipPos_TopCenter tt $ do
+                tooltipped TooltipPos_TopLeft tt $ do
                   let attrs = ffor dc $ \(_, included) -> "class" =: case included of
                         Nothing -> "large blue icon-vote-badge icon"
                         Just False -> "large grey icon-ellipsis icon" -- TODO badge version

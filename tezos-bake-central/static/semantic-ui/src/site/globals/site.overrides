@@ -1166,10 +1166,6 @@ img.credits-obsidian {
   }
 }
 
-.pushable, .pusher, .app-content {
-  overflow: visible !important;
-}
-
 .dashboard-section > .ui.cards {
   margin-left: 0;
   margin-right: 0;
