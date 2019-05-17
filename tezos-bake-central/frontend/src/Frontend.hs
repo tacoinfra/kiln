@@ -237,13 +237,6 @@ appMain = do
         pure e
     pure ()
 
--- TODO this is temporary, for testing the voting modal
-watchFakeVotes :: (Applicative m, Reflex t) => m (Dynamic t (Map.Map ProtocolHash Bool))
-watchFakeVotes = pure $ pure $ Map.fromList
-  [ ("Psjnh6RuurUG3S5M7cbzB4SFqew7D4qAFyqvg17ja3f8W3pc1Hc", True)
-  , ("Pt1jF6oZY7EQBuqETjoa7gjgWdV7rRwTPRbHXcxRQQDs4EHNb8n", False)
-  ]
-
 appName :: Text
 appName = "Kiln"
 
@@ -1832,7 +1825,10 @@ bakersTab =
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
           dyn_ $ ffor isInternal $ \i -> when i $ do
             divClass "baker-vote-popup" $ do
-              let accessVoting = divClass "detail" $ text "Access Voting from the extras menu on this baker tile." -- TODO ...
+              let accessVoting = divClass "detail" $ do
+                    text "Access Voting from the extras menu "
+                    icon "icon-ellipsis grey"
+                    text "on this baker tile."
               whenJustDyn voteState $ \dc -> do
                 let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
                       Nothing -> accessVoting
