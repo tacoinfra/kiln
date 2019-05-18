@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -10,6 +11,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -19,6 +21,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} -- for MonadError instance
 
 {-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
@@ -36,7 +39,6 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
--- import Control.Lens (TraversableWithIndex)
 import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
@@ -84,6 +86,7 @@ import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple.LargeObjects as PG
 import qualified Database.PostgreSQL.Simple as PG
+import Named
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
@@ -484,7 +487,7 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
     go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
     go n bad = do
       $(logDebugSH) ("RPC monad attempt number" :: Text, n :: Int, "starting" :: Text)
-      tryNodeQueryT bad f >>= \case
+      tryNodeQueryTWithDb bad f >>= \case
         Left e -> return $ Left e
         Right (NodeQueryTResult_Done v) -> do
           $(logDebugSH) ("RPC monad attempt number" :: Text, n, "succeeded" :: Text)
@@ -496,14 +499,14 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
             Right _ -> go (n + 1) bad
             Left e -> go (n + 1) (bad <> DMap.singleton q (Const $ Map.singleton h e))
 
-tryNodeQueryT
+tryNodeQueryTWithDb
   :: forall a s e m.
     ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
     )
   => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> m (Either e (NodeQueryTResult a))
-tryNodeQueryT bad f = do
+tryNodeQueryTWithDb bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
       bail = DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn
@@ -512,13 +515,21 @@ tryNodeQueryT bad f = do
     v@(Right (NodeQueryTResult_Done _)) -> return v
     q@(Right (NodeQueryTResult_Query _ _)) -> q <$ bail
 
+
+tryNodeQueryT :: Functor m => NodeQueryT m a -> m (Maybe a)
+tryNodeQueryT f = do
+  unNodeQueryT f DMap.empty <&> \case
+    NodeQueryTResult_Done a -> Just a
+    NodeQueryTResult_Query{} -> Nothing
+
 unpackCacheResult
   :: forall a r m. (MonadSTM m, MonadReader r m, HasTimestamp r)
   => Compose TVar CacheLine a -> m a
 unpackCacheResult (Compose var) = do
   result <- readTVar' var
   now <- asks (^. Stm.timestamp)
-  writeTVar' var $ result{_cacheLine_used = now}
+  when (_cacheLine_used result < now) $
+    writeTVar' var $ result{_cacheLine_used = now}
   pure $ _cacheLine_value result
 
 -- get lca between two blocks
@@ -691,29 +702,83 @@ data RightsCycleInfo = RightsCycleInfo
   , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level of _rightsCycleInfo_cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
+
+firstLevelInCycle
+  :: (HasNodeDataSource nds, MonadReader nds m, MonadIO m, MonadError e m, AsCacheError e, MonadMask m, PostgresRaw m)
+  => Cycle -> BlockHash -> NodeQueryT m RawLevel
+firstLevelInCycle c branch = do
+  (branchBlock, branchProtocolConstants) <- liftA2 (,)
+    (nodeQueryDataSourceSafe $ NodeQuery_Block branch)
+    (nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants branch)
+  let
+    firstLevelInBranchCycle = branchBlock ^. level - branchBlock ^. block_metadata . blockMetadata_level . level_cyclePosition -- TODO: Check for off-by-one
+    cycle = block_metadata . blockMetadata_level . level_cycle
+  case branchBlock ^. cycle of
+    branchCycle
+      | branchCycle == c ->
+          -- The branch is on the cycle we're looking for so we can calculate the offset to
+          -- the first block of that cycle.
+          pure firstLevelInBranchCycle
+      | branchCycle > c ->
+          -- TODO: Get rid of the WARNING. If the desired cycle is in the future, we can
+          -- know for certain which level it will be as long as it's not beyond the point
+          -- of a possible protocol transition. Past that point we're just guessing and
+          -- assuming that the protocol doesn't change or that $BLOCKS_PER_CYCLE doesn't
+          -- change with the next protocol. We could return a sum type to encode
+          -- "guessing" to let caller decide how certain they need to be.
+          -- WARNING: We assume $BLOCKS_PER_CYCLE doesn't change in the future!
+          pure $
+            firstLevelInBranchCycle + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ branchCycle - c)
+      | otherwise -> do
+          -- TODO: Using the same logic as the TODO above we can optimize this to avoid
+          -- some RPC calls if we can determine that the desired cycle is within the
+          -- range of blocks that must certainly be on the same protocol as the one
+          -- we have in hand already.
+
+          -- See if going all the way back to the beginning of this protocol is enough.
+          -- If not, we'll have to recurse starting with the block that preceeds the
+          -- first block of this protocol.
+          firstBlockHashOfBranchProtocol <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolFirstBlock $ branchBlock ^. protocolHash
+          firstBlockOfBranchProtocol <- nodeQueryDataSourceSafe $ NodeQuery_Block firstBlockHashOfBranchProtocol
+          case firstBlockOfBranchProtocol ^. cycle < c of
+            True -> pure $ firstBlockOfBranchProtocol ^. level + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - firstBlockOfBranchProtocol ^. cycle)
+            False -> do
+              nds <- asks (^. nodeDataSource)
+              hist <- nqAtomically $ readTVar' $ nds ^. nodeDataSource_history
+              maybe (nqThrowError CacheError_NotEnoughHistory) (firstLevelInCycle c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
+
+
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
 cycleStartHashes
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> ProtoInfo -> BlockHash -> m (Maybe [RightsCycleInfo]) -- Nothing when the branch is not in history.
-cycleStartHashes nds protoInfo blkHash = do
-  let dsrc = nds ^. nodeDataSource
-  history <- readTVar' $ _nodeDataSource_history dsrc
-  return $ do
-    branch <- blkHash `Map.lookup` _cachedHistory_blocks history
-    let
-      minLvl = _cachedHistory_minLevel history
-      lvl = minLvl + RawLevel (fromIntegral $ length branch)
-      cycle = levelToCycle protoInfo lvl
-      preservedCycles = _protoInfo_preservedCycles protoInfo
-      cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
-      minLevels = firstLevelInCycle protoInfo <$> cycles
-      maxLevels = pred . firstLevelInCycle protoInfo . succ <$> cycles
-      branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
-    return $ getZipList $ RightsCycleInfo
-      <$> ZipList branches
-      <*> ZipList cycles
-      <*> ZipList minLevels
-      <*> ZipList maxLevels
+  :: forall nds e m. (HasNodeDataSource nds, MonadReader nds m, MonadIO m, PostgresRaw m, MonadError e m, AsCacheError e, MonadMask m)
+  => BlockHash -> NodeQueryT m [RightsCycleInfo] -- Nothing when the branch is not in history.
+cycleStartHashes blkHash = do
+  dsrc <- asks (^. nodeDataSource)
+  history <- nqAtomically $ readTVar' $ _nodeDataSource_history dsrc
+  -- TODO: Partial match
+  let Just (branch, branchBlockHash) = do
+        b <- blkHash `Map.lookup` _cachedHistory_blocks history
+        branchHash <- case LCA.view b of
+          LCA.Root -> Nothing
+          LCA.Node bBlockHash _ _ -> Just bBlockHash
+        pure (b, branchHash)
+
+  branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branchBlockHash
+  branchProtocolConstants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants branchBlockHash
+  let
+    minLvl = _cachedHistory_minLevel history
+    cycle = branchBlock ^. block_metadata . blockMetadata_level . level_cycle
+    preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
+    cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
+  (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
+    (firstLevelInCycle c branchBlockHash)
+    (pred <$> firstLevelInCycle (succ c) branchBlockHash)
+  let branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
+  return $ getZipList $ RightsCycleInfo
+    <$> ZipList branches
+    <*> ZipList cycles
+    <*> ZipList minLevels
+    <*> ZipList maxLevels
 
 
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
@@ -930,14 +995,20 @@ nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggin
         (blk ^. hash)
 
       -- TODO: This is a LINEAR search backward. Improve somehow? (Binary search?)
-      go blkHash = do
+      go :: BlockHash -> "candidate" :! Maybe Block -> ExceptT CacheError IO (Maybe BlockHash)
+      go branch (Arg candidate') = do
         let votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
-        blk <- self $ NodeQuery_Block blkHash
-        case blk ^. block_protocol == protoHash of
-          False -> pure $ ancestorOf blk (blk ^. votingPeriodPosition)
-          True -> maybe (pure Nothing) go $ ancestorOf blk (blk ^. votingPeriodPosition - 1)
+        blk <- self $ NodeQuery_Block branch
+        let lastBlockHashInPreviousVotingPeriod = ancestorOf blk (blk ^. votingPeriodPosition - 1)
+        case (blk ^. block_protocol == protoHash, candidate') of
+          -- Our branch isn't on the protocol we're looking for and we have no candidate block so keep searching backward
+          (False, Nothing) -> maybe (pure Nothing) (go ! #candidate Nothing) lastBlockHashInPreviousVotingPeriod
+          -- Our branch isn't on the protocol we're looking for, but our previous iteration was, so we have found the switch-over point!
+          (False, Just candidate) -> pure $ ancestorOf candidate (candidate ^. votingPeriodPosition)
+          -- Our branch is on the protocol we're looking for, so this block is our candidate but we need to keep looking until we find the switch-over point.
+          (True, _) -> maybe (pure Nothing) (go ! #candidate (Just blk)) lastBlockHashInPreviousVotingPeriod
 
-    maybe (throwError CacheError_NotEnoughHistory) pure =<< go qBranch
+    maybe (throwError CacheError_NotEnoughHistory) pure =<< go qBranch ! #candidate Nothing
 
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
 

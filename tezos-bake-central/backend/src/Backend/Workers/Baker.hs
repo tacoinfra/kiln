@@ -291,6 +291,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
     headLvl = headBlock ^. level
+    levelToCycle = undefined
     headCycle = levelToCycle protoInfo headLvl
     pkh = _baker_publicKeyHash baker
     headFitness = headBlock ^. fitness

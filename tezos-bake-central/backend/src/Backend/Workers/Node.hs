@@ -682,6 +682,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   let
+    levelToCycle = undefined
     currentLvl = latestHead ^. level
     nextCycle = 1 + levelToCycle protoInfo currentLvl
     nextCheckLvl = firstLevelInCycle protoInfo nextCycle

@@ -19,7 +19,7 @@ import Tezos.Ledger as X
 import Tezos.Level as X
 import Tezos.Operation as X (Operation)
 import Tezos.PeriodSequence as X
-import Tezos.ProtocolConstants as X hiding (levelToCycle, predictFutureTimestamp)
+import Tezos.ProtocolConstants as X hiding (levelToCycle, predictFutureTimestamp, firstLevelInCycle)
 import Tezos.PublicKeyHash as X
 import Tezos.Tez as X
 import Tezos.Vote as X

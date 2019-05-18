@@ -21,8 +21,6 @@ import Data.Time (NominalDiffTime)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
-import Tezos.Types
-
 import Backend.Alerts (reportAccusation)
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
@@ -48,6 +46,7 @@ accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds
         order by a.level asc
       |]
 
+      let levelToCycle = undefined
       for_ alertData $ \(aHash, aBlockHash, aIsBake, aBaker, aOccurredLevel, aLevel) -> do
         params <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants aBlockHash
         flip runReaderT appConfig $ reportAccusation
