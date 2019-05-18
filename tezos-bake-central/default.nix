@@ -27,6 +27,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
+      named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };
