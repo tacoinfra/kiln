@@ -495,7 +495,7 @@ getBakerAddresses nds bid = do
   -- grab the hashes of the cycle starts, if they exist
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
   maxProgress_rightsInfo :: Either CacheError (RawLevel, [RightsCycleInfo]) <- case latestHead' of
-    Nothing -> pure CacheError_NotEnoughHistory
+    Nothing -> pure $ Left CacheError_NotEnoughHistory
     Just latestHead -> tryNodeQueryT $ flip runReaderT nds $ runExceptT $ liftA2 (,)
       (cycleStartHashes $ latestHead ^. hash)
       (do
@@ -515,7 +515,7 @@ getBakerAddresses nds bid = do
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
     chainId = _nodeDataSource_chain nds
 
-  nextBakeRightsL <- case headLevelM of
+  nextBakeRightsL <- case latestHead' ^? _Just . level of
     Nothing -> pure []
     Just headLevel -> [queryQ|
       SELECT brcp."publicKeyHash",
