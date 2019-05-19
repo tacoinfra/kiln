@@ -493,22 +493,27 @@ getBakerAddresses nds bid = do
   -- we need to do this *here* instead of, say, on bakerdetails, because we
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
-  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- atomicallyWithTime $
-    withLatestProtocol nds (Nothing, Nothing, []) $ \protoInfo -> do
-      headM <- dataSourceHead nds
-      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes nds protoInfo . view hash) headM
-
-      return (view level <$> headM, Just (firstLevelInCycle protoInfo (_protoInfo_preservedCycles protoInfo + 1) - 1), rightsInfo)
+  latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
+  maxProgress_rightsInfo :: Either CacheError (RawLevel, [RightsCycleInfo]) <- case latestHead' of
+    Nothing -> pure CacheError_NotEnoughHistory
+    Just latestHead -> tryNodeQueryT $ flip runReaderT nds $ runExceptT $ liftA2 (,)
+      (cycleStartHashes $ latestHead ^. hash)
+      (do
+        protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants latestHead'
+        (_, latestHeadCycle) <- getPositionOfBlockFaster $ latestHead ^. hash
+        -- Calculate the level of the last block in the cycle $PRESERVED_CYCLES + 1 from the latest head cycle.
+        fmap pred $ firstLevelInCycle latestHead $ latestHeadCycle + protoInfo ^. protoInfo_preservedCycles + 1
+      )
 
   let
-    (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
+    maxProgress = maxProgress_rightsInfo ^? _Right . _1
+    rightsInfo = fromMaybe [] $ maxProgress_rightsInfo ^? _Right . _2
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
     chainId = _nodeDataSource_chain nds
-    maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
   nextBakeRightsL <- case headLevelM of
     Nothing -> pure []

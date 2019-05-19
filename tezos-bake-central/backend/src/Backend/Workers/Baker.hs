@@ -122,7 +122,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
       -- here's what we've got:
       let
-        haveProgress :: MonoidalMap (Cycle,  PublicKeyHash) (Max BakerRightsCycleProgress)
+        haveProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress)
         haveProgress = flip foldMap bakerRightsCycleProgress' $
           \p -> MMap.singleton (_bakerRightsCycleProgress_cycle &&& _bakerRightsCycleProgress_publicKeyHash $ p) (Max p)
 

@@ -618,12 +618,6 @@ getLatestProtocol nds = runMaybeT $ do
   block <- unpackCacheResult blockVar
   MaybeT $ getProtocolConstants nds (block ^. block_protocol)
 
-withLatestProtocol :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> a -> (ProtoInfo -> m a) -> m a
-withLatestProtocol nds default_ f = do
-  getLatestProtocol nds >>= \case
-    Nothing -> pure default_
-    Just proto -> f proto
-
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
 waitForNewHeadWithTimeout nds = do
@@ -703,10 +697,29 @@ data RightsCycleInfo = RightsCycleInfo
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
+-- | Tries to be more efficient about finding the level and cycle of a block by using
+-- protocol data from the latest head block before resorting to querying the
+-- block itself.
+-- TODO: Actually write the faster version of this.
+getPositionOfBlockFaster
+  :: ( HasNodeDataSource nds, MonadReader nds m
+     , MonadIO m, PostgresRaw m, MonadMask m
+     , MonadError e m, AsCacheError e
+     )
+  => BlockHash -> NodeQueryT m (RawLevel, Cycle)
+getPositionOfBlockFaster blkHash =
+  -- NOTE: Level can always be calculated from history, but we're querying the block anyway
+  -- so might as well get it this way.
+  level &&& block_metadata . blockMetadata_level . level_cycle <$>
+    nodeQueryDataSourceSafe (NodeQuery_Block blkHash)
+
 firstLevelInCycle
-  :: (HasNodeDataSource nds, MonadReader nds m, MonadIO m, MonadError e m, AsCacheError e, MonadMask m, PostgresRaw m)
-  => Cycle -> BlockHash -> NodeQueryT m RawLevel
-firstLevelInCycle c branch = do
+  :: ( HasNodeDataSource nds, MonadReader nds m
+     , MonadIO m, PostgresRaw m, MonadMask m
+     , MonadError e m, AsCacheError e
+     )
+  => BlockHash -> Cycle -> NodeQueryT m RawLevel
+firstLevelInCycle branch c = do
   (branchBlock, branchProtocolConstants) <- liftA2 (,)
     (nodeQueryDataSourceSafe $ NodeQuery_Block branch)
     (nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants branch)
@@ -739,19 +752,23 @@ firstLevelInCycle c branch = do
           -- If not, we'll have to recurse starting with the block that preceeds the
           -- first block of this protocol.
           firstBlockHashOfBranchProtocol <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolFirstBlock $ branchBlock ^. protocolHash
-          firstBlockOfBranchProtocol <- nodeQueryDataSourceSafe $ NodeQuery_Block firstBlockHashOfBranchProtocol
-          case firstBlockOfBranchProtocol ^. cycle < c of
-            True -> pure $ firstBlockOfBranchProtocol ^. level + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - firstBlockOfBranchProtocol ^. cycle)
+          (levelOfFirstBlockOnProtocol, cycleOfFirstBlockOnProtocol) <- getPositionOfBlockFaster firstBlockHashOfBranchProtocol
+          case cycleOfFirstBlockOnProtocol < c of
+            True -> pure $ levelOfFirstBlockOnProtocol + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - cycleOfFirstBlockOnProtocol)
             False -> do
               nds <- asks (^. nodeDataSource)
               hist <- nqAtomically $ readTVar' $ nds ^. nodeDataSource_history
-              maybe (nqThrowError CacheError_NotEnoughHistory) (firstLevelInCycle c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
+              maybe (nqThrowError CacheError_NotEnoughHistory) (`firstLevelInCycle` c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
 
 
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
 cycleStartHashes
-  :: forall nds e m. (HasNodeDataSource nds, MonadReader nds m, MonadIO m, PostgresRaw m, MonadError e m, AsCacheError e, MonadMask m)
-  => BlockHash -> NodeQueryT m [RightsCycleInfo] -- Nothing when the branch is not in history.
+  :: forall nds e m
+   . ( HasNodeDataSource nds, MonadReader nds m
+     , MonadIO m, PostgresRaw m, MonadMask m
+     , MonadError e m, AsCacheError e
+     )
+  => BlockHash -> NodeQueryT m [RightsCycleInfo]
 cycleStartHashes blkHash = do
   dsrc <- asks (^. nodeDataSource)
   history <- nqAtomically $ readTVar' $ _nodeDataSource_history dsrc
@@ -771,8 +788,8 @@ cycleStartHashes blkHash = do
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
-    (firstLevelInCycle c branchBlockHash)
-    (pred <$> firstLevelInCycle (succ c) branchBlockHash)
+    (firstLevelInCycle branchBlockHash c)
+    (pred <$> firstLevelInCycle branchBlockHash (succ c))
   let branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
   return $ getZipList $ RightsCycleInfo
     <$> ZipList branches
