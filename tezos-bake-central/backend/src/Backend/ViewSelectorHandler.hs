@@ -494,16 +494,17 @@ getBakerAddresses nds bid = do
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
-  maxProgress_rightsInfo :: Either CacheError (RawLevel, [RightsCycleInfo]) <- case latestHead' of
+  maxProgress_rightsInfo :: Either CacheError (Maybe RawLevel, [RightsCycleInfo]) <- case latestHead' of
     Nothing -> pure $ Left CacheError_NotEnoughHistory
-    Just latestHead -> tryNodeQueryT $ flip runReaderT nds $ runExceptT $ liftA2 (,)
-      (cycleStartHashes $ latestHead ^. hash)
-      (do
-        protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants latestHead'
-        (_, latestHeadCycle) <- getPositionOfBlockFaster $ latestHead ^. hash
-        -- Calculate the level of the last block in the cycle $PRESERVED_CYCLES + 1 from the latest head cycle.
-        fmap pred $ firstLevelInCycle latestHead $ latestHeadCycle + protoInfo ^. protoInfo_preservedCycles + 1
-      )
+    Just latestHead -> tryNodeQueryT $ flip runReaderT nds $ runExceptT $ do
+      rightsInfo <- cycleStartHashes $ latestHead ^. hash
+      -- WARNING: We're looking up information in the future which might be wrong. We assume the following
+      -- protocol constants won't ever change, even with a new protocol:
+      --    $PRESERVED_CYCLES
+      --    $BLOCKS_PER_CYCLE
+      maxProgress <- for (maximumMay $ _rightsCycleInfo_cycle <$> rightsInfo) $ \highestRightsCycle ->
+        lastLevelInCycle latestHead $ highestRightsCycle + protoInfo ^. protoInfo_preservedCycles + 1
+      pure (maxProgress, rightsInfo)
 
   let
     maxProgress = maxProgress_rightsInfo ^? _Right . _1

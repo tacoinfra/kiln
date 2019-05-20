@@ -760,6 +760,13 @@ firstLevelInCycle branch c = do
               hist <- nqAtomically $ readTVar' $ nds ^. nodeDataSource_history
               maybe (nqThrowError CacheError_NotEnoughHistory) (`firstLevelInCycle` c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
 
+lastLevelInCycle
+  :: ( HasNodeDataSource nds, MonadReader nds m
+      , MonadIO m, PostgresRaw m, MonadMask m
+      , MonadError e m, AsCacheError e
+      )
+  => BlockHash -> Cycle -> NodeQueryT m RawLevel
+lastLevelInCycle branch c = fmap pred $ firstLevelInCycle branch (c + 1)
 
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
 cycleStartHashes
