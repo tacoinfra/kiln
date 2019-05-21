@@ -68,6 +68,10 @@ preMigrate =
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
+  >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTesting") (ColumnExists "votingPeriod") False
+  >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
+  >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
+  >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
 
 migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -99,6 +103,23 @@ renameColumnIfExists table columnFrom columnTo ta = do
         return $ columnFrom `elem` fmap (Identifier . T.pack . colName) (tableColumns tableInfo)
   case columnExists of
     Just True -> renameColumn table columnFrom columnTo *> getTableAnalysis
+    _ -> pure ta
+
+data DropTableCondition
+  = ColumnExists String
+  | ColumnMissing String
+  deriving (Eq, Ord, Show)
+
+dropTableIf :: (Migrate m) => QualifiedIdentifier -> DropTableCondition -> Bool -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIf table cond cascade ta = do
+  let
+    hasColumn col = fmap (any ((== col) . colName) . tableColumns) <$> analyzeTable ta (convQN table)
+    shouldDrop = case cond of
+      ColumnExists col -> hasColumn col
+      ColumnMissing col -> fmap not <$> hasColumn col
+
+  shouldDrop >>= \case
+    Just True -> dropTable table cascade *> getTableAnalysis
     _ -> pure ta
 
 renameColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> m ()
