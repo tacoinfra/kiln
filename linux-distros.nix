@@ -199,7 +199,7 @@ let
       # We need to do a nested unshare (after doing mount) to change to a non-root shell
       # But the second 'unshare --user' (to go from root -> nobody) cannot happen after doing chroot
       # (see error EPERM, in man 2 unshare)
-      # 
+      #
       # So in order to do a nested unshare we instead do 'pivot_root'
       do-mount-and-pivot = ''
         #!/usr/bin/env bash
@@ -260,7 +260,8 @@ let
 
     [Install]
     WantedBy=multi-user.target
-    After=network.target
+    After=network-online.target
+    Wants=network-online.target
   ''; };
 in {
   inherit kiln-debian;
