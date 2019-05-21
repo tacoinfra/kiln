@@ -99,6 +99,7 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
 import Tezos.NodeRPC.Types
+import Tezos.Operation (Ballot)
 import Tezos.PublicKey
 import Tezos.Types
 
@@ -128,6 +129,8 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
   NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
@@ -675,6 +678,8 @@ getKey params hist = \case
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
+  NodeQuery_Ballot ctx pkh -> pure (ctx, NodeQuery_Ballot ctx pkh)
+  NodeQuery_ProposalVote ctx pkh -> pure (ctx, NodeQuery_ProposalVote ctx pkh)
   NodeQuery_Listings ctx -> pure (ctx, NodeQuery_Listings ctx)
   NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
   NodeQuery_CurrentProposal ctx lvl -> pure (ctx, NodeQuery_CurrentProposal ctx lvl)
@@ -841,6 +846,8 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
+  NodeQuery_Ballot branch pkh -> nodeRPC' $ rBallot chainId branch pkh
+  NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
   NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch

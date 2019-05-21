@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Tezos.NodeRPC.Class where
@@ -20,11 +21,13 @@ import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
+import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 
 import Tezos.NodeRPC.Types (NetworkStat)
+import Tezos.Operation (Ballot)
 import Tezos.Types
 
 
@@ -49,6 +52,8 @@ class QueryHistory repr where -- blockscale
   rProposals :: ChainId -> BlockHash -> repr (Seq ProposalVotes)
   rCurrentProposal :: ChainId -> BlockHash -> repr (Maybe ProtocolHash)
   rCurrentQuorum :: ChainId -> BlockHash -> repr Int
+  rBallot :: ChainId -> BlockHash -> PublicKeyHash -> repr (Maybe Ballot)
+  rProposalVote :: ChainId -> BlockHash -> PublicKeyHash -> repr (Set ProtocolHash)
 
   rManagerKey :: ContractId -> ChainId -> BlockHash -> repr ManagerKey
 
@@ -104,6 +109,8 @@ instance QueryHistory RpcQuery where
   rProposals = blockAPI "/votes/proposals/"
   rCurrentProposal = blockAPI "/votes/current_proposal/"
   rCurrentQuorum = blockAPI "/votes/current_quorum/"
+  rBallot chain block pkh = blockAPI ("/context/raw/json/votes/ballots/" <> toPublicKeyHashText pkh) chain block
+  rProposalVote chain block pkh = S.fromList . map fst . filter (elem @[] pkh . snd) <$> blockAPI "/context/raw/json/votes/proposals?depth=1" chain block
   rManagerKey contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId <> "/manager_key")
   rBakingRights params = blockAPI $ "/helpers/baking_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))

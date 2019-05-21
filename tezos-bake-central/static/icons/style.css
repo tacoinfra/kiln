@@ -1,10 +1,10 @@
 @font-face {
   font-family: 'tezos-icons';
-  src:  url('fonts/tezos-icons.eot?uc8fly');
-  src:  url('fonts/tezos-icons.eot?uc8fly#iefix') format('embedded-opentype'),
-    url('fonts/tezos-icons.ttf?uc8fly') format('truetype'),
-    url('fonts/tezos-icons.woff?uc8fly') format('woff'),
-    url('fonts/tezos-icons.svg?uc8fly#tezos-icons') format('svg');
+  src:  url('fonts/tezos-icons.eot?hyoy95');
+  src:  url('fonts/tezos-icons.eot?hyoy95#iefix') format('embedded-opentype'),
+    url('fonts/tezos-icons.ttf?hyoy95') format('truetype'),
+    url('fonts/tezos-icons.woff?hyoy95') format('woff'),
+    url('fonts/tezos-icons.svg?hyoy95#tezos-icons') format('svg');
   font-weight: normal;
   font-style: normal;
 }
@@ -77,6 +77,12 @@
 }
 .icon-vote-badge:before {
   content: "\e91c";
+}
+.icon-dots-badge:before {
+  content: "\e91d";
+}
+.icon-check-badge:before {
+  content: "\e91e";
 }
 .icon-question-mark:before {
   content: "\e915";

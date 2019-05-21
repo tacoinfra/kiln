@@ -31,6 +31,7 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
+import qualified Data.Set as S
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
@@ -39,7 +40,7 @@ import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
@@ -470,6 +471,46 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
         $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
 
+  -- Update baker votes
+  mPkh <- runDb (Identity db) $ join <$> project1
+    (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+    (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ mPkh $ \pkh -> case currentPeriodKind of
+    VotingPeriodKind_Proposal -> do
+      let blk = latestHead ^. hash
+      proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
+      let proposals = In $ S.toList proposals'
+          chainId = _nodeDataSource_chain nds
+          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+
+      runDb (Identity db) $ do
+        pps <- [queryQ|
+          UPDATE "BakerProposal" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp.hash IN ?proposals AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod
+          RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes
+        |]
+        for_ pps $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
+    VotingPeriodKind_Testing -> pure ()
+    _ -> do
+      let blk = latestHead ^.hash
+      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+      let chainId = _nodeDataSource_chain nds
+          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+      for_ mBallot $ \ballot -> runDb (Identity db) $ do
+        pps <- [queryQ|
+          UPDATE "BakerVote" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod AND ballot = ?ballot AND pkh = ?pkh
+          RETURNING proposal
+        |]
+        for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+          { _bakerVote_pkh = pkh
+          , _bakerVote_proposal = proposal
+          , _bakerVote_ballot = ballot
+          , _bakerVote_included = Just blk
+          }
+
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.
   -- Any *greater* periods should be blanked out.
@@ -500,7 +541,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       wipe p
       notify NotifyTag_Amendment (p, Nothing)
       case p of
-        VotingPeriodKind_Proposal -> notify NotifyTag_Proposals ()
+        VotingPeriodKind_Proposal -> pure () -- can never happen
         VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
         VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
@@ -517,7 +558,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     wipe p = do
       delete $ Amendment_periodField ==. p
       case p of
-        VotingPeriodKind_Proposal -> deleteAll' @PeriodProposal Proxy
+        VotingPeriodKind_Proposal -> pure ()
         VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
         VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
@@ -541,14 +582,21 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         VotingPeriodKind_Proposal -> do
           proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
           runDb (Identity db) $ do
-            for_ proposals $ \(ProposalVotes (phash, votes)) -> do
-              insert_ $ PeriodProposal
-                { _periodProposal_hash = phash
-                , _periodProposal_chainId = chainId
-                , _periodProposal_votingPeriod = votingPeriod
-                , _periodProposal_votes = votes
-                }
-            notify NotifyTag_Proposals ()
+            deletedIds <- [queryQ|
+              DELETE FROM "BakerProposal"
+              WHERE proposal IN (SELECT id FROM "PeriodProposal" WHERE "votingPeriod" < ?votingPeriod);
+              DELETE FROM "PeriodProposal"
+              WHERE "votingPeriod" < ?votingPeriod
+              RETURNING id
+            |]
+            for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
+            inserted <- returning [sql|
+              INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
+              RETURNING id, hash, "chainId", "votingPeriod", votes
+            |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
+            for_ inserted $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Nothing))
         VotingPeriodKind_Testing -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash) (predBlk ^. level)
           for_ mProposal $ \proposal -> do
@@ -561,38 +609,40 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
                     } -> (TestChainStatus_Running, Just c, Just b)
             tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
             runDb (Identity db) $ do
-              let t = PeriodTesting
-                    { _periodTesting_proposal = proposal
-                    , _periodTesting_chainId = chainId
-                    , _periodTesting_testChainId = testChainId
-                    , _periodTesting_votingPeriod = votingPeriod
-                    , _periodTesting_startingLevel = (^. level) <$> tcStartBlock
-                    , _periodTesting_status = status
-                    }
-              insert_ t
-              notify NotifyTag_PeriodTesting $ Just t
+              let startingLevel = (^. level) <$> tcStartBlock
+              ts <- [queryQ|
+                INSERT INTO "PeriodTesting" (proposal, "testChainId", "startingLevel", status)
+                (SELECT p.id, ?testChainId, ?startingLevel, ?status FROM "PeriodProposal" p WHERE p.hash = ?proposal)
+                RETURNING proposal, "testChainId", "startingLevel", status
+              |]
+              for_ ts $ \(ph,t,l,s) -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
+                { _periodTesting_proposal = ph
+                , _periodTesting_testChainId = t
+                , _periodTesting_startingLevel = l
+                , _periodTesting_status = s
+                }
         VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
-    handleVotingPeriod :: PersistEntity a => Block -> (PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+
+    handleVotingPeriod :: PersistEntity a => Block -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do
-      let chainId = _nodeDataSource_chain nds
-          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
         ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
         quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
         totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
-        pure $ flip fmap mProposal $ \proposal -> PeriodVote
-          { _periodVote_proposal = proposal
-          , _periodVote_chainId = chainId
-          , _periodVote_votingPeriod = votingPeriod
-          , _periodVote_ballots = ballots
-          , _periodVote_quorum = quorum
-          , _periodVote_totalRolls = totalRolls
-          }
-      for_ mpv $ \pv -> runDb (Identity db) $ do
-        insert_ $ f pv
-        notify n $ Just $ f pv
+        pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalRolls)
+
+      for_ mpv $ \(proposal, ballots, quorum, totalRolls) -> runDb (Identity db) $ do
+        mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
+        for_ mPid $ \pid -> do
+          let pv = PeriodVote
+                { _periodVote_ballots = ballots
+                , _periodVote_quorum = quorum
+                , _periodVote_totalRolls = totalRolls
+                }
+          insert_ $ f pid pv
+          notify n $ Just $ f pid pv
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker

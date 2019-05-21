@@ -126,6 +126,168 @@ h6.ui.header {
   vertical-align: middle;
 }
 
+.vote-modal {
+  min-width: 700px;
+  .detail {
+    font-size: @12px;
+    color: #6a6a6a;
+  }
+  .header {
+    margin-bottom: @10px;
+    font-size: @24px;
+    font-weight: bold;
+    > .icon {
+      vertical-align: -@2px;
+      margin-right: @8px;
+    }
+    > .detail {
+      font-weight: normal;
+      margin-left: @20px;
+    }
+  }
+  .bigtitle {
+    .icon {
+      margin: 0 @20px @4px 0;
+    }
+    padding: @20px;
+    font-size: @20px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .centered-grey {
+    text-align: center;
+    color: @grey;
+  }
+  .cast-vote-protocol {
+    margin-bottom: @30px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .confirm-title {
+    margin-top: @30px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .confirm-content {
+    margin-top: @10px;
+    font-size: @16px;
+    font-weight: bold;
+    text-align: center;
+  }
+  .looking-tezos-wallet {
+    .header {
+      font-size: @20px;
+      padding: @10px;
+    }
+    .ui.active.inline.loader {
+      margin-right: @20px;
+    }
+  }
+  .ui.message {
+    display: flex;
+    background: @white;
+    .icon {
+      margin-right: @24px;
+    }
+    .title {
+      font-size: @16px;
+      font-weight: bold;
+    }
+    .description {
+      margin-top: @13px;
+      font-size: @12px;
+      color: @grey;
+    }
+  }
+  .vote-cast-as {
+    margin: @21px 0 @40px 0;
+    display: flex;
+    flex-direction: row;
+    align-items: start;
+    .kiln-icon { margin: @2px @12px 0 0; }
+    > .item {
+      margin-right: @47px;
+      > .title {
+        font-size: @16px;
+        font-weight: bold;
+      }
+    }
+  }
+  .ledger-device-status {
+    text-align: center;
+    .mark {
+      position: relative;
+      right: @12px;
+      top: -@15px;
+      > .icon {
+        background-color: @white;
+      }
+    }
+  }
+  .proposals {
+    margin: 0 -@10px;
+    table {
+      margin-top: @20px;
+      width: 100%;
+      text-align: center;
+      border-spacing: @8px;
+      th:first-child, td:first-child { text-align: left; }
+      thead {
+        margin-bottom: @11px;
+        tr > th {
+          color: #6a6a6a;
+          font-size: @12px;
+          font-weight: normal;
+        }
+      }
+      tbody {
+        font-weight: bold;
+        > tr {
+          vertical-align: middle;
+          &.filtered { display: none; }
+          .ui.button {
+            width: unit(76 / @emSize, rem);
+            height: @24px;
+            line-height: @24px;
+            padding: 0;
+            margin: 0;
+            background-color: @blue;
+            color: @white;
+            &.pending, &.voted { cursor: auto; }
+            &.pending { background-color: #aabfe1; }
+            &.voted {
+              background-color: @white;
+              box-shadow: none;
+              color: #98a0ad;
+            }
+          }
+        }
+      }
+    }
+  }
+  .vote-buttons {
+    text-align: center;
+    button {
+      margin: 0 @10px;
+      width: unit(166 / @emSize, rem);
+    }
+  }
+  .proposal-hash {
+    font-weight: bold;
+    margin-top: @14px;
+  }
+  .promote { text-align: center; }
+  label {
+    display: block;
+    margin-bottom: @4px;
+  }
+  .ui.input > input {
+    background-color: #fcfcfc;
+  }
+}
+
 .amendment-popup {
   width: unit(528 / @emSize, rem);
   padding: @20px 0;
@@ -1004,7 +1166,6 @@ img.credits-obsidian {
   }
 }
 
-
 .dashboard-section > .ui.cards {
   margin-left: 0;
   margin-right: 0;
@@ -1076,7 +1237,11 @@ img.credits-obsidian {
         font-size: @14px;
         font-weight: bold;
         line-height: 1.3;
-        overflow: hidden;
+        .baker-vote-popup {
+          display: inline-block;
+          margin-left: @15px;
+          .detail { color: #898989; }
+        }
         text-overflow: ellipsis;
         white-space: nowrap;
 

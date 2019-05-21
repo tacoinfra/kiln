@@ -72,7 +72,7 @@ toLSSText = \case
 ledgerSetupSteps :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedger
-  ledgerIdentifier <- holdUniqDyn $ (_connectedLedger_ledgerIdentifier =<<) <$> connectedLedger
+  ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
   divClass "progress" $ do
     elClass "h4" "ui header" $ do
