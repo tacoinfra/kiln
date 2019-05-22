@@ -25,11 +25,20 @@ in {
     #!/usr/bin/env bash
     set -Eeuo pipefail
 
+    PATH="${pkgs.jq + /bin}:$PATH"
+
+    kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
+    : "''${speed:=10}"
+    : "''${block_per_voting_preiod:=40}"
+    : "''${root_path:=$PWD/dpu_root_path}"
+
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
 
-    connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
-    ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
+    if [ -z "''${ledger_uri:-}" ]; then
+      connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
+      ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
+    fi
     echo "> Ledger: $ledger_uri"
 
     show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
@@ -38,19 +47,19 @@ in {
     pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
     echo "> PKH: $pkh"
 
-    echo 'Starting flextesa protocol test...'
-    echo '>>> Monitor a node via Kiln at http://127.0.0.1:20000 <<<'
+    echo 'Starting tezos-sandbox protocol test...'
 
+    mkdir -p "$kiln_config_dir"
     ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${propto} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
       --no-daemons-for LBK \
       --add-external 10000 \
-      --generate-kiln ./tezos-bake-central/config/,10000 \
+      --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
-      --time 10,10 \
-      --blocks-per-vot 40 \
+      --time "$speed,$speed" \
+      --blocks-per-vot "$block_per_voting_preiod" \
       --pause-on-error true \
-      --root-path "$PWD/dpu_root_path" \
+      --root-path "$root_path" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
