@@ -47,7 +47,7 @@ in {
       --add-external 10000 \
       --generate-kiln ./tezos-bake-central/config/,10000 \
       --clean-kiln-config \
-      --time 4,4 \
+      --time 10,10 \
       --blocks-per-vot 40 \
       --pause-on-error true \
       --root-path "$PWD/dpu_root_path" \
