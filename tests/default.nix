@@ -16,11 +16,11 @@ in {
   '';
 
   protocol = let
-    tezosBin = tbp-flextesa.tezos.master.kit + /bin;
-    tezosClient = "${tezosBin}/tezos-client";
+    tzFlextesa = tbp-flextesa.tezos.master;
+    tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
     oldSuffix = "003-PsddFKi3";
     newSuffix = "004-Pt24m4xi";
-    propto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet.tezos-src + /src/proto_004_Pt24m4xi/lib_protocol;
+    propto = tzMultiProto.tezos-src + /src/proto_004_Pt24m4xi/lib_protocol;
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -28,11 +28,11 @@ in {
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
 
-    connected_ledgers=''$(${tezosClient} -P 0 list connected ledgers 2>/dev/null)
+    connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
     ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
     echo "> Ledger: $ledger_uri"
 
-    show_ledger=$(${tezosClient} -P 0 show ledger "$ledger_uri" 2>/dev/null)
+    show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
     pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
     echo "> PK: $pk"
     pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
@@ -41,7 +41,7 @@ in {
     echo 'Starting flextesa protocol test...'
     echo '>>> Monitor a node via Kiln at http://127.0.0.1:20000 <<<'
 
-    ${tezosBin}/tezos-sandbox daemons-upgrade ${propto} \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${propto} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
       --no-daemons-for LBK \
       --add-external 10000 \
@@ -51,15 +51,15 @@ in {
       --blocks-per-vot 40 \
       --pause-on-error true \
       --root-path "$PWD/dpu_root_path" \
-      --tezos-node-binary ${tezosBin}/tezos-node \
+      --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
-      --first-baker-alpha-binary     ${tezosBin}/tezos-baker-${oldSuffix} \
-      --first-endorser-alpha-binary  ${tezosBin}/tezos-endorser-${oldSuffix}} \
-      --first-accuser-alpha-binary   ${tezosBin}/tezos-accuser-${oldSuffix}} \
-      --second-baker-alpha-binary    ${tezosBin}/tezos-baker-${newSuffix} \
-      --second-endorser-alpha-binary ${tezosBin}/tezos-endorser-${newSuffix} \
-      --second-accuser-alpha-binary  ${tezosBin}/tezos-accuser-${newSuffix} \
-      --tezos-client-binary ${tezosClient} \
-      --tezos-admin-client-binary ${tezosBin}/tezos-admin-client
+      --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
+      --first-endorser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-endorser- + oldSuffix} \
+      --first-accuser-alpha-binary   ${tzMultiProto.kit + /bin/tezos-accuser- + oldSuffix} \
+      --second-baker-alpha-binary    ${tzMultiProto.kit + /bin/tezos-baker- + newSuffix} \
+      --second-endorser-alpha-binary ${tzMultiProto.kit + /bin/tezos-endorser- + newSuffix} \
+      --second-accuser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-accuser- + newSuffix} \
+      --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client} \
+      --tezos-admin-client-binary ${tzMultiProto.kit + /bin/tezos-admin-client}
   '';
 }
