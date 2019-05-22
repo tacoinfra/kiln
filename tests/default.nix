@@ -10,9 +10,13 @@ in {
     rm -rf /tmp/kiln_voting_test
     cp -r ${tbp-flextesa.tezos.master.tezos-src}/src/bin_client/test/proto_test_injection /tmp/kiln_voting_test
     chmod -R +w /tmp/kiln_voting_test
+
+    export PATH="${tbp-flextesa.tezos.master.kit + /bin}:$PATH"
     ${tbp-flextesa.tezos.master.kit}/bin/tezos-sandbox voting \
-      /tmp/kiln_voting_test \
-      --base-port=20000 --interactive=true --pause-on-error=true
+      /tmp/kiln_voting_test/TEZOS_PROTOCOL /tmp/kiln_voting_test/TEZOS_PROTOCOL \
+      --base-port=20000 \
+      --interactive=true \
+      --pause-on-error=true
   '';
 
   protocol = let
@@ -25,7 +29,7 @@ in {
     #!/usr/bin/env bash
     set -Eeuo pipefail
 
-    PATH="${pkgs.jq + /bin}:$PATH"
+    export PATH="${pkgs.jq + /bin}:$PATH"
 
     kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
     : "''${speed:=10}"
