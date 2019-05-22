@@ -1837,8 +1837,8 @@ bakersTab =
                 tooltipped TooltipPos_TopLeft tt $ do
                   let attrs = ffor dc $ \(_, included) -> "class" =: case included of
                         Nothing -> "large blue icon-vote-badge icon"
-                        Just False -> "large grey icon-ellipsis icon" -- TODO badge version
-                        Just True -> "large grey icon-check icon" -- TODO badge version
+                        Just False -> "large grey icon-dots-badge icon"
+                        Just True -> "large grey icon-check-badge icon"
                   elDynAttr "i" attrs blank
 
             divClass "internal-subtitle" $ do
