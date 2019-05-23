@@ -1783,18 +1783,16 @@ bakersTab =
             Left _ -> do -- not a kiln baker
               removeEntry $ removeItemModal "baker"
             Right bid -> do
+              () <- do -- Vote option
+                open <- tileMenuEntry "Vote"
+                mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
+                mProtoInfo <- maybeDyn =<< watchProtoInfo
+                let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
+                      Left _ -> Nothing
+                      Right b -> Just (pkh, _bakerInternalData_secretKey b)
+                    xs = ffor3 (current mProtoInfo) (current mAmendment) baker (\x y b -> ffor3 x y b (,,))
+                tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
 
-              whenJustDyn voteState $ \vs -> dyn_ $ ffor vs $ \(_, included) -> case included of
-                Just _ -> pure ()
-                Nothing -> do
-                  open <- tileMenuEntry "Vote"
-                  mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
-                  mProtoInfo <- maybeDyn =<< watchProtoInfo
-                  let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
-                        Left _ -> Nothing
-                        Right b -> Just (pkh, _bakerInternalData_secretKey b)
-                      xs = ffor3 (current mProtoInfo) (current mAmendment) baker (\x y b -> ffor3 x y b (,,))
-                  tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
               latestHead <- maybeDyn =<< watchLatestHead
