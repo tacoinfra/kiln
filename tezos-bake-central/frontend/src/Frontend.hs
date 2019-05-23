@@ -1783,15 +1783,20 @@ bakersTab =
             Left _ -> do -- not a kiln baker
               removeEntry $ removeItemModal "baker"
             Right bid -> do
-              () <- do -- Vote option
-                open <- tileMenuEntry "Vote"
-                mAmendment <- maybeDyn . fmap (fmap snd . Map.lookupMax) =<< watchAmendment
-                mProtoInfo <- maybeDyn =<< watchProtoInfo
-                let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
-                      Left _ -> Nothing
-                      Right b -> Just (pkh, _bakerInternalData_secretKey b)
-                    xs = ffor3 (current mProtoInfo) (current mAmendment) baker (\x y b -> ffor3 x y b (,,))
-                tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
+              mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
+              whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
+                isTestingPeriod <- holdUniqDyn $ (VotingPeriodKind_Testing ==) . fst <$> periodKind_amendment
+                dyn_ $ ffor isTestingPeriod $ \case
+                  True -> pure ()
+                  False -> do
+                    open <- tileMenuEntry "Vote"
+                    let amendment = snd <$> periodKind_amendment
+                    mProtoInfo <- maybeDyn =<< watchProtoInfo
+                    let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
+                          Left _ -> Nothing
+                          Right b -> Just (pkh, _bakerInternalData_secretKey b)
+                        xs = (liftA3 . liftA3) (,,) (current mProtoInfo) (pure . pure <$> current amendment) baker
+                    tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
 
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
