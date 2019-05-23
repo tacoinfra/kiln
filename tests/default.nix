@@ -32,9 +32,9 @@ in {
     export PATH="${pkgs.jq + /bin}:$PATH"
 
     kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
+    : "''${size:=3}"
     : "''${speed:=10}"
     : "''${block_per_voting_preiod:=40}"
-    : "''${root_path:=$PWD/dpu_root_path}"
 
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
@@ -53,6 +53,9 @@ in {
 
     echo 'Starting tezos-sandbox protocol test...'
 
+    root_path=/tmp/kiln-protocol-test
+    rm -rf "$root_path"
+
     mkdir -p "$kiln_config_dir"
     ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${propto} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
@@ -61,6 +64,7 @@ in {
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
       --time "$speed,$speed" \
+      --size "$size" \
       --blocks-per-vot "$block_per_voting_preiod" \
       --pause-on-error true \
       --root-path "$root_path" \
