@@ -1,7 +1,7 @@
 {
   "url": "https://gitlab.com/obsidian.systems/tezos-baking-platform.git",
-  "rev": "c6ff50ea841ad6d14cc3ac284a37d87a9b87a1e0",
-  "sha256": "11fk1mfhf4846d9r3vh3fayczjl9gspxvw633gzssp9gfln8sx3c",
+  "rev": "e9c5ac582d079aa58f946c30652211c2b76f9fdd",
+  "sha256": "1c08w9k69pb7a2ap5yyyx7s694d2k4lnyd4p387g1zzzm0kf5qrf",
   "fetchSubmodules": false,
   "branch": "sm@flextesa-iii"
 }

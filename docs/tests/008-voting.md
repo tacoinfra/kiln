@@ -17,7 +17,19 @@ Users should be able to vote from within Kiln using a Kiln Baker. This should wo
      ```shell
      $(nix-build --no-out-link -A tests.protocol)/bin/protocol-test app
      ```
-  4. Wait for the `protocol-test` script to get to a point where it says the following (it may take a minute or so):
+  4. Wait for the `protocol-test` script to say the following (should only take a few seconds after starting the script):
+     ```
+     Flextesa.daemons-upgrade:
+       Kiln-Configuration DONE  Kiln was configured at `app/config`
+     ```
+  5. Start Kiln:
+     ```shell
+     (cd app && ./backend)
+     ```
+  6. Add a Kiln Node and wait for it to sync.
+  7. Add a Kiln baker and use the account that has a lot of tez.
+  8. Set the high-water mark of the baker to 0.
+  9. Wait for the `protocol-test` script to get to a point where it says the following:
      ```
      Flextesa.daemons-upgrade:
        Pause
@@ -27,19 +39,13 @@ Users should be able to vote from within Kiln using a Kiln Baker. This should wo
 
      Flextesa.daemons-upgrade: Please enter command:
      ```
-  5. Start Kiln:
-     ```shell
-     (cd app && ./backend)
-     ```
-  6. Add a Kiln Node and wait for it to sync.
-  7. Add a Kiln baker and use the account that has a lot of tez.
-  8. In the shell where `protocol-test` is waiting for your input, enter `q` and hit Enter. This will start the protocol transition. If the test dies without transitioning to the next period, start it again (step 3) and hit `q` again.
-  9. Go forth and vote on all the voting periods. You don't have lots of time to do it.
+  10. In the shell where `protocol-test` is waiting for your input, enter `q` and hit Enter. This will start the protocol transition.
+  11. Go forth and vote on all the voting periods. You don't have lots of time to do it.
 
 To clean up and start everything from scratch run:
 
 ```shell
-rm -rf app dpu_root_path
+rm -rf app
 ```
 
 You may also need to run `pkill tezos-node` to stop old nodes.
