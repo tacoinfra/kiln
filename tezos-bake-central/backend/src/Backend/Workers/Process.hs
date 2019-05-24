@@ -98,7 +98,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         {-# INLINE claim #-}
         claim = do
           now <- liftIO getCurrentTime
-          let nowMinus5min = addUTCTime (-600) now
+          let nowMinus5min = addUTCTime (-60 * 5) now
           pd <- runDb (Identity db) $ do
             update [state_ =. state, updated_ =. Just now, backend_ =. Just lockId]
               ((AutoKeyField ==. fromId pid)
