@@ -65,7 +65,13 @@ import ExtraPrelude
 
 processWorker
   :: (MonadIO m)
-  => (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> (ProcessState -> m' ()) -> FilePath -> m' a)
+  => ( forall m'
+       . (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m')
+       => "db" :! Pool Postgresql
+       -> "updateState" :! (ProcessState -> m' ())
+       -> "configFile" :! FilePath
+       -> m' a
+     )
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
@@ -78,7 +84,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg process) (Ar
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
-      v <- runLoggingEnv logger $ initialize db updateState configFile
+      v <- runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
       updateState ProcessState_Starting
       withCreateProcess (process v configFile) procMonitor
     threadDelay' 10

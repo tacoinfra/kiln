@@ -1,19 +1,22 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoDoAndIfThenElse #-}
 {-# LANGUAGE NumDecimals #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.NodeCmd where
 
-import Control.Monad.Logger (MonadLogger)
+import Control.Monad.Logger (MonadLogger, logInfo)
+import Control.Monad.Trans (lift)
 import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
@@ -120,35 +123,45 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
       ]
       ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
       ++ nodeExtraArgs
+
   processWorker
-    (initNode appConfig nodePath)
+    (initNode ! #logger logger ! #config appConfig ! #nodePath nodePath)
     ! #logger logger
     ! #db db
     ! #config appConfig
+    ! #logNamespace "kiln-node"
     ! #mkProcess (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
     ! #pid pid
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-initNode :: (MonadIO m)
-  => AppConfig
-  -> FilePath
-  -> Pool Postgresql
-  -> (ProcessState -> m ())
-  -> FilePath
+runCommandWithInfoLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m Text
+runCommandWithInfoLogging cmd args = do
+  out <- T.pack <$> liftIO (readProcess cmd (T.unpack <$> args) "")
+  $(logInfo) $ "Running command " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
+  pure out
+
+initNode
+  :: (MonadIO m)
+  => "logger" :! LoggingEnv
+  -> "config" :! AppConfig
+  -> "nodePath" :! FilePath
+  -> "db" :! Pool Postgresql
+  -> "updateState" :! (ProcessState -> m ())
+  -> "configFile" :! FilePath
   -> m FilePath
-initNode appConfig nodePath _ updateState nodeConfigPath = do
+initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  -- liftIO . putStrLn =<< liftIO (readProcess "cat" [nodeConfigPath] "")
   haveVersionFile <- liftIO $ doesFileExist versionFile
   when (not haveVersionFile) $
-    liftIO . putStrLn =<< liftIO (readProcess nodePath ["config", "show", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
+    void $ runCommandWithInfoLogging nodePath ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
-    updateState ProcessState_GeneratingIdentity
-    liftIO . putStrLn =<< liftIO (readProcess nodePath ["identity", "generate", "--config-file", nodeConfigPath, "--data-dir", dataDir] "")
+    lift $ updateState ProcessState_GeneratingIdentity
+    void $ runCommandWithInfoLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+
   return dataDir
 
 -- Start Baker and Endorser
@@ -211,15 +224,15 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
                    , "run"
                    , alias]
     pw (pathF, args) pid = processWorker
-      (fetchProtocol pid)
+      (\(Arg db_) _ _ -> fetchProtocol pid db_)
       ! #logger logger
       ! #db db
       ! #config appConfig
       ! #mkProcess (\proto _nodeConfigPath -> proc (pathF proto) args)
       ! #pid pid
       ! #mkNotify Nothing
-    bakerPw = pw (bakerPath paths, bakerArgs)
-    endorserPw = pw (endorserPath paths, endorserArgs)
+    bakerPw = pw (bakerPath paths, bakerArgs) ! #logNamespace "kiln-baker"
+    endorserPw = pw (endorserPath paths, endorserArgs) ! #logNamespace "kiln-endorser"
     paths = either (const tezosBinaryPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
@@ -235,9 +248,10 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
   return (bp1 *> bp2 *> ep1 *> ep2)
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
-fetchProtocol :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Id ProcessData -> Pool Postgresql -> a -> b -> m (Maybe ProtocolHash)
-fetchProtocol pid db _ _ = runDb (Identity db) $ do
+fetchProtocol
+  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  => Id ProcessData -> Pool Postgresql -> m (Maybe ProtocolHash)
+fetchProtocol pid db = runDb (Identity db) $ do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
     Just bdid ->
