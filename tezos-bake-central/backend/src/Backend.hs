@@ -102,6 +102,11 @@ onRpcError = either (throwError . tshow) pure
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
 
+resolveKnownChains :: Either NamedChain ChainId -> Either NamedChain ChainId
+resolveKnownChains = \case
+  Right chainId | chainId == mainnetChainId -> Left NamedChain_Mainnet
+  x -> x
+
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
@@ -120,7 +125,7 @@ backendImpl cfg serve = do
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
+  !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
