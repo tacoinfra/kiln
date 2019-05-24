@@ -1,14 +1,17 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -20,6 +23,7 @@ import Control.Monad.Catch (bracket)
 import Control.Monad.Logger (MonadLogger, logWarnSH, logDebugSH, logWarn, logInfoSH)
 import Data.Pool (Pool)
 import Database.Groundhog.Postgresql
+import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
@@ -60,17 +64,16 @@ import ExtraPrelude
 --     Also monitors if process terminates unexpectedly.
 
 processWorker
-  :: ( MonadIO m
-     )
-  => LoggingEnv
-  -> Pool Postgresql
-  -> AppConfig
-  -> (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> (ProcessState -> m' ()) -> FilePath -> m' a)
-  -> (a -> FilePath -> CreateProcess)
-  -> Id ProcessData
-  -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  :: (MonadIO m)
+  => (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> (ProcessState -> m' ()) -> FilePath -> m' a)
+  -> "logger" :! LoggingEnv
+  -> "db" :! Pool Postgresql
+  -> "config" :! AppConfig
+  -> "mkProcess" :! (a -> FilePath -> CreateProcess)
+  -> "pid" :! Id ProcessData
+  -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker logger db appConfig initialize process pid makeNotify = worker' $ do
+processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg process) (Arg pid) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing

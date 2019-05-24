@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE OverloadedLabels #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -18,6 +19,7 @@ import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Database.Groundhog.Postgresql
+import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -118,11 +120,14 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
       ]
       ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
       ++ nodeExtraArgs
-  processWorker logger db appConfig
+  processWorker
     (initNode appConfig nodePath)
-    (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
-    pid
-    (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+    ! #logger logger
+    ! #db db
+    ! #config appConfig
+    ! #mkProcess (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
+    ! #pid pid
+    ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
 initNode :: (MonadIO m)
   => AppConfig
@@ -205,11 +210,14 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
-    pw (pathF, args) pid = processWorker logger db appConfig
+    pw (pathF, args) pid = processWorker
       (fetchProtocol pid)
-      (\proto _nodeConfigPath -> proc (pathF proto) args)
-      pid
-      Nothing
+      ! #logger logger
+      ! #db db
+      ! #config appConfig
+      ! #mkProcess (\proto _nodeConfigPath -> proc (pathF proto) args)
+      ! #pid pid
+      ! #mkNotify Nothing
     bakerPw = pw (bakerPath paths, bakerArgs)
     endorserPw = pw (endorserPath paths, endorserArgs)
     paths = either (const tezosBinaryPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
