@@ -5,6 +5,7 @@
 
   * Voting support for Kiln bakers!
   * New governance status popup showing current votes, proposals, etc.
+  * Kiln baking will seamlessly transition between protocol 003 and 004.
   * Debian package installer now works on *Debian* (not just Ubuntu)!
   * Debian installer now automatically configures all udev rules necessary for ledger communication.
   * Kiln's node now uses non-default ports: 8733 for RPC and 9733 for P2P. This was done to avoid
