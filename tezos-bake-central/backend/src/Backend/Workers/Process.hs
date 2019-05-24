@@ -87,7 +87,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
     waitUntilShouldRun = do
       isStopped <- runLoggingEnv logger $ runDb (Identity db) $
         all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
-      when isStopped $ threadDelay' 1 >> waitUntilShouldRun
+      when isStopped $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $

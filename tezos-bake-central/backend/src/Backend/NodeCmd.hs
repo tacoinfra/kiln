@@ -201,7 +201,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
                 , "--base-dir", tezosClientDataDir appConfig
                 , "run", "with", "local", "node", nodeDataDir appConfig
                 , alias]
-    endorserArgs = ["--port", nodeRpcPort
+    endorserArgs = [ "--port", nodeRpcPort
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
