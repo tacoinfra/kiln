@@ -21,10 +21,11 @@ import Rhyolite.Schema (Email, Id)
 import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.Operation(Ballot)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (ErrorLog, LogTag, RightKind, RightNotificationLimit)
+import Common.Schema (ErrorLog, LogTag, PeriodProposal, RightKind, RightNotificationLimit)
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -86,6 +87,11 @@ instance HasRequest Bake where
     PublicRequest_SetRightNotificationSettings
       :: RightKind
       -> Maybe RightNotificationLimit
+      -> PublicRequest Bake ()
+    PublicRequest_DoVote
+      :: SecretKey
+      -> Id PeriodProposal
+      -> Maybe Ballot -- When 'Nothing', vote for proposal rather than submitting a ballot
       -> PublicRequest Bake ()
 
   data PrivateRequest Bake a where

@@ -104,7 +104,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
-      bakerPKHs :: [PublicKeyHash] <- project (Baker_publicKeyHashField) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
+      bakerPKHs :: [PublicKeyHash] <- project Baker_publicKeyHashField (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
         inCycleHashes = In $ _rightsCycleInfo_branch <$> cycleHashes
@@ -217,7 +217,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
                 return $ Just pId
               | otherwise -> return Nothing -- already have this progress, do nothing.
-          rights <- for (bakerRights progressId pkh) $ \r -> insert r *> return r
+          rights <- for (bakerRights progressId pkh) $ \r -> insert r $> r
           let
             maybeNotify :: forall m' . PersistBackend m' => Id BakerRightsCycleProgress -> BakerRightsCycleProgress -> [BakerRight] -> m' ()
             maybeNotify x y z = when (_bakerRightsCycleProgress_progress y `mod` 128 == 0
@@ -225,7 +225,6 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
               notify NotifyTag_BakerRightsProgress (x,y,z)
             {-# INLINE maybeNotify #-}
           sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
-          return ()
 
   case res of
     Right _ -> pure ()
@@ -258,7 +257,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
       return $ (bakerInt,) $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
-      let isInternal = maybe False (== _baker_publicKeyHash baker) bakerInt
+      let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
       res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
       case res of
         Right commit -> do
@@ -272,7 +271,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
     lift @(ExceptT CacheError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
 
   case res of
-    Right () -> $(logDebug) $ "bakerWorker DONE"
+    Right () -> $(logDebug) "bakerWorker DONE"
     Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
 
 
@@ -308,7 +307,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
   -- behave as if we have never run before.
   -- we don't actually need to know the hashes; headHash is sufficient, but we do need to know the levels.
   headBranch :: [(RawLevel, BlockHash)] <- atomicallyWith
-    $ zipWith (,) [headLvl, pred headLvl .. 1]
+    $ zip [headLvl, pred headLvl .. 1]
     . fst
     . fromMaybe ([headHash], [])
     <$> enumerateBranches headHash detailsBranch
@@ -318,25 +317,25 @@ getWantedAction protoInfo headBlock baker details isInternal = do
     bakingAlerts :: [mCommit ()]
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
-      let action = (bool reportMissedBake clearMissedBake
-                   (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker))
-                    (headBlock ^. fitness)
-                    RightKind_Baking
-                    (baker ^. baker_publicKeyHash)
-                    lvl
-      return $ pure $ action
+      let action =
+            bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
+              (headBlock ^. fitness)
+              RightKind_Baking
+              (baker ^. baker_publicKeyHash)
+              lvl
+      return $ pure action
 
     -- endorsements *on* this block are *of* the previos block
     endorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
-      let action = (bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock))
+      let action = bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
                    (headBlock ^. fitness)
                    RightKind_Endorsing
                    (baker ^. baker_publicKeyHash)
                    (lvl - 1)
-      return $ pure $ action
+      return $ pure action
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
 
@@ -384,10 +383,12 @@ getWantedAction protoInfo headBlock baker details isInternal = do
         deactivationAlerts :: mCommit ()
         deactivationAlerts =
           if _cacheDelegateInfo_deactivated di
-            then reportBakerDeactivated delegatePkh protoInfo headFitness
+            then do
+              clearBakerDeactivationRisk delegatePkh headFitness
+              reportBakerDeactivated delegatePkh protoInfo headFitness
             else do
               clearBakerDeactivated delegatePkh headFitness
-              if (1 >= gracePeriod - headCycle)
+              if 1 >= gracePeriod - headCycle
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
 

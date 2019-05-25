@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -37,6 +38,14 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
+
+import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.Document as Document
+import qualified GHCJS.DOM.HTMLElement as HTMLElement
+import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
+import qualified GHCJS.DOM.Node as Node
+import qualified GHCJS.DOM.Types as DOM
 
 import Tezos.NodeRPC.Sources (tzScanUri)
 import Tezos.ShortByteString (fromShort)
@@ -168,6 +177,42 @@ localHumanizedTimestampBasicWithoutTZ
   -> m ()
 localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
 
+-- | Clickable copy-to-clipboard icon
+copyButton
+  :: (SemUi.UI t m, MonadJSM (Performable m))
+  => Behavior t Text -- ^ Text to copy to clipboard
+  -> m ()
+copyButton content = mdo
+  let conf = ffor state $ ("class" =:) . \case
+        Nothing -> "blue icon-copy link icon"
+        Just True -> "green icon-check icon"
+        Just False -> "red icon-x icon"
+  copy <- fmap fst $ elDynAttr' "i" conf blank
+  result <- copyToClipboard $ tag content $ domEvent Click copy
+  delayed <- delay 1 result
+  state <- holdDyn Nothing $ leftmost [Just <$> result, Nothing <$ delayed]
+  pure ()
+
+-- | Copy the given text to the clipboard
+copyToClipboard
+  :: (MonadJSM (Performable m), PerformEvent t m)
+  => Event t Text
+  -- ^ Text to copy to clipboard. Event must come directly from user
+  -- interaction (e.g. domEvent Click), or the copy will not take place.
+  -> m (Event t Bool)
+  -- ^ Did the copy take place successfully?
+copyToClipboard copy = performEvent $ ffor copy $ \t -> do
+  doc <- DOM.currentDocumentUnchecked
+  ta <- DOM.uncheckedCastTo TextArea.HTMLTextAreaElement <$> Document.createElement doc ("textarea" :: Text)
+  TextArea.setValue ta t
+  body <- Document.getBodyUnchecked doc
+  _ <- Node.appendChild body ta
+  HTMLElement.focus ta
+  TextArea.select ta
+  success <- Document.execCommand doc ("copy" :: Text) False (Nothing :: Maybe Text)
+  _ <- Node.removeChild body ta
+  pure success
+
 data TooltipPos
   = TooltipPos_TopLeft
   | TooltipPos_TopCenter
@@ -179,17 +224,16 @@ data TooltipPos
   | TooltipPos_BottomRight
 
 tooltipped
-  :: forall a m t.
-    ( DomBuilder t m
-    , PostBuild t m
-    , MonadHold t m
-    , MonadFix m
-    , PerformEvent t m
-    , MonadIO (Performable m)
-    , TriggerEvent t m
-    )
+  :: SemUi.UI t m
   => TooltipPos -> m () -> m a -> m a
-tooltipped pos tip w = mdo
+tooltipped = tooltippedWrapper $ elAttr' "span" ("style" =: "position:relative")
+
+tooltippedWrapper
+  :: SemUi.UI t m
+  => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
+  -- ^ Wrapper (used to determine mouse events)
+  -> TooltipPos -> m () -> m a -> m a
+tooltippedWrapper wrapper pos tip w = mdo
   let (cls, x, y, transform) = case pos of
         TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
         TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
@@ -200,10 +244,12 @@ tooltipped pos tip w = mdo
         TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
         TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
 
-  (wEl, a) <- elAttr' "span" ("style" =: "position:relative") $ do
+  (wEl, a) <- wrapper $ do
     a' <- w
-    let
-      hovered = leftmost [ True <$ domEvent Mouseenter wEl, False <$ domEvent Mouseleave wEl ]
+    let mouseenter = True <$ domEvent Mouseenter wEl
+        mouseleave = False <$ domEvent Mouseleave wEl
+    hovered' <- debounce 0.75 $ leftmost [mouseenter, mouseleave]
+    hovered <- fmap updated . holdUniqDyn <=< holdDyn False $ leftmost [mouseenter, hovered']
     open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
     close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
     let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]

@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -33,7 +31,7 @@ import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
-                   NodeSummary (..), BakerSummary (..), SetupState (..),
+                   NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
                    mailServerConfigToView, Deletable, BakerSummary)
 import Common.App (bakerErrorViewOnly)
@@ -73,7 +71,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_ConnectedLedger :=> Identity mli -> handleConnectedLedger mli
     NotifyTag_ShowLedger :=> Identity (sk, mpkh) -> handleShowLedger sk mpkh
     NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
+    NotifyTag_VotePrompting :=> Identity (sk, step) -> handleVotePrompting sk step
     NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
+    NotifyTag_Amendment :=> Identity (k, ma) -> handleAmendment k ma
+    NotifyTag_Proposals :=> Identity (pid, mp) -> handleProposals pid mp
+    NotifyTag_PeriodTestingVote :=> Identity ma -> handlePeriodTestingVote ma
+    NotifyTag_PeriodTesting :=> Identity ma -> handlePeriodTesting ma
+    NotifyTag_PeriodPromotionVote :=> Identity ma -> handlePeriodPromotionVote ma
+    NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
   where
     clientsVS = _bakeViewSelector_clients aggVS
     clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
@@ -101,6 +106,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handlePrompting sk step
       | viewSelects sk promptingVS = pure $ mempty
         { _bakeView_prompting = toRangeView1 promptingVS sk $ Just $ First step
+        }
+      | otherwise = pure mempty
+
+    votePromptingVS = _bakeViewSelector_votePrompting aggVS
+    handleVotePrompting :: Applicative m' => SecretKey -> Maybe VoteState -> m' (BakeView a)
+    handleVotePrompting sk step
+      | viewSelects sk votePromptingVS = pure $ mempty
+        { _bakeView_votePrompting = toRangeView1 votePromptingVS sk $ Just $ First step
         }
       | otherwise = pure mempty
 
@@ -148,7 +161,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeExternalV <- case mNodeExternalData of
         Nothing -> pure [(Bounded nid, First Nothing)]
-        Just _ -> getNodeAddresses (Just $ nid)
+        Just _ -> getNodeAddresses (Just nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
 
     {-# INLINE handleNodeInternal #-}
@@ -158,7 +171,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleNodeInternal nid mProcessData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeInternalV <- case mProcessData of
         Nothing -> pure [(Bounded nid, First Nothing)]
-        Just _ -> getNodeAddresses (Just $ nid)
+        Just _ -> getNodeAddresses (Just nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }
 
     handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
@@ -191,7 +204,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
                        => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
-      bakerV <- getBakerAddresses nds (Just $ pkh)
+      bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
 
     -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
@@ -226,7 +239,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
       notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
       pure $ (mempty :: BakeView a)
-        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ flip mailServerConfigToView notificatees $ mailServer
+        { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ Just $ mailServerConfigToView mailServer notificatees
         }
 
     handleErrorLog
@@ -329,4 +342,40 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | viewSelects rk rightNotificationSettingsVS = pure $ mempty
         { _bakeView_rightNotificationSettings = toRangeView1 rightNotificationSettingsVS rk $ Just $ First mrnl
         }
+      | otherwise = pure mempty
+
+    amendmentVS = _bakeViewSelector_amendment aggVS
+    handleAmendment :: Applicative m' => VotingPeriodKind -> Maybe Amendment -> m' (BakeView a)
+    handleAmendment k ma = whenM (viewSelects k amendmentVS) $ do
+      pure $ mempty { _bakeView_amendment = toRangeView1 amendmentVS k (Just $ First ma) }
+
+    proposalsVS = _bakeViewSelector_proposals aggVS
+    handleProposals :: PersistBackend m' => Id PeriodProposal -> Maybe (PeriodProposal, Maybe Bool) -> m' (BakeView a)
+    handleProposals pid mp
+      | viewSelects (Bounded pid) proposalsVS = pure $ mempty
+      { _bakeView_proposals = toRangeView1 proposalsVS (Bounded pid) $ Just $ First mp }
+      | otherwise = pure mempty
+
+    bakerVoteVS = _bakeViewSelector_bakerVote aggVS
+    handleBakerVote :: PersistBackend m' => Maybe BakerVote -> m' (BakeView a)
+    handleBakerVote ma
+      | viewSelects () bakerVoteVS = pure $ mempty { _bakeView_bakerVote = toMaybeView bakerVoteVS $ Just ma }
+      | otherwise = pure mempty
+
+    periodTestingVoteVS = _bakeViewSelector_periodTestingVote aggVS
+    handlePeriodTestingVote :: PersistBackend m' => Maybe PeriodTestingVote -> m' (BakeView a)
+    handlePeriodTestingVote ma
+      | viewSelects () periodTestingVoteVS = pure $ mempty { _bakeView_periodTestingVote = toMaybeView periodTestingVoteVS $ Just ma }
+      | otherwise = pure mempty
+
+    periodTestingVS = _bakeViewSelector_periodTesting aggVS
+    handlePeriodTesting :: PersistBackend m' => Maybe PeriodTesting -> m' (BakeView a)
+    handlePeriodTesting ma
+      | viewSelects () periodTestingVS = pure $ mempty { _bakeView_periodTesting = toMaybeView periodTestingVS $ Just ma }
+      | otherwise = pure mempty
+
+    periodPromotionVoteVS = _bakeViewSelector_periodPromotionVote aggVS
+    handlePeriodPromotionVote :: PersistBackend m' => Maybe PeriodPromotionVote -> m' (BakeView a)
+    handlePeriodPromotionVote ma
+      | viewSelects () periodPromotionVoteVS = pure $ mempty { _bakeView_periodPromotionVote = toMaybeView periodPromotionVoteVS $ Just ma }
       | otherwise = pure mempty

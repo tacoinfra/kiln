@@ -23,6 +23,7 @@ import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErr
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
+import Data.Foldable (foldl')
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
@@ -30,6 +31,7 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
+import qualified Data.Set as S
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
@@ -38,7 +40,7 @@ import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
@@ -51,13 +53,14 @@ import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, 
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
+import qualified Tezos.TestChainStatus as Tezos
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
-import Backend.Config (AppConfig (..), kilnNodeURI)
+import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -113,7 +116,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     let newHash = headBlockInfo ^. hash
         newLevel = headBlockInfo ^. level
         chainId = _nodeDataSource_chain nds
-     in void $ [executeQ|
+     in void [executeQ|
           insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
           values (?newHash, ?newLevel, ?chainId, null, null, false, false)
           on conflict do nothing
@@ -171,7 +174,7 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       minPeerCount = nodeData_minPeerConnections node
     for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
       flip runReaderT appConfig $
-        if (peerCount < fromIntegral minPeerCount)
+        if peerCount < fromIntegral minPeerCount
           then reportNodeInvalidPeerCountError nid minPeerCount peerCount
           else clearNodeInvalidPeerCountError nid
 
@@ -182,11 +185,10 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       ]
       (NodeDetails_idField ==. nid)
     project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
-  pure ()
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
-nodeData_address appConfig = either (const $ kilnNodeURI appConfig) _nodeExternalData_address
+nodeData_address appConfig = either (const $ kilnNodeRpcURI appConfig) _nodeExternalData_address
 
 nodeData_minPeerConnections :: NodeData -> Int
 nodeData_minPeerConnections = either (const 0) (fromMaybe 0 . _nodeExternalData_minPeerConnections)
@@ -212,7 +214,7 @@ getNodes db constraints = do
                                , Map (Id Node) NodeDetailsData
                                )
     <- runDb (Identity db) $ (,,,)
-      <$> (selectMap NodeConstructor CondEmpty)
+      <$> selectMap NodeConstructor CondEmpty
       <*> (Map.fromList <$> project
             ( NodeExternal_idField
             , NodeExternal_dataField ~> DeletableRow_dataSelector)
@@ -364,7 +366,7 @@ updateDataSource nds (pn, chain, uri) = do
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
-           in void $ [executeQ|
+           in void [executeQ|
                 insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
                 values (?newHash, ?newLevel, ?chainId, null, null, false, false)
                 on conflict do nothing
@@ -445,6 +447,203 @@ updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
   for_ latestBlock' $ \latestBlock ->
     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
 
+safePred :: (Eq a, Enum a, Bounded a) => a -> a
+safePred a = if a /= minBound then pred a else minBound
+
+-- Monitors the amendment process
+amendmentProcessWorker
+  :: NodeDataSource
+  -> Pool Postgresql
+  -> IO (IO ())
+amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
+  latestBlock <- throwing $ getBlock (latestHead ^. hash)
+  blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
+    readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
+  history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+  -- The RPCs under /votes/ return the information for the *next block*, not the current block.
+  -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
+  -- (the last block of the period), but /votes/current_period_kind for that block will return
+  -- the *next* period kind.
+  let currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+      isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
+      -- The period of the *current* block, not the next one
+      currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
+        $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+
+  -- Update baker votes
+  mPkh <- runDb (Identity db) $ join <$> project1
+    (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+    (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ mPkh $ \pkh -> case currentPeriodKind of
+    VotingPeriodKind_Proposal -> do
+      let blk = latestHead ^. hash
+      proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
+      let proposals = In $ S.toList proposals'
+          chainId = _nodeDataSource_chain nds
+          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+
+      runDb (Identity db) $ do
+        pps <- [queryQ|
+          UPDATE "BakerProposal" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp.hash IN ?proposals AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod
+          RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes
+        |]
+        for_ pps $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
+    VotingPeriodKind_Testing -> pure ()
+    _ -> do
+      let blk = latestHead ^.hash
+      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+      let chainId = _nodeDataSource_chain nds
+          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+      for_ mBallot $ \ballot -> runDb (Identity db) $ do
+        pps <- [queryQ|
+          UPDATE "BakerVote" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod AND ballot = ?ballot AND pkh = ?pkh
+          RETURNING proposal
+        |]
+        for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+          { _bakerVote_pkh = pkh
+          , _bakerVote_proposal = proposal
+          , _bakerVote_ballot = ballot
+          , _bakerVote_included = Just blk
+          }
+
+  -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
+  -- Current period should be updated to the values of the latest block.
+  -- Any *greater* periods should be blanked out.
+
+  for_ [minBound..maxBound] $ \p -> case compare p currentPeriodKind of
+    LT -> do
+      let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
+      (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
+        let startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+        startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
+          levelAncestor history startBlockLevel (latestBlock ^. hash)
+        endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
+          -- Calc the blockLevel at the start of the current voting period, move
+          -- back by periodDiff voting periods, and move to the end of that period
+          levelAncestor history (startBlockLevel + blocksPerVotingPeriod - 1) (latestBlock ^. hash)
+        predBlock <- getBlock $ endBlock ^. predecessor
+        pure (startBlock, predBlock, endBlock)
+      updateTo periodStartBlock periodEndBlockPred periodEndBlock p
+    EQ -> do
+      startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
+        levelAncestor history (latestBlock ^. level - currentVotingPosition) (latestBlock ^. hash)
+      predOrLatest <-
+        if isLastBlockOfPeriod latestBlock
+        then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
+        else pure latestBlock
+      updateTo startBlock predOrLatest latestBlock p
+    GT -> runDb (Identity db) $ do
+      wipe p
+      notify NotifyTag_Amendment (p, Nothing)
+      case p of
+        VotingPeriodKind_Proposal -> pure () -- can never happen
+        VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
+        VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
+        VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
+
+  where
+    getBlock = nodeQueryDataSource . NodeQuery_Block
+
+    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
+    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+
+    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
+    runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
+
+    wipe p = do
+      delete $ Amendment_periodField ==. p
+      case p of
+        VotingPeriodKind_Proposal -> pure ()
+        VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
+        VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
+        VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
+    updateTo startBlock predBlk blk p = do
+      let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+          chainId = _nodeDataSource_chain nds
+          amendment = Amendment
+            { _amendment_period = p
+            , _amendment_chainId = chainId
+            , _amendment_votingPeriod = votingPeriod
+            , _amendment_start = startBlock ^. timestamp
+            , _amendment_startLevel = startBlock ^. level
+            , _amendment_position = position'
+            }
+      runDb (Identity db) $ do
+        wipe p
+        insert_ amendment
+        notify NotifyTag_Amendment (p, Just amendment)
+      case p of
+        VotingPeriodKind_Proposal -> do
+          proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
+          runDb (Identity db) $ do
+            deletedIds <- [queryQ|
+              DELETE FROM "BakerProposal"
+              WHERE proposal IN (SELECT id FROM "PeriodProposal" WHERE "votingPeriod" < ?votingPeriod);
+              DELETE FROM "PeriodProposal"
+              WHERE "votingPeriod" < ?votingPeriod
+              RETURNING id
+            |]
+            for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
+            inserted <- returning [sql|
+              INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
+              RETURNING id, hash, "chainId", "votingPeriod", votes
+            |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
+            for_ inserted $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Nothing))
+        VotingPeriodKind_Testing -> do
+          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash) (predBlk ^. level)
+          for_ mProposal $ \proposal -> do
+            let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+                  Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
+                  Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
+                  Tezos.TestChainStatus_Running
+                    { Tezos._testChainStatusRunning_chainId = c
+                    , Tezos._testChainStatusRunning_genesis = b
+                    } -> (TestChainStatus_Running, Just c, Just b)
+            tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
+            runDb (Identity db) $ do
+              let startingLevel = (^. level) <$> tcStartBlock
+              ts <- [queryQ|
+                INSERT INTO "PeriodTesting" (proposal, "testChainId", "startingLevel", status)
+                (SELECT p.id, ?testChainId, ?startingLevel, ?status FROM "PeriodProposal" p WHERE p.hash = ?proposal)
+                RETURNING proposal, "testChainId", "startingLevel", status
+              |]
+              for_ ts $ \(ph,t,l,s) -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
+                { _periodTesting_proposal = ph
+                , _periodTesting_testChainId = t
+                , _periodTesting_startingLevel = l
+                , _periodTesting_status = s
+                }
+        VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+
+    handleVotingPeriod :: PersistEntity a => Block -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    handleVotingPeriod blk f n = do
+      mpv <- runMaybe $ do
+        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
+        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
+        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
+        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
+        pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalRolls)
+
+      for_ mpv $ \(proposal, ballots, quorum, totalRolls) -> runDb (Identity db) $ do
+        mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
+        for_ mPid $ \pid -> do
+          let pv = PeriodVote
+                { _periodVote_ballots = ballots
+                , _periodVote_quorum = quorum
+                , _periodVote_totalRolls = totalRolls
+                }
+          insert_ $ f pid pv
+          notify n $ Just $ f pid pv
+
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker
   :: NodeDataSource
@@ -466,13 +665,13 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
       tp <- if vp == VotingPeriodKind_PromotionVote
         then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)
         else return Nothing
-      return $ ( blk ^. block_metadata . blockMetadata_protocol, tp)
+      return (blk ^. block_metadata . blockMetadata_protocol, tp)
 
   (mainProto, altProto) <- getProtocol
 
   let
     inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
-    inDb m = runDb (Identity db) m
+    inDb = runDb (Identity db)
     setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
@@ -487,15 +686,15 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         epid = _bakerDaemonInternalData_endorserProcessData bdid
         tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
         tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
-      isRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId bpid))
+      isRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId bpid)
       let
         setMainProto = unless (mp == mainProto) $ do
           update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
           when isRunning $ setControl ProcessControl_Restart [bpid, epid]
         setAltProto p = do
-          isAltRunning <- (/= Just ProcessControl_Stop) <$> (project1 ProcessData_controlField $ AutoKeyField ==. (fromId tbpid))
+          isAltRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId tbpid)
           if tp == Just p
-            then when (isRunning && (not isAltRunning)) $ setControl ProcessControl_Restart [tbpid, tepid]
+            then when (isRunning && not isAltRunning) $ setControl ProcessControl_Restart [tbpid, tepid]
             else do
               update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
               when isRunning $ setControl ProcessControl_Restart [tbpid, tepid]
@@ -533,4 +732,4 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
-  return ()
+

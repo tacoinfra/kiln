@@ -75,6 +75,7 @@ import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
 import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
+import Common.Alerts (isUserResolvable)
 import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
@@ -85,6 +86,7 @@ import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
 import Common.Schema hiding (Event)
 import ExtraPrelude
+import Frontend.Amendment
 import Frontend.Common
 import Frontend.Ledger
 import Frontend.Modal.Base (ModalBackdropConfig (..), runModalT, withModals)
@@ -235,7 +237,6 @@ appMain = do
         pure e
     pure ()
 
-
 appName :: Text
 appName = "Kiln"
 
@@ -341,7 +342,7 @@ appSideFooter =
 
 appHeader
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -356,22 +357,38 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
     divClass "twelve wide column topbar" $ do
       divClass "ui horizontal list" $ do
         latestHead <- watchLatestHead
-        let info faded title body = divClass "item" $
+        let infoItem faded title body = divClass "item" $
               elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
                 divClass "header" $ text title
                 body
 
-        info (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        protoInfo <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> info disconnected "Cycle" $
+        protoInfo' <- watchProtoInfo
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
           text $ tshow $ unCycle c
 
-        whenJustDyn latestHead $ \b -> info disconnected "Block" $ el "span" $ do
+        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
           text $ tshow (unRawLevel $ b ^. level)
           elClass "span" "metadescription" $ text " Baked "
           localHumanizedTimestampBasic $ pure $ b ^. timestamp
+
+        amendments <- watchAmendment
+        mProtoInfo <- maybeDyn protoInfo'
+        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+        whenJustDyn ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \(protoInfo, amendment) -> do
+          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+            kind <- holdUniqDyn $ _amendment_period <$> amendment
+            divClass "header" $ text "Amendment Period"
+            divClass "amendment-period" $ do
+              dynText $ textPeriod <$> kind
+              text " "
+              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+              text "/"
+              display $ unCycle . cyclesPerPeriod <$> protoInfo
+              dyn_ $ ffor (periodHasVote <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
       dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"
@@ -417,6 +434,7 @@ appContentArea
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m)
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     , Routed t (R AppRoute) m
@@ -433,6 +451,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r (ModalM m), MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -477,6 +496,7 @@ networkUpdateAlert elua = do
   let namedChain = _errorLogNetworkUpdate_namedChain elua
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
+    (LogTag_NetworkUpdate :=> pure elua)
     (icon "icon-alert-badge big blue")
     header
     Nothing
@@ -486,7 +506,6 @@ networkUpdateAlert elua = do
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
-    (Just $ LogTag_NetworkUpdate :=> pure elua)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
 welcomeScreen = do
@@ -953,7 +972,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         Nothing -> uiButton "primary fluid" "Start Baking"
         Just bid -> do
           kilnLogo
-          dynText $ ffor (_bakerInternalData_running <$> bid) $ \case
+          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ \case
             True -> "A Kiln baker is running."
             False -> "A Kiln baker is configured, but is stopped."
           pure never
@@ -1346,6 +1365,7 @@ nodesTab =
               externalNodeMenu
               (>>= getNodeHeadBlock)
               (Just errors)
+              (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
@@ -1369,7 +1389,7 @@ nodesTab =
                       "Stop Node"
 
                   runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                  bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                     (True, bRunning) ->
@@ -1410,6 +1430,10 @@ nodesTab =
                     internalNodeMenu
                     ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
+                    (Just $ ffor2 ebn nodeData $ \es nd -> and
+                      [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
+                      , _processData_state nd == ProcessState_Running
+                      ])
                     (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                     (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
@@ -1451,6 +1475,7 @@ nodesTab =
               blank
               publicNodeMenu
               (Just . mkVeryBlockLike)
+              Nothing
               Nothing
               Nothing
               Nothing
@@ -1503,20 +1528,20 @@ nodesTab =
           el "dd" $ do
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
-    tileConnectionStats getPeerCount' getNetworkStats' node =
-      if isNothing getPeerCount' && isNothing getNetworkStats'
+    tileConnectionStats connected' getPeerCount' getNetworkStats' node =
+      if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'
       then Nothing
       else Just $ do
-        for_ getPeerCount' $ \getPeerCount -> do
-          peerCount <- maybeDyn <=< holdUniqDyn $ getPeerCount <$> node
-          elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
+        for_ (liftA2 (,) connected' getPeerCount') $ \(connected, getPeerCount) -> do
+          peerCount <- holdUniqDyn $ getPeerCount <$> node
+          elClass "span" "peer-count" $ dynText $ ffor2 peerCount connected $ \p c -> if c then maybe "-" tshow p else "-"
           text " connected peers"
 
-        for_ getNetworkStats' $ \getNetworKStats -> do
+        for_ (liftA2 (,) connected' getNetworkStats') $ \(connected, getNetworkStats) -> do
           let
-            stat = getNetworKStats <$> node
-            showSpeed n = dynText <=< holdUniqDyn $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
-            showTotal n = dynText <=< holdUniqDyn $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
+            stat = getNetworkStats <$> node
+            showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do
@@ -1524,12 +1549,12 @@ nodesTab =
               divClass "cell" $ text "Total"
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-up" *> showSpeed (_networkStat_currentOutflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-up" *> showTotal (_networkStat_totalSent <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showSpeed connected (_networkStat_currentOutflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showTotal connected (_networkStat_totalSent <$> stat)
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showSpeed connected (_networkStat_currentInflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showTotal connected (_networkStat_totalRecv <$> stat)
 
     -- TODO: errors' is a Maybe because we statically state that public nodes
     -- don't display a status icon, but I don't think that's a good way to
@@ -1541,18 +1566,19 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t Bool) -- ^ (Optional) Are we connected to the node?
       -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    standardNodeTile title subtitle menuContents getBlock errors' internalState getPeerCount' getNetworkStats' node = do
+    standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
         [ tileHeader title subtitle menuContents badge errors'
         , tileBlockStats getBlock node
         ]
-        <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
+        <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
 
     nodeTileWithSections :: [m ()] -> m ()
     nodeTileWithSections = divClass "ui card dashboard-tile node-tile" . divClass "content" .
@@ -1568,6 +1594,7 @@ bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1588,8 +1615,11 @@ bakersTab =
          resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
            icon "icon-check"
            text "Resolve All"
-         let toLogTag (f :=> k) = let g = LogTag_Baker f in g :=> Const (errorLogIdForErrorLogView $ g :=> k)
-             alerts = concatMap (fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+         let
+           toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
+             then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
+             else Nothing
+           alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
          _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
          elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1686,20 +1716,21 @@ bakersTab =
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \errorView@(bTag :=> Identity log) ->
       let
         pkh = bakerIdForBakerErrorLogView errorView
+        ev = LogTag_Baker bTag :=> Identity log
       in case bTag of
         -- TODO
         BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-        BakerLogTag_BakerMissed -> renderBakerError (bakerMissedDescriptions log) pkh
-        BakerLogTag_BakerDeactivated -> renderBakerError (bakerDeactivatedDescriptions log) pkh
-        BakerLogTag_BakerDeactivationRisk -> renderBakerError (bakerDeactivationRiskDescriptions log) pkh
-        BakerLogTag_BakerAccused -> renderBakerError (bakerAccusedDescriptions log) pkh
-        BakerLogTag_InsufficientFunds -> renderBakerError (bakerInsufficientFundsDescriptions log) pkh
+        BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
+        BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
+        BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
+        BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
+        BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
 
       where
-        renderBakerError :: BakerErrorDescriptions -> PublicKeyHash -> m ()
-        renderBakerError dsc pkh = do
+        renderBakerError :: ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
+        renderBakerError ev dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
-          renderResolvableSplashAlert
+          renderResolvableSplashAlert ev
             (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
             (_bakerErrorDescriptions_title dsc <> ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
@@ -1712,7 +1743,6 @@ bakersTab =
                   el "strong" $ text "Fix:"
                   text " "
                   text $ _bakerErrorDescriptions_fix dsc)
-            (_bakerErrorDescriptions_userResolvable dsc)
 
     tile
       :: m () -- ^ Title
@@ -1727,6 +1757,25 @@ bakersTab =
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
+
+        -- -- Calculate what we should show in the voting icon. Maybe Bool
+        -- -- indicates if the vote has taken place, and if so, if it has been included
+        -- voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
+        --   damendment <- watchAmendment
+        --   dmBakerVote <- watchBakerVote
+        --   dproposals <- watchProposals
+        --   let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+        --   maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
+        --     Nothing -> Nothing
+        --     Just (k, _) -> case k of
+        --       VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
+        --         n | n == 0 -> bakerNotVoted
+        --           | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
+        --       VotingPeriodKind_Testing -> Nothing
+        --       _ -> Just $ case mBakerVote of
+        --         Nothing -> bakerNotVoted
+        --         Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
+
         tileMenu $ do
           let
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
@@ -1734,6 +1783,21 @@ bakersTab =
             Left _ -> do -- not a kiln baker
               removeEntry $ removeItemModal "baker"
             Right bid -> do
+              mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
+              whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
+                isTestingPeriod <- holdUniqDyn $ (VotingPeriodKind_Testing ==) . fst <$> periodKind_amendment
+                dyn_ $ ffor isTestingPeriod $ \case
+                  True -> pure ()
+                  False -> do
+                    open <- tileMenuEntry "Vote"
+                    let amendment = snd <$> periodKind_amendment
+                    mProtoInfo <- maybeDyn =<< watchProtoInfo
+                    let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
+                          Left _ -> Nothing
+                          Right b -> Just (pkh, _bakerInternalData_secretKey b)
+                        xs = (liftA3 . liftA3) (,,) (current mProtoInfo) (pure . pure <$> current amendment) baker
+                    tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
+
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
               latestHead <- maybeDyn =<< watchLatestHead
@@ -1762,13 +1826,31 @@ bakersTab =
             iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
-          dyn_ $ ffor isInternal $ \i -> when i $ divClass "internal-subtitle" $ do
-            kilnLogo
-            divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
-              MonitoredStatus_Stopped -> "Stopped"
-              MonitoredStatus_Healthy -> "Running"
-              MonitoredStatus_Unhealthy -> "Unhealthy"
-              MonitoredStatus_Unknown -> "Unknown"
+          dyn_ $ ffor isInternal $ \i -> when i $ do
+            -- divClass "baker-vote-popup" $ do
+            --   let accessVoting = divClass "detail" $ do
+            --         text "Access Voting from the extras menu "
+            --         icon "icon-ellipsis grey"
+            --         text "on this baker tile."
+            --   whenJustDyn voteState $ \dc -> do
+            --     let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
+            --           Nothing -> accessVoting
+            --           Just True -> pure ()
+            --           Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
+            --     tooltipped TooltipPos_TopLeft tt $ do
+            --       let attrs = ffor dc $ \(_, included) -> "class" =: case included of
+            --             Nothing -> "large blue icon-vote-badge icon"
+            --             Just False -> "large grey icon-dots-badge icon"
+            --             Just True -> "large grey icon-check-badge icon"
+            --       elDynAttr "i" attrs blank
+
+            divClass "internal-subtitle" $ do
+              kilnLogo
+              divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
+                MonitoredStatus_Stopped -> "Stopped"
+                MonitoredStatus_Healthy -> "Running"
+                MonitoredStatus_Unhealthy -> "Unhealthy"
+                MonitoredStatus_Unknown -> "Unknown"
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
@@ -1831,20 +1913,20 @@ bakersTab =
               *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
-  => m () -- ^ Alert icon
+  => ErrorLogView
+  -> m () -- ^ Alert icon
   -> Text -- ^ Title
   -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
-  -> Maybe (DSum LogTag Identity) -- ^ Optional resolvable request
   -> m ()
-renderResolvableSplashAlert splashIcon title entity desc mReq = do
+renderResolvableSplashAlert e@(etag :=> _) splashIcon title entity desc = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
-    for_ mReq $ \resolveReq -> do
+    when (isUserResolvable etag) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"
-      requestingIdentity $ public (PublicRequest_ResolveAlert resolveReq) <$ resolve
+      void $ requestingIdentity $ public (PublicRequest_ResolveAlert e) <$ resolve
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon

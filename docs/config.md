@@ -72,12 +72,19 @@ unioned. Defaults to off.
 
 The GitLab project id to query for network updates. Defaults to off.
 
-## kiln-node-port PORT
+## kiln-node-rpc-port PORT
 
-The port to use for the kiln node. Defaults to 8732.
+The RPC port to use for the kiln node. Defaults to 9733.
+
+## kiln-node-net-port PORT
+
+The net-addr port to use for the kiln node. Defaults to 8733.
 
 ## kiln-data-dir DIRECTORY
 
 The data directory used by the kiln node and tezos-client. Defaults to
 "./.kiln".
 
+## kiln-node-custom-args ARGS
+
+Custom arguments for the Kiln Node.

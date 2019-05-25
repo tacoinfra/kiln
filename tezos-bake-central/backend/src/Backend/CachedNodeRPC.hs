@@ -73,12 +73,11 @@ import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
--- import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
@@ -100,6 +99,7 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
 import Tezos.NodeRPC.Types
+import Tezos.Operation (Ballot)
 import Tezos.PublicKey
 import Tezos.Types
 
@@ -129,8 +129,12 @@ data NodeQuery a where
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
+  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
+  NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -215,7 +219,7 @@ newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT Cache
 runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, MonadIO m) => NodeQueryQueued a -> m a
 runNodeQueryQueued action = do
   nds <- view nodeDataSource
-  (liftEither =<<) $ fmap (left (review asCacheError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
+  (liftEither =<<) $ fmap (left (review asCacheError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
 
 deriving newtype instance Functor NodeQueryQueued
 deriving newtype instance Applicative NodeQueryQueued
@@ -239,14 +243,14 @@ instance MonadNodeQuery NodeQueryQueued where
   nqInDB action = do
     db <- asksNodeDataSource _nodeDataSource_pool
     logger <- asksNodeDataSource _nodeDataSource_logger
-    NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) $ action
+    NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) action
   answerImmediate = return . return . NodeQueryQueuedAnswerM
   withFinishWith nds cb = do
     -- A separate TVar for keeping the actual API result (outside the cache structure)
     apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
     action <- cb $ writeTVar' apiResultVar . Just
     let ioQueue = _nodeDataSource_ioQueue nds
-    liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued $ action
+    liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
   nodeRPCOrBust protoInfo qBranch q = do
     dsrc <- askNodeDataSource
@@ -285,7 +289,7 @@ instance MonadNodeQuery NodeQueryImmediate where
   asksNodeDataSource = NodeQueryImmediate . asksNodeDataSource
   nqThrowError = NodeQueryImmediate . nqThrowError
   nqCatchError action handler = NodeQueryImmediate $ nqCatchError (unNodeQueryImmediate action) (unNodeQueryImmediate . handler)
-  nqInDB action = NodeQueryImmediate $ nqInDB $ action
+  nqInDB action = NodeQueryImmediate $ nqInDB action
   answerImmediate getResult = return $ fmap NodeQueryImmediateAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
   withFinishWith _ cb = (fmap NodeQueryImmediateAnswerM . nqLiftEither =<<) <$> cb return
   nodeRPCOrBust p h q = NodeQueryImmediate $ nodeRPCOrBust p h q
@@ -511,8 +515,6 @@ withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
 withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
 
 -}
-calcTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime
-calcTimeBetweenBlocks = fromIntegral . sum . take 1 . toList . _protoInfo_timeBetweenBlocks
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
@@ -647,8 +649,6 @@ cycleStartHashes blkHash = do
       <*> ZipList maxLevels
 
 
-
-
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = ctxBlockHash
   where
@@ -678,8 +678,12 @@ getKey params hist = \case
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
+  NodeQuery_Ballot ctx pkh -> pure (ctx, NodeQuery_Ballot ctx pkh)
+  NodeQuery_ProposalVote ctx pkh -> pure (ctx, NodeQuery_ProposalVote ctx pkh)
+  NodeQuery_Listings ctx -> pure (ctx, NodeQuery_Listings ctx)
   NodeQuery_Proposals ctx -> pure (ctx, NodeQuery_Proposals ctx)
   NodeQuery_CurrentProposal ctx lvl -> pure (ctx, NodeQuery_CurrentProposal ctx lvl)
+  NodeQuery_CurrentQuorum ctx -> pure (ctx, NodeQuery_CurrentQuorum ctx)
   NodeQuery_BlockBaker ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BlockBaker ctx' lvl)) <$> levelAncestor hist lvl ctx
   NodeQuery_DelegateInfo ctx lvl pkh -> (\ctx' -> (ctx' , NodeQuery_DelegateInfo ctx' lvl pkh)) <$> levelAncestor hist lvl ctx
   q@(NodeQuery_PublicKey _) -> do
@@ -696,7 +700,7 @@ nodeQueryDataSource
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = do
-  (view $ nodeDataSource . nodeDataSource_logger) >>= (flip runLoggingEnv $ $(logDebugSH) ("nodeQueryDataSource called" :: Text,q))
+  view (nodeDataSource . nodeDataSource_logger) >>= flip runLoggingEnv ($(logDebugSH) ("nodeQueryDataSource called" :: Text,q))
   NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw q
   now <- liftIO getCurrentTime
   timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
@@ -842,8 +846,12 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
+  NodeQuery_Ballot branch pkh -> nodeRPC' $ rBallot chainId branch pkh
+  NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
+  NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
+  NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
@@ -851,7 +859,7 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKey_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
-      Just pk -> pure $ pk
+      Just pk -> pure pk
   where
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
@@ -968,7 +976,7 @@ tryFetchFromCache chainId q = do
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
     |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
-  case nonEmpty $ resultM of
+  case nonEmpty resultM of
     Nothing -> return Nothing
     Just ((rid, result) :| _) -> case requestResponseFromJSON q of
       Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
@@ -982,6 +990,5 @@ deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
 makeRequestForData ''NodeQuery
 
--- TODO: Is this worth keeping?
 instance Hashable (NodeQuery a) where
   hashWithSalt s = hashWithSalt s . requestToJSON

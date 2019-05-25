@@ -1,5 +1,4 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Backend.ChainHealth (scanForkInfo) where
@@ -59,7 +58,7 @@ scanForkInfo :: forall m r.
 scanForkInfo now rpt = do
   let
     check :: forall b. BlockLike b => b -> m ForkInfo
-    check b = checkChainHealth now 30 b
+    check = checkChainHealth now 30
   baked <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_baked rpt
   seen <- traverse check $ maximumByMay (compare `on` _event_time) $ _report_seen rpt
   return $ catMaybes [baked, seen]

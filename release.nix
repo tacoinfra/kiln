@@ -1,5 +1,14 @@
+{ local-self ? import ./. {}
+}:
+
 let
-  perMachine = system: let
+  inherit (local-self.pkgs) lib runCommand nix;
+
+  cacheBuildSystems =
+    [ "x86_64-linux"
+      # "x86_64-darwin"
+    ];
+  perPlatform = lib.genAttrs cacheBuildSystems (system: let
     root = import ./. { inherit system; };
   in {
     ghc = {
@@ -9,10 +18,7 @@ let
       inherit (root.ghcjs) frontend common;
     };
   } // root.pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-    dockerExe = root.pkgs.lib.hydraJob root.dockerExe;
-    dockerImage = root.pkgs.lib.hydraJob root.dockerImage;
-  };
-in {
-  x86_64-linux = perMachine "x86_64-linux";
-  #x86_64-darwin = perMachine "x86_64-darwin";
-}
+    inherit (root) dockerExe dockerImage kilnVM kilnVMSystem kiln-debian exe all;
+  });
+
+in perPlatform.x86_64-linux

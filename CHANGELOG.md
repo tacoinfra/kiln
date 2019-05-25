@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.2
+*May 24, 2019*
+
+  * Voting support for Kiln bakers!
+  * New governance status popup showing current votes, proposals, etc.
+  * Kiln baking will seamlessly transition between protocol 003 and 004.
+  * Debian package installer now works on *Debian* (not just Ubuntu)!
+  * Debian installer now automatically configures all udev rules necessary for ledger communication.
+  * Kiln's node now uses non-default ports: 8733 for RPC and 9733 for P2P. This was done to avoid
+    conflicting with nodes run outside of Kiln. These ports be changed via Kiln configuration.
+  * Minor improvements:
+      * Input validation on ledger BIP32 paths
+      * Improved documentation
+      * Updated Kiln logo
+      * New public-facing Nix cache for Kiln and all tezos executables (`tezos-client`, etc.). Refer to [Setting up Nix Caching](https://gitlab.com/obsidian.systems/tezos-baking-platform#setting-up-nix-caching-recommended) for details.
+  * Bug Fixes:
+    * Improved accuracy surrounding data for nodes that are having connectivity issues
+    * Improved correctness surrounding notifications for inactive bakers
+
+### Known Issues
+
+  * This version of Kiln **does not support** the most recent version of zeronet as of the release date (chain ID `NetXkaRXbyeogSM`).
+
+
 ## 0.5.1
 *April 16, 2019*
 

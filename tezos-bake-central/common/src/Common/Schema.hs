@@ -131,8 +131,8 @@ sumFees baker = getSum . views balanceUpdates getFee
 type Baked = Event BakedEvent
 
 data Error = Error
-  { _error_time :: UTCTime
-  , _error_text :: Text
+  { _error_time :: !UTCTime
+  , _error_text :: !Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 mkErr :: Event ErrorEvent -> Error
@@ -209,7 +209,7 @@ instance HasId BakerDaemonExternalData where
 
 data BakerDaemonInfo = BakerDaemonInfo
   { _bakerDaemonInfo_id :: !(Id BakerDaemon)
-  , _bakerDaemonInfo_data :: BakerDaemonInfoData
+  , _bakerDaemonInfo_data :: !BakerDaemonInfoData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 data BakerDaemonInfoData = BakerDaemonInfoData
@@ -231,6 +231,7 @@ instance HasId BakerDaemonInternal where
 data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
   , _connectedLedger_bakingAppVersion :: !(Maybe Text)
+  , _connectedLedger_walletAppVersion :: !(Maybe Text)
   , _connectedLedger_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
@@ -245,6 +246,8 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetupToBake :: !Bool
   , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
+  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
+  , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -253,7 +256,7 @@ kilnLedgerAlias :: Text
 kilnLedgerAlias = "ledger_kiln"
 
 data BakerDaemonInternalData = BakerDaemonInternalData
-  { _bakerDaemonInternalData_alias :: !(Text)
+  { _bakerDaemonInternalData_alias :: !Text
   , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
   , _bakerDaemonInternalData_insufficientFunds :: !Bool
   , _bakerDaemonInternalData_protocol :: !ProtocolHash
@@ -336,7 +339,7 @@ instance HasId ProcessData
 
 data NodeDetails = NodeDetails
   { _nodeDetails_id :: !(Id Node)
-  , _nodeDetails_data :: NodeDetailsData
+  , _nodeDetails_data :: !NodeDetailsData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- TODO don't need Maybes here probably.
@@ -414,57 +417,57 @@ data Parameters = Parameters
 instance HasId Parameters
 
 data BakedEventOperation = BakedEventOperation
-  { _bakedEventOperation_branch :: BlockHash
-  , _bakedEventOperation_data :: Operation
+  { _bakedEventOperation_branch :: !BlockHash
+  , _bakedEventOperation_data :: !Operation
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data BakedEvent = BakedEvent
-  { _bakedEvent_hash :: BlockHash
-  , _bakedEvent_operations :: [[BakedEventOperation]]
-  , _bakedEvent_signedHeader :: BlockHeader
+  { _bakedEvent_hash :: !BlockHash
+  , _bakedEvent_operations :: ![[BakedEventOperation]]
+  , _bakedEvent_signedHeader :: !BlockHeader
   , _bakedEvent_baker :: !PublicKeyHash
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data SeenEvent = SeenEvent
-  { _seenEvent_hash :: BlockHash
-  -- , _seenEvent_chainId :: ChainId
-  , _seenEvent_fitness :: Fitness
+  { _seenEvent_hash :: !BlockHash
+  -- , _seenEvent_chainId :: !ChainId
+  , _seenEvent_fitness :: !Fitness
   , _seenEvent_level :: !RawLevel
-  , _seenEvent_predecessor :: BlockHash
-  -- , _seenEvent_protocol :: Protocol
-  , _seenEvent_timestamp :: UTCTime
+  , _seenEvent_predecessor :: !BlockHash
+  -- , _seenEvent_protocol :: !Protocol
+  , _seenEvent_timestamp :: !UTCTime
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Event e = Event
-  { _event_detail :: e
-  , _event_seq :: Int
-  , _event_time :: UTCTime
-  , _event_worker :: Text
+  { _event_detail :: !e
+  , _event_seq :: !Int
+  , _event_time :: !UTCTime
+  , _event_worker :: !Text
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ErrorEvent = ErrorEvent
-  { _errorEvent_message :: Text
-  , _errorEvent_trace :: Json [Aeson.Value]
+  { _errorEvent_message :: !Text
+  , _errorEvent_trace :: !(Json [Aeson.Value])
   } deriving (Show, Eq, Typeable, Generic)
 
 instance Ord ErrorEvent where
   compare = compare `on` _errorEvent_message
 
 data EndorseEvent = EndorseEvent
-  { _endorseEvent_hash :: BlockHash
-  , _endorseEvent_level :: Int
-  , _endorseEvent_slot :: Int -- todo, pluralize
-  , _endorseEvent_baker :: PublicKeyHash
-  , _endorseEvent_name :: String
-  , _endorseEvent_oph :: OperationHash
+  { _endorseEvent_hash :: !BlockHash
+  , _endorseEvent_level :: !Int
+  , _endorseEvent_slot :: !Int -- todo, pluralize
+  , _endorseEvent_baker :: !PublicKeyHash
+  , _endorseEvent_name :: !String
+  , _endorseEvent_oph :: !OperationHash
   } deriving (Show, Eq, Typeable, Generic)
 
 data Report = Report
-  { _report_baked :: [Event BakedEvent]
-  -- , _report_endorsed :: [Event EndorseEvent]
-  , _report_errors :: [Event ErrorEvent]
-  , _report_seen :: [Event SeenEvent]
-  , _report_startTime :: UTCTime
+  { _report_baked :: ![Event BakedEvent]
+  -- , _report_endorsed :: ![Event EndorseEvent]
+  , _report_errors :: ![Event ErrorEvent]
+  , _report_seen :: ![Event SeenEvent]
+  , _report_startTime :: !UTCTime
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data Accusation = Accusation
@@ -478,6 +481,65 @@ data Accusation = Accusation
   } deriving (Show, Eq, Ord, Typeable, Generic)
 instance HasId Accusation where
   type IdData Accusation = (OperationHash, BlockHash)
+
+data Amendment = Amendment
+  { _amendment_period :: !VotingPeriodKind
+  , _amendment_chainId :: !ChainId
+  , _amendment_votingPeriod :: !RawLevel
+  , _amendment_start :: !UTCTime -- ^ Start time
+  , _amendment_startLevel :: !RawLevel -- ^ Start level
+  , _amendment_position :: !RawLevel -- ^ Blocks passed in this period
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodProposal = PeriodProposal
+  { _periodProposal_hash :: !ProtocolHash
+  , _periodProposal_chainId :: !ChainId
+  , _periodProposal_votingPeriod :: !RawLevel
+  , _periodProposal_votes :: !Int
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId PeriodProposal
+
+data PeriodVote = PeriodVote
+  { _periodVote_ballots :: !Ballots
+  , _periodVote_quorum :: !Int -- Percent * 100, e.g. 80.02% would be 8002
+  , _periodVote_totalRolls :: !Int -- Total number of rolls of delegates who are eligible to vote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodTestingVote = PeriodTestingVote
+  { _periodTestingVote_proposal :: !(Id PeriodProposal)
+  , _periodTestingVote_periodVote :: !PeriodVote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+-- | Like Tezos.TestChainStatus, but for a single column
+data TestChainStatus = TestChainStatus_NotRunning | TestChainStatus_Forking | TestChainStatus_Running
+  deriving (Eq, Ord, Generic, Typeable, Read, Show, Enum, Bounded)
+instance Aeson.ToJSON TestChainStatus
+instance Aeson.FromJSON TestChainStatus
+
+data PeriodTesting = PeriodTesting
+  { _periodTesting_proposal :: !(Id PeriodProposal)
+  , _periodTesting_testChainId :: !(Maybe ChainId)
+  , _periodTesting_startingLevel :: !(Maybe RawLevel)
+  , _periodTesting_status :: !TestChainStatus
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data PeriodPromotionVote = PeriodPromotionVote
+  { _periodPromotionVote_proposal :: !(Id PeriodProposal)
+  , _periodPromotionVote_periodVote :: !PeriodVote
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data BakerProposal = BakerProposal
+  { _bakerProposal_pkh :: !PublicKeyHash
+  , _bakerProposal_proposal :: !(Id PeriodProposal)
+  , _bakerProposal_included :: !(Maybe BlockHash)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+
+data BakerVote = BakerVote
+  { _bakerVote_pkh :: !PublicKeyHash
+  , _bakerVote_proposal :: !(Id PeriodProposal)
+  , _bakerVote_ballot :: !Ballot
+  , _bakerVote_included :: !(Maybe BlockHash)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
   { _blockTodo_hash :: !BlockHash
@@ -519,9 +581,9 @@ data ClientDaemonWorker
   deriving (Ord, Enum, Show, Eq, Typeable, Generic)
 
 data ClientConfig = ClientConfig
-  { _clientConfig_startTime :: UTCTime
-  , _clientConfig_bakers :: [PublicKeyHash] -- Ident
-  , _clientConfig_workers :: [ClientDaemonWorker]
+  { _clientConfig_startTime :: !UTCTime
+  , _clientConfig_bakers :: ![PublicKeyHash] -- Ident
+  , _clientConfig_workers :: ![ClientDaemonWorker]
   , _clientConfig_nodeUri :: !URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
@@ -603,8 +665,8 @@ data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: !Word64
   , _bakeEfficiency_bakingRights :: !Word64
   -- TODO:
-  -- { _bakeEfficiency_bakerSucecss :: Sum Int
-  -- , _bakeEfficiency_bakerTotal :: Sum Int
+  -- { _bakeEfficiency_bakerSucecss :: !(Sum Int)
+  -- , _bakeEfficiency_bakerTotal :: !(Sum Int)
   -- , _bakeEfficiency_endorseOperationSuccess
   -- , _bakeEfficiency_endorseOperationTotal
   -- , _bakeEfficiency_endorseSlotsSuccess
@@ -626,7 +688,7 @@ instance Monoid BakeEfficiency where
   mappend = (<>)
 
 data Notificatee = Notificatee
-  { _notificatee_email :: Email
+  { _notificatee_email :: !Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 instance Aeson.ToJSON Notificatee
@@ -637,7 +699,7 @@ data AlertNotificationMethod
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
 
 instance Aeson.ToJSONKey AlertNotificationMethod where
-  toJSONKey = Aeson.ToJSONKeyText (tshow) (AesonE.text . tshow)
+  toJSONKey = Aeson.ToJSONKeyText tshow (AesonE.text . tshow)
 
 -- show match show!
 instance Aeson.FromJSONKey AlertNotificationMethod where
@@ -656,13 +718,13 @@ instance Universe SmtpProtocol where universe = universeDef
 instance Finite SmtpProtocol
 
 data MailServerConfig = MailServerConfig
-  { _mailServerConfig_hostName :: Text
-  , _mailServerConfig_portNumber :: Word16
-  , _mailServerConfig_smtpProtocol :: SmtpProtocol
-  , _mailServerConfig_userName :: Text
-  , _mailServerConfig_password :: Text
+  { _mailServerConfig_hostName :: !Text
+  , _mailServerConfig_portNumber :: !Word16
+  , _mailServerConfig_smtpProtocol :: !SmtpProtocol
+  , _mailServerConfig_userName :: !Text
+  , _mailServerConfig_password :: !Text
   -- TODO this `madeDefaultAt` seems to be for old design
-  , _mailServerConfig_madeDefaultAt :: UTCTime
+  , _mailServerConfig_madeDefaultAt :: !UTCTime
   , _mailServerConfig_enabled :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
@@ -912,6 +974,8 @@ deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
+  , ''Amendment
+  , ''AlertNotificationMethod
   , ''BakeEfficiency
   , ''BakedEvent
   , ''BakedEventOperation
@@ -924,8 +988,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
+  , ''BakerProposal
   , ''BakerRight
   , ''BakerRightsCycleProgress
+  , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
   , ''CacheDelegateInfo
@@ -937,37 +1003,41 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
-  , ''ErrorLogBakerMissed
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
-  , ''ErrorLogInsufficientFunds
+  , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
+  , ''ErrorLogInsufficientFunds
   , ''ErrorLogMultipleBakersForSameBaker
-  , ''ErrorLogNodeWrongChain
-  , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeWrongChain
   , ''Event
   , ''MailServerConfig
   , ''Node
+  , ''NodeDetails
+  , ''NodeDetailsData
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
+  , ''Parameters
+  , ''PeriodTestingVote
+  , ''PeriodPromotionVote
+  , ''PeriodProposal
+  , ''PeriodTesting
+  , ''PeriodVote
+  , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''ProcessControl
-  , ''NodeDetails
-  , ''NodeDetailsData
-  , ''RightNotificationLimit
-  , ''RightNotificationSettings
-  , ''Parameters
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
   , ''RightKind
+  , ''RightNotificationLimit
+  , ''RightNotificationSettings
   , ''SeenEvent
-  , ''AlertNotificationMethod
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -976,6 +1046,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpstreamVersion
   ] ++ map makeLenses
   [ 'Accusation
+  , 'Amendment
   , 'BakeEfficiency
   , 'BakedEvent
   , 'BakedEventOperation
@@ -1002,10 +1073,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
-  , 'ErrorLogInsufficientFunds
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
+  , 'ErrorLogInsufficientFunds
   , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
@@ -1013,18 +1084,23 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'Event
   , 'MailServerConfig
   , 'Node
+  , 'NodeDetails
+  , 'NodeDetailsData
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'RightNotificationLimit
-  , 'RightNotificationSettings
-  , 'ProcessData
-  , 'NodeDetails
-  , 'NodeDetailsData
   , 'Parameters
+  , 'PeriodTestingVote
+  , 'PeriodPromotionVote
+  , 'PeriodProposal
+  , 'PeriodTesting
+  , 'PeriodVote
+  , 'ProcessData
   , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report
+  , 'RightNotificationLimit
+  , 'RightNotificationSettings
   , 'SeenEvent
   , 'TelegramConfig
   , 'TelegramMessageQueue

@@ -4,7 +4,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -22,20 +21,25 @@ import Text.URI (URI)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
+import qualified Language.Haskell.TH.Quote as QQ
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
+import Common.Config (defaultKilnNodeRpcPort)
 import Common.URI (Port)
 import ExtraPrelude
-import Tezos.Base58Check (toBase58Text, ChainId)
+import Tezos.Base58Check (toBase58Text, ChainId, ProtocolHash)
 import Tezos.Json
 
 data AppConfig = AppConfig
   { _appConfig_emailFromAddress :: Address
-  , _appConfig_kilnNodePort :: Port
+  , _appConfig_kilnNodeRpcPort :: Port
+  , _appConfig_kilnNodeNetPort :: Port
   , _appConfig_kilnDataDir :: FilePath
   , _appConfig_kilnNodeConfig :: NodeConfigFile
   , _appConfig_chainId :: ChainId
+  , _appConfig_kilnNodeCustomArgs :: Maybe Text
+  , _appConfig_binaryPaths :: Maybe BinaryPaths
   }
 
 class HasAppConfig a where
@@ -47,9 +51,9 @@ instance HasAppConfig AppConfig where
 askAppConfig :: (HasAppConfig a, MonadReader a m) => m AppConfig
 askAppConfig = asks $ view getAppConfig
 
-kilnNodeURI :: AppConfig -> URI
-kilnNodeURI appConfig = fromRight [Uri.uri|http://127.0.0.1:8732|] $
-  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodePort appConfig))
+kilnNodeRpcURI :: AppConfig -> URI
+kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
+  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
@@ -176,6 +180,13 @@ data NodeConfigFile = NodeConfigFile
   , _nodeConfigFile_shell :: !(Maybe NodeConfigShell)
   }
 
+data BinaryPaths = BinaryPaths
+  { _binaryPaths_nodePath :: FilePath
+  , _binaryPaths_clientPath :: FilePath
+  , _binaryPaths_bakerEndorserPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
+  }
+  deriving (Show)
+
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
     = map (\case {'_' -> '-'; x -> x})
@@ -191,4 +202,5 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   , ''NodeConfigShellChainValidator
   , ''NodeConfigShellPeerValidator
   , ''NodeConfigShellPrevalidator
+  , ''BinaryPaths
   ]

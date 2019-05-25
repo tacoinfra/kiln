@@ -103,11 +103,12 @@ import qualified Text.URI as Uri
 import Tezos.Base58Check (HashedValue (..), tryFromBase58)
 import Tezos.NodeRPC.Sources (PublicNode (..))
 import Tezos.NodeRPC.Types
+import Tezos.Operation (Ballot)
 import Tezos.Types
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
-import Common.App (SetupState)
+import Common.App (SetupState, VoteState)
 import Common.Schema
 import ExtraPrelude
 
@@ -134,7 +135,14 @@ data NotifyTag a where
   NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
   NotifyTag_ShowLedger :: NotifyTag (SecretKey, Maybe (PublicKeyHash, Tez))
   NotifyTag_Prompting :: NotifyTag (SecretKey, Maybe SetupState)
+  NotifyTag_VotePrompting :: NotifyTag (SecretKey, Maybe VoteState)
   NotifyTag_RightNotificationSettings :: NotifyTag (RightKind, Maybe RightNotificationLimit)
+  NotifyTag_Amendment :: NotifyTag (VotingPeriodKind, Maybe Amendment)
+  NotifyTag_Proposals :: NotifyTag (Id PeriodProposal, Maybe (PeriodProposal, Maybe Bool))
+  NotifyTag_PeriodTestingVote :: NotifyTag (Maybe PeriodTestingVote)
+  NotifyTag_PeriodTesting :: NotifyTag (Maybe PeriodTesting)
+  NotifyTag_PeriodPromotionVote :: NotifyTag (Maybe PeriodPromotionVote)
+  NotifyTag_BakerVote :: NotifyTag (Maybe BakerVote)
   deriving Typeable
 
 mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
@@ -250,6 +258,10 @@ getId = get . fromId
 type EntityWithIdBy u a = (DefaultKeyId a, DefaultKey a ~ Key a (Unique u), PersistEntity a, IsUniqueKey (Key a (Unique u)))
 getIdBy :: (PersistBackend m, EntityWithIdBy u a) => Id a -> m (Maybe a)
 getIdBy = getBy . fromId
+
+-- Version of 'deleteAll' that doesn't entice you to use 'undefined'.
+deleteAll' :: forall v m proxy. (PersistBackend m, PersistEntity v) => proxy v -> m ()
+deleteAll' _ = deleteAll (error "deleteAll argument was demanded" :: v)
 
 updateId
   :: (EntityWithId a, GH.Expression (PhantomDb m) (RestrictionHolder v c) (DefaultKey a), PersistEntity v, PersistBackend m, GH.Unifiable (AutoKeyField v c) (DefaultKey a), _)
@@ -584,6 +596,16 @@ instance ToField SigningCurve where
 instance FromField SigningCurve where
   fromField f = maybe (fail "Invalid value for SigningCurve") pure . readMaybe <=< fromField f
 
+instance ToField Ballot where
+  toField = toField . show
+instance FromField Ballot where
+  fromField f = maybe (fail "Invalid value for Ballot") pure . readMaybe <=< fromField f
+
+instance ToField TestChainStatus where
+  toField = toField . show
+instance FromField TestChainStatus where
+  fromField f = maybe (fail "Invalid value for TestChainStatus") pure . readMaybe <=< fromField f
+
 instance ToField PublicKeyHash where
   toField a = toField (toPublicKeyHashText a)
 instance FromField PublicKeyHash where
@@ -624,6 +646,79 @@ instance Field2 (a :. b) (a :. b') b b' where
 --          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
 
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - primitive: VotingPeriodKind
+  - primitive: Ballot
+  - embedded: Ballots
+  - entity: Amendment
+    autoKey: null
+    constructors:
+      - name: Amendment
+        uniques:
+          - name: Amendment_period
+            type: primary
+            fields: [_amendment_period, _amendment_chainId, _amendment_votingPeriod]
+  - embedded: PeriodVote
+  - entity: PeriodProposal
+    constructors:
+      - name: PeriodProposal
+        uniques:
+          - name: PeriodProposal_hash
+            type: constraint
+            fields: [_periodProposal_hash, _periodProposal_chainId, _periodProposal_votingPeriod]
+  - entity: BakerProposal
+    autoKey: null
+    constructors:
+      - name: BakerProposal
+        fields:
+          - name: _bakerProposal_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+        uniques:
+          - name: BakerProposal_key
+            type: primary
+            fields: [_bakerProposal_pkh, _bakerProposal_proposal]
+  - entity: BakerVote
+    autoKey: null
+    constructors:
+      - name: BakerVote
+        fields:
+          - name: _bakerVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+        uniques:
+          - name: BakerVote_key
+            type: primary
+            fields: [_bakerVote_pkh, _bakerVote_proposal]
+  - entity: PeriodTestingVote
+    autoKey: null
+    constructors:
+      - name: PeriodTestingVote
+        fields:
+          - name: _periodTestingVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+  - primitive: TestChainStatus
+  - entity: PeriodTesting
+    autoKey: null
+    constructors:
+      - name: PeriodTesting
+        fields:
+          - name: _periodTesting_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
+  - entity: PeriodPromotionVote
+    autoKey: null
+    constructors:
+      - name: PeriodPromotionVote
+        fields:
+          - name: _periodPromotionVote_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
@@ -1013,6 +1108,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
   , (''Parameters, 'ParametersKey)
+  , (''PeriodProposal, 'PeriodProposalKey)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
@@ -1042,7 +1138,7 @@ instance DefaultKeyId NodeInternal where
   fromIdData _ = NodeInternalIdKey
 
 instance DefaultKeyId ErrorLogBakerMissed where
-  toIdData _ (ErrorLogBakerMissedIdKey eid) = (eid :: Id ErrorLog)
+  toIdData _ (ErrorLogBakerMissedIdKey eid) = eid :: Id ErrorLog
   fromIdData _ = ErrorLogBakerMissedIdKey :: Id ErrorLog -> Key ErrorLogBakerMissed (Unique ErrorLogBakerMissedId)
 instance DefaultKeyId ErrorLogBadNodeHead where
   toIdData _ (ErrorLogBadNodeHeadIdKey eid) = eid
@@ -1198,7 +1294,7 @@ bakerLogDep = \case
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   where
-    depBakerAlert' f = Related f $ ForeignKey_UniqueId
+    depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
 
 embeddedSecretKeyEquals
@@ -1241,7 +1337,14 @@ instance ArgDict NotifyTag where
     , c (Maybe ConnectedLedger)
     , c (SecretKey, Maybe (PublicKeyHash, Tez))
     , c (SecretKey, Maybe SetupState)
+    , c (SecretKey, Maybe VoteState)
     , c (RightKind, Maybe RightNotificationLimit)
+    , c (VotingPeriodKind, Maybe Amendment)
+    , c (Id PeriodProposal, Maybe (PeriodProposal, Maybe Bool))
+    , c (Maybe PeriodTestingVote)
+    , c (Maybe PeriodTesting)
+    , c (Maybe PeriodPromotionVote)
+    , c (Maybe BakerVote)
     )
   argDict = \case
     NotifyTag_BakerDaemonExternal -> Dict
@@ -1277,7 +1380,14 @@ instance ArgDict NotifyTag where
     NotifyTag_ConnectedLedger -> Dict
     NotifyTag_ShowLedger -> Dict
     NotifyTag_Prompting -> Dict
+    NotifyTag_VotePrompting -> Dict
     NotifyTag_RightNotificationSettings -> Dict
+    NotifyTag_Amendment -> Dict
+    NotifyTag_Proposals -> Dict
+    NotifyTag_PeriodTestingVote -> Dict
+    NotifyTag_PeriodTesting -> Dict
+    NotifyTag_PeriodPromotionVote -> Dict
+    NotifyTag_BakerVote -> Dict
 
 fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
