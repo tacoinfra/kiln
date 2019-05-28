@@ -1770,7 +1770,7 @@ bakersTab =
             Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
                 n | n == 0 -> bakerNotVoted
-                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
+                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n >= 20))
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ case mBakerVote of
                 Nothing -> bakerNotVoted
