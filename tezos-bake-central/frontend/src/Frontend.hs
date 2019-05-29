@@ -1611,7 +1611,8 @@ bakersTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
-         anyErrors <- holdUniqDyn $ not . null <$> dEbb
+         let
+           anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . concat . (fmap NEL.toList) <$> dEbb
          resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
            icon "icon-check"
            text "Resolve All"
