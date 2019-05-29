@@ -496,7 +496,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       let blk = latestHead ^.hash
       mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
       let chainId = _nodeDataSource_chain nds
-          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - case currentPeriodKind of
+          -- The voting period of the last proposal period
+          amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - case currentPeriodKind of
             VotingPeriodKind_TestingVote -> 1
             VotingPeriodKind_PromotionVote -> 3
             _ -> 0 -- impossible
@@ -508,7 +509,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
           pps <- [queryQ|
             UPDATE "BakerVote" SET included = ?blk
             FROM "PeriodProposal" pp
-            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod AND ballot = ?ballot AND pkh = ?pkh
+            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
             RETURNING proposal
           |]
           for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
