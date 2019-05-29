@@ -48,6 +48,3 @@ parseChain x = case parseNamedChain x of
 
 mainnetChainId :: ChainId
 mainnetChainId = "NetXdQprcVkpaWU"
-
-betanetChainId :: ChainId
-betanetChainId = mainnetChainId

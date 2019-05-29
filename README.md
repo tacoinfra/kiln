@@ -31,16 +31,17 @@ Kiln bakes with a local node, which increases system requirements.
 Kiln can be built from source on linux distributions and Obsidian Systems provides:
 * pre-built Docker images hosted on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/).
 * pre-built deb files
+* pre-built ova files
 
-This table details Kiln's distributions, their key features, and their availability. Click a link in the left column to learn more about that distribution of Kiln.
+Click the link in the left column to learn more about that Kiln distribution.
 
 | **Distribution**                                       | **Supports Baking?** | **Operating Systems**           | **Released?**     |
 |--------------------------------------------------------|----------------------|---------------------------------|-------------------|
 | [Build from Source](docs/distros/build-from-source.md) | Yes                  | Linux                           | Yes               |
 | [Docker](docs/distros/docker.md)                       | **No**               | Linux / Mac                     | Yes               |
-| [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Ubuntu (others soon)            | Yes               |
-| VM Package (OVA)                                       | Yes                  | Any                             | Est. May 2019     |
-| Mac Distribution                                       | Yes                  | Mac                             | Est. May 2019     |
+| [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Debian / Ubuntu                 | Yes               |
+| [VM Package](docs/distros/virtualmachine.md) (.ova)    | Yes                  | Any                             | Yes               |
+| Mac Distribution                                       | Yes                  | Mac                             | Est. June 2019    |
 
 # Using Kiln to Bake
 
@@ -128,10 +129,6 @@ Click *Settings* from the left panel and provide the SMTP configuration for your
 ### Known Issue: Front End Stops Updating
 
 There are instances where Kiln’s front end will stop updating, but the backend will continue functioning properly. For instance, resolving a notification will not cause the notification to disappear until the page is refreshed. Stopping and restarting Kiln fixes this issue.
-
-### Known Issue: Ubuntu package may not recognize Ledger device
-
-v0.5.1 of Kiln assumes you have previously used the ledger device on your machine, and thus your udev rules have been set. If Kiln does not recognize your ledger, [set your udev rules](https://github.com/obsidiansystems/ledger-app-tezos#udev-rules-linux-only), then restart Kiln.
 
 # Contact Us
 

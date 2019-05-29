@@ -13,7 +13,7 @@ preceding periods, if we are in a period after proposal).
   3. Open the monitor in the browser
   4. From another terminal window, navigate to tezos-bake-monitor and run:
   ```
-    $(nix-build -A votingTest --no-out-link)/bin/voting-test
+    $(nix-build -A tests.voting --no-out-link)/bin/voting-test
   ```
   5. Enter `q` in the interactive shell from the previous step. The node should be updated in kiln and show the first block.
   6. Enter `q` again. The top bar should be updated with the block and amendment period data. Verify that we are in the proposal period.

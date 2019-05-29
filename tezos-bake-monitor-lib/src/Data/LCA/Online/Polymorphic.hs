@@ -53,7 +53,6 @@ module Data.LCA.Online.Polymorphic
   , lca, mlca
   , View(..)
   , nearest
-  , graft
   , concatPaths
   ) where
 
@@ -346,14 +345,6 @@ nearest x = maximumByMay (compare `on` lal x)
     -- least ancestor level.  the inverse distance between leaves.
     lal :: (Monoid a, Monoid b, Eq k) => Path k b -> Path k a -> Int
     lal y z = length $ lca z y
-
--- restore sharing between paths by taking the part of branch not on trunk.
--- TODO: i'm sure that this can be made O(log h) by retaining subtrees of the path above the lca
-graft :: (Monoid a, Eq k) => Path k a -> Path k a -> Path k a
-graft trunk branch = concatPaths common leaves
-  where
-    common = lca trunk branch
-    leaves = keep (length branch - length common) branch
 
 concatPaths :: Monoid a => Path k a -> Path k a -> Path k a
 concatPaths trunk = foldr (uncurry cons) trunk . toList

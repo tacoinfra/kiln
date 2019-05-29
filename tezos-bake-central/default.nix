@@ -2,6 +2,7 @@
 , supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
 , profiling ? false
 , distMethod ? null
+, tezosScopedKit ? null
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -10,7 +11,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
     rhyolite = import (hackGet dep/rhyolite);
-    nodeKit = (import ./scoped-tzkits.nix {}).kits;
+    nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
+      inherit pkgs;
+      tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
+    };
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
@@ -23,6 +27,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
+      named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };

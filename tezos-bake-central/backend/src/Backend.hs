@@ -102,6 +102,11 @@ onRpcError = either (throwError . tshow) pure
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
 
+resolveKnownChains :: Either NamedChain ChainId -> Either NamedChain ChainId
+resolveKnownChains = \case
+  Right chainId | chainId == mainnetChainId -> Left NamedChain_Mainnet
+  x -> x
+
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
@@ -120,7 +125,7 @@ backendImpl cfg serve = do
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
+  !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
@@ -168,10 +173,10 @@ backendImpl cfg serve = do
     maybeNamedChain = either Just (const Nothing) chain
     maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
     maybeNamedChainOrPaths = either (Just . Left)
-      (const $ maybe Nothing (Just . Right) binaryPaths) chain
+      (const $ fmap Right binaryPaths) chain
 
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
-    firstOption = (fmap.fmap) getFirst . fmap getOption . fold . (fmap.fmap) Option . (fmap.fmap.fmap) First
+    firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
 
   !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $  _opts_tzscanApiUri cfg
@@ -337,7 +342,7 @@ backendImpl cfg serve = do
           True -> $(logInfo) $ "Node data already exists at " <> T.pack newDir
           False -> do
             liftIO (doesDirectoryExist oldDir) >>= \case
-              False -> $(logInfo) $ "No node data to migrate..."
+              False -> $(logInfo) "No node data to migrate..."
               True -> do
                 $(logWarn) $ "Migrating node data from " <> T.pack oldDir <> " to " <> T.pack newDir
                 liftIO $ renameDirectory oldDir newDir
@@ -534,10 +539,10 @@ optsArgDescr =
       ("The data directory used by the kiln node and tezos-client. Defaults to " <> show Config.defaultKilnDataDir <> ".")
 
   , mkReqArg Config.kilnNodeCustomArgs "ARGS" (set opts_kilnNodeCustomArgs . Just)
-      ("Custom arguments for the Kiln Node.")
+      "Custom arguments for the Kiln Node."
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
-      ("Custom paths to tezos binaries.")
+      "Custom paths to tezos binaries."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

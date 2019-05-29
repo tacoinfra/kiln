@@ -16,3 +16,12 @@ nix-build -A kiln-debian
 ```
 
 The result of this command will be the path to the deb file.
+
+## Building the Virtual Machine
+
+
+```shell
+nix-build -A kilnVM
+```
+
+The result of this command will be the path containing the `kiln-vm.ova` file.

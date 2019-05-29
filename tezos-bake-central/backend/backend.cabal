@@ -1,5 +1,5 @@
 name: backend
-version: 0.5.1
+version: 0.5.2
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -58,6 +58,7 @@ library
     , monad-logger
     , monoidal-containers
     , mtl
+    , named == 0.3.*
     , network
     , obelisk-asset-serve-snap
     , obelisk-backend

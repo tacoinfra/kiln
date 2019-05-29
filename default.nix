@@ -7,6 +7,7 @@ let
   obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
 
   distroMethods = {
+    source = null;
     docker = "docker";
     linuxPackage = "linux-package";
   };
@@ -85,12 +86,11 @@ let
     , user ? monitorName
     , rpcPort
     , monitorPort
-    , appConfig
     , version
     , ...}@args: {config, ...}: {
       imports = [
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = (obApp null).linuxExeConfigurable appConfig version;
+          exe = (obApp distroMethods.source).linuxExeConfigurable version;
           name = monitorName;
           user = user;
           internalPort = monitorPort;
@@ -344,7 +344,8 @@ let
       };
       systemd.services.setupkiln = {
         wantedBy = [ "multi-user.target" ];
-        after = [ "home-kiln-app.mount" ];
+        after = [ "home-kiln-app.mount" "network-online.target" ];
+        wants = [ "network-online.target" ];
         # Change the ownership of the kiln folder (root of the other disk)
         script = ''
           chown -R kiln:users /home/kiln/app
@@ -359,7 +360,7 @@ let
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
         preStart = ''
-          ln -sft . '${(obAppGargoyle null).exe}'/*
+          ln -sft . '${(obAppGargoyle distroMethods.source).exe}'/*
           mkdir -p log
         '';
         script = ''
@@ -378,35 +379,19 @@ let
   installKiln = pkgs.writeScriptBin "install-kiln" ''
     #!/usr/bin/env bash
     set -e
-    if [[ $# -eq 0 ]] ; then
-       echo "Installing Kiln in directory : 'app'"
-       export KILN_INSTALL_PATH=app
-    else
-       echo "Installing Kiln in directory : $1"
-       export KILN_INSTALL_PATH=$1
-    fi
-    mkdir -p $KILN_INSTALL_PATH
-    ln -sf ${(obAppGargoyle null).exe}/* $KILN_INSTALL_PATH
+    KILN_INSTALL_PATH="''${1:-app}"
+    echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
+    mkdir -p "$KILN_INSTALL_PATH"
+    ln -sf '${(obAppGargoyle distroMethods.source).exe}'/* "$KILN_INSTALL_PATH"
     echo "Install Complete!"
-    echo "'cd $KILN_INSTALL_PATH' and run './backend' to run kiln with default settings."
+    echo "'cd \"$KILN_INSTALL_PATH\"' and run './backend' to run kiln with default settings."
   '';
 
-  votingTest = pkgs.writeScriptBin "voting-test" ''
-    #!/usr/bin/env bash
-    set -e
-    echo 'Starting flextesa voting test... monitor a node via kiln at http://127.0.0.1:20000'
-    rm -rf /tmp/kiln_voting_test
-    cp -r ${(import ./dep/tezos-baking-platform {}).tezos.master.tezos-src}/src/bin_client/test/proto_test_injection /tmp/kiln_voting_test
-    chmod -R +w /tmp/kiln_voting_test
-    nix-shell -A tezos.master.sandbox dep/tezos-baking-platform --run \
-      'flextesa voting \
-      /tmp/kiln_voting_test \
-      --base-port=20000 --interactive=true --pause-on-error=true'
-  '';
+in (obApp distroMethods.source) // {
+  tests = import ./tests { inherit obelisk pkgs; };
 
-in (obApp null) // {
-  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln votingTest;
-  server = args@{ hostName, adminEmail, routeHost, enableHttps, config, version, ... }:
+  inherit pkgs dockerExe kilnVMConfig dockerImage installKiln;
+  server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
@@ -420,11 +405,7 @@ in (obApp null) // {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
           (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig // {
-              appConfig = config;
-              version = version;
-            })
-          )
+          (mkMonitorModule (args // nodeConfig // { inherit version; }))
           (syslog-ngModule {
             opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
           })
@@ -443,7 +424,7 @@ in (obApp null) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
-    nodeKit = kilnNodeKit;
-    pkgName = "kiln"; version = "0.5.1";
+    pkgName = "kiln";
+    version = "0.5.2";
   }).kiln-debian;
 }

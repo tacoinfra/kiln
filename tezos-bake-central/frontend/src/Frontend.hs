@@ -237,7 +237,6 @@ appMain = do
         pure e
     pure ()
 
-
 appName :: Text
 appName = "Kiln"
 
@@ -435,6 +434,7 @@ appContentArea
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m)
     , HasModal t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
     , Routed t (R AppRoute) m
@@ -451,6 +451,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r (ModalM m), MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -971,7 +972,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         Nothing -> uiButton "primary fluid" "Start Baking"
         Just bid -> do
           kilnLogo
-          dynText $ ffor (_bakerInternalData_running <$> bid) $ \case
+          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ \case
             True -> "A Kiln baker is running."
             False -> "A Kiln baker is configured, but is stopped."
           pure never
@@ -1364,6 +1365,7 @@ nodesTab =
               externalNodeMenu
               (>>= getNodeHeadBlock)
               (Just errors)
+              (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
@@ -1387,7 +1389,7 @@ nodesTab =
                       "Stop Node"
 
                   runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap _bakerInternalData_running))
+                  bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
                     <$> watchInternalBaker
                   dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                     (True, bRunning) ->
@@ -1428,6 +1430,10 @@ nodesTab =
                     internalNodeMenu
                     ((=<<) getNodeHeadBlock . snd)
                     (Just errors)
+                    (Just $ ffor2 ebn nodeData $ \es nd -> and
+                      [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
+                      , _processData_state nd == ProcessState_Running
+                      ])
                     (Just $ _processData_state . fst)
                     (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                     (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
@@ -1469,6 +1475,7 @@ nodesTab =
               blank
               publicNodeMenu
               (Just . mkVeryBlockLike)
+              Nothing
               Nothing
               Nothing
               Nothing
@@ -1521,20 +1528,20 @@ nodesTab =
           el "dd" $ do
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
-    tileConnectionStats getPeerCount' getNetworkStats' node =
-      if isNothing getPeerCount' && isNothing getNetworkStats'
+    tileConnectionStats connected' getPeerCount' getNetworkStats' node =
+      if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'
       then Nothing
       else Just $ do
-        for_ getPeerCount' $ \getPeerCount -> do
-          peerCount <- maybeDyn <=< holdUniqDyn $ getPeerCount <$> node
-          elClass "span" "peer-count" $ withPlaceholder $ (fmap.fmap) display peerCount
+        for_ (liftA2 (,) connected' getPeerCount') $ \(connected, getPeerCount) -> do
+          peerCount <- holdUniqDyn $ getPeerCount <$> node
+          elClass "span" "peer-count" $ dynText $ ffor2 peerCount connected $ \p c -> if c then maybe "-" tshow p else "-"
           text " connected peers"
 
-        for_ getNetworkStats' $ \getNetworKStats -> do
+        for_ (liftA2 (,) connected' getNetworkStats') $ \(connected, getNetworkStats) -> do
           let
-            stat = getNetworKStats <$> node
-            showSpeed n = dynText <=< holdUniqDyn $ ffor n $ fromIntegral >>> humanBytes >>> (<> "/s")
-            showTotal n = dynText <=< holdUniqDyn $ ffor n $ unTezosWord64 >>> fromIntegral >>> humanBytes
+            stat = getNetworkStats <$> node
+            showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do
@@ -1542,12 +1549,12 @@ nodesTab =
               divClass "cell" $ text "Total"
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-up" *> showSpeed (_networkStat_currentOutflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-up" *> showTotal (_networkStat_totalSent <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showSpeed connected (_networkStat_currentOutflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-up" *> showTotal connected (_networkStat_totalSent <$> stat)
 
             divClass "column" $ do
-              divClass "cell" $ icon "icon-arrow-down" *> showSpeed (_networkStat_currentInflow <$> stat)
-              divClass "cell" $ icon "icon-arrow-down" *> showTotal (_networkStat_totalRecv <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showSpeed connected (_networkStat_currentInflow <$> stat)
+              divClass "cell" $ icon "icon-arrow-down" *> showTotal connected (_networkStat_totalRecv <$> stat)
 
     -- TODO: errors' is a Maybe because we statically state that public nodes
     -- don't display a status icon, but I don't think that's a good way to
@@ -1559,18 +1566,19 @@ nodesTab =
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t Bool) -- ^ (Optional) Are we connected to the node?
       -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
       -> m ()
-    standardNodeTile title subtitle menuContents getBlock errors' internalState getPeerCount' getNetworkStats' node = do
+    standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
         [ tileHeader title subtitle menuContents badge errors'
         , tileBlockStats getBlock node
         ]
-        <> toList (tileConnectionStats getPeerCount' getNetworkStats' node)
+        <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
 
     nodeTileWithSections :: [m ()] -> m ()
     nodeTileWithSections = divClass "ui card dashboard-tile node-tile" . divClass "content" .
@@ -1586,6 +1594,7 @@ bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1748,6 +1757,25 @@ bakersTab =
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
+
+        -- -- Calculate what we should show in the voting icon. Maybe Bool
+        -- -- indicates if the vote has taken place, and if so, if it has been included
+        -- voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
+        --   damendment <- watchAmendment
+        --   dmBakerVote <- watchBakerVote
+        --   dproposals <- watchProposals
+        --   let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+        --   maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
+        --     Nothing -> Nothing
+        --     Just (k, _) -> case k of
+        --       VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
+        --         n | n == 0 -> bakerNotVoted
+        --           | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
+        --       VotingPeriodKind_Testing -> Nothing
+        --       _ -> Just $ case mBakerVote of
+        --         Nothing -> bakerNotVoted
+        --         Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
+
         tileMenu $ do
           let
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
@@ -1755,6 +1783,21 @@ bakersTab =
             Left _ -> do -- not a kiln baker
               removeEntry $ removeItemModal "baker"
             Right bid -> do
+              mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
+              whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
+                isTestingPeriod <- holdUniqDyn $ (VotingPeriodKind_Testing ==) . fst <$> periodKind_amendment
+                dyn_ $ ffor isTestingPeriod $ \case
+                  True -> pure ()
+                  False -> do
+                    open <- tileMenuEntry "Vote"
+                    let amendment = snd <$> periodKind_amendment
+                    mProtoInfo <- maybeDyn =<< watchProtoInfo
+                    let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
+                          Left _ -> Nothing
+                          Right b -> Just (pkh, _bakerInternalData_secretKey b)
+                        xs = (liftA3 . liftA3) (,,) (current mProtoInfo) (pure . pure <$> current amendment) baker
+                    tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
+
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
               latestHead <- maybeDyn =<< watchLatestHead
@@ -1783,13 +1826,31 @@ bakersTab =
             iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
-          dyn_ $ ffor isInternal $ \i -> when i $ divClass "internal-subtitle" $ do
-            kilnLogo
-            divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
-              MonitoredStatus_Stopped -> "Stopped"
-              MonitoredStatus_Healthy -> "Running"
-              MonitoredStatus_Unhealthy -> "Unhealthy"
-              MonitoredStatus_Unknown -> "Unknown"
+          dyn_ $ ffor isInternal $ \i -> when i $ do
+            -- divClass "baker-vote-popup" $ do
+            --   let accessVoting = divClass "detail" $ do
+            --         text "Access Voting from the extras menu "
+            --         icon "icon-ellipsis grey"
+            --         text "on this baker tile."
+            --   whenJustDyn voteState $ \dc -> do
+            --     let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
+            --           Nothing -> accessVoting
+            --           Just True -> pure ()
+            --           Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
+            --     tooltipped TooltipPos_TopLeft tt $ do
+            --       let attrs = ffor dc $ \(_, included) -> "class" =: case included of
+            --             Nothing -> "large blue icon-vote-badge icon"
+            --             Just False -> "large grey icon-dots-badge icon"
+            --             Just True -> "large grey icon-check-badge icon"
+            --       elDynAttr "i" attrs blank
+
+            divClass "internal-subtitle" $ do
+              kilnLogo
+              divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
+                MonitoredStatus_Stopped -> "Stopped"
+                MonitoredStatus_Healthy -> "Running"
+                MonitoredStatus_Unhealthy -> "Unhealthy"
+                MonitoredStatus_Unknown -> "Unknown"
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
