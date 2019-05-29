@@ -58,6 +58,7 @@ library
     , monad-logger
     , monoidal-containers
     , mtl
+    , named == 0.3.*
     , network
     , obelisk-asset-serve-snap
     , obelisk-backend

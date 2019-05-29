@@ -1,37 +1,44 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Monad (when, unless)
+import Control.Concurrent.Async (withAsync)
+import Control.Exception.Safe (tryJust)
 import Control.Monad.Catch (bracket)
-import Control.Monad.Logger (MonadLogger, logWarnSH, logDebugSH, logWarn, logInfoSH)
+import Control.Monad.Logger (MonadLogger, logDebugSH, logErrorNS, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
+import qualified Data.Text as T
+import Data.Time (getCurrentTime, addUTCTime)
 import Database.Groundhog.Postgresql
+import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
-import System.IO (hFlush)
+import qualified System.Process as Proc
+import System.IO (hFlush, hGetLine)
+import System.IO.Error (isEOFError)
 import System.IO.Temp (withTempFile)
-
-import Data.Time (getCurrentTime, addUTCTime)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as LBS
 
 import Backend.Common
 import Backend.Config
@@ -60,24 +67,34 @@ import ExtraPrelude
 --     Also monitors if process terminates unexpectedly.
 
 processWorker
-  :: ( MonadIO m
+  :: (MonadIO m)
+  => ( forall m'
+       . (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m')
+       => "db" :! Pool Postgresql
+       -> "updateState" :! (ProcessState -> m' ())
+       -> "configFile" :! FilePath
+       -> m' a
      )
-  => LoggingEnv
-  -> Pool Postgresql
-  -> AppConfig
-  -> (forall m'. (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m') => Pool Postgresql -> (ProcessState -> m' ()) -> FilePath -> m' a)
-  -> (a -> FilePath -> CreateProcess)
-  -> Id ProcessData
-  -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  -> "logger" :! LoggingEnv
+  -> "db" :! Pool Postgresql
+  -> "config" :! AppConfig
+  -> "logNamespace" :! Text
+  -> "mkProcess" :! (a -> FilePath -> CreateProcess)
+  -> "pid" :! Id ProcessData
+  -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker logger db appConfig initialize process pid makeNotify = worker' $ do
+processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
-      v <- runLoggingEnv logger $ initialize db updateState configFile
+      v <- runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
       updateState ProcessState_Starting
-      withCreateProcess (process v configFile) procMonitor
+      let procSpec = (mkProcess v configFile)
+            { Proc.std_out = Proc.CreatePipe
+            , Proc.std_err = Proc.CreatePipe
+            }
+      withCreateProcess procSpec procMonitor
     threadDelay' 10
   where
     state_ = ProcessData_stateField
@@ -87,7 +104,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
     waitUntilShouldRun = do
       isStopped <- runLoggingEnv logger $ runDb (Identity db) $
         all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
-      when isStopped $ threadDelay' 1 >> waitUntilShouldRun
+      when isStopped $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
@@ -98,7 +115,7 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         {-# INLINE claim #-}
         claim = do
           now <- liftIO getCurrentTime
-          let nowMinus5min = addUTCTime (-600) now
+          let nowMinus5min = addUTCTime (-60 * 5) now
           pd <- runDb (Identity db) $ do
             update [state_ =. state, updated_ =. Just now, backend_ =. Just lockId]
               ((AutoKeyField ==. fromId pid)
@@ -121,9 +138,21 @@ processWorker logger db appConfig initialize process pid makeNotify = worker' $ 
         update [updated_ =. Just now, backend_ =. (Nothing :: Maybe Int)]
           (AutoKeyField ==. fromId pid)
 
-    procMonitor _ _ _ ph = do
-      runLoggingEnv logger go
+    procMonitor _stdin hStdout hStderr ph = do
+      withHandleCopyWith (logInfoNS namespace) hStdout $ do
+        withHandleCopyWith (logErrorNS namespace) hStderr $ do
+          runLoggingEnv logger go
       where
+        withHandleCopyWith perLine h' f = case h' of
+          Nothing -> f
+          Just h -> withAsync forEachHandleLine $ const f
+            where
+              forEachHandleLine = runLoggingEnv logger $
+                fix $ \loop -> do
+                  liftIO (tryJust (guard . isEOFError) (hGetLine h)) >>= \case
+                    Left _ -> pure ()
+                    Right ln -> perLine (T.pack ln) *> loop
+
         {-# INLINE go #-}
         go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
         go = do
