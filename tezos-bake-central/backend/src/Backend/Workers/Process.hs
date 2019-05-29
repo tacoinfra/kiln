@@ -81,9 +81,10 @@ processWorker
   -> "logNamespace" :! Text
   -> "mkProcess" :! (a -> FilePath -> CreateProcess)
   -> "pid" :! Id ProcessData
+  -> "pidToRunAfter" :! Maybe (Id ProcessData)
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg makeNotify) = worker' $ do
+processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing
@@ -102,9 +103,13 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
     backend_ = ProcessData_backendField
     control_ = ProcessData_controlField
     waitUntilShouldRun = do
-      isStopped <- runLoggingEnv logger $ runDb (Identity db) $
-        all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
-      when isStopped $ threadDelay' 1 *> waitUntilShouldRun
+      canRun <- runLoggingEnv logger $ runDb (Identity db) $ do
+        isStopped <- all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
+        otherProcessRunning <- case pidToRunAfter of
+          Nothing -> pure True
+          Just pid1 -> all (== ProcessState_Running) <$> project state_ (AutoKeyField ==. fromId pid1)
+        pure $ (not isStopped) && otherProcessRunning
+      unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
