@@ -19,7 +19,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
+import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
@@ -39,9 +39,11 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
+import System.Directory (removeDirectoryRecursive)
 import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
@@ -57,12 +59,13 @@ import ExtraPrelude
 
 requestHandler
   :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
-  => Text
+  => AppConfig
+  -> Text
   -> Address
   -> NodeDataSource
   -> [DataSource]
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
+requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -208,15 +211,15 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               notify NotifyTag_NodeInternal (nid, processData)
               return pid
 
-      PublicRequest_RemoveNode node -> inDb $ case node of
-        Left addr -> do
+      PublicRequest_RemoveNode node -> case node of
+        Left addr -> inDb $ do
           nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
           for_ nids $ \nid -> do
             update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
             notify NotifyTag_NodeExternal (nid, Nothing)
             clearErrors nid
         Right () -> do
-          getInternalNode >>= \case
+          inDb $ getInternalNode >>= \case
             Nothing -> pure ()
             Just (nid, nodeData) -> do
               update
@@ -227,7 +230,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
+          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ removeDataDir
         where
+          removeDataDir = do
+            let dataDir = nodeDataDir appConfig
+            $(logDebug) ("Removing Kiln node's data dir: " <> (tshow dataDir))
+            liftIO $ removeDirectoryRecursive dataDir
           clearErrors nid = do
             let
               deleteLogs :: forall cstr m' t.
