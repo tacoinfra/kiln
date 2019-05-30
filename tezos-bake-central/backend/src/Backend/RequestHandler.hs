@@ -49,7 +49,6 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Backend.Workers.TezosClient (addBakerImpl, checkIfRegistered, startBaking)
-import Backend.Common
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -171,47 +170,33 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify NotifyTag_NodeExternal . (nid,) . Just)
 
-      PublicRequest_UpdateInternalWorker workerType shouldRun -> case workerType of
+      PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
         WorkerType_Node
-          | shouldRun -> inDb $ void $ updateNode True -- Only start node
-          | otherwise -> inDb $ do -- On stopping node, stop the baker also (if running)
-              updateBakerDaemon False
-              void $ updateNode False
+          | shouldRun -> updateNode -- Only start node
+          | otherwise -> do -- On stopping node, stop the baker also (if running)
+              updateBakerDaemon
+              updateNode
         WorkerType_Baker
-          | not shouldRun -> updateBaker False (Nothing :: Maybe (Id ProcessData)) -- Only stop baker
+          | not shouldRun -> updateBakerDaemon -- Only stop baker
           | otherwise -> do -- On starting baker, start the node also (if stopped)
-              inDb (updateNode True) >>= updateBaker True
+              updateNode
+              updateBakerDaemon
         where
-          -- TODO: This is very wrong. It must be non-blocking.
-          updateBaker shouldRun' mPid = if shouldRun'
-            then mapM_ waitForNodeToStart mPid
-            else inDb $ updateBakerDaemon shouldRun'
-            where
-              waitForNodeToStart pid =
-                inDb (project1 ProcessData_stateField
-                  (AutoKeyField ==. fromId pid)) >>= \case
-                Nothing -> return ()
-                Just ProcessState_Failed -> return ()
-                Just ProcessState_Running -> inDb $ updateBakerDaemon shouldRun'
-                _ -> threadDelay' 1 *> waitForNodeToStart pid
-
-          updateBakerDaemon shouldRun' = do
+          c = if shouldRun then ProcessControl_Run else ProcessControl_Stop
+          updateBakerDaemon = do
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
               >>= traverse_ (\bdid -> do
                 let bPid = _bakerDaemonInternalData_bakerProcessData bdid
                     ePid = _bakerDaemonInternalData_endorserProcessData bdid
-                    c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
                 update [ProcessData_controlField =. c]
                   (AutoKeyField `in_` map fromId [bPid, ePid]))
 
-          updateNode shouldRun' = do
-            (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
+          updateNode = do
+            (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
               let pid = _deletableRow_data nodeData
-                  c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
               update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
-              return pid
 
       PublicRequest_RemoveNode node -> inDb $ case node of
         Left addr -> do

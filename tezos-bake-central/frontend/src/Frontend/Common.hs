@@ -299,9 +299,9 @@ uiDynButton classes label = fmap (domEvent Click . fst) $
 modalOpeningButton :: (DomBuilder t m) => Text -> Text -> m (Event t ())
 modalOpeningButton = buttonWithInfoCls ""
 
-buttonIconWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> Text -> m (Event t ())
-buttonIconWithInfoCls i classes label t =
-  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes) <> "data-tooltip" =: t) $ do
+buttonIconWithInfoCls :: (DomBuilder t m) => Text -> Text -> Text -> m (Event t ())
+buttonIconWithInfoCls i classes label =
+  fmap (domEvent Click . fst) <$> elAttr' "button" ("type" =: "button" <> "class" =: ("ui button " <> classes)) $ do
     icon i
     text label
 
