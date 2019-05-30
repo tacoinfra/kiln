@@ -132,6 +132,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #logNamespace "kiln-node"
     ! #mkProcess (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
     ! #pid pid
+    ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
 runCommandWithInfoLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m Text
@@ -168,10 +169,11 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
 bakerDaemonProcess appConfig logger db namedChainOrPaths = do
-  (_nid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
-    project1 ( BakerDaemonInternal_idField
-             , BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
-      (Just v) -> return v
+  (nodePPid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+    -- nodePPid should always be a Just value
+    nodePPid <- project1 (NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+    project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
+      (Just bdid) -> return (nodePPid, bdid)
       Nothing -> do
         let processData = ProcessData
               { _processData_control = ProcessControl_Stop
@@ -185,7 +187,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
         tbpid <- insert' processData
         tepid <- insert' processData
         nid <- insert' BakerDaemon
-        let v = BakerDaemonInternalData
+        let bdid = BakerDaemonInternalData
               { _bakerDaemonInternalData_alias = "ledger_kiln"
               , _bakerDaemonInternalData_publicKeyHash = Nothing
               , _bakerDaemonInternalData_insufficientFunds = False
@@ -202,11 +204,11 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow
-            { _deletableRow_data = v
+            { _deletableRow_data = bdid
             , _deletableRow_deleted = True
             }
           }
-        return (nid, v)
+        return (nodePPid, bdid)
   let
     aliasT = _bakerDaemonInternalData_alias bdid
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
@@ -230,6 +232,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
       ! #config appConfig
       ! #mkProcess (\proto _nodeConfigPath -> proc (pathF proto) args)
       ! #pid pid
+      ! #pidToRunAfter nodePPid
       ! #mkNotify Nothing
     bakerPw = pw (bakerPath paths, bakerArgs) ! #logNamespace "kiln-baker"
     endorserPw = pw (endorserPath paths, endorserArgs) ! #logNamespace "kiln-endorser"
