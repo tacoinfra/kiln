@@ -228,6 +228,7 @@ h6.ui.header {
   }
   .proposals {
     margin: 0 -@10px;
+    .no-proposals { font-size: @16px; }
     table {
       margin-top: @20px;
       width: 100%;
@@ -391,6 +392,13 @@ h6.ui.header {
       }
     }
   }
+}
+
+.no-proposals {
+  color: #898989;
+  text-align: center;
+  font-weight: bold;
+  margin-top: @20px;
 }
 
 i.ui.icon.icon-arrow-up.upgrade-icon {
