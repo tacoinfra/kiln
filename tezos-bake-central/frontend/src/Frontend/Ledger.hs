@@ -24,6 +24,8 @@ module Frontend.Ledger (ledgerSetupSteps) where
 import Data.Bifunctor (bimap)
 import Data.Char (isDigit)
 import Data.Dependent.Sum (DSum(..), (==>))
+import qualified Data.Dependent.Map as DMap
+import Data.GADT.Compare
 import Data.GADT.Compare.TH
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -69,6 +71,32 @@ toLSSText = \case
   LSS_RegisterDelegate -> "Register Delegate"
   LSS_Complete -> ""
 
+data PromptResult m a where
+  PromptResult_RecoverableError :: PromptResult m (m ())
+  PromptResult_ClientError :: PromptResult m ClientError
+  PromptResult_Interstitial :: PromptResult m (m ())
+  PromptResult_Success :: PromptResult m ()
+
+instance GEq (PromptResult m) where
+  geq PromptResult_RecoverableError PromptResult_RecoverableError = Just Refl
+  geq PromptResult_ClientError PromptResult_ClientError = Just Refl
+  geq PromptResult_Interstitial PromptResult_Interstitial = Just Refl
+  geq PromptResult_Success PromptResult_Success = Just Refl
+  geq _ _ = Nothing
+
+instance GCompare (PromptResult m) where
+  gcompare PromptResult_RecoverableError PromptResult_RecoverableError = GEQ
+  gcompare PromptResult_RecoverableError _ = GLT
+  gcompare PromptResult_ClientError PromptResult_RecoverableError = GGT
+  gcompare PromptResult_ClientError PromptResult_ClientError = GEQ
+  gcompare PromptResult_ClientError _ = GLT
+  gcompare PromptResult_Interstitial PromptResult_ClientError = GGT
+  gcompare PromptResult_Interstitial PromptResult_RecoverableError = GGT
+  gcompare PromptResult_Interstitial PromptResult_Interstitial = GEQ
+  gcompare PromptResult_Interstitial _ = GLT
+  gcompare PromptResult_Success PromptResult_Success = GEQ
+  gcompare PromptResult_Success _ = GGT
+
 ledgerSetupSteps :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedger
@@ -102,7 +130,7 @@ ledgerSetupSteps = mdo
     LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
     LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (selectAddress l)
     LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
-    LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_RegisterDelegate ==> sk) (authorizeLedger sk)
+    LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
     LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
     LSS_Complete :=> Identity sk -> (fmap . fmap) (Left . Right) (setupComplete sk)
   let (quit :: Event t (Either ClientError ()), updateStep) = fanEither quitOrUpdate
@@ -122,7 +150,7 @@ doPrompt
   -> Text
   -- ^ Ledger prompt
   -> SecretKey
-  -> (SetupState -> Maybe (Either (m ()) (Either ClientError ())))
+  -> (SetupState -> Maybe (DSum (PromptResult m) Identity))
   -> m (Event t (Either ClientError ()))
 doPrompt title explanation prompt sk handleStep = divClass "central" $ do
   promptDyn <- watchPrompting sk
@@ -135,12 +163,18 @@ doPrompt title explanation prompt sk handleStep = divClass "central" $ do
       req <- explanation
       continue <- uiButton "primary" "Continue"
       pure (never, attachWithMaybe (\r () -> prompting <$> r) req continue)
-    prompting req = Workflow $ do
-      respondToPrompt $ text prompt
+    prompting req = Workflow $ mdo
+      _ <- runWithReplace (respondToPrompt $ text prompt) interstitial
       pb <- getPostBuild
       _ <- requestingIdentity $ public req <$ pb
       let changed = leftmost [updated promptDyn, tag (current promptDyn) pb]
-          (back, finished) = fanEither $ fforMaybe changed $ \mss -> handleStep =<< mss
+          selector = fan $ fforMaybe changed $ \mss -> fmap (DMap.fromList . pure) . handleStep =<< mss
+          back = select selector PromptResult_RecoverableError
+          finished = leftmost
+            [ Left <$> select selector PromptResult_ClientError
+            , Right <$> select selector PromptResult_Success
+            ]
+          interstitial = select selector PromptResult_Interstitial
       pure (finished, splash . Just <$> back)
   done <- switch . current <$> workflow (splash Nothing)
   pure done
@@ -170,17 +204,21 @@ importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation promp
     prompt = "Provide Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
     handleStep ss
       | Just (First importStep) <- _setupState_import ss = case importStep of
-        ImportSecretKeyStep_Done -> Just $ Right $ Right ()
-        ImportSecretKeyStep_Disconnected -> Just $ Right $ Left ClientError_LedgerDisconnected
-        ImportSecretKeyStep_Declined -> Just $ Left declinedError
-        ImportSecretKeyStep_Failed _e -> Just $ Left failedError
+        ImportSecretKeyStep_Done -> Just $ PromptResult_Success ==> ()
+        ImportSecretKeyStep_Disconnected -> Just $ PromptResult_ClientError ==> ClientError_LedgerDisconnected
+        ImportSecretKeyStep_Declined -> Just $ PromptResult_RecoverableError ==> declinedError
+        ImportSecretKeyStep_Failed _e -> Just $ PromptResult_RecoverableError ==> failedError
         ImportSecretKeyStep_Prompting -> Nothing
       | otherwise = Nothing
 
 authorizeLedger
   :: forall t m. MonadRhyoliteFrontendWidget Bake t m
-  => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
-authorizeLedger (sk, pkh) = doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
+  => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
+authorizeLedger (sk, pkh) = do
+  e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
+  let (err, ok) = fanEither e
+  resp <- requestingIdentity $ public (PublicRequest_BakeIfRegistered pkh) <$ ok
+  pure $ leftmost [Left <$> err, ffor resp $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
       text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
@@ -188,13 +226,13 @@ authorizeLedger (sk, pkh) = doPrompt "Authorize Ledger Device for this address."
     prompt = "Setup Baking? Address: " <> toPublicKeyHashText pkh
     handleStep ss
       | Just (First setupStep) <- _setupState_setup ss = case setupStep of
-        SetupLedgerToBakeStep_Done -> Just $ Right $ Right ()
-        SetupLedgerToBakeStep_Disconnected -> Just $ Right $ Left ClientError_LedgerDisconnected
-        SetupLedgerToBakeStep_Declined -> Just $ Left declinedError
-        SetupLedgerToBakeStep_Failed -> Just $ Left failedError
+        SetupLedgerToBakeStep_Done -> Just $ PromptResult_Success ==> ()
+        SetupLedgerToBakeStep_Disconnected -> Just $ PromptResult_ClientError ==> ClientError_LedgerDisconnected
+        SetupLedgerToBakeStep_Declined -> Just $ PromptResult_RecoverableError ==> declinedError
+        SetupLedgerToBakeStep_Failed -> Just $ PromptResult_RecoverableError ==> failedError
         SetupLedgerToBakeStep_Prompting -> Nothing
         -- this shouldn't really happen, but if it does, we force the user to restart the process in order to get the appropriate error earlier on
-        SetupLedgerToBakeStep_OutdatedVersion _v -> Just $ Right $ Left ClientError_LedgerDisconnected
+        SetupLedgerToBakeStep_OutdatedVersion _v -> Just $ PromptResult_ClientError ==> ClientError_LedgerDisconnected
       | otherwise = Nothing
 
 registerDelegate
@@ -205,17 +243,21 @@ registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanat
     prompt = "Register as delegate? Address: " <> toPublicKeyHashText pkh
     handleStep ss
       | Just (First registerStep) <- _setupState_register ss = case registerStep of
-        RegisterStep_Registered -> Just $ Right $ Right ()
-        RegisterStep_Disconnected -> Just $ Right $ Left ClientError_LedgerDisconnected
-        RegisterStep_Declined -> Just $ Left declinedError
-        RegisterStep_Failed -> Just $ Left failedError
+        RegisterStep_Registered -> Just $ PromptResult_Success ==> ()
+        RegisterStep_Disconnected -> Just $ PromptResult_ClientError ==> ClientError_LedgerDisconnected
+        RegisterStep_Declined -> Just $ PromptResult_RecoverableError ==> declinedError
+        RegisterStep_Failed -> Just $ PromptResult_RecoverableError ==> failedError
         RegisterStep_Prompting -> Nothing
-        RegisterStep_WaitingForInclusion -> Nothing
-        RegisterStep_AlreadyRegistered -> Just $ Right $ Right () -- we could also inform the user they didn't need to pay the fee
-        RegisterStep_NodeNotReady -> Just $ Right $ Left ClientError_NodeNotReady
-        RegisterStep_FeeTooLow _fee -> Just $ Left $ text "Fee is too low, please try again with a higher fee."
-        RegisterStep_FeeTooHigh _fee -> Just $ Left $ text "To avoid paying an unnecessarily high fee enter a value of 1 tez or less. We recommend trying the default minimum fee listed above."
-        RegisterStep_NotEnoughFunds balance -> Just $ Left $ do
+        RegisterStep_WaitingForInclusion -> Just $ PromptResult_Interstitial ==> do
+          elClass "h5" "ui header" $ do
+            divClass "ui active tiny inline blue loader" blank
+            text "Waiting for the registration operation to be included in a block..."
+          divClass "centered explanation" $ text "To verify that your address has been registered as a delegate, the registration operation must be included in a block on the chain. This should usually take only a minute or two."
+        RegisterStep_AlreadyRegistered -> Just $ PromptResult_Success ==> () -- we could also inform the user they didn't need to pay the fee
+        RegisterStep_NodeNotReady -> Just $ PromptResult_ClientError ==> ClientError_NodeNotReady
+        RegisterStep_FeeTooLow _fee -> Just $ PromptResult_RecoverableError ==> text "Fee is too low, please try again with a higher fee."
+        RegisterStep_FeeTooHigh _fee -> Just $ PromptResult_RecoverableError ==> text "To avoid paying an unnecessarily high fee enter a value of 1 tez or less. We recommend trying the default minimum fee listed above."
+        RegisterStep_NotEnoughFunds balance -> Just $ PromptResult_RecoverableError ==> do
           text "Balance ("
           elClass "span" "tez" $ text $ tez balance
           text ") too low to cover fee."

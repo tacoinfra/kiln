@@ -57,6 +57,7 @@ instance HasRequest Bake where
     PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest Bake ()
     PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest Bake ()
     PublicRequest_RegisterKeyAsDelegate :: SecretKey -> Tez -> PublicRequest Bake ()
+    PublicRequest_BakeIfRegistered :: PublicKeyHash -> PublicRequest Bake Bool
     PublicRequest_SetHWM :: SecretKey -> RawLevel -> PublicRequest Bake ()
     PublicRequest_AddBaker
       :: PublicKeyHash
