@@ -263,7 +263,6 @@ let
 
       kiln-shell = ''
         #!/usr/bin/env bash
-        mkdir -p /tmp/kiln-shell-home
         if [[ \$# -eq 0 ]] ; then
         	echo \"Starting kiln-shell for mainnet.\"
         	echo \"To run kiln-shell for other network, please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'.\"
