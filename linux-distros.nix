@@ -249,6 +249,8 @@ let
   serviceFiles = pkgs.writeTextFile { name = "${pkgName}.service"; text = ''
     [Unit]
     Description=Kiln
+    After=network-online.target
+    Wants=network-online.target
 
     [Service]
     Type=simple
@@ -260,8 +262,6 @@ let
 
     [Install]
     WantedBy=multi-user.target
-    After=network-online.target
-    Wants=network-online.target
   ''; };
 in {
   inherit kiln-debian;
