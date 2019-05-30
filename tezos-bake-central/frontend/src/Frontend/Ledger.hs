@@ -331,7 +331,7 @@ selectAddress ledger = divClass "select-address" $ mdo
   let submitted = domEvent Submit formEl
 
   pb <- getPostBuild
-  traverse_ (\sk -> requestingIdentity $ public (PublicRequest_ShowLedger sk) <$ pb) secretKeys
+  traverse_ (\sk -> requestingIdentity $ public (PublicRequest_ShowLedger sk) <$ pb) (reverse secretKeys)
 
   (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
     let accountItem :: SecretKey -> Dynamic t (Maybe (PublicKeyHash, Tez)) -> m (Event t (SecretKey, PublicKeyHash))
@@ -375,7 +375,7 @@ selectAddress ledger = divClass "select-address" $ mdo
         fmap DerivationPath <$> holdDyn initVal (fmapMaybe id $ updated mDerivPath)
       pure $ SecretKey ledger . runIdentity <$> value curve <*> derivation
 
-    specificRequest <- debounce 1 $ leftmost [updated manualSk, tag (current manualSk) pb]
+    specificRequest <- debounce 1 $ updated manualSk
     _ <- requestingIdentity $ public . PublicRequest_ShowLedger <$> specificRequest
 
     manualD <- holdUniqDyn $ ffor2 manualSk accounts $ \sk as -> (,) sk <$> MMap.lookup sk as

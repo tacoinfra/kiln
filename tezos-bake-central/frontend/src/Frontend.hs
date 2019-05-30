@@ -1611,85 +1611,85 @@ bakersTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
-         let
-           anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . concat . (fmap NEL.toList) <$> dEbb
-         resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
-           icon "icon-check"
-           text "Resolve All"
-         let
-           toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
-             then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
-             else Nothing
-           alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
-         _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
-         elClass "h4" "dashboard-section-title" $ text "Bakers"
+          let
+            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . concat . (fmap NEL.toList) <$> dEbb
+          resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
+            icon "icon-check"
+            text "Resolve All"
+          let
+            toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
+              then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
+              else Nothing
+            alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+          _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
+          elClass "h4" "dashboard-section-title" $ text "Bakers"
 
-         let
-           bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
-             fmap $ \bakerSummary ->
-               bakerStatus $ bakerSummary <$ cns
-           wantBakerData = (||)
-             <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
-             <*> (any isNothing <$> joinDynThroughMap bakersDetails)
-         (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
-           holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
-             Left _ -> \_ -> Just BakersBanner_CannotGather
-             Right () -> \cond -> BakersBanner_Gathering <$ guard cond
-         dyn_ $ ffor bakersBanner $ mkBakersBanner
+          let
+            bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
+              fmap $ \bakerSummary ->
+                bakerStatus $ bakerSummary <$ cns
+            wantBakerData = (||)
+              <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
+              <*> (any isNothing <$> joinDynThroughMap bakersDetails)
+          (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
+            holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
+              Left _ -> \_ -> Just BakersBanner_CannotGather
+              Right () -> \cond -> BakersBanner_Gathering <$ guard cond
+          dyn_ $ ffor bakersBanner $ mkBakersBanner
 
-         let notifications :: Dynamic t (Map.Map (Down (DSum BakerLogTag Identity)) ())
-             notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems <$> dEbb
-         _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
+          let notifications :: Dynamic t (Map.Map (Down (DSum BakerLogTag Identity)) ())
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems <$> dEbb
+          _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
-         (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
-                                              (Dynamic t (Maybe BakerDetails)))) <- divClass "ui stackable cards" $ do
-          listWithKey (coerceDynamic tilesDyn) $ \pkh vDyn -> do
-            unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> dEbb
+          (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
+                                               (Dynamic t (Maybe BakerDetails)))) <- divClass "ui stackable cards" $ do
+            listWithKey (coerceDynamic tilesDyn) $ \pkh vDyn -> do
+              unresolvedAlerts <- holdUniqDyn $ foldMap toList . MMap.lookup pkh <$> dEbb
 
-            let
-              renderBakerError = text . _bakerErrorDescriptions_tile
+              let
+                renderBakerError = text . _bakerErrorDescriptions_tile
 
-              connectivityAndUnresolvedAlerts = (++)
-                <$> (ffor dCollectiveNodesStatus $ \case
-                        Left e -> [Left e]
-                        Right _ -> [])
-                <*> (Right <$$> unresolvedAlerts)
+                connectivityAndUnresolvedAlerts = (++)
+                  <$> (ffor dCollectiveNodesStatus $ \case
+                          Left e -> [Left e]
+                          Right _ -> [])
+                  <*> (Right <$$> unresolvedAlerts)
 
-              errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
-                Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                Right (lTag :=> Identity log) -> case lTag of
-                  BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-                  BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
-                    where
-                      aRight = case _errorLogBakerMissed_right log of
-                        RightKind_Baking -> "a bake"
-                        RightKind_Endorsing -> "an endorsement"
-                  BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
-                  BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
-                  BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
-                  BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
+                errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
+                  Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
+                  Right (lTag :=> Identity log) -> case lTag of
+                    BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+                    BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
+                      where
+                        aRight = case _errorLogBakerMissed_right log of
+                          RightKind_Baking -> "a bake"
+                          RightKind_Endorsing -> "an endorsement"
+                    BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
+                    BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
+                    BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
+                    BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
 
-            let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
-            titleUniq <- holdUniqDyn title
-            subtitleUniq <- holdUniqDyn subtitle
-            details <- watchBakerDetails pkh
+              let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
+              titleUniq <- holdUniqDyn title
+              subtitleUniq <- holdUniqDyn subtitle
+              details <- watchBakerDetails pkh
 
-            tile
-              (dynText titleUniq)
-              pkh
-              subtitleUniq
-              (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-              -- if you have both a bake and endorse for the same level, you
-              -- must *first* bake the block at that level, then you may
-              -- immediately endorse that block.  the times are the same,
-              -- baking happens first.
-              (Just errorMessages)
-              vDyn
-              details
-              dCollectiveNodesStatus
+              tile
+                (dynText titleUniq)
+                pkh
+                subtitleUniq
+                (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+                -- if you have both a bake and endorse for the same level, you
+                -- must *first* bake the block at that level, then you may
+                -- immediately endorse that block.  the times are the same,
+                -- baking happens first.
+                (Just errorMessages)
+                vDyn
+                details
+                dCollectiveNodesStatus
 
-            pure details
-         blank
+              pure details
+          blank
 
     mkBakersBanner :: Maybe BakersBanner -> m ()
     mkBakersBanner = \case
@@ -1759,23 +1759,23 @@ bakersTab =
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
 
-        -- -- Calculate what we should show in the voting icon. Maybe Bool
-        -- -- indicates if the vote has taken place, and if so, if it has been included
-        -- voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
-        --   damendment <- watchAmendment
-        --   dmBakerVote <- watchBakerVote
-        --   dproposals <- watchProposals
-        --   let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
-        --   maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
-        --     Nothing -> Nothing
-        --     Just (k, _) -> case k of
-        --       VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
-        --         n | n == 0 -> bakerNotVoted
-        --           | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n < 20))
-        --       VotingPeriodKind_Testing -> Nothing
-        --       _ -> Just $ case mBakerVote of
-        --         Nothing -> bakerNotVoted
-        --         Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
+        -- Calculate what we should show in the voting icon. Maybe Bool
+        -- indicates if the vote has taken place, and if so, if it has been included
+        voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
+          damendment <- watchAmendment
+          dmBakerVote <- watchBakerVote
+          dproposals <- watchProposals
+          let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+          maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
+            Nothing -> Nothing
+            Just (k, _) -> case k of
+              VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
+                n | n == 0 -> bakerNotVoted
+                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n >= 20))
+              VotingPeriodKind_Testing -> Nothing
+              _ -> Just $ case mBakerVote of
+                Nothing -> bakerNotVoted
+                Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
 
         tileMenu $ do
           let
@@ -1828,22 +1828,22 @@ bakersTab =
           title
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
           dyn_ $ ffor isInternal $ \i -> when i $ do
-            -- divClass "baker-vote-popup" $ do
-            --   let accessVoting = divClass "detail" $ do
-            --         text "Access Voting from the extras menu "
-            --         icon "icon-ellipsis grey"
-            --         text "on this baker tile."
-            --   whenJustDyn voteState $ \dc -> do
-            --     let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
-            --           Nothing -> accessVoting
-            --           Just True -> pure ()
-            --           Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
-            --     tooltipped TooltipPos_TopLeft tt $ do
-            --       let attrs = ffor dc $ \(_, included) -> "class" =: case included of
-            --             Nothing -> "large blue icon-vote-badge icon"
-            --             Just False -> "large grey icon-dots-badge icon"
-            --             Just True -> "large grey icon-check-badge icon"
-            --       elDynAttr "i" attrs blank
+            divClass "baker-vote-popup" $ do
+              let accessVoting = divClass "detail" $ do
+                    text "Access Voting from the extras menu "
+                    icon "icon-ellipsis grey"
+                    text "on this baker tile."
+              whenJustDyn voteState $ \dc -> do
+                let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
+                      Nothing -> accessVoting
+                      Just True -> pure ()
+                      Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
+                tooltipped TooltipPos_TopLeft tt $ do
+                  let attrs = ffor dc $ \(_, included) -> "class" =: case included of
+                        Nothing -> "large blue icon-vote-badge icon"
+                        Just False -> "large grey icon-dots-badge icon"
+                        Just True -> "large grey icon-check-badge icon"
+                  elDynAttr "i" attrs blank
 
             divClass "internal-subtitle" $ do
               kilnLogo
