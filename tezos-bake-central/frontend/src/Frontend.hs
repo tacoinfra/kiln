@@ -1443,7 +1443,7 @@ nodesTab =
                 generatingTile = nodeTileWithSections $
                   [ tileHeader title subtitle internalNodeMenu badge Nothing
                   , divClass "internal-node-tile-body" $ do
-                      divClass "ui row" $ do
+                      divClass "generating-icons" $ do
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
                       divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"

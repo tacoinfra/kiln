@@ -1180,6 +1180,11 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
+    .generating-icons {
+      margin-top: @15px;
+      margin-bottom: @19px;
+      .icon-id-badge { color: #d8dce6; }
+    }
   }
 
   > .ui.card.baker-tile {
