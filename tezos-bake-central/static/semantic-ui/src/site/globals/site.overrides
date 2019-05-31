@@ -1185,6 +1185,10 @@ img.credits-obsidian {
       margin-bottom: @19px;
       .icon-id-badge { color: #d8dce6; }
     }
+    .content > .title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
 
   > .ui.card.baker-tile {
