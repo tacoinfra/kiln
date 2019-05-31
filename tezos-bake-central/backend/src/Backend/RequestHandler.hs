@@ -50,7 +50,7 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Backend.Workers.TezosClient (addBakerImpl)
+import Backend.Workers.TezosClient (addBakerImpl, checkIfRegistered, startBaking)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -100,6 +100,10 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
         update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_BakeIfRegistered pkh -> do
+        registered <- checkIfRegistered nds pkh
+        when registered $ inDb $ startBaking pkh
+        pure registered
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 

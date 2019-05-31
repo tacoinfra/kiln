@@ -376,7 +376,7 @@ backendImpl cfg serve = do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
-        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
+        addFinalizer =<< tezosClientWorker 1.3 logger dataSrc appConfig db v
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
