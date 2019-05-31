@@ -73,7 +73,6 @@ h6.ui.header {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  max-width: 100%;
   max-height: 100%;
   background-color: #FFF;
   box-shadow: 0 @15px @40px 0 rgba(0,0,0,0.2);
@@ -503,6 +502,8 @@ i.ui.icon.icon-arrow-up.upgrade-icon {
 body {
   height: 100%;
   width: 100%;
+  min-width: 70rem;
+  overflow-x: auto;
 }
 
 .app-frame {
@@ -1563,7 +1564,7 @@ h4.dashboard-section-title {
 
 .modal-box.add-baker {
   width: unit(766 / @emSize, rem);
-  max-width: 95%;
+  max-width: none;
 
   h3 {
     font-size: unit(24 / @emSize, rem);
