@@ -377,7 +377,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         amendments <- watchAmendment
         mProtoInfo <- maybeDyn protoInfo'
         mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \(protoInfo, amendment) -> do
+        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
           let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
           tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
             kind <- holdUniqDyn $ _amendment_period <$> amendment
