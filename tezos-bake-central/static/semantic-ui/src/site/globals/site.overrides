@@ -889,6 +889,11 @@ body {
         color: @black;
         font-size: @12px;
 
+        * {
+          text-overflow: ellipsis;
+          overflow: hidden;
+        }
+
         > * {
           margin-top: @3px;
           margin-bottom: @3px;
@@ -1181,6 +1186,15 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
+    .generating-icons {
+      margin-top: @15px;
+      margin-bottom: @19px;
+      .icon-id-badge { color: #d8dce6; }
+    }
+    .content > .title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
 
   > .ui.card.baker-tile {
@@ -1398,6 +1412,10 @@ h4.dashboard-section-title {
 
     .add-internal {
       width: unit(279 / @emSize, rem);
+      img.app-logo {
+        margin-bottom: -@3px;
+        margin-right: @12px;
+      }
     }
 
     .add-external {
