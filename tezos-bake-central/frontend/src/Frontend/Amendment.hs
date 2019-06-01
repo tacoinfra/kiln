@@ -178,19 +178,10 @@ periodTest test = el "dl" $ do
     let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> test
     copyButton $ current proposalHash
     dynText proposalHash
-  mChain <- maybeDyn $ _periodTesting_testChainId . snd <$> test
-  whenJustDyn mChain $ \chainId -> do
-    el "dt" $ text "Chain ID"
-    el "dd" $ dynText $ toBase58Text <$> chainId
   mBlockLevel <- maybeDyn $ _periodTesting_startingLevel . snd <$> test
   whenJustDyn mBlockLevel $ \lvl -> do
     el "dt" $ text "Starting Block Level"
     el "dd" $ dynText $ textWithCommas . fromIntegral . unRawLevel <$> lvl
-  el "dt" $ text "Chain Status"
-  el "dd" $ dynText $ ffor test $ \(_,t) -> case _periodTesting_status t of
-    TestChainStatus_Running -> "Running"
-    TestChainStatus_Forking -> "Forking"
-    TestChainStatus_NotRunning -> "Not yet started"
 
 periodVote
   :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
