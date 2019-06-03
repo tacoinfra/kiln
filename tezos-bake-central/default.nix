@@ -47,7 +47,9 @@ obelisk.project ./. ({ pkgs, ... }@args:
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
+      markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
+      silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
       tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
       tezos-noderpc = dontHaddock super.tezos-noderpc;
