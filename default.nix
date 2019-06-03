@@ -42,6 +42,7 @@ let
       rpcPort = 8732;
       tzKit = tezos.mainnet.kit;
       monitorPort = 8000;
+      histMode = "archive";
     };
   };
 
