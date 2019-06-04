@@ -658,7 +658,7 @@ protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> if latestHead ^. level < 2 then pure () else runLoggingEnv (_nodeDataSource_logger nds) $ do
   protoInfo <- liftIO $ atomically $ waitForParams nds
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
