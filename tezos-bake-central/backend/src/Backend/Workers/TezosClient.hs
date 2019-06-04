@@ -175,6 +175,15 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
+          -- check if the baker is already registered, start baking if already registered
+          inDb (selectSingle $ LedgerAccount_checkIfRegisteredField /=. (Nothing :: Maybe PublicKeyHash)) >>= \mla ->
+            for_ mla $ \la -> case _ledgerAccount_checkIfRegistered la of
+              Nothing -> pure () -- shouldn't happen
+              Just pkh -> do
+                isReg <- checkIfRegistered nds pkh
+                when isReg $ inDb $ startBaking pkh
+                inDb $ notify NotifyTag_BakerRegistered (pkh, isReg)
+
           -- do any voting
           let selectProposal = [queryQ|
                 SELECT la."publicKeyHash", la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath", la."shouldDoVoteBallot", pp.id, pp.hash
