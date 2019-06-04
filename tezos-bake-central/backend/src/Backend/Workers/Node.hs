@@ -455,7 +455,7 @@ amendmentProcessWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> if latestHead ^. level < 2 then pure () else runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
   latestBlock <- throwing $ getBlock (latestHead ^. hash)
   blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
@@ -527,7 +527,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
       (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
-        let startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+        let startBlockLevel = max 2 $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
         startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
           levelAncestor history startBlockLevel (latestBlock ^. hash)
         endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
@@ -538,8 +538,9 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         pure (startBlock, predBlock, endBlock)
       updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
+      let startBlockLevel = max 2 $ latestBlock ^. level - currentVotingPosition
       startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
-        levelAncestor history (latestBlock ^. level - currentVotingPosition) (latestBlock ^. hash)
+        levelAncestor history startBlockLevel (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
