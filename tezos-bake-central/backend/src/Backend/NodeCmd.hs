@@ -108,9 +108,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
-    useArchiveMode = case namedChainOrPaths of
-      Left NamedChain_Zeronet -> True
-      _ -> False
+    useArchiveMode = True
     -- use the user supplied config file if specified
     -- we can only specify this option once
     hasUserConfigFile = "--config-file" `elem` nodeExtraArgs
