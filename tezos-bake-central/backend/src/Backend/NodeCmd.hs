@@ -17,6 +17,9 @@ module Backend.NodeCmd where
 
 import Control.Monad.Logger (MonadLogger, logInfo)
 import Control.Monad.Trans (lift)
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
@@ -30,6 +33,7 @@ import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.Process (readProcess, proc)
 import qualified Data.Text as T
+import Text.Read (readMaybe)
 
 import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
@@ -152,9 +156,22 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  haveVersionFile <- liftIO $ doesFileExist versionFile
-  when (not haveVersionFile) $
-    void $ runCommandWithInfoLogging nodePath ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+  hasVersionFile <- liftIO $ doesFileExist versionFile
+  if hasVersionFile
+    then do
+      vf <- liftIO $ LBS.readFile versionFile
+      let
+        v = getVersion =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
+        getVersion :: Text -> Maybe Int
+        getVersion t = T.stripPrefix "0.0." t >>= readMaybe . T.unpack
+      case v of
+        Nothing -> pure ()
+        Just val -> when (val < 3) $ do
+          void $ runCommandWithInfoLogging nodePath
+            ["upgrade", "storage", "--data-dir", T.pack dataDir]
+    else do
+      void $ runCommandWithInfoLogging nodePath
+        ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
