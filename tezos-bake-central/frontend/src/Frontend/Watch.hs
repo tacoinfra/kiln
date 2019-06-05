@@ -396,7 +396,7 @@ watchVotePrompting sk = do
 watchBakerRegistered :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> PublicKeyHash -> m (Dynamic t (Maybe Bool))
 watchBakerRegistered sk pkh = do
   pb <- getPostBuild
-  _ <- requestingIdentity $ public (PublicRequest_BakeIfRegistered sk pkh) <$ pb
+  _ <- requestingIdentity $ public (PublicRequest_CheckIfRegistered sk pkh) <$ pb
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerRegistered = viewRangeExactly (Bounded pkh) 1
     }

@@ -183,7 +183,6 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                 isReg <- checkIfRegistered nds pkh
                 inDb $ do
                   update [LedgerAccount_checkIfRegisteredField =. (Nothing :: Maybe PublicKeyHash)] CondEmpty
-                  when isReg $ startBaking pkh
                   notify NotifyTag_BakerRegistered (pkh, isReg)
 
           -- do any voting
