@@ -181,8 +181,10 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
               Nothing -> pure () -- shouldn't happen
               Just pkh -> do
                 isReg <- checkIfRegistered nds pkh
-                when isReg $ inDb $ startBaking pkh
-                inDb $ notify NotifyTag_BakerRegistered (pkh, isReg)
+                inDb $ do
+                  update [LedgerAccount_checkIfRegisteredField =. (Nothing :: Maybe PublicKeyHash)] CondEmpty
+                  when isReg $ startBaking pkh
+                  notify NotifyTag_BakerRegistered (pkh, isReg)
 
           -- do any voting
           let selectProposal = [queryQ|
