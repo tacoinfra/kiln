@@ -84,9 +84,9 @@ instance ToJSON Expression where
 
   toEncoding (Expression_Seq xs) = toEncoding xs
   toEncoding (Expression_Prim xs) = toEncoding xs
-  toEncoding (Expression_String x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "string" ( toEncoding x )))
-  toEncoding (Expression_Int x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "int" ( toEncoding x )))
-  toEncoding (Expression_Bytes x) = Aeson.wrapObject (Aeson.pairs ( Aeson.pair "bytes" ( toEncoding x )))
+  toEncoding (Expression_String x) = Aeson.pairs ( Aeson.pair "string" ( toEncoding x ))
+  toEncoding (Expression_Int x) = Aeson.pairs ( Aeson.pair "int" ( toEncoding x ))
+  toEncoding (Expression_Bytes x) = Aeson.pairs ( Aeson.pair "bytes" ( toEncoding x ))
 
 
 -- src/proto_002_PsYLVpVv/lib_protocol/src/script_tc_errors_registration.ml:48:        (dft "annots" (list string) [])))
