@@ -66,15 +66,11 @@ getPath f paths = \case
 
 tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
 tezosBinaryPaths =
-  ( "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
-  , $(staticWhich "mainnet-tezos-baker-003-PsddFKi3")
-  , $(staticWhich "mainnet-tezos-endorser-003-PsddFKi3")
+  ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
+  , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
   ) :|
-    [ ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-      , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
-      , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
-      )
-    , ( "PtG6cmhhWF8AY5gVQhCaUASbgu8CGebkGPdNSX26m3CSnxvih9v"
+    [ ( "PtG6cmhhWF8AY5gVQhCaUASbgu8CGebkGPdNSX26m3CSnxvih9v"
       , $(staticWhich "zeronet-tezos-baker-alpha")
       , $(staticWhich "zeronet-tezos-endorser-alpha")
       )
