@@ -31,7 +31,6 @@ import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
 import Data.List (intersperse, sortBy)
-import Data.List.NonEmpty (nonEmpty)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -1977,111 +1976,6 @@ tileMenu content =
         }) $ do
           SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) content
     pure ()
-
-bakerTab
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => PublicKeyHash
-  -> m ()
-bakerTab pkh = do
-  bakers <- watchBakerStats $ pure $ Set.singleton pkh
-  dparameters <- watchProtoInfo
-    -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisBaker <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> bakers
-  dyn_ $ ffor thisBaker $ \case
-    Nothing -> waitingForResponse
-    Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
-      divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ publicKeyHashLink pkh
-
-        let tz = _account_balance account
-        elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
-          text "Current Balance: "
-          text (tez tz)
-        dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
-          let bSD = _protoInfo_blockSecurityDeposit protoInfo
-              eSD = _protoInfo_endorsementSecurityDeposit protoInfo
-              failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
-          case failures of
-            (t:_) -> do
-              text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
-                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                <> "You'll need to transfer sufficient tez into the account before it can continue."
-            [] | tz < 4 * (bSD + eSD) -> do
-              text $ "The identity in use by this baker is running somewhat low on tez. "
-                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                <> "Be sure to keep enough tez in the account to pay the security deposits on blocks you'll be baking or endorsing."
-            _ -> blank
-
-        elClass "p" "efficiency" $ do
-          elClass "h4" "ui medium header" $ text "Efficiency"
-          elClass "td" "right aligned" $ do
-            let baked = _bakeEfficiency_bakedBlocks bakeEfficiency
-            let rights = _bakeEfficiency_bakingRights bakeEfficiency
-            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker either baked or was beaten by higher proiry baker (over past preserved cycles)") $
-              text $ tshow baked
-            text " of "
-            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker had rights to bake at any priority (over past preserved cycles)") $
-              text $ tshow rights
-            when (rights /= 0) $ do
-              text " ("
-              text $ tshow (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
-              text "%)"
-
-clientTab
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => Id BakerDaemon -> URI -> m ()
-clientTab cid addr = do
-  clients <- watchClient (pure cid)
-  dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
-    Nothing -> waitingForResponse
-    Just clientInfo -> divClass "ui grid" $ do
-      dparameters <- watchProtoInfo
-      let report = unJson (_bakerDaemonInfoData_report clientInfo)
-          baked = sortBy (flip (comparing _event_time)) (_report_baked report)
-          errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
-      divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ text $ Uri.render addr
-        _ <- divClass "bakers" $ do
-          text "ID: "
-          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _bakerDaemonInfoData_config clientInfo)
-
-        elClass "p" "counts" $ do
-          tooltip "This counts the number of errors that this baker has encountered since it began running." $
-            text $ "Errors: " <> tshow (length errors)
-
-        for_ (nonEmpty errors) $ \es -> elClass "p" "errors" $ do
-          elClass "h4" "ui medium header" $ text "Errors"
-          elClass "table" "ui celled striped table" $ do
-            el "thead" . el "tr" $ do
-              elClass "th" "four wide" $ text "Time"
-              el "th" $ text "Message"
-            for_ es $ \e -> do
-              el "tr" $ do
-                el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
-                el "td" $ do
-                  for_ (T.lines (_error_text e)) $ \t ->
-                    divClass "errorLine" $ text t
-
-      divClass "eight wide column" $ do
-        divClass "ui medium header" $ text "Activity"
-        elAttr "table" ("class" =: "ui celled striped table") $ do
-          el "thead" . el "tr" $ do
-            elClass "th" "four wide" $ text "Time"
-            el "th" $ text "Level"
-            el "th" $ text "Block Hash"
-            el "th" $ text "Reward"
-          for_ baked $ \b -> el "tr" $ do
-            el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
-            el "td" $ text $ tshow $ blockLevel b
-            el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
-            el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
-              text $ tez $ blockRewards b protoInfo
 
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
