@@ -12,11 +12,12 @@ import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Data.String (IsString(..))
 import qualified Data.Text as T
+import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
-import Reflex (FunctorMaybe, ffilter)
+import Reflex (ffilter)
 
 import Common.Schema
 import ExtraPrelude
@@ -29,7 +30,7 @@ instance FromJSONKey AlertsFilter
 instance ToJSON AlertsFilter
 instance ToJSONKey AlertsFilter
 
-alertsFilter :: FunctorMaybe f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
+alertsFilter :: Filterable f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
 alertsFilter f = \case
   AlertsFilter_All -> id
   AlertsFilter_UnresolvedOnly -> ffilter (isNothing . _errorLog_stopped . f)

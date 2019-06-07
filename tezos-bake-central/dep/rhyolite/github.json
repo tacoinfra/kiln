@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "rhyolite",
-  "branch": "disallow-aborts",
-  "rev": "d27bb996e32854327483f31bdbb6ca53da9f9074",
-  "sha256": "1p20bpn7ff7dqq2iixg6xqn61m8nf0kqnx42m5zdii8910yvj2rr"
+  "branch": "ae-bump-obelisk",
+  "rev": "acbb903c0455a7cb6d4afb2e0e8d13c4abff73e2",
+  "sha256": "1gx3rqkxsn23wig1lk3ip7zm3k915ll4j7z7rfjr5i7lf3g91rav"
 }
