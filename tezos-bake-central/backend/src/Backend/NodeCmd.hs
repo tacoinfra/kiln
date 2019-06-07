@@ -24,6 +24,7 @@ import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Version
 import Database.Groundhog.Postgresql
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -33,7 +34,7 @@ import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.Process (readProcess, proc)
 import qualified Data.Text as T
-import Text.Read (readMaybe)
+import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
@@ -162,11 +163,11 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
       vf <- liftIO $ LBS.readFile versionFile
       let
         v = getVersion =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
-        getVersion :: Text -> Maybe Int
-        getVersion t = T.stripPrefix "0.0." t >>= readMaybe . T.unpack
+        getVersion :: Text -> Maybe Version
+        getVersion = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
       case v of
         Nothing -> pure ()
-        Just val -> when (val < 3) $ do
+        Just ver -> when (ver < (Version [0,0,3] [])) $ do
           void $ runCommandWithInfoLogging nodePath
             ["upgrade", "storage", "--data-dir", T.pack dataDir]
     else do
