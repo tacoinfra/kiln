@@ -99,6 +99,7 @@ library
     , universe
     , uri-encode
     , vector
+    , unordered-containers
 
   exposed-modules:
     Backend

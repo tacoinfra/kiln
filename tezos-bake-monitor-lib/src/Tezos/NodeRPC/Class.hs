@@ -19,12 +19,13 @@ import Data.Word (Word64)
 
 import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Encoding (emptyObject_)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
+import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Operation (Ballot)
@@ -74,12 +75,16 @@ class MonitorHeads repr where
 
 data RpcQuery a = RpcQuery
   { _RpcQuery_decoder :: LBS.ByteString -> Either String a
+  , _RpcQuery_body :: Aeson.Encoding
   , _RpcQuery_method :: Http.Method
   , _RpcQuery_resource :: Text
   } deriving Functor
 
 plainNodeRequest :: FromJSON a => Http.Method -> Text -> RpcQuery a
-plainNodeRequest = RpcQuery Aeson.eitherDecode'
+plainNodeRequest = RpcQuery Aeson.eitherDecode' emptyObject_
+
+postNodeRequest :: (Aeson.ToJSON b, FromJSON a) => b -> Text -> RpcQuery a
+postNodeRequest b = RpcQuery Aeson.eitherDecode' (Aeson.toEncoding b) Http.methodPost
 
 newtype PlainNode a = PlainNode (RpcQuery a)
 newtype PlainNodeStream a = PlainNodeStream (RpcQuery a)

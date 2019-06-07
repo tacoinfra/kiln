@@ -21,7 +21,7 @@ module Backend.Workers.Process where
 import Control.Concurrent.Async (withAsync)
 import Control.Exception.Safe (tryJust)
 import Control.Monad.Catch (bracket)
-import Control.Monad.Logger (MonadLogger, logDebugSH, logErrorNS, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.Logger (MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
@@ -145,7 +145,8 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
 
     procMonitor _stdin hStdout hStderr ph = do
       withHandleCopyWith (logInfoNS namespace) hStdout $ do
-        withHandleCopyWith (logErrorNS namespace) hStderr $ do
+        -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
+        withHandleCopyWith (logInfoNS namespace) hStderr $ do
           runLoggingEnv logger go
       where
         withHandleCopyWith perLine h' f = case h' of

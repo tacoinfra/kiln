@@ -21,6 +21,7 @@ import Control.Monad.Logger (MonadLogger, logDebugS, logInfoS)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (ord)
@@ -52,12 +53,12 @@ import Tezos.Types
 nodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)
   => RpcQuery a -> m a
-nodeRPC                         (RpcQuery decoder method resource)    = nodeRPCImpl' decoder method resource
+nodeRPC                         (RpcQuery decoder body method resource)    = nodeRPCImpl' decoder body method resource
 
 nodeRPCChunked
   :: (MonadIO m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Monoid r)
   => PlainNodeStream a -> (a -> IO r) -> m r
-nodeRPCChunked (PlainNodeStream (RpcQuery decoder method resource)) k = nodeRPCChunkedImpl' decoder k method resource
+nodeRPCChunked (PlainNodeStream (RpcQuery decoder body method resource)) k = nodeRPCChunkedImpl' decoder body k method resource
 
 
 
@@ -77,7 +78,7 @@ nodeRPCImpl :: forall m a s e.
   , MonadReader s m , HasNodeRPC s
   , MonadError e m , AsRpcError e
   )
-  => Http.Method -> Text -> m a
+  => Aeson.Encoding -> Http.Method -> Text -> m a
 nodeRPCImpl = nodeRPCImpl' Aeson.eitherDecode'
 
 nodeRPCImpl' :: forall m a s e.
@@ -85,8 +86,8 @@ nodeRPCImpl' :: forall m a s e.
   , MonadReader s m, HasNodeRPC s
   , MonadError e m, AsRpcError e
   )
-  => (LBS.ByteString -> Either String a) -> Http.Method -> Text -> m a
-nodeRPCImpl' decoder method_ rpcSelector = do
+  => (LBS.ByteString -> Either String a) -> Aeson.Encoding -> Http.Method -> Text -> m a
+nodeRPCImpl' decoder requestBody method_ rpcSelector = do
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
   node <- asks (_nodeRPCContext_node . view nodeRPCContext)
   -- sayShow (node, method_, rpcSelector)
@@ -95,7 +96,7 @@ nodeRPCImpl' decoder method_ rpcSelector = do
   $(logDebugS) "NODERPC" $ rpcUrl
 
   let
-    request = rpcBoilerplate method_ $ Http.parseRequest_ $ T.unpack rpcUrl
+    request = rpcBoilerplate method_ requestBody $ Http.parseRequest_ $ T.unpack rpcUrl
     throwLoggedError e = {-sayErr ("NODERPC ERROR: " <> (T.pack $ show rpcUrl) <> " >> " <> (T.pack $ show e)) *>-} throwError e
 
   liftIO (try @_ @Http.HttpException $ Http.httpLbs request mgr) >>= \case
@@ -118,7 +119,8 @@ nodeRPCChunkedImpl :: forall a r s e m.
   , MonadError e m, AsRpcError e
   , Monoid r
   )
-  => (a -> IO r)
+  => Aeson.Encoding
+  -> (a -> IO r)
   -> Http.Method
   -> Text
   -> m r
@@ -132,18 +134,19 @@ nodeRPCChunkedImpl' :: forall a r s e m.
   , Monoid r
   )
   => (LBS.ByteString -> Either String a)
+  -> Aeson.Encoding
   -> (a -> IO r)
   -> Http.Method
   -> Text
   -> m r
-nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
+nodeRPCChunkedImpl' decoder requestBody callback method_ rpcSelector = do
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
   node <- asks (_nodeRPCContext_node . view nodeRPCContext)
 
   let
     rpcUrl = node <> rpcSelector
 
-    request = rpcBoilerplate method_ $ Http.parseRequest_ $ T.unpack rpcUrl
+    request = rpcBoilerplate method_ requestBody $ Http.parseRequest_ $ T.unpack rpcUrl
 
   res :: Either Http.HttpException (Either RpcError r) <- liftIO $ try @_ @Http.HttpException $
     Http.withResponse request mgr $ \response -> runExceptT $ do
@@ -172,10 +175,10 @@ nodeRPCChunkedImpl' decoder callback method_ rpcSelector = do
     Right (Left rpcError) -> throwError $ rpcError ^. re asRpcError
     Right (Right r) -> pure r
 
-rpcBoilerplate :: Http.Method -> Http.Request -> Http.Request
-rpcBoilerplate method_ req = req
+rpcBoilerplate :: Http.Method -> Aeson.Encoding -> Http.Request -> Http.Request
+rpcBoilerplate method_ body req = req
   { Http.method = method_
-  , Http.requestBody = if method_ == Http.methodGet then "" else "{}"
+  , Http.requestBody = if method_ == Http.methodGet then "" else Http.RequestBodyLBS $ Aeson.encodingToLazyByteString body
   , Http.requestHeaders =
     [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
     ++ [ (Http.hUserAgent, "tezos-bake-monitor-lib/" <> T.encodeUtf8 (T.pack $ showVersion version))

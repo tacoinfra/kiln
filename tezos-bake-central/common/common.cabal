@@ -65,6 +65,7 @@ library
     , universe-base
     , universe-template
     , uri-encode
+    , witherable
     , writer-cps-mtl
 
   exposed-modules:

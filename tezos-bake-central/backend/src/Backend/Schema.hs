@@ -411,7 +411,6 @@ instance FromField Micro where
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
-instance NeverNull (Json CacheDelegateInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
 instance NeverNull LedgerIdentifier
@@ -422,7 +421,6 @@ instance NeverNull Tez
 instance NeverNull TezosWord64
 instance NeverNull Version
 instance NeverNull VeryBlockLike
-instance NeverNull (Json VeryBlockLike)
 
 parseVersionOrError :: Text -> Version
 parseVersionOrError = fromMaybe (error "Invalid version") . parseVersion

@@ -53,7 +53,7 @@ import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.These (These (..))
-import Reflex.FunctorMaybe
+import Data.Witherable (Filterable(mapMaybe, catMaybes))
 
 import Common.WrappedShow1
 
@@ -99,11 +99,11 @@ cropView :: (Semigroup a, ViewSelector t) => t a -> View t b -> View t a
 cropView vs = iMapMaybe $ \i _ -> lookup i vs
 
 class ( TraversableWithIndex (ViewIndex f) (View f)
-      , FunctorMaybe (View f)
+      , Filterable (View f)
       -- these two shouldn't really be needed, rhyolite doesn't actually use
       -- them.  for now, this makes it easier to "migrate", especially since
       -- the needed semigroup instances can be more easily made with these
-      , FunctorMaybe f, Functor f, Align f
+      , Filterable f, Functor f, Align f
       ) => ViewSelector f where
   data View f :: * -> *
   type ViewIndex f
@@ -203,15 +203,15 @@ deriving instance (Traversable (View v), Traversable (View w)) => Traversable (V
 -- supposed to be visible to the caller.  For now though, the default instance
 -- is nearly right.
 instance (ViewSelector v, ViewSelector w, Ord (ViewIndex v))
-    => FunctorMaybe (View (Compose v w)) where
-  fmapMaybe :: forall a b. (a -> Maybe b) -> View (Compose v w) a -> View (Compose v w) b
-  fmapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap $  lower')
+    => Filterable (View (Compose v w)) where
+  mapMaybe :: forall a b. (a -> Maybe b) -> View (Compose v w) a -> View (Compose v w) b
+  mapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap $  lower')
     where
       swizzle :: ViewIndex v -> a -> Writer (Map.Map (ViewIndex v) (View w b)) (Maybe b)
       swizzle i x = case f x of
         Nothing -> return Nothing
         Just y -> do
-          traverse_  (tell . Map.singleton i . fmapMaybe f) (MMap.lookup i lower)
+          traverse_  (tell . Map.singleton i . mapMaybe f) (MMap.lookup i lower)
           return $ Just y
       (upper', lower') = runWriter $ itraverse swizzle upper :: ( View v (Maybe b) , Map.Map (ViewIndex v) (View w b) )
 
@@ -250,16 +250,11 @@ instance
       witherUpper :: ViewIndex v -> a -> f (Maybe b)
       witherUpper i x = maybe (pure Nothing) (traverse getFirst . getOption . getConst . itraverse (\j _ -> Const $ Option $ Just $ First $ f (i,j) x)) $ MMap.lookup i $ getCompose lower
 
--- | add to reflex and/or use Data.Witherable.Filterable
-catMaybes :: FunctorMaybe f => f (Maybe a) -> f a
-catMaybes = fmapMaybe id
-{-# INLINE catMaybes #-}
 
-
-iMapMaybe :: (FunctorWithIndex i t, FunctorMaybe t) => (i -> a -> Maybe b) -> t a -> t b
+iMapMaybe :: (FunctorWithIndex i t, Filterable t) => (i -> a -> Maybe b) -> t a -> t b
 iMapMaybe f = catMaybes . imap f
 
-iWither :: (TraversableWithIndex i t, FunctorMaybe t, Applicative f) => (i -> a -> f (Maybe b)) -> t a -> f (t b)
+iWither :: (TraversableWithIndex i t, Filterable t, Applicative f) => (i -> a -> f (Maybe b)) -> t a -> f (t b)
 iWither f = fmap catMaybes . itraverse f
 
 
@@ -275,7 +270,7 @@ iWither f = fmap catMaybes . itraverse f
 type MaybeView v a = View (MaybeSelector v) a
 
 newtype MaybeSelector (v :: *) a = MaybeSelector { unMaybeSelector :: Option a }
-  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1, FunctorMaybe, Align)
+  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1, Filterable, Align)
 
 
 
@@ -301,8 +296,8 @@ instance Eq v => Eq1 (View (MaybeSelector v)) where
   liftEq f (MaybeView (Option xs)) (MaybeView (Option ys)) =
     liftEq (liftEq f) xs ys
 
-instance FunctorMaybe (View (MaybeSelector v)) where
-  fmapMaybe f = MaybeView . fmapMaybe (traverse f) . unSingle
+instance Filterable (View (MaybeSelector v)) where
+  mapMaybe f = MaybeView . mapMaybe (traverse f) . unSingle
 
 instance FunctorWithIndex () (View (MaybeSelector v))
 instance FoldableWithIndex () (View (MaybeSelector v))
@@ -311,7 +306,7 @@ instance TraversableWithIndex () (View (MaybeSelector v)) where
 
 
 newtype MapSelector k (v :: *) a = MapSelector { unMapSelector :: MonoidalMap k a }
-  deriving (Eq, Ord, Functor, Foldable, Traversable, Semigroup, FunctorMaybe, Align)
+  deriving (Eq, Ord, Functor, Foldable, Traversable, Semigroup, Filterable, Align)
 
 instance Ord k => ViewSelector (MapSelector k v) where
   newtype View (MapSelector k v) a = MapView { unMapView :: MonoidalMap k (First v, a) }
@@ -332,8 +327,8 @@ instance (Eq v, Ord k) => Eq1 (View (MapSelector k v)) where
   liftEq f (MapView (MMap.MonoidalMap xs)) (MapView (MMap.MonoidalMap ys)) =
     liftEq (liftEq f) xs ys
 
-instance FunctorMaybe (View (MapSelector k v)) where
-  fmapMaybe f = MapView . fmapMaybe (traverse f) . unMapView
+instance Filterable (View (MapSelector k v)) where
+  mapMaybe f = MapView . mapMaybe (traverse f) . unMapView
 
 instance FunctorWithIndex k (View (MapSelector k v))
 instance FoldableWithIndex k (View (MapSelector k v))
@@ -347,7 +342,7 @@ instance TraversableWithIndex k (View (MapSelector k v)) where
 
 newtype IntervalSelector e (i :: *) (v :: *) a = IntervalSelector
   { unIntervalSelector :: (AppendIntervalMap (ClosedInterval e)) a }
-  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, FunctorMaybe, Align)
+  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Align)
 
 type IntervalSelector' e = IntervalSelector (WithInfinity e)
 
@@ -389,13 +384,13 @@ instance (Eq i, Eq v, Eq e) => Eq1 (View (IntervalSelector e i v)) where
 instance (Ord i, Ord v, Ord e) => Ord1 (View (IntervalSelector e i v)) where
   liftCompare f (IntervalView xs xxs) (IntervalView ys yys) = liftCompare f xs ys `mappend` compare xxs yys
 
-instance (Ord i, Ord e) => FunctorMaybe (View (IntervalSelector e i v)) where
-  fmapMaybe :: forall a b. (a -> Maybe b) -> View (IntervalSelector e i v) a -> View (IntervalSelector e i v) b
-  fmapMaybe f (IntervalView support entries) = IntervalView support' entries'
+instance (Ord i, Ord e) => Filterable (View (IntervalSelector e i v)) where
+  mapMaybe :: forall a b. (a -> Maybe b) -> View (IntervalSelector e i v) a -> View (IntervalSelector e i v) b
+  mapMaybe f (IntervalView support entries) = IntervalView support' entries'
     where
-      support' = fmapMaybe f support
+      support' = mapMaybe f support
       entries' :: MonoidalMap i (First (v, ClosedInterval e))
-      entries' = fmapMaybe (\x@(First (_, k)) -> x <$ lookup k viewSelector) entries
+      entries' = mapMaybe (\x@(First (_, k)) -> x <$ lookup k viewSelector) entries
 
       viewSelector :: IntervalSelector e i v ()
       viewSelector = IntervalSelector (() <$ support')
@@ -418,7 +413,7 @@ newtype RangeSelector e (v :: *) a = RangeSelector
     , Monoid, Semigroup
     , FromJSON, FromJSON1
     , ToJSON, ToJSON1
-    , FunctorMaybe
+    , Filterable
     , Align)
 
 type RangeSelector' e = RangeSelector (WithInfinity e)
@@ -457,7 +452,7 @@ getRangeView :: View (RangeSelector e v) a -> MonoidalMap e v
 getRangeView = _rangeView_points
 
 getRangeView' :: View (RangeSelector' e v) a -> MonoidalMap e v
-getRangeView' = MMap.fromDistinctAscList . fmapMaybe getBounded . MMap.toAscList . _rangeView_points
+getRangeView' = MMap.fromDistinctAscList . mapMaybe getBounded . MMap.toAscList . _rangeView_points
   where
     getBounded :: (WithInfinity e, v) -> Maybe (e, v)
     getBounded (Bounded k, v) = Just (k, v)
@@ -479,16 +474,16 @@ instance (Semigroup a, Ord e) => Monoid (View (RangeSelector e v) a) where
   mappend = (<>)
   mempty = RangeView mempty MMap.empty
 
-instance (Ord e) => FunctorMaybe (View (RangeSelector e v)) where
-  fmapMaybe f (RangeView i xs) = RangeView i' $ iMapMaybe inI xs
+instance (Ord e) => Filterable (View (RangeSelector e v)) where
+  mapMaybe f (RangeView i xs) = RangeView i' $ iMapMaybe inI xs
     where
-      i' = fmapMaybe f i
+      i' = mapMaybe f i
       inI k v = if null $ IMap.containing i' k then Nothing else Just v
 
 instance Ord e => FunctorWithIndex e (View (RangeSelector e v))
 instance Ord e => FoldableWithIndex e (View (RangeSelector e v))
 -- This is not 100% cromulent, but i think it's "correct" for the way they get
--- used, which is poking around in Views to make FunctorMaybe trim out just enough data properly
+-- used, which is poking around in Views to make Filterable trim out just enough data properly
 instance Ord e => TraversableWithIndex e (View (RangeSelector e v)) where
   itraverse f (RangeView i xs) = RangeView <$> itraverse (\(ClosedInterval lb _) x -> f lb x) i <*> pure xs -- xs <$> iWither _f i
 
@@ -521,10 +516,10 @@ isCompleteSelector :: Ord k => RangeSelector' k v a -> Bool
 isCompleteSelector (RangeSelector (IMap.AppendIntervalMap vs)) = isJust $ BaseIMap.lookup (ClosedInterval LowerInfinity UpperInfinity) vs
 
 tightenView :: ViewSelector v => View v a -> View v a
-tightenView = fmapMaybe Just
+tightenView = mapMaybe Just
 
 iMapSelectorKeys :: RangeSelector' k v a -> [k]
-iMapSelectorKeys (RangeSelector vs) = fmapMaybe f $ IMap.keys vs
+iMapSelectorKeys (RangeSelector vs) = mapMaybe f $ IMap.keys vs
   where
     f (ClosedInterval l _) = case l of
       Bounded x -> Just x
@@ -532,11 +527,8 @@ iMapSelectorKeys (RangeSelector vs) = fmapMaybe f $ IMap.keys vs
 
 -- more orphans!
 
--- "witherable" has this instance.  I think, if we had a use for this instance (other than "we could use it in theory") we really want:
--- instance (Foldable g, FunctorMaybe f, FunctorMaybe g) => FunctorMaybe (Compose f g)
--- so that we could cut things from f when the contained g's become empty (as in `Foldable.null`).  That's different from the obvious instance below, which corresponds to the other instances for `Compose` in "witherable" and "compactible"
-instance (Functor f, FunctorMaybe g) => FunctorMaybe (Compose f g) where
-  fmapMaybe f (Compose xs) = Compose (fmap (fmapMaybe f) xs)
+-- TODO Upstream into witherable
+deriving instance Filterable Option
 
 instance (Align f, Align g) => Align (Compose f g) where
   nil = Compose nil

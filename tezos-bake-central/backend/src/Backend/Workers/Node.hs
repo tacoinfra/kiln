@@ -461,6 +461,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
     readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+  let minLevel = _cachedHistory_minLevel history
   -- The RPCs under /votes/ return the information for the *next block*, not the current block.
   -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
   -- (the last block of the period), but /votes/current_period_kind for that block will return
@@ -527,7 +528,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
       (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
-        let startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+        let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
         startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
           levelAncestor history startBlockLevel (latestBlock ^. hash)
         endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
@@ -538,8 +539,9 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         pure (startBlock, predBlock, endBlock)
       updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
+      let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
       startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
-        levelAncestor history (latestBlock ^. level - currentVotingPosition) (latestBlock ^. hash)
+        levelAncestor history startBlockLevel (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
