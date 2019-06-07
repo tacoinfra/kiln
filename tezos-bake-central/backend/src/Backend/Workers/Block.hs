@@ -15,7 +15,7 @@
 
 module Backend.Workers.Block where
 
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, readTVarIO)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH)
 import Control.Monad.Logger (logWarnSH)
@@ -33,6 +33,7 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
 import qualified Tezos.Binary as TBin
 import Tezos.Envelope (Envelope (Envelope_Endorsement))
+import Tezos.History
 import Tezos.NodeRPC.Types (RpcError(RpcError_UnexpectedStatus))
 import Tezos.Operation
 import qualified Tezos.Signature.Verify as Sig
@@ -56,8 +57,11 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     (params, dsh) <- liftIO $ atomically $
       (,) <$> waitForParams nds <*> dataSourceHead nds
-    let headLevelMay = (^. level) <$> dsh
-    let cutoffLevel = max 2 $ maybe 2 (rightsContextLevel params) headLevelMay
+    history <- liftIO $ readTVarIO (_nodeDataSource_history nds)
+    let
+      minLevel =  _cachedHistory_minLevel history
+      headLevelMay = (^. level) <$> dsh
+      cutoffLevel = max minLevel $ maybe minLevel (rightsContextLevel params) headLevelMay
 
     queuedBlockOrNot <- inDb $ do
       [queryQ|
