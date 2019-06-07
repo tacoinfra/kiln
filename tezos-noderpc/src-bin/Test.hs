@@ -42,7 +42,7 @@ main :: IO ()
 main = do
   nodeAddr:_ <- getArgs
   httpMgr <- liftIO $ newManager tlsManagerSettings
-  historyVar <- newTVarIO emptyCache
+  historyVar <- newTVarIO $ emptyCache 2
 
   let
     ctx = AccumHistoryContext

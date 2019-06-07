@@ -306,7 +306,12 @@ backendImpl cfg serve = do
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger
+    let
+      minLevel :: RawLevel
+      minLevel = case maybeNamedChain of
+        Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
+        _ -> 2
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
