@@ -216,9 +216,11 @@ authorizeLedger
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
 authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
+  isRegisteredD <- watchBakerRegistered sk pkh
   let (err, ok) = fanEither e
-  resp <- requestingIdentity $ public (PublicRequest_BakeIfRegistered pkh) <$ ok
-  pure $ leftmost [Left <$> err, ffor resp $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
+      isRegistered = fmap (== (Just True)) $ tag (current isRegisteredD) ok
+  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ (fforMaybe isRegistered $ \r -> if r then Just () else Nothing)
+  pure $ leftmost [Left <$> err, ffor isRegistered $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
       text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."

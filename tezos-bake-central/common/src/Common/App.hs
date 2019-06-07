@@ -244,6 +244,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
   , _bakeViewSelector_votePrompting :: !(RangeSelector SecretKey (Deletable VoteState) a)
   , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
+  , _bakeViewSelector_bakerRegistered :: !(RangeSelector' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data BakeView a = BakeView
@@ -285,6 +286,7 @@ data BakeView a = BakeView
   , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
   , _bakeView_votePrompting :: !(RangeView SecretKey (Deletable VoteState) a)
   , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
+  , _bakeView_bakerRegistered :: !(RangeView' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data MailServerView = MailServerView
@@ -396,6 +398,7 @@ cropBakeView vs v = BakeView
   , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
   , _bakeView_votePrompting = cropView (_bakeViewSelector_votePrompting vs) (_bakeView_votePrompting v)
   , _bakeView_rightNotificationSettings = cropView (_bakeViewSelector_rightNotificationSettings vs) (_bakeView_rightNotificationSettings v)
+  , _bakeView_bakerRegistered = cropView (_bakeViewSelector_bakerRegistered vs) (_bakeView_bakerRegistered v)
   }
 
 instance Filterable BakeViewSelector where
@@ -430,6 +433,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_prompting = mapMaybe f (_bakeViewSelector_prompting a)
     , _bakeViewSelector_votePrompting = mapMaybe f (_bakeViewSelector_votePrompting a)
     , _bakeViewSelector_rightNotificationSettings = mapMaybe f $ _bakeViewSelector_rightNotificationSettings a
+    , _bakeViewSelector_bakerRegistered = mapMaybe f $ _bakeViewSelector_bakerRegistered a
     }
 
 instance Align BakeViewSelector where
@@ -464,6 +468,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_prompting = nil
     , _bakeViewSelector_votePrompting = nil
     , _bakeViewSelector_rightNotificationSettings = nil
+    , _bakeViewSelector_bakerRegistered = nil
     }
 
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
@@ -498,6 +503,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
     , _bakeViewSelector_votePrompting = f' _bakeViewSelector_votePrompting
     , _bakeViewSelector_rightNotificationSettings = f' _bakeViewSelector_rightNotificationSettings
+    , _bakeViewSelector_bakerRegistered = f' _bakeViewSelector_bakerRegistered
     }
     where
       f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
@@ -535,6 +541,7 @@ instance Filterable BakeView where
     , _bakeView_prompting = mapMaybe f $ _bakeView_prompting a
     , _bakeView_votePrompting = mapMaybe f $ _bakeView_votePrompting a
     , _bakeView_rightNotificationSettings = mapMaybe f $ _bakeView_rightNotificationSettings a
+    , _bakeView_bakerRegistered = mapMaybe f $ _bakeView_bakerRegistered a
     }
 
 mapMaybeSnd :: Filterable f => (a -> Maybe b) -> f (e, a) -> f (e, b)
@@ -577,6 +584,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
     , _bakeViewSelector_votePrompting = (<>) (_bakeViewSelector_votePrompting u) (_bakeViewSelector_votePrompting v)
     , _bakeViewSelector_rightNotificationSettings = (<>) (_bakeViewSelector_rightNotificationSettings u) (_bakeViewSelector_rightNotificationSettings v)
+    , _bakeViewSelector_bakerRegistered = (<>) (_bakeViewSelector_bakerRegistered u) (_bakeViewSelector_bakerRegistered v)
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
@@ -611,6 +619,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_prompting = mempty
     , _bakeViewSelector_votePrompting = mempty
     , _bakeViewSelector_rightNotificationSettings = mempty
+    , _bakeViewSelector_bakerRegistered = mempty
     }
   mappend = (<>)
 
@@ -654,6 +663,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_prompting = mempty
     , _bakeView_votePrompting = mempty
     , _bakeView_rightNotificationSettings = mempty
+    , _bakeView_bakerRegistered = mempty
     }
   mappend u v = u <> v
 
@@ -691,6 +701,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v
     , _bakeView_votePrompting = _bakeView_votePrompting u <> _bakeView_votePrompting v
     , _bakeView_rightNotificationSettings = _bakeView_rightNotificationSettings u <> _bakeView_rightNotificationSettings v
+    , _bakeView_bakerRegistered = _bakeView_bakerRegistered u <> _bakeView_bakerRegistered v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where
