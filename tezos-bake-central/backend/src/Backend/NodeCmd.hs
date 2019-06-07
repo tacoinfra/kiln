@@ -17,10 +17,14 @@ module Backend.NodeCmd where
 
 import Control.Monad.Logger (MonadLogger, logInfo)
 import Control.Monad.Trans (lift)
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Version
 import Database.Groundhog.Postgresql
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -30,6 +34,7 @@ import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.Process (readProcess, proc)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
@@ -108,9 +113,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
-    useArchiveMode = case namedChainOrPaths of
-      Left NamedChain_Zeronet -> True
-      _ -> False
+    useArchiveMode = True
     -- use the user supplied config file if specified
     -- we can only specify this option once
     hasUserConfigFile = "--config-file" `elem` nodeExtraArgs
@@ -154,9 +157,22 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  haveVersionFile <- liftIO $ doesFileExist versionFile
-  when (not haveVersionFile) $
-    void $ runCommandWithInfoLogging nodePath ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+  hasVersionFile <- liftIO $ doesFileExist versionFile
+  if hasVersionFile
+    then do
+      vf <- liftIO $ LBS.readFile versionFile
+      let
+        v = getVersion =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
+        getVersion :: Text -> Maybe Version
+        getVersion = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
+      case v of
+        Nothing -> pure ()
+        Just ver -> when (ver < (Version [0,0,3] [])) $ do
+          void $ runCommandWithInfoLogging nodePath
+            ["upgrade", "storage", "--data-dir", T.pack dataDir]
+    else do
+      void $ runCommandWithInfoLogging nodePath
+        ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do

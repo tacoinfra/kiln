@@ -57,7 +57,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
     (params, dsh) <- liftIO $ atomically $
       (,) <$> waitForParams nds <*> dataSourceHead nds
     let headLevelMay = (^. level) <$> dsh
-    let cutoffLevel = maybe 0 (rightsContextLevel params) headLevelMay
+    let cutoffLevel = max 2 $ maybe 2 (rightsContextLevel params) headLevelMay
 
     queuedBlockOrNot <- inDb $ do
       [queryQ|
