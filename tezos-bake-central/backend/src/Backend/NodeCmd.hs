@@ -15,7 +15,7 @@
 
 module Backend.NodeCmd where
 
-import Control.Monad.Logger (MonadLogger, logInfo)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -32,13 +32,14 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.Process (readProcess, proc)
+import System.Process (readProcessWithExitCode, proc)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
 import ExtraPrelude
+import System.Exit (ExitCode(..))
 import System.Which
 import Tezos.Chain (NamedChain(..))
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
@@ -134,11 +135,18 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-runCommandWithInfoLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m Text
-runCommandWithInfoLogging cmd args = do
-  out <- T.pack <$> liftIO (readProcess cmd (T.unpack <$> args) "")
-  $(logInfo) $ "Running command " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-  pure out
+runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
+runCommandWithLogging cmd args = do
+  (exitCode, out', err') <- liftIO (readProcessWithExitCode cmd (T.unpack <$> args) "")
+  let
+    out = T.pack out'
+    err = T.pack err'
+  if exitCode == ExitSuccess
+    then do
+      (logInfoNS "INITNODE") ("Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out)
+    else do
+      (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
+      (logErrorNS "INITNODE") $ "Command Failed : (stderr): " <> T.pack cmd <> " " <> tshow args <> " --> " <> err
 
 initNode
   :: (MonadIO m)
@@ -164,16 +172,16 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
       case v of
         Nothing -> pure ()
         Just ver -> when (ver < (Version [0,0,3] [])) $ do
-          void $ runCommandWithInfoLogging nodePath
+          runCommandWithLogging nodePath
             ["upgrade", "storage", "--data-dir", T.pack dataDir]
     else do
-      void $ runCommandWithInfoLogging nodePath
+      runCommandWithLogging nodePath
         ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
     lift $ updateState ProcessState_GeneratingIdentity
-    void $ runCommandWithInfoLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+    runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   return dataDir
 
