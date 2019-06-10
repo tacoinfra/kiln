@@ -28,9 +28,10 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
+import Data.Either (partitionEithers)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
-import Data.List (intersperse, sortBy)
+import Data.List (intersperse, sortBy, minimumBy, maximumBy)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -39,6 +40,7 @@ import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Time as Time
+import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
@@ -73,9 +75,11 @@ import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
 import Common.Alerts (bakerInsufficientFundsDescriptions)
+import Common.Alerts (bakerGroupedMissedDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
 import Common.Alerts (isUserResolvable)
 import Common.Alerts (networkUpdateDescription)
+import Common.Alerts (standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -495,7 +499,7 @@ networkUpdateAlert elua = do
   let namedChain = _errorLogNetworkUpdate_namedChain elua
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (LogTag_NetworkUpdate :=> pure elua)
+    (pure (LogTag_NetworkUpdate :=> pure elua))
     (icon "icon-alert-badge big blue")
     header
     Nothing
@@ -1589,6 +1593,35 @@ data BakersBanner
   | BakersBanner_CannotGather
   deriving (Eq, Ord, Show)
 
+data BakerAlert
+  = BakerAlert_Alert (DSum BakerLogTag Identity)
+  | BakerAlert_GroupedAlert (RawLevel, UTCTime) (RawLevel, UTCTime) (NonEmpty ErrorLogBakerMissed)
+  deriving (Eq, Ord, Show)
+
+groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
+groupBakerAlerts bs = others ++ (group bm) ++ (group em)
+  where
+    (others, missed) = partitionEithers $ map filterByTag bs
+    (bm, em) = partitionEithers missed
+    filterByTag
+      :: (ErrorLog, DSum BakerLogTag Identity)
+      -> Either BakerAlert (Either (ErrorLog, ErrorLogBakerMissed) (ErrorLog, ErrorLogBakerMissed))
+    filterByTag (e,v@(lTag :=> Identity log)) = case lTag of
+      BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right log of
+        RightKind_Baking -> Right $ Left (e, log)
+        RightKind_Endorsing -> Right $ Right (e, log)
+      _ -> Left $ BakerAlert_Alert v
+
+    group [] = []
+    group ((_,l):[]) = [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
+    group ls = [BakerAlert_GroupedAlert v1 v2 $ NEL.fromList (map snd ls)]
+      where
+        v1 = g $ minimumBy (comparing fst) ls
+        v2 = g $ maximumBy (comparing fst) ls
+
+    g :: (ErrorLog, ErrorLogBakerMissed) -> (RawLevel, UTCTime)
+    g (e, log) = (_errorLogBakerMissed_level log, _errorLog_started e)
+
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -1605,13 +1638,13 @@ bakersTab =
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerErrorLogView)) <- snd <$$$$> watchErrorsByBaker alertWindow
+      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))) <- watchErrorsByBaker alertWindow
       dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . concat . (fmap NEL.toList) <$> dEbb
+            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concat . (fmap NEL.toList) <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
@@ -1619,7 +1652,7 @@ bakersTab =
             toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1636,8 +1669,8 @@ bakersTab =
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
           dyn_ $ ffor bakersBanner $ mkBakersBanner
 
-          let notifications :: Dynamic t (Map.Map (Down (DSum BakerLogTag Identity)) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems <$> dEbb
+          let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . (fmap (groupBakerAlerts . NEL.toList)) <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
@@ -1648,15 +1681,15 @@ bakersTab =
               let
                 renderBakerError = text . _bakerErrorDescriptions_tile
 
-                connectivityAndUnresolvedAlerts = (++)
+                bakerAlerts = (++)
                   <$> (ffor dCollectiveNodesStatus $ \case
                           Left e -> [Left e]
                           Right _ -> [])
-                  <*> (Right <$$> unresolvedAlerts)
+                  <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
+                errorMessages = ffor bakerAlerts $ fmap $ \case
                   Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                  Right (lTag :=> Identity log) -> case lTag of
+                  Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
                     BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
                     BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
                       where
@@ -1667,6 +1700,14 @@ bakersTab =
                     BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
+                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> el "span" $ do
+                    elClass "span" "ui label circular" $ text $ tshow (length ls)
+                    text nbsp
+                    text $ "Missed " <> aRight <> "."
+                    where
+                      aRight = case _errorLogBakerMissed_right log of
+                        RightKind_Baking -> "a bake"
+                        RightKind_Endorsing -> "an endorsement"
 
               let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
               titleUniq <- holdUniqDyn title
@@ -1712,22 +1753,30 @@ bakersTab =
                text " "
                ensureHealthyNodes)
 
-    splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \errorView@(bTag :=> Identity log) ->
-      let
-        pkh = bakerIdForBakerErrorLogView errorView
-        ev = LogTag_Baker bTag :=> Identity log
-      in case bTag of
-        -- TODO
-        BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-        BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
-        BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
-        BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
-        BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
-        BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+    splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerAlert -> m ()
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+      BakerAlert_Alert errorView@(bTag :=> Identity log) ->
+        let
+          pkh = bakerIdForBakerErrorLogView errorView
+          ev = (LogTag_Baker bTag :=> Identity log) :| []
+        in case bTag of
+          -- TODO
+          BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+          BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
+          BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
+          BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
+          BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
+          BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+
+      BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
+        tz <- asks (^. timeZone)
+        let
+          pkh = unId $ _errorLogBakerMissed_baker log
+          ev = (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Identity l) <$> ls
+        renderBakerError ev (bakerGroupedMissedDescriptions tz (length ls) first' latest' log) pkh
 
       where
-        renderBakerError :: ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
+        renderBakerError :: NonEmpty ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert ev
@@ -1913,20 +1962,21 @@ bakersTab =
               *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
-  => ErrorLogView
+  => NonEmpty ErrorLogView
   -> m () -- ^ Alert icon
   -> Text -- ^ Title
   -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> m ()
-renderResolvableSplashAlert e@(etag :=> _) splashIcon title entity desc = do
+renderResolvableSplashAlert es@((etag :=> _) :| _) splashIcon title entity desc = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
     when (isUserResolvable etag) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"
-      void $ requestingIdentity $ public (PublicRequest_ResolveAlert e) <$ resolve
+      void $ requestingIdentity $ public (PublicRequest_ResolveAlerts es') <$ resolve
+  where es' = (\e -> etag :=> (Const $ errorLogIdForErrorLogView e)) <$> NEL.toList es
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
