@@ -4,8 +4,14 @@
 *June 11, 2019*
 
   * The Kiln baker tile now shows the status of your vote (not yet voted, pending, and included).
+  * When setting up the Kiln baker, Kiln now checks to see if the baker address has already registered and skips those steps if possible.
   * Small UI improvements
   * Bug fixes
+
+### Known Issues
+
+  * This version of Kiln **does not support** the new "Full" and "Rolling" history modes of Tezos nodes. The Kiln node always uses "Archive" mode for now and if you monitor a non-Archive node, Kiln may not be able to collect all information. We are actively working to add support for this.
+  * This version of Kiln **does not support** the most recent version of zeronet as of the release date (chain ID `NetXkaRXbyeogSM`).
 
 ## 0.5.2
 *May 24, 2019*
