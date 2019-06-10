@@ -135,19 +135,6 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
-runCommandWithLogging cmd args = do
-  (exitCode, out', err') <- liftIO (readProcessWithExitCode cmd (T.unpack <$> args) "")
-  let
-    out = T.pack out'
-    err = T.pack err'
-  if exitCode == ExitSuccess
-    then do
-      (logInfoNS "INITNODE") ("Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out)
-    else do
-      (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-      (logErrorNS "INITNODE") $ "Command Failed : (stderr): " <> T.pack cmd <> " " <> tshow args <> " --> " <> err
-
 initNode
   :: (MonadIO m)
   => "logger" :! LoggingEnv
@@ -184,6 +171,20 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   return dataDir
+  where
+    runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
+    runCommandWithLogging cmd args = do
+      (exitCode, out', err') <- liftIO (readProcessWithExitCode cmd (T.unpack <$> args) "")
+      let
+        out = T.pack out'
+        err = T.pack err'
+      if exitCode == ExitSuccess
+        then do
+          (logInfoNS "INITNODE") ("Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out)
+        else do
+          (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
+          (logErrorNS "INITNODE") $ "Command Failed : (stderr): " <> T.pack cmd <> " " <> tshow args <> " --> " <> err
+
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
