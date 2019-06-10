@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+*June 11, 2019*
+
+  * The Kiln baker tile now shows the status of your vote (not yet voted, pending, and included).
+  * Small UI improvements
+  * Bug fixes
+
 ## 0.5.2
 *May 24, 2019*
 
