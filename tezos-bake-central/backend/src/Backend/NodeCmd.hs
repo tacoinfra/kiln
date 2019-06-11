@@ -15,6 +15,7 @@
 
 module Backend.NodeCmd where
 
+import Control.Exception.Safe (throwIO)
 import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
@@ -184,6 +185,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
         else do
           (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
           (logErrorNS "INITNODE") $ "Command Failed : (stderr): " <> T.pack cmd <> " " <> tshow args <> " --> " <> err
+          liftIO $ throwIO exitCode
 
 
 -- Start Baker and Endorser

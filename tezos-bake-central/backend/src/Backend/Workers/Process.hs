@@ -19,8 +19,8 @@
 module Backend.Workers.Process where
 
 import Control.Concurrent.Async (withAsync)
-import Control.Exception.Safe (tryJust)
-import Control.Monad.Catch (bracket)
+import Control.Exception.Safe (tryJust, throwIO)
+import Control.Monad.Catch (bracket, catch)
 import Control.Monad.Logger (MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -36,6 +36,7 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
+import System.Exit (ExitCode(..))
 import System.IO (hFlush, hGetLine)
 import System.IO.Error (isEOFError)
 import System.IO.Temp (withTempFile)
@@ -89,7 +90,13 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
   bracket obtainLock freeLock $ \_ -> do
     updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
-      v <- runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
+      let
+        initF = runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
+      v <- catch initF $ \e -> do
+        runLoggingEnv logger $ runDb (Identity db) $
+          update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
+        updateState ProcessState_Failed
+        throwIO (e :: ExitCode)
       updateState ProcessState_Starting
       let procSpec = (mkProcess v configFile)
             { Proc.std_out = Proc.CreatePipe
