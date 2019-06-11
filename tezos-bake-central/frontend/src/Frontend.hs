@@ -28,10 +28,9 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
-import Data.Either (partitionEithers)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
-import Data.List (intersperse, sortBy, minimumBy, maximumBy)
+import Data.List (intersperse, sortBy, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -1599,28 +1598,25 @@ data BakerAlert
   deriving (Eq, Ord, Show)
 
 groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
-groupBakerAlerts bs = others ++ (group bm) ++ (group em)
+groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (group endorseMiss)
   where
-    (others, missed) = partitionEithers $ map filterByTag bs
-    (bm, em) = partitionEithers missed
-    filterByTag
-      :: (ErrorLog, DSum BakerLogTag Identity)
-      -> Either BakerAlert (Either (ErrorLog, ErrorLogBakerMissed) (ErrorLog, ErrorLogBakerMissed))
-    filterByTag (e,v@(lTag :=> Identity log)) = case lTag of
+    (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
+    partitionF
+      :: ([DSum BakerLogTag Identity], [(ErrorLog, ErrorLogBakerMissed)], [(ErrorLog, ErrorLogBakerMissed)])
+      -> (ErrorLog, DSum BakerLogTag Identity)
+      -> ([DSum BakerLogTag Identity], [(ErrorLog, ErrorLogBakerMissed)], [(ErrorLog, ErrorLogBakerMissed)])
+    partitionF (os, bms, ems) (elog, v@(lTag :=> Identity log)) = case lTag of
       BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right log of
-        RightKind_Baking -> Right $ Left (e, log)
-        RightKind_Endorsing -> Right $ Right (e, log)
-      _ -> Left $ BakerAlert_Alert v
+        RightKind_Baking -> (os, (elog, log) : bms, ems)
+        RightKind_Endorsing -> (os, bms, (elog, log) : ems)
+      _ -> (v : os, bms, ems)
 
-    group [] = []
-    group ((_,l):[]) = [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
-    group ls = [BakerAlert_GroupedAlert v1 v2 $ NEL.fromList (map snd ls)]
-      where
-        v1 = g $ minimumBy (comparing fst) ls
-        v2 = g $ maximumBy (comparing fst) ls
-
-    g :: (ErrorLog, ErrorLogBakerMissed) -> (RawLevel, UTCTime)
-    g (e, log) = (_errorLogBakerMissed_level log, _errorLog_started e)
+    group ls' = case NEL.nonEmpty ls' of
+      Nothing -> []
+      Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
+      Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) $ (fmap snd ls)]
+        where
+          applyF f = (\(e, log) -> (_errorLogBakerMissed_level log, _errorLog_started e)) $ f (comparing fst) ls
 
 bakersTab
   :: forall r m t.
