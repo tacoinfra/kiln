@@ -1602,9 +1602,10 @@ groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (gro
   where
     (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
     partitionF
-      :: ([DSum BakerLogTag Identity], [(ErrorLog, ErrorLogBakerMissed)], [(ErrorLog, ErrorLogBakerMissed)])
-      -> (ErrorLog, DSum BakerLogTag Identity)
-      -> ([DSum BakerLogTag Identity], [(ErrorLog, ErrorLogBakerMissed)], [(ErrorLog, ErrorLogBakerMissed)])
+      :: (a ~ (DSum BakerLogTag Identity), c ~ ErrorLogBakerMissed)
+      => ([a], [(b, c)], [(b, c)])
+      -> (b, a)
+      -> ([a], [(b, c)], [(b, c)])
     partitionF (os, bms, ems) (elog, v@(lTag :=> Identity log)) = case lTag of
       BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right log of
         RightKind_Baking -> (os, (elog, log) : bms, ems)
@@ -1614,7 +1615,7 @@ groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (gro
     group ls' = case NEL.nonEmpty ls' of
       Nothing -> []
       Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
-      Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) $ (fmap snd ls)]
+      Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) $ fmap snd ls]
         where
           applyF f = (\(e, log) -> (_errorLogBakerMissed_level log, _errorLog_started e)) $ f (comparing fst) ls
 
