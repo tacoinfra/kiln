@@ -16,22 +16,28 @@
 
 module Tezos.Operation where
 
-import Control.Lens(Traversal')
+import Control.Lens ((<&>),Traversal')
 import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Applicative ((<|>))
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
+import Data.Binary.Get (bytesRead)
+import Data.Binary.Builder (toLazyByteString)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as BSL
+import Data.Dependent.Sum (DSum(..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import Data.Some (Some(..), withSome)
 import Data.Text (Text)
 import Data.Typeable
 import GHC.Generics
 import GHC.Word
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
+import Numeric.Natural (Natural)
 
 import Tezos.BalanceUpdate
 import Tezos.Base16ByteString
@@ -69,17 +75,41 @@ data OpKind
   | OpKind_Endorsement
   | OpKind_Proposals
   | OpKind_Ballot
-  | OpKind_Reveal
-  | OpKind_Transaction
-  | OpKind_Origination
-  | OpKind_Delegation
   | OpKind_Manager [OpKindManager]
+
+data OpKindTag opKind where
+  -- OpKindTag_SeedNonceRevelation :: OpKindTag OpKind_SeedNonceRevelation
+  -- OpKindTag_DoubleEndorsementEvidence :: OpKindTag OpKind_DoubleEndorsementEvidence
+  -- OpKindTag_DoubleBakingEvidence :: OpKindTag OpKind_DoubleBakingEvidence
+  -- OpKindTag_ActivateAccount :: OpKindTag OpKind_ActivateAccount
+  OpKindTag_Endorsement :: OpKindTag 'OpKind_Endorsement
+  -- OpKindTag_Proposals :: OpKindTag OpKind_Proposals
+  -- OpKindTag_Ballot :: OpKindTag OpKind_Ballot
+  -- OpKindTag_Reveal :: OpKindTag OpKind_Reveal
+  -- OpKindTag_Origination :: OpKindTag OpKind_Origination
+  -- OpKindTag_Delegation :: OpKindTag OpKind_Delegation
+  OpKindTag_Manager :: OpKindManagerTag opKindManager -> OpKindTag ('OpKind_Manager (opKindManager : '[]))
+  deriving (Typeable)
+
+data OpsKindTag opKinds where
+  OpsKindTag_Single :: OpKindTag k -> OpsKindTag k
+  -- OpsKindTag_Cons :: OpKindTag (OpKind_Manager (k : '[])) -> OpsKindTag (OpKind_Manager ks) -> OpsKindTag (OpKind_Manager (k : ks))
+  -- TODO support operation batching since this attempt did not work
+  deriving (Typeable)
 
 data OpKindManager
   = OpKindManager_Reveal
   | OpKindManager_Transaction
   | OpKindManager_Origination
   | OpKindManager_Delegation
+  deriving (Typeable)
+
+data OpKindManagerTag opKindManager where
+  -- OpKindManagerTag_Reveal :: OpKindManagerTag OpKindManager_Reveal
+  OpKindManagerTag_Transaction :: OpKindManagerTag 'OpKindManager_Transaction
+  -- OpKindManagerTag_Origination :: OpKindManagerTag OpKindManager_Origination
+  -- OpKindManagerTag_Delegation :: OpKindManagerTag OpKindManager_Delegation
+  deriving (Typeable)
 
 data Op (a :: OpKind) = Op
   { _op_branch :: !BlockHash
@@ -117,7 +147,7 @@ data OperationContents
 
 data OpContentsList (a :: OpKind) where
   OpContentsList_Single :: OpContents a -> OpContentsList a
-  OpContentsList_Cons :: OpContents ('OpKind_Manager (a : '[])) -> OpContentsList ('OpKind_Manager as) -> OpContentsList ('OpKind_Manager (a : as))
+  -- OpContentsList_Cons :: OpContents ('OpKind_Manager '[a]) -> OpContentsList ('OpKind_Manager as) -> OpContentsList ('OpKind_Manager (a : as))
   deriving Typeable
 
 deriving instance Eq (OpContentsList a)
@@ -126,6 +156,7 @@ deriving instance Show (OpContentsList a)
 
 data OpContents (a :: OpKind) where
   OpContents_Endorsement :: !OpContentsEndorsement -> OpContents 'OpKind_Endorsement
+  OpContents_Transaction :: !(OpContentsManager OpContentsTransaction) -> OpContents ('OpKind_Manager '[ 'OpKindManager_Transaction])
   deriving Typeable
 
 deriving instance Eq (OpContents a)
@@ -134,6 +165,23 @@ deriving instance Show (OpContents a)
 
 data OpContentsEndorsement = OpContentsEndorsement
   { _opContentsEndorsement_level :: !RawLevel
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data OpContentsManager op = OpContentsManager
+  { _opContentsManager_source :: !ContractId
+  , _opContentsManager_fee :: !Tez
+  , _opContentsManager_counter :: !Natural
+  , _opContentsManager_gasLimit :: !Natural
+  , _opContentsManager_storageLimit :: !Natural
+  , _opContentsManager_operation :: !op
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data OpContentsTransaction = OpContentsTransaction
+  { _opContentsTransaction_amount :: !Tez
+  , _opContentsTransaction_destination :: !ContractId
+  , _opContentsTransaction_parameters :: !(Maybe Expression)
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -480,9 +528,56 @@ outlineEndorsement (InlinedEndorsement { _inlinedEndorsement_branch = branch, _i
       InlinedEndorsementContents { _inlinedEndorsementContents_level = level } ->
         Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
 
+instance B.TezosBinary (Some OpKindTag) where
+  put t = withSome t $ \case
+    OpKindTag_Endorsement -> B.put @Word8 0
+    OpKindTag_Manager OpKindManagerTag_Transaction -> B.put @Word8 8
+  get = B.get @Word8 >>= \case
+    0 -> pure $ This OpKindTag_Endorsement
+    8 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Transaction)
+    _ -> fail "currently unsupported operation tag"
+
 instance B.TezosBinary OpContentsEndorsement where
   put = B.puts _opContentsEndorsement_level
   get = OpContentsEndorsement <$> B.get
+
+instance B.TezosBinary OpContentsTransaction where
+  put = B.puts _opContentsTransaction_amount
+    <** B.puts _opContentsTransaction_destination
+    <** B.puts _opContentsTransaction_parameters
+  get = pure OpContentsTransaction
+    <*> B.get
+    <*> B.get
+    <*> B.get
+
+newtype TenByteNatural = TenByteNatural { unTenByteNatural :: Natural }
+  deriving (Eq, Ord, Show, Typeable)
+
+instance B.TezosBinary TenByteNatural where
+  build (TenByteNatural n) =
+    let x = B.build n in
+      if BSL.null $ BSL.drop 10 $ toLazyByteString x then x else error "number too big (>10 bytes)"
+  get = do
+    start <- bytesRead
+    n <- B.get @Natural
+    end <- bytesRead
+    if end - 10 > start then fail "number too big (>10 bytes)"
+      else return $ TenByteNatural n
+
+instance B.TezosBinary op => B.TezosBinary (OpContentsManager op) where
+  put = B.puts _opContentsManager_source
+    <** B.puts _opContentsManager_fee
+    <** B.puts (TenByteNatural . _opContentsManager_counter)
+    <** B.puts (TenByteNatural . _opContentsManager_gasLimit)
+    <** B.puts (TenByteNatural . _opContentsManager_storageLimit)
+    <** B.puts _opContentsManager_operation
+  get = pure OpContentsManager
+    <*> B.get
+    <*> B.get
+    <*> fmap unTenByteNatural B.get
+    <*> fmap unTenByteNatural B.get
+    <*> fmap unTenByteNatural B.get
+    <*> B.get
 
 instance B.TezosBinary (OpContents 'OpKind_Endorsement) where
   put = \case
@@ -491,10 +586,30 @@ instance B.TezosBinary (OpContents 'OpKind_Endorsement) where
     0 -> OpContents_Endorsement <$> B.get
     _ -> fail "not an endorsement"
 
+instance B.TezosBinary (DSum OpKindTag OpContents) where
+  put (t :=> op) = B.put (This t) *>
+    case op of
+      OpContents_Endorsement opc -> B.put opc
+      OpContents_Transaction opc -> B.put opc
+  get = B.get >>= \case
+    This t -> (t :=>) <$> case t of
+      OpKindTag_Endorsement -> OpContents_Endorsement <$> B.get
+      OpKindTag_Manager OpKindManagerTag_Transaction -> OpContents_Transaction <$> B.get
+
 instance B.TezosBinary (OpContentsList 'OpKind_Endorsement) where
   put = \case
     OpContentsList_Single op -> B.put op
   get = OpContentsList_Single <$> B.get
+
+instance B.TezosBinary (DSum OpsKindTag OpContentsList) where
+  put = \case
+    OpsKindTag_Single t :=> OpContentsList_Single op ->
+      B.put $ t :=> op
+    -- OpsKindTag_Cons t ts :=> OpContentsList_Cons op ops -> do
+    --   B.put $ t :=> op
+    --   B.put $ ts :=> ops
+  get = B.get <&> \case
+    t :=> op -> OpsKindTag_Single t :=> OpContentsList_Single op
 
 instance B.TezosUnsignedBinary (Op 'OpKind_Endorsement) where
   putUnsigned = shellHeaderEncoding <** B.puts _op_contents
@@ -503,6 +618,27 @@ instance B.TezosUnsignedBinary (Op 'OpKind_Endorsement) where
   getUnsigned = shellHeaderDecoding <*> B.get <*> pure Nothing
     where
       shellHeaderDecoding = Op <$> B.get
+
+instance B.TezosUnsignedBinary (DSum OpsKindTag Op) where
+  putUnsigned (tag :=> op) =
+      shellHeaderEncoding op *>
+      B.puts ((tag :=>) . _op_contents) op
+    where
+      shellHeaderEncoding = B.puts _op_branch
+  getUnsigned = shellHeaderDecoding <*> B.get <*> pure Nothing
+    where
+      shellHeaderDecoding = do
+        shellHeader <- B.get
+        return $ \case
+          (tag :=> protocolData) -> (tag :=>) . Op shellHeader protocolData
+
+instance B.TezosBinary (DSum OpsKindTag Op) where
+  put op@(_ :=> body) =
+      B.putUnsigned op *> B.puts _op_signature body
+  get = B.getUnsigned >>= \case
+    (t :=> op) -> do
+      sig <- B.get
+      pure $ t :=> op { _op_signature = Just sig }
 
 concat <$> traverse deriveTezosJson
   [ ''Operation

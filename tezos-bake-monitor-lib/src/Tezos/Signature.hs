@@ -18,6 +18,7 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 import Tezos.Base58Check
+import Tezos.Binary as B
 
 data Signature
   = Signature_Ed25519 Ed25519Signature -- see lib_crypto/ed25519.ml
@@ -72,3 +73,11 @@ instance Show Signature where
 
 instance IsString Signature where
   fromString x = either (error . show) id $ tryFromBase58 signatureConstructorDecoders $ fromString x
+
+instance B.TezosBinary Signature where
+  build = \case
+    Signature_Ed25519 x -> B.build x
+    Signature_Secp256k1 x -> B.build x
+    Signature_P256 x -> B.build x
+    Signature_Unknown x -> B.build x
+  get = Signature_Unknown <$> B.get

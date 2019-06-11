@@ -4,6 +4,8 @@ module Tezos.Binary where
 import Control.Applicative (many)
 import Data.Binary.Builder
 import Data.Binary.Get
+import Data.Bits (Bits, (.&.), (.|.), bit, setBit, shift, testBit, zeroBits)
+import Numeric.Natural (Natural)
 import Data.Bool (Bool(..), bool)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -18,6 +20,8 @@ import qualified Data.Sequence as Seq
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
 import Data.Word
+import qualified Data.Text
+import qualified Data.Text.Encoding as TE
 
 import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
@@ -79,6 +83,34 @@ instance TezosBinary Int64 where
   build = putInt64be
   get = getInt64be
 
+readZ :: (Num a, Bits a) => Int -> a -> Get a
+readZ offset n = do
+  b <- getWord8
+  if (b == 0) && (offset > 0) then fail "trailing zero" else pure ()
+  let n' = (fromIntegral (b .&. 0x7f) `shift` offset) .|. n
+  if b `testBit` 7 then readZ (offset + 7) n' else pure n'
+
+writeZ :: (Integral a, Ord a, Bits a) => Int -> a -> Builder
+writeZ offset n =
+  if n < bit (7 - offset) then singleton $ fromIntegral $ n `shift` offset
+    else singleton (fromIntegral (((n `shift` offset) .&. 0x7f) `setBit` 7)) <> writeZ (offset - 7) n
+
+instance TezosBinary Natural where
+  build = writeZ 0
+  get = readZ 0 0
+
+instance TezosBinary Integer where
+  build n =
+    let signBit = if n < 0 then bit 6 else zeroBits
+        ab = abs n
+    in
+    if ab < 0x40 then singleton (fromIntegral ab .|. signBit)
+      else singleton (fromIntegral (ab .&. 0x3f) .|. signBit .|. bit 7) <> writeZ 6 ab
+  get = do
+    b <- getWord8
+    n <- if b `testBit` 7 then readZ 6 (fromIntegral $ b .&. 0x3f) else pure (fromIntegral $ b .&. 0x3f)
+    pure $ if b `testBit` 6 then negate n else n
+
 instance TezosBinary Bool where
   put = puts (bool 0x00 0xff :: Bool -> Word8)
   get = getWord8 >>= \case
@@ -108,6 +140,13 @@ instance TezosBinary a => TezosBinary (Seq a) where
   build = foldMap build
   put = traverse_ put
   get = Seq.fromList <$> many get
+
+instance TezosBinary Data.Text.Text where
+  build = build . TE.encodeUtf8
+  put = put . TE.encodeUtf8
+  get = fmap TE.decodeUtf8' get >>= \case
+    Left err -> fail $ show err
+    Right answer -> pure answer
 
 -- we all scream for ice cream
 (<**) :: (Applicative f, Applicative g) => f (g a) -> f (g b) -> f (g a)

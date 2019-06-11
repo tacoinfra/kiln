@@ -61,6 +61,7 @@ library
     , cryptohash
     , cryptonite
     , deepseq
+    , dependent-sum
     , functor-infix
     , groups
     , hashable

@@ -12,7 +12,9 @@ import Data.Int (Int64)
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import GHC.Word (Word64)
+import Numeric.Natural (Natural)
 
+import qualified Tezos.Binary as B
 import Tezos.Json (parseIntegralAsString)
 
 newtype Tez = Tez { getTez :: Micro }
@@ -41,3 +43,7 @@ instance ToJSON Tez where
 
 instance FromJSON Tez where
   parseJSON x = microTez <$> parseIntegralAsString @Word64 x
+
+instance B.TezosBinary Tez where
+  put t = B.put @Natural $ fromIntegral $ getMicroTez t
+  get = microTez <$> B.get @Natural
