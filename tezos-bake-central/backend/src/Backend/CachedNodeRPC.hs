@@ -136,6 +136,7 @@ data NodeQuery a where
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
+  NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
@@ -678,6 +679,7 @@ getKey params hist = \case
   NodeQuery_BakingRightsChunk ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRightsChunk ctx' lvl (floorBy priorityChunkSize prio))) <$> rightsContext params hist ctx lvl
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx -> pure (ctx, NodeQuery_Block ctx)
+  NodeQuery_BlockHeader ctx -> pure (ctx, NodeQuery_BlockHeader ctx)
   NodeQuery_Account ctx contractId -> pure (ctx, NodeQuery_Account ctx contractId)
   NodeQuery_Ballots ctx -> pure (ctx, NodeQuery_Ballots ctx)
   NodeQuery_Ballot ctx pkh -> pure (ctx, NodeQuery_Ballot ctx pkh)
@@ -855,6 +857,7 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
+  NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader chainId branch
   NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
@@ -863,7 +866,7 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure pk
   where
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
+    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
