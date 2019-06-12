@@ -26,7 +26,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
 import qualified Data.Text as T
-import Data.Time (getCurrentTime, addUTCTime)
+import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
 import Database.Groundhog.Postgresql
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -171,11 +171,14 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
           liftIO (getProcessExitCode ph) >>= \case
             Nothing -> do
               updateState ProcessState_Running
-              let stop = procControl /= ProcessControl_Run
-              liftIO $ when stop $ if mCount < Just 60
+              let
+                stop = procControl /= ProcessControl_Run
+                timeoutInSec = 60 :: Int
+                delayInSec = 1 :: NominalDiffTime
+              liftIO $ when stop $ if mCount < Just (ceiling $ (fromIntegral timeoutInSec) / delayInSec)
                 then terminateProcess ph
                 else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' 1 *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
             Just _ -> case procControl of
               ProcessControl_Stop -> do
                 updateState ProcessState_Stopped
