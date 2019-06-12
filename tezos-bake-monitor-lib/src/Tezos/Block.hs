@@ -4,11 +4,12 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', iso, (^.))
+import Control.Lens (Lens', iso, (^.), _1, _2)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
@@ -210,6 +211,13 @@ instance BlockLike Block where
   level = block_header . blockHeader_level
   fitness = block_header . blockHeader_fitness
   timestamp = block_header . blockHeader_timestamp
+
+instance BlockLike (BlockHash, BlockHeader) where
+  hash = _1
+  predecessor = _2 . blockHeader_predecessor
+  level = _2 . blockHeader_level
+  fitness = _2 . blockHeader_fitness
+  timestamp = _2 . blockHeader_timestamp
 
 instance BlockLike MonitorBlock where
   hash = monitorBlock_hash

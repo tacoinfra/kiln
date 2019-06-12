@@ -37,8 +37,10 @@ class QueryChain repr where
 
 class QueryBlock repr where
   type BlockType repr
+  type BlockHeaderType repr
   rHead :: ChainId -> repr (BlockType repr)
   rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
+  rBlockHeader :: ChainId -> BlockHash -> repr (BlockHeaderType repr)
 
 class QueryHistory repr where -- blockscale
   rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
@@ -94,9 +96,11 @@ instance QueryChain RpcQuery where
 
 instance QueryBlock RpcQuery where
   type BlockType RpcQuery = Block
+  type BlockHeaderType RpcQuery = BlockHeader
   --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
   rHead = chainAPI "/blocks/head"
   rBlock = blockAPI ""
+  rBlockHeader = blockAPI "/header"
 
 instance QueryHistory RpcQuery where
   rBlockPred (RawLevel levelsBack) = blockAPI $ "~" <> T.pack (show levelsBack)
