@@ -542,7 +542,6 @@ instance Semigroup Opts where
 
 instance Monoid Opts where
   mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing
-  mappend = (<>)
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =

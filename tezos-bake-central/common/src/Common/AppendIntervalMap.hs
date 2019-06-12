@@ -58,7 +58,6 @@ instance (IsInterval k e, Ord k, Semigroup v) => Semigroup (AppendIntervalMap k 
 
 instance (IsInterval k e, Ord k, Semigroup v) => Monoid (AppendIntervalMap k v) where
   mempty = AppendIntervalMap mempty
-  mappend = (<>)
 
 instance FunctorWithIndex k (AppendIntervalMap k)
 instance FoldableWithIndex k (AppendIntervalMap k)
