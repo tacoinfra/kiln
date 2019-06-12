@@ -28,6 +28,7 @@ import Data.Binary.Builder (toLazyByteString)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Dependent.Sum (DSum(..))
+import Data.Foldable (traverse_)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..), withSome)
@@ -544,11 +545,11 @@ instance B.TezosBinary OpContentsEndorsement where
 instance B.TezosBinary OpContentsTransaction where
   put = B.puts _opContentsTransaction_amount
     <** B.puts _opContentsTransaction_destination
-    <** B.puts _opContentsTransaction_parameters
+    <** B.puts (fmap B.DynamicSize . _opContentsTransaction_parameters)
   get = pure OpContentsTransaction
     <*> B.get
     <*> B.get
-    <*> B.get
+    <*> fmap (fmap B.unDynamicSize) B.get
 
 newtype TenByteNatural = TenByteNatural { unTenByteNatural :: Natural }
   deriving (Eq, Ord, Show, Typeable)
@@ -634,7 +635,7 @@ instance B.TezosUnsignedBinary (DSum OpsKindTag Op) where
 
 instance B.TezosBinary (DSum OpsKindTag Op) where
   put op@(_ :=> body) =
-      B.putUnsigned op *> B.puts _op_signature body
+      B.putUnsigned op *> traverse_ B.put (_op_signature body)
   get = B.getUnsigned >>= \case
     (t :=> op) -> do
       sig <- B.get
