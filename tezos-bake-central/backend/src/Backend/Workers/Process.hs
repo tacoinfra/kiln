@@ -174,7 +174,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
               let stop = procControl /= ProcessControl_Run
               liftIO $ when stop $ if mCount < Just 60
                 then terminateProcess ph
-                else Proc.getPid ph >>= mapM_ (signalProcess sigKILL)
+                else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
               threadDelay' 1 *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
             Just _ -> case procControl of
               ProcessControl_Stop -> do
