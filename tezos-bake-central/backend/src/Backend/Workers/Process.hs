@@ -21,7 +21,7 @@ module Backend.Workers.Process where
 import Control.Concurrent.Async (withAsync)
 import Control.Exception.Safe (tryJust, throwIO)
 import Control.Monad.Catch (bracket, catch)
-import Control.Monad.Logger (MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.Logger (MonadLogger, LoggingT, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
@@ -69,12 +69,10 @@ import ExtraPrelude
 
 processWorker
   :: (MonadIO m)
-  => ( forall m'
-       . (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m')
-       => "db" :! Pool Postgresql
-       -> "updateState" :! (ProcessState -> m' ())
+  => (    "db" :! Pool Postgresql
+       -> "updateState" :! (ProcessState -> IO ())
        -> "configFile" :! FilePath
-       -> m' a
+       -> IO a
      )
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
@@ -88,16 +86,16 @@ processWorker
 processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
-    updateState ProcessState_Initializing
+    inDb $ updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
       let
-        initF = runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
+        initF = initialize ! #db db ! #updateState (\ps -> inDb $ updateState ps) ! #configFile configFile
       v <- catch initF $ \e -> do
-        runLoggingEnv logger $ runDb (Identity db) $
+        inDb $ do
           update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
-        updateState ProcessState_Failed
+          updateState ProcessState_Failed
         throwIO (e :: ExitCode)
-      updateState ProcessState_Starting
+      inDb $ updateState ProcessState_Starting
       let procSpec = (mkProcess v configFile)
             { Proc.std_out = Proc.CreatePipe
             , Proc.std_err = Proc.CreatePipe
@@ -105,6 +103,8 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
       withCreateProcess procSpec procMonitor
     threadDelay' 10
   where
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
+    inDb = runLoggingEnv logger . runDb (Identity db)
     state_ = ProcessData_stateField
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
@@ -176,25 +176,26 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
             (getPC <$> project control_ (AutoKeyField ==. fromId pid))
           liftIO (getProcessExitCode ph) >>= \case
             Nothing -> do
-              updateState ProcessState_Running
+              inDb $ updateState ProcessState_Running
               case procControl of
                 ProcessControl_Run -> return ()
                 _ -> liftIO $ terminateProcess ph
               threadDelay' 1 *> go
             Just _ -> case procControl of
               ProcessControl_Stop -> do
-                updateState ProcessState_Stopped
+                inDb $ updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully:" :: Text, pid)
               ProcessControl_Restart -> do
-                updateState ProcessState_Stopped
+                inDb $ do
+                  updateState ProcessState_Stopped
+                  update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
-                runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
               ProcessControl_Run -> do
-                updateState ProcessState_Failed
+                inDb $ updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
-    updateState :: (MonadIO m, MonadBaseNoPureAborts IO m) => ProcessState -> m ()
-    updateState state = runLoggingEnv logger $ runDb (Identity db) $ do
+    updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
+    updateState state = do
       $(logDebugSH) ("putState:" :: Text, pid, state)
       get (fromId pid) >>= \case
         Nothing -> return ()

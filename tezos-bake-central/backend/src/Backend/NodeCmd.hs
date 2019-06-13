@@ -137,14 +137,13 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
 initNode
-  :: (MonadIO m)
-  => "logger" :! LoggingEnv
+  :: "logger" :! LoggingEnv
   -> "config" :! AppConfig
   -> "nodePath" :! FilePath
   -> "db" :! Pool Postgresql
-  -> "updateState" :! (ProcessState -> m ())
+  -> "updateState" :! (ProcessState -> IO ())
   -> "configFile" :! FilePath
-  -> m FilePath
+  -> IO FilePath
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let versionFile = dataDir `combine` "version.json"
@@ -249,7 +248,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
                    , "run"
                    , alias]
     pw (pathF, args) pid = processWorker
-      (\(Arg db_) _ _ -> fetchProtocol pid db_)
+      (\_ _ _ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
@@ -275,9 +274,9 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol
-  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Id ProcessData -> Pool Postgresql -> m (Maybe ProtocolHash)
-fetchProtocol pid db = runDb (Identity db) $ do
+  :: (PersistBackend m)
+  => Id ProcessData -> m (Maybe ProtocolHash)
+fetchProtocol pid =
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
     Just bdid ->
