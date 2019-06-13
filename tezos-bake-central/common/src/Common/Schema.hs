@@ -352,6 +352,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
   , _nodeDetailsData_peerCount :: !(Maybe Word64)
   , _nodeDetailsData_networkStat :: !NetworkStat
+  , _nodeDetailsData_checkpoint :: !(DeletableRow Checkpoint)
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
   , _nodeDetailsData_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Typeable, Generic)
@@ -367,6 +368,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_headBlockBakedAt = Nothing
   , _nodeDetailsData_peerCount = Nothing
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
+  , _nodeDetailsData_checkpoint = DeletableRow (Checkpoint 0 0 HistoryMode_Archive) True
   , _nodeDetailsData_fitness = Nothing
   , _nodeDetailsData_updated = Nothing
   }
