@@ -56,9 +56,9 @@ instance FromJSON PublicKey where
 
 toPublicKeyText :: PublicKey -> Text
 toPublicKeyText = \case
-    PublicKey_Ed25519 x -> T.pack $ show x
-    PublicKey_Secp256k1 x -> T.pack $ show x
-    PublicKey_P256 x -> T.pack $ show x
+    PublicKey_Ed25519 x -> toBase58Text x
+    PublicKey_Secp256k1 x -> toBase58Text x
+    PublicKey_P256 x -> toBase58Text x
 
 instance Show PublicKey where
   show = ("fromString "  <>) . show . toPublicKeyText
