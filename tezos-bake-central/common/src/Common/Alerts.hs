@@ -12,6 +12,8 @@ import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Data.String (IsString(..))
 import qualified Data.Text as T
+import qualified Data.Time as Time
+import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
@@ -29,6 +31,9 @@ instance FromJSON AlertsFilter
 instance FromJSONKey AlertsFilter
 instance ToJSON AlertsFilter
 instance ToJSONKey AlertsFilter
+
+standardTimeFormat :: String
+standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
 
 alertsFilter :: Filterable f => (a -> ErrorLog) -> AlertsFilter -> f a -> f a
 alertsFilter f = \case
@@ -193,6 +198,30 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
+
+bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> ErrorLogBakerMissed -> BakerErrorDescriptions
+bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker missed " <> aRight
+  , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
+  , _bakerErrorDescriptions_notification = "This baker failed "
+  , _bakerErrorDescriptions_problem =
+      [ "This baker has missed " <> errorEmphasis ((tshow count) <> " " <> opportunity) <> "."
+      , "The first " <> theRight <> " missed was for "
+        <> errorEmphasis ("block level " <> (tshow $ unRawLevel fb))
+        <> " on " <> errorEmphasis (localTime ft) <> "."
+      , "The latest " <> theRight <> " missed was for "
+        <> errorEmphasis ("block level " <> (tshow $ unRawLevel lb))
+        <> " on " <> errorEmphasis (localTime lt) <> "."
+      ]
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  }
+  where
+    localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
+    (aRight, opportunity, theRight) = case _errorLogBakerMissed_right elog of
+      RightKind_Baking -> ("a bake", "bake opportunities", "bake")
+      RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 
 bakerInsufficientFundsDescriptions :: ErrorLogInsufficientFunds -> BakerErrorDescriptions
 bakerInsufficientFundsDescriptions _{-elog-} = BakerErrorDescriptions

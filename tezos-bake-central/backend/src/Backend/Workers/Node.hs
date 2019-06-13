@@ -407,8 +407,8 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
-      nodeHead <- nodeQueryDataSource (NodeQuery_Block nodeHeadHash)
-      lcaBlock' <- atomicallyWith $ branchPoint (nodeHead ^. hash) (latestHead ^. hash)
+      nodeHead <- (,) nodeHeadHash <$> nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
+      lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
       case lcaBlock' of
@@ -427,8 +427,8 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
                  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
                  let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
                      uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
-                 latestParent <- nodeQueryDataSource (NodeQuery_Block parentHash)
-                 latestUncle <- nodeQueryDataSource (NodeQuery_Block uncleHash)
+                 latestParent <- (,) parentHash <$> nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
+                 latestUncle <- (,) uncleHash <$> nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
