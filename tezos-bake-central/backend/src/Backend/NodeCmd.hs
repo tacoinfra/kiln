@@ -182,8 +182,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
         then do
           (logInfoNS "INITNODE") ("Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out)
         else do
-          (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-          (logErrorNS "INITNODE") $ "Command Failed : (stderr): " <> T.pack cmd <> " " <> tshow args <> " --> " <> err
+          (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
           liftIO $ throwIO exitCode
 
 
