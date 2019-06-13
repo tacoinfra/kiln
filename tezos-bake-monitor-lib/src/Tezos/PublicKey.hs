@@ -12,7 +12,6 @@ import Data.Semigroup
 import Data.Hashable (Hashable)
 import Data.String
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
