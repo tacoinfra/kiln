@@ -202,17 +202,18 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
     let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
-      SELECT v.pkh, v.proposal, v.ballot, v.included
+      SELECT v.pkh, v.proposal, v.ballot, v.included, v.attempted
       FROM "BakerVote" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included) -> BakerVote
+    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included, attempted) -> BakerVote
       { _bakerVote_pkh = pkh
       , _bakerVote_proposal = proposal
       , _bakerVote_ballot = ballot
       , _bakerVote_included = included
+      , _bakerVote_attempted = attempted
       }
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do

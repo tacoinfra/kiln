@@ -500,15 +500,15 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
               UPDATE "BakerVote" SET included = ?blk
               FROM "PeriodProposal" pp
               WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
-              RETURNING proposal
+              RETURNING proposal, attempted
             |]
-            for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+            for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
               { _bakerVote_pkh = pkh
               , _bakerVote_proposal = proposal
               , _bakerVote_ballot = ballot
               , _bakerVote_included = Just blk
+              , _bakerVote_attempted = attempted
               }
-
   -- Update baker votes
   mPkh <- runDb (Identity db) $ join <$> project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)

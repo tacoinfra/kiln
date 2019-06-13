@@ -499,17 +499,21 @@ data PeriodPromotionVote = PeriodPromotionVote
   , _periodPromotionVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Proposal period
 data BakerProposal = BakerProposal
   { _bakerProposal_pkh :: !PublicKeyHash
   , _bakerProposal_proposal :: !(Id PeriodProposal)
   , _bakerProposal_included :: !(Maybe BlockHash)
+  , _bakerProposal_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Exploration/promotion period
 data BakerVote = BakerVote
   { _bakerVote_pkh :: !PublicKeyHash
   , _bakerVote_proposal :: !(Id PeriodProposal)
   , _bakerVote_ballot :: !Ballot
   , _bakerVote_included :: !(Maybe BlockHash)
+  , _bakerVote_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
@@ -792,7 +796,7 @@ instance HasId ErrorLogBadNodeHead where
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
 -- new uncle occurs in which the baker /did/ exercise their rights, or the user
--- manually acknowledges the error.  If the network is branch hopping; its
+-- manually acknowledges the error.  If the network is branch hopping; it's
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
 data ErrorLogBakerMissed = ErrorLogBakerMissed
