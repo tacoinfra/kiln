@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Tezos.PublicKey where
 
@@ -14,9 +15,11 @@ import Data.String
 import Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
+import Data.Word (Word8)
 import GHC.Generics (Generic)
 
 import Tezos.Base58Check
+import qualified Tezos.Binary as B
 
 -- TODO: it'd be nice to unify all this into a tagged scheme.
 
@@ -52,6 +55,16 @@ instance FromJSON PublicKey where
         Left bad -> fail $ show bad
         Right ok -> return ok
 
+instance B.TezosBinary PublicKey where
+  build = \case
+    PublicKey_Ed25519 x -> B.build @Word8 0 <> B.build x
+    PublicKey_Secp256k1 x -> B.build @Word8 1 <> B.build x
+    PublicKey_P256 x -> B.build @Word8 2 <> B.build x
+  get = B.get @Word8 >>= \case
+    0 -> PublicKey_Ed25519 <$> B.get
+    1 -> PublicKey_Secp256k1 <$> B.get
+    2 -> PublicKey_P256 <$> B.get
+    _ -> fail "invalid tag for PublicKey"
 
 toPublicKeyText :: PublicKey -> Text
 toPublicKeyText = \case
