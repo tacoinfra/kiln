@@ -71,6 +71,7 @@ class QueryHistory repr where -- blockscale
 class QueryNode repr where -- my node
   rConnections :: repr Word64 -- just a count for now, but there's more data there we may someday be interested in
   rNetworkStat :: repr NetworkStat
+  rCheckpoint :: ChainId -> repr Checkpoint
 
 class MonitorHeads repr where
   rMonitorHeads :: ChainId -> repr MonitorBlock
@@ -141,6 +142,7 @@ instance QueryNode RpcQuery where
       decoder :: [Aeson.Value] -> Word64
       decoder = fromIntegral . length
   rNetworkStat = plainNodeRequest Http.methodGet "/network/stat"
+  rCheckpoint = chainAPI "/checkpoint"
 
 instance MonitorHeads PlainNodeStream where
   rMonitorHeads chainId = PlainNodeStream $ plainNodeRequest Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
