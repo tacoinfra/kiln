@@ -105,7 +105,7 @@ instance TezosBinary Integer where
         ab = abs n
     in
     if ab < 0x40 then singleton (fromIntegral ab .|. signBit)
-      else singleton (fromIntegral (ab .&. 0x3f) .|. signBit .|. bit 7) <> writeZ 6 ab
+      else singleton (fromIntegral (ab .&. 0x3f) .|. signBit .|. bit 7) <> writeZ (-6) ab
   get = do
     b <- getWord8
     n <- if b `testBit` 7 then readZ 6 (fromIntegral $ b .&. 0x3f) else pure (fromIntegral $ b .&. 0x3f)
