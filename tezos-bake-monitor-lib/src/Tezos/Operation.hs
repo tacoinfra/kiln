@@ -28,7 +28,7 @@ import Data.Binary.Builder (toLazyByteString)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Dependent.Sum (DSum(..))
-import Data.Foldable (traverse_)
+import Data.Foldable (traverse_, toList)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..), withSome)
@@ -38,6 +38,7 @@ import GHC.Generics
 import GHC.Word
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Vector as Vector
 import Numeric.Natural (Natural)
 
 import Tezos.BalanceUpdate
@@ -108,7 +109,7 @@ data OpKindManager
 data OpKindManagerTag opKindManager where
   -- OpKindManagerTag_Reveal :: OpKindManagerTag OpKindManager_Reveal
   OpKindManagerTag_Transaction :: OpKindManagerTag 'OpKindManager_Transaction
-  -- OpKindManagerTag_Origination :: OpKindManagerTag OpKindManager_Origination
+  OpKindManagerTag_Origination :: OpKindManagerTag 'OpKindManager_Origination
   -- OpKindManagerTag_Delegation :: OpKindManagerTag OpKindManager_Delegation
   deriving (Typeable)
 
@@ -158,11 +159,20 @@ deriving instance Show (OpContentsList a)
 data OpContents (a :: OpKind) where
   OpContents_Endorsement :: !OpContentsEndorsement -> OpContents 'OpKind_Endorsement
   OpContents_Transaction :: !(OpContentsManager OpContentsTransaction) -> OpContents ('OpKind_Manager '[ 'OpKindManager_Transaction])
+  OpContents_Origination :: !(OpContentsManager OpContentsOrigination) -> OpContents ('OpKind_Manager '[ 'OpKindManager_Origination])
   deriving Typeable
 
 deriving instance Eq (OpContents a)
-deriving instance Ord (OpContents a)
 deriving instance Show (OpContents a)
+
+instance Ord (OpContents a) where
+  compare = \case
+    OpContents_Endorsement op -> \case
+      OpContents_Endorsement op2 -> compare op op2
+    OpContents_Transaction op -> \case
+      OpContents_Transaction op2 -> compare op op2
+    OpContents_Origination op -> \case
+      OpContents_Origination op2 -> compare op op2
 
 data OpContentsEndorsement = OpContentsEndorsement
   { _opContentsEndorsement_level :: !RawLevel
@@ -183,6 +193,16 @@ data OpContentsTransaction = OpContentsTransaction
   { _opContentsTransaction_amount :: !Tez
   , _opContentsTransaction_destination :: !ContractId
   , _opContentsTransaction_parameters :: !(Maybe Expression)
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data OpContentsOrigination = OpContentsOrigination
+  { _opContentsOrigination_managerPubkey :: !PublicKeyHash
+  , _opContentsOrigination_balance :: !Tez
+  , _opContentsOrigination_spendable :: !Bool
+  , _opContentsOrigination_delegatable :: !Bool
+  , _opContentsOrigination_delegate :: !(Maybe PublicKeyHash)
+  , _opContentsOrigination_script :: !(Maybe ContractScript)
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -533,9 +553,11 @@ instance B.TezosBinary (Some OpKindTag) where
   put t = withSome t $ \case
     OpKindTag_Endorsement -> B.put @Word8 0
     OpKindTag_Manager OpKindManagerTag_Transaction -> B.put @Word8 8
+    OpKindTag_Manager OpKindManagerTag_Origination -> B.put @Word8 9
   get = B.get @Word8 >>= \case
     0 -> pure $ This OpKindTag_Endorsement
     8 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Transaction)
+    9 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Origination)
     _ -> fail "currently unsupported operation tag"
 
 instance B.TezosBinary OpContentsEndorsement where
@@ -550,6 +572,21 @@ instance B.TezosBinary OpContentsTransaction where
     <*> B.get
     <*> B.get
     <*> fmap (fmap B.unDynamicSize) B.get
+
+instance B.TezosBinary OpContentsOrigination where
+  put = B.puts _opContentsOrigination_managerPubkey
+    <** B.puts _opContentsOrigination_balance
+    <** B.puts _opContentsOrigination_spendable
+    <** B.puts _opContentsOrigination_delegatable
+    <** B.puts _opContentsOrigination_delegate
+    <** B.puts _opContentsOrigination_script
+  get = pure OpContentsOrigination
+    <*> B.get
+    <*> B.get
+    <*> B.get
+    <*> B.get
+    <*> B.get
+    <*> B.get
 
 newtype TenByteNatural = TenByteNatural { unTenByteNatural :: Natural }
   deriving (Eq, Ord, Show, Typeable)
@@ -580,6 +617,43 @@ instance B.TezosBinary op => B.TezosBinary (OpContentsManager op) where
     <*> fmap unTenByteNatural B.get
     <*> B.get
 
+instance FromJSON op => FromJSON (OpContentsManager op) where
+  parseJSON o = withObject "OpContentsManager" `flip` o $ \v -> OpContentsManager
+    <$> v .: "source"
+    <*> v .: "fee"
+    <*> v .: "counter"
+    <*> v .: "gas_limit"
+    <*> v .: "storage_limit"
+    <*> parseJSON o
+
+-- FIXME Aeson should have a ToJSONObject class for things that are objects!!
+jsonAddKeys :: [(Text,Value)] -> Value -> Value
+jsonAddKeys keys = \case
+  Object o -> Object $ HashMap.fromList keys <> o
+  _ -> String "YOU TRIED TO USE jsonAddKeys ON SOMETHING OTHER THAN AN OBJECT"
+
+instance ToJSON op => ToJSON (OpContentsManager op) where
+  toJSON v = jsonAddKeys
+    [ "source" .= _opContentsManager_source v
+    , "fee" .= _opContentsManager_fee v
+    , "counter" .= _opContentsManager_counter v
+    , "gas_limit" .= _opContentsManager_gasLimit v
+    , "storage_limit" .= _opContentsManager_storageLimit v
+    ]
+    $ toJSON $ _opContentsManager_operation v
+
+instance FromJSON OpContentsOrigination where
+  parseJSON = withObject "OpContentsOrigination" $ \v -> OpContentsOrigination
+    -- We need this hand written instance due to
+    -- https://gitlab.com/tezos/tezos/issues/276
+    -- Once that's resolved, we can go back to deriving this as usual
+    <$> (v .: "manager_pubkey" <|> v .: "managerPubkey")
+    <*> v .: "balance"
+    <*> v .:? "spendable" .!= True
+    <*> v .:? "delegatable" .!= True
+    <*> v .:? "delegate"
+    <*> v .:? "script"
+
 instance B.TezosBinary (OpContents 'OpKind_Endorsement) where
   put = \case
     OpContents_Endorsement op -> B.put @Word8 0 <* B.put op
@@ -592,15 +666,55 @@ instance B.TezosBinary (DSum OpKindTag OpContents) where
     case op of
       OpContents_Endorsement opc -> B.put opc
       OpContents_Transaction opc -> B.put opc
+      OpContents_Origination opc -> B.put opc
   get = B.get >>= \case
     This t -> (t :=>) <$> case t of
       OpKindTag_Endorsement -> OpContents_Endorsement <$> B.get
       OpKindTag_Manager OpKindManagerTag_Transaction -> OpContents_Transaction <$> B.get
+      OpKindTag_Manager OpKindManagerTag_Origination -> OpContents_Origination <$> B.get
+
+instance ToJSON (Some OpKindTag) where
+  toJSON = \case
+    This OpKindTag_Endorsement -> String "endorsement"
+    This (OpKindTag_Manager OpKindManagerTag_Transaction) -> String "transaction"
+    This (OpKindTag_Manager OpKindManagerTag_Origination) -> String "origination"
+
+instance FromJSON (Some OpKindTag) where
+  parseJSON = \case
+    String "endorsement" -> pure $ This OpKindTag_Endorsement
+    String "transaction" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Transaction)
+    String "origination" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Origination)
+    _ -> fail "not a supported operation kind"
+
+instance ToJSON (DSum OpKindTag OpContents) where
+  toJSON (t :=> op) = jsonAddKeys [ "kind" .= This t ] $ case op of
+    OpContents_Endorsement c -> toJSON c
+    OpContents_Transaction c -> toJSON c
+    OpContents_Origination c -> toJSON c
+
+instance FromJSON (DSum OpKindTag OpContents) where
+  parseJSON v = do
+    tt <- withObject "operation contents" (.: "kind") v
+    case tt of
+      This t@OpKindTag_Endorsement -> (t :=>) . OpContents_Endorsement <$> parseJSON v
+      This t@(OpKindTag_Manager OpKindManagerTag_Transaction) -> (t :=>) . OpContents_Transaction <$> parseJSON v
+      This t@(OpKindTag_Manager OpKindManagerTag_Origination) -> (t :=>) . OpContents_Origination <$> parseJSON v
 
 instance B.TezosBinary (OpContentsList 'OpKind_Endorsement) where
   put = \case
     OpContentsList_Single op -> B.put op
   get = OpContentsList_Single <$> B.get
+
+instance ToJSON (DSum OpsKindTag OpContentsList) where
+  toJSON = \case
+    OpsKindTag_Single t :=> OpContentsList_Single op ->
+      Array $ Vector.fromList [toJSON $ t :=> op]
+
+instance FromJSON (DSum OpsKindTag OpContentsList) where
+  parseJSON = withArray "contents list" $ (. toList) $ \case
+    [v] -> parseJSON v >>= \case
+      t :=> op -> pure $ OpsKindTag_Single t :=> OpContentsList_Single op
+    _ -> fail "batch not yet supported" -- FIXME
 
 instance B.TezosBinary (DSum OpsKindTag OpContentsList) where
   put = \case
@@ -619,6 +733,21 @@ instance B.TezosUnsignedBinary (Op 'OpKind_Endorsement) where
   getUnsigned = shellHeaderDecoding <*> B.get <*> pure Nothing
     where
       shellHeaderDecoding = Op <$> B.get
+
+instance ToJSON (DSum OpsKindTag Op) where
+  toJSON = \case
+    tag :=> op -> object $
+      [ "branch" .= _op_branch op
+      , "contents" .= (tag :=> _op_contents op)
+      ] <> toList (("signature" .=) <$> _op_signature op)
+
+instance FromJSON (DSum OpsKindTag Op) where
+  parseJSON = withObject "operation" $ \o -> do
+    branch <- o .: "branch"
+    taggedContents <- o .: "contents"
+    signature <- o .:? "signature"
+    case taggedContents of
+      t :=> ops -> pure $ t :=> Op { _op_branch = branch, _op_contents = ops , _op_signature = signature }
 
 instance B.TezosUnsignedBinary (DSum OpsKindTag Op) where
   putUnsigned (tag :=> op) =
@@ -655,6 +784,8 @@ concat <$> traverse deriveTezosJson
   , ''OperationContentsReveal , ''OperationResultReveal
   , ''OperationContentsTransaction
   , ''OperationContentsDelegation, ''OperationResultDelegation
+  , ''OpContentsEndorsement
+  , ''OpContentsTransaction
   ]
 
 
@@ -699,9 +830,16 @@ fmap concat $ sequence
     , 'OperationResultOrigination
     , 'OperationResultReveal
     , 'OperationResultTransaction
+    , 'OpContentsEndorsement
+    , 'OpContentsTransaction
+    , 'OpContentsOrigination
     , 'SeedNonceRevelationMetadata
     ]
   ]
+
+instance ToJSON OpContentsOrigination where
+  toJSON = $(Aeson.mkToJSON tezosJsonOptions ''OpContentsOrigination)
+  toEncoding = $(Aeson.mkToEncoding tezosJsonOptions ''OpContentsOrigination)
 
 instance HasBalanceUpdates Operation where
   -- balanceUpdates :: Traversal' Operation BalanceUpdate

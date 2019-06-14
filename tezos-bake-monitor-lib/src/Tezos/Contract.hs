@@ -92,4 +92,8 @@ data ContractScript = ContractScript
   }
   deriving (Eq, Ord, Show, Typeable)
 
+instance B.TezosBinary ContractScript where
+  put = B.puts _contractScript_code B.<** B.puts _contractScript_storage
+  get = ContractScript <$> B.get <*> B.get
+
 deriveTezosJson ''ContractScript
