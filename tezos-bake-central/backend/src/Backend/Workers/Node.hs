@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -285,6 +285,13 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           Left _ -> pure Nothing
           Right cp -> do
             pure $ Just cp
+        liftIO $ atomically $ do
+          let val = case mcp of
+                Nothing -> Nothing
+                Just cp -> if _checkpoint_historyMode cp == HistoryMode_Archive
+                  then Nothing
+                  else Just $ _checkpoint_savePoint cp
+          modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr val)
 
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.

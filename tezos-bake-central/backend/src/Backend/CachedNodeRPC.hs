@@ -179,6 +179,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
+  , _nodeDataSource_nodeCheckpoints :: !(TVar (Map URI (Maybe RawLevel)))
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -499,6 +500,7 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
   protoInfoVar <- newTVarIO protoInfo'
   latestHead <- newTVarIO Nothing
   ioQueue <- newTQueueIO
+  nodeCheckpoints <- newTVarIO mempty
 
   return NodeDataSource
     { _nodeDataSource_history = hist
@@ -511,6 +513,7 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
     , _nodeDataSource_latestHead = latestHead
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
+    , _nodeDataSource_nodeCheckpoints = nodeCheckpoints
     }
 {-
 
