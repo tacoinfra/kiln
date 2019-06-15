@@ -115,13 +115,16 @@ snapVeryBlockLike = do
 
     maybe (throwError "block unknown") return =<< liftIO (atomically $ lookupBlock nds block)
 
+dummyLevel :: RawLevel
+dummyLevel = RawLevel 0
+
 snapBallots :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Ballots)
 snapBallots = do
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
     blockBS <- requiredQueryParam "block"
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
-    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Ballots block
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Ballots block dummyLevel
 
 snapProposals :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq ProposalVotes))
 snapProposals = do
@@ -129,7 +132,7 @@ snapProposals = do
     blockBS <- requiredQueryParam "block"
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
-    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Proposals block
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Proposals block dummyLevel
 
 snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Block)
 snapBlock = do
@@ -137,7 +140,7 @@ snapBlock = do
     blockBS <- requiredQueryParam "hash"
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
-    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block dummyLevel
 
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
 snapBakingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do

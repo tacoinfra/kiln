@@ -87,7 +87,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
 
     for_ queuedBlockOrNot $ \queuedBlock -> (either ($(logErrorSH) . \e -> ("blockWorker" :: Text,queuedBlock,e)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
       $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
-      couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block $ _blockTodo_hash queuedBlock
+      couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock) (fromIntegral $ _blockTodo_level queuedBlock)
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
           $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))

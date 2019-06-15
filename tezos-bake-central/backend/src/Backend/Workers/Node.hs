@@ -457,7 +457,7 @@ amendmentProcessWorker
   -> IO (IO ())
 amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
-  latestBlock <- throwing $ getBlock (latestHead ^. hash)
+  latestBlock <- throwing $ getBlock (latestHead ^. level) (latestHead ^. hash)
   blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
     readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
@@ -479,7 +479,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   for_ mPkh $ \pkh -> case currentPeriodKind of
     VotingPeriodKind_Proposal -> do
       let blk = latestHead ^. hash
-      proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
+          lvl = latestHead ^. level
+      proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk lvl pkh
       let proposals = In $ S.toList proposals'
           chainId = _nodeDataSource_chain nds
           votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
@@ -494,8 +495,9 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         for_ pps $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
     VotingPeriodKind_Testing -> pure ()
     _ -> do
-      let blk = latestHead ^.hash
-      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+      let blk = latestHead ^. hash
+          lvl = latestHead ^. level
+      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk lvl pkh
       let chainId = _nodeDataSource_chain nds
           -- The voting period of the last proposal period
           amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - case currentPeriodKind of
@@ -529,22 +531,23 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
       (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
         let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
-        startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
+            endBlockLevel = startBlockLevel + blocksPerVotingPeriod - 1
+        startBlock <- getBlock startBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
           levelAncestor history startBlockLevel (latestBlock ^. hash)
-        endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
+        endBlock <- getBlock endBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
           -- Calc the blockLevel at the start of the current voting period, move
           -- back by periodDiff voting periods, and move to the end of that period
-          levelAncestor history (startBlockLevel + blocksPerVotingPeriod - 1) (latestBlock ^. hash)
-        predBlock <- getBlock $ endBlock ^. predecessor
+          levelAncestor history endBlockLevel (latestBlock ^. hash)
+        predBlock <- getBlock (pred endBlockLevel) $ endBlock ^. predecessor
         pure (startBlock, predBlock, endBlock)
       updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
       let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
-      startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
+      startBlock <- throwing $ getBlock startBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
         levelAncestor history startBlockLevel (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
-        then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
+        then throwing $ getBlock (pred $ latestBlock ^. level) $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
         else pure latestBlock
       updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
@@ -557,7 +560,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
 
   where
-    getBlock = nodeQueryDataSource . NodeQuery_Block
+
+    getBlock lvl hash' = nodeQueryDataSource $ NodeQuery_Block hash' lvl
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
@@ -590,7 +594,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         notify NotifyTag_Amendment (p, Just amendment)
       case p of
         VotingPeriodKind_Proposal -> do
-          proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
+          proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash) (predBlk ^. level)
           runDb (Identity db) $ do
             deletedIds <- [queryQ|
               DELETE FROM "BakerProposal"
@@ -639,9 +643,9 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     handleVotingPeriod blk f n = do
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
-        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
-        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
-        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings $ blk ^. hash)
+        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash) (blk ^. level)
+        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash) (blk ^. level)
+        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings (blk ^. hash) (blk ^. level))
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalRolls)
 
       for_ mpv $ \(proposal, ballots, quorum, totalRolls) -> runDb (Identity db) $ do
@@ -671,7 +675,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         threadDelay' 1
         getProtocol
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
-      blk <- nodeQueryDataSource $ NodeQuery_Block $ latestHead ^. hash
+      blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash) (latestHead ^. level)
       let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
       tp <- if vp == VotingPeriodKind_PromotionVote
         then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)

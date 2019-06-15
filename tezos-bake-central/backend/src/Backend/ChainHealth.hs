@@ -37,7 +37,7 @@ checkChainHealth _now _delay seenBaked = do
   nds <- asks (^. nodeDataSource)
   seen <- runExceptT $ do
     -- try really hard to get seenBaked into history
-    seen <- nodeQueryDataSource $ NodeQuery_Block $ seenBaked ^. hash
+    seen <- nodeQueryDataSource $ NodeQuery_Block (seenBaked ^. hash) (seenBaked ^. level)
     -- look for the head to give the newly seen block a chance to become the head
     headBlock :: VeryBlockLike
       <- maybe (throwError $ ForkStatus_BadNode CacheError_NotEnoughHistory) pure
