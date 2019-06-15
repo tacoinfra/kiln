@@ -49,7 +49,7 @@ import qualified Text.URI as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat)
+                      rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
@@ -101,8 +101,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
           pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe Checkpoint -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mcp = do
   atomically $ do
     updateNodeDataSource nds nodeAddr headBlockInfo
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
@@ -135,13 +135,16 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
           }
         }
       (_:_) -> update
-        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        ([ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
         , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
         , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ]
+        ] ++ (case mcp of
+                Nothing -> []
+                Just cp -> [ p NodeDetailsData_checkpointSelector ~> DeletableRow_dataSelector ~> Checkpoint_savePointSelector =. cp ^. checkpoint_savePoint ]
+             ))
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
@@ -278,13 +281,18 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
+        mcp <- liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+          Left _ -> pure Nothing
+          Right cp -> do
+            pure $ Just cp
+
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
             clearInaccessibleNodeError nodeId
             clearNodeWrongChainError nodeId
 
-          nodeMonitor nds appConfig nodeAddr nodeId block
+          nodeMonitor nds appConfig nodeAddr nodeId block mcp
 
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
