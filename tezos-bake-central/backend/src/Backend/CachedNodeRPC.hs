@@ -685,17 +685,17 @@ getKey params hist q = case q of
   NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
   NodeQuery_Block ctx _lvl -> pure (ctx, q)
   NodeQuery_BlockHeader ctx -> pure (ctx, q)
-  NodeQuery_Account ctx _lvl contractId -> pure (ctx, q)
+  NodeQuery_Account ctx _lvl _contractId -> pure (ctx, q)
   NodeQuery_Ballots ctx _lvl -> pure (ctx, q)
-  NodeQuery_Ballot ctx _lvl pkh -> pure (ctx, q)
-  NodeQuery_ProposalVote ctx _lvl pkh -> pure (ctx, q)
+  NodeQuery_Ballot ctx _lvl _pkh -> pure (ctx, q)
+  NodeQuery_ProposalVote ctx _lvl _pkh -> pure (ctx, q)
   NodeQuery_Listings ctx _lvl -> pure (ctx, q)
   NodeQuery_Proposals ctx _lvl -> pure (ctx, q)
-  NodeQuery_CurrentProposal ctx lvl -> pure (ctx, q)
+  NodeQuery_CurrentProposal ctx _lvl -> pure (ctx, q)
   NodeQuery_CurrentQuorum ctx _lvl -> pure (ctx, q)
-  NodeQuery_BlockBaker ctx lvl -> pure (ctx, q)
-  NodeQuery_DelegateInfo ctx lvl pkh -> pure (ctx, q)
-  q@(NodeQuery_PublicKey _) -> do
+  NodeQuery_BlockBaker ctx _lvl -> pure (ctx, q)
+  NodeQuery_DelegateInfo ctx _lvl _pkh -> pure (ctx, q)
+  NodeQuery_PublicKey _ -> do
     let branches = _cachedHistory_branches hist
     block <- maximumByMay (comparing $ view fitness) $ Map.elems branches
     pure (view hash block, q)
@@ -850,14 +850,14 @@ validNodes = \case
       let nodes = Map.toList $ Map.mapMaybe id nodeHeads
       case (nodes, mLvl) of
         ([], _) -> pure $ Left CacheError_NoSuitableNode
-        (nodes, Nothing) -> pure $ Right nodes
-        (nodes, Just (RawLevel 0)) -> pure $ Right nodes
-        (nodes, Just lvl) -> do
+        (_, Nothing) -> pure $ Right nodes
+        (_, Just (RawLevel 0)) -> pure $ Right nodes
+        (_, Just lvl) -> do
           nodeCheckpoints <- readTVar' $ _nodeDataSource_nodeCheckpoints dsrc
           let f v@(nUri, blk) = case Map.lookup nUri nodeCheckpoints of
                 Nothing -> Just v
                 Just Nothing -> Just v
-                Just (Just sp) -> if sp <= lvl
+                Just (Just sp) -> if sp <= lvl && lvl <= blk ^. level
                   then Just v
                   else Nothing
           pure $ case catMaybes $ map f nodes of
