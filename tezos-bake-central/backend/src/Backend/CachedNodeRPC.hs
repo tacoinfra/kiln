@@ -853,8 +853,16 @@ validNodes = \case
         (nodes, Nothing) -> pure $ Right nodes
         (nodes, Just (RawLevel 0)) -> pure $ Right nodes
         (nodes, Just lvl) -> do
-          pure $ Left CacheError_NotEnoughHistory
-          -- pure . nonEmpty . Map.toList $ Map.mapMaybe id nodeHeads
+          nodeCheckpoints <- readTVar' $ _nodeDataSource_nodeCheckpoints dsrc
+          let f v@(nUri, blk) = case Map.lookup nUri nodeCheckpoints of
+                Nothing -> Just v
+                Just Nothing -> Just v
+                Just (Just sp) -> if sp <= lvl
+                  then Just v
+                  else Nothing
+          pure $ case catMaybes $ map f nodes of
+            [] -> Left CacheError_NotEnoughHistory
+            ns -> Right ns
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
