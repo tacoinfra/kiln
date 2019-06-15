@@ -677,12 +677,12 @@ priorityChunkSize :: Num a => a
 priorityChunkSize = 64
 
 -- Recontextualize a query for maximum cache friendliness, and also return the least block
-getKey :: ProtoInfo -> CachedHistory' -> NodeQuery a -> Maybe (BlockHash, NodeQuery a) -- , Set ClientAddress)
-getKey params hist q = case q of
-  NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
-  NodeQuery_BakingRights1 ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRights1 ctx' lvl prio)) <$> rightsContext params hist ctx lvl
-  NodeQuery_BakingRightsChunk ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRightsChunk ctx' lvl (floorBy priorityChunkSize prio))) <$> rightsContext params hist ctx lvl
-  NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> rightsContext params hist ctx lvl
+optimizeCacheKey :: forall m a. MonadNodeQuery m => ProtoInfo -> NodeQuery a -> m (BlockHash, NodeQuery a)
+optimizeCacheKey protoInfo q = case q of
+  NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> getRightsContext ctx lvl
+  NodeQuery_BakingRights1 ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRights1 ctx' lvl prio)) <$> getRightsContext ctx lvl
+  NodeQuery_BakingRightsChunk ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRightsChunk ctx' lvl (floorBy priorityChunkSize prio))) <$> getRightsContext ctx lvl
+  NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> getRightsContext ctx lvl
   NodeQuery_Block ctx _lvl -> pure (ctx, q)
   NodeQuery_BlockHeader ctx -> pure (ctx, q)
   NodeQuery_Account ctx _lvl _contractId -> pure (ctx, q)
@@ -695,10 +695,29 @@ getKey params hist q = case q of
   NodeQuery_CurrentQuorum ctx _lvl -> pure (ctx, q)
   NodeQuery_BlockBaker ctx _lvl -> pure (ctx, q)
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure (ctx, q)
-  NodeQuery_PublicKey _ -> do
-    let branches = _cachedHistory_branches hist
-    block <- maximumByMay (comparing $ view fitness) $ Map.elems branches
-    pure (view hash block, q)
+  NodeQuery_PublicKey _ -> getFittestBranch <&> (, q)
+
+  where
+    getHist = do
+      histVar <- asksNodeDataSource _nodeDataSource_history
+      nqAtomically $ readTVar' histVar
+
+    maybeToErr = maybe (nqThrowError CacheError_NotEnoughHistory) pure
+
+    getFittestBranch = maybeToErr =<< do
+      hist <- getHist
+      let branches = _cachedHistory_branches hist
+      pure $ view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
+      -- pure $ v
+
+    getRightsContext :: BlockHash -> RawLevel -> m BlockHash
+    getRightsContext blk lvl = maybeToErr =<< do
+      hist <- getHist
+      let actualContext = rightsContext protoInfo hist blk lvl
+      pure actualContext
+      -- search db (actualContext, level)
+
+
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -755,68 +774,69 @@ nodeQueryDataSourceRaw
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q' = do
   $(logDebugSH) ("nodeQueryDataSourceRaw called" :: Text,q')
-  dsrc <- askNodeDataSource
-  updateCache dsrc >>= nqLiftEither
+  dsrc <- asksNodeDataSource id
+  protoInfo <- nqAtomically (maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc))
+  (qBranch, q) <- optimizeCacheKey protoInfo q'
+  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM dsrc protoInfo qBranch q
+
+-- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
+-- Returns the raw cache value (if found) and an action that will wait on the cache
+-- regardless of whether it was found or required a new request to be queued.
+nodeQueryDataSourceSTM
+  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n)
+  => nds -> ProtoInfo -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n a))
+nodeQueryDataSourceSTM nds protoInfo qBranch q = do
+  cache <- readTVar' cacheVar
+  liftSTM $ case DMap.lookup q cache of
+    -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
+    Just avar -> fmap (Just avar,) $ answerImmediate $ Just . Right <$> unpackCacheResult avar
+
+    -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
+    Nothing -> fmap (Nothing,) $ withFinishWith @n dsrc $ \finishWith -> do
+      let
+        -- Updates the cache key if the result is useful and communicates the result upstream.
+        -- XXX Can't actually use this type signature since 'r' is not in scope...
+        -- writeResult :: Either CacheError (a, DirtyBit) -> m r
+        writeResult a' = nqAtomicallyWithTime $ do
+          case a' of
+            Right (a, dirty) -> populateKey q a dirty
+            Left _ -> pure ()
+          lift $ finishWith $ fmap fst a'
+
+      return $
+        -- Try very hard to write *something* into the result TVar in case of exception.
+        -- The catch handles synchronous/recoverable errors, and its result passes through,
+        -- which is necessary in the immediate case and harmless in the worker queue case.
+        -- The withException handles asynchronous/unrecoverable errors.  In the case of a
+        -- worker queue, the calling thread can still recover because it's a different
+        -- thread.  The result is thrown away meaning in the immediate case the caller
+        -- cannot recover, but this is fine because that's what is supposed to happen for
+        -- such an error.
+        (writeResult =<< makeRequestAndCache)
+          `catch` \e ->
+            nqAtomically (finishWith $ Left $ CacheError_SomeException e)
+          `withException` \x ->
+            nqAtomically (finishWith $ Left $ CacheError_SomeException x)
 
   where
-    updateCache :: NodeDataSource -> m (Either CacheError (AnswerM m a))
-    updateCache dsrc = (sequence =<<) $ nqAtomically $ runExceptT @CacheError $ do
-      protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
-      history <- readTVar' (_nodeDataSource_history dsrc)
+    dsrc = nds ^. nodeDataSource
+    cacheVar = _nodeDataSource_cache dsrc
+    chainId = _nodeDataSource_chain dsrc
 
-      (qBranch, q) <- maybe (throwError CacheError_NotEnoughHistory) pure $ getKey protoInfo history q'
-
+    populateKey q_ a dirty = do
       cache <- readTVar' cacheVar
-      lift $ case DMap.lookup q cache of
-        -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
-        Just avar -> answerImmediate $
-          Just . Right <$> unpackCacheResult avar
+      case DMap.lookup q_ cache of
+        Just _ -> pure ()
+        Nothing -> do
+          now <- asks (^. Stm.timestamp)
+          var <- newTVar' $ CacheLine a now dirty
+          writeTVar' cacheVar $ DMap.insert q_ (Compose var) cache
 
-        -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
-        Nothing -> withFinishWith @m dsrc $ \finishWith -> do
-          let
-            -- Updates the cache key if the result is useful and communicates the result upstream.
-            -- XXX Can't actually use this type signature since 'r' is not in scope...
-            -- writeResult :: Either CacheError (a, DirtyBit) -> m r
-            writeResult a' = nqAtomicallyWithTime $ do
-              case a' of
-                Right (a, dirty) -> populateKey q a dirty
-                Left _ -> pure ()
-              lift $ finishWith $ fmap fst a'
-
-          return $
-            -- Try very hard to write *something* into the result TVar in case of exception.
-            -- The catch handles synchronous/recoverable errors, and its result passes through,
-            -- which is necessary in the immediate case and harmless in the worker queue case.
-            -- The withException handles asynchronous/unrecoverable errors.  In the case of a
-            -- worker queue, the calling thread can still recover because it's a different
-            -- thread.  The result is thrown away meaning in the immediate case the caller
-            -- cannot recover, but this is fine because that's what is supposed to happen for
-            -- such an error.
-            (writeResult =<< makeRequestAndCache protoInfo q qBranch)
-              `catch` \e ->
-                nqAtomically (finishWith $ Left $ CacheError_SomeException e)
-              `withException` \x ->
-                nqAtomically (finishWith $ Left $ CacheError_SomeException x)
-
-      where
-        cacheVar = _nodeDataSource_cache dsrc
-        chainId = _nodeDataSource_chain dsrc
-
-        populateKey q a dirty = do
-          cache <- readTVar' cacheVar
-          case DMap.lookup q cache of
-            Just _ -> pure ()
-            Nothing -> do
-              now <- asks (^. Stm.timestamp)
-              var <- newTVar' $ CacheLine a now dirty
-              writeTVar' cacheVar $ DMap.insert q (Compose var) cache
-
-        makeRequestAndCache :: ProtoInfo -> NodeQuery a -> BlockHash -> m (Either CacheError (a, DirtyBit))
-        makeRequestAndCache protoInfo q qBranch = nqTry $
-          tryFetchFromCache chainId q >>= \case
-            Just x -> pure $ fmap Just x :: m (a, DirtyBit)
-            Nothing -> (,Nothing) <$> nodeRPCOrBust protoInfo qBranch q :: m (a, DirtyBit)
+    makeRequestAndCache :: n (Either CacheError (a, DirtyBit))
+    makeRequestAndCache = nqTry $
+      tryFetchFromCache chainId q >>= \case
+        Just x -> pure $ fmap Just x :: n (a, DirtyBit)
+        Nothing -> (,Nothing) <$> nodeRPCOrBust protoInfo qBranch q :: n (a, DirtyBit)
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
