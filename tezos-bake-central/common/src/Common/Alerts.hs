@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 
@@ -8,6 +9,7 @@
 module Common.Alerts where
 
 import Prelude hiding (cycle)
+import Control.Lens ((&))
 import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Data.String (IsString(..))
@@ -18,7 +20,7 @@ import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common.Schema
@@ -141,8 +143,51 @@ isUserResolvable = \case
     BakerLogTag_BakerDeactivationRisk -> False
     BakerLogTag_BakerAccused -> True
     BakerLogTag_InsufficientFunds -> False
+    BakerLogTag_VotingReminder -> True
   LogTag_BakerNoHeartbeat -> True
   LogTag_NetworkUpdate -> True
+
+data ErrorLogMessage = ErrorLogMessage
+  { _errorLogMessage_resolved :: Bool
+  , _errorLogMessage_subject :: Text
+  , _errorLogMessage_content :: Text
+  }
+data ErrorLogWidgets m = ErrorLogWidgets
+  { _errorLogWidgets_tile :: m ()
+  , _errorLogWidgets_notification :: m ()
+  , _errorLogWidgets_banner :: m ()
+  }
+
+mkVotingReminderMessage :: (Double, Integer) -> Bool -> ErrorLogVotingReminder -> ErrorLogMessage
+mkVotingReminderMessage (periodFractionEllapsed, minutesLeft) resolved elog = ErrorLogMessage
+  { _errorLogMessage_resolved = resolved
+  , _errorLogMessage_subject = title & if resolved then ("Resolved: " <>) else id
+  , _errorLogMessage_content = "Open the menu on your Kiln baker tile and click “Vote” to vote."
+  }
+  where
+    previouslyVoted = _errorLogVotingReminder_previouslyVoted elog
+    periodKind = _errorLogVotingReminder_periodKind elog
+
+    timeLeft = case (minutesLeft `divMod` 60) of
+      (0, m) -> tshow m <> " minutes"
+      (h, _) -> tshow h <> " hours"
+
+    singleVotePeriod periodName =
+      if | periodFractionEllapsed >= 0.9 -> periodName <> " Period ends in " <> timeLeft <> "; Remember to vote!"
+         | periodFractionEllapsed >= 0.5 -> "You have not yet voted in this " <> periodName <> " Period; Remember to vote!"
+         | otherwise                     -> periodName <> " Period has begun; Remember to vote!"
+
+    title = case periodKind of
+      VotingPeriodKind_Proposal -> state <> if resolved
+                                            then ""
+                                            else  " " <> timeLeft <> " remain before voting closes."
+        where state = if previouslyVoted
+                      then "Proposals have been submitted since you last voted."
+                      else "Proposals are available for voting."
+      VotingPeriodKind_TestingVote -> singleVotePeriod "Exploration"
+      VotingPeriodKind_Testing -> "" -- impossible
+      VotingPeriodKind_PromotionVote -> singleVotePeriod "Promotion"
+
 
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
@@ -277,7 +322,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       <> " " <> errorEmphasis ("block level " <> lvl)
       <> " in " <> errorEmphasis ("cycle " <> cycle) <> ". The accusation was baked at "
       <> errorEmphasis ("block level " <> accusedLevel) <> ".\n\n"
-    turnOffShort = 
+    turnOffShort =
       "\n\nThis baker should be turned off for the remainder of the cycle to "
       <> "avoid losing deposits and rewards for upcoming rights."
     cycle = tshow $ unCycle $ _errorLogBakerAccused_cycle elog

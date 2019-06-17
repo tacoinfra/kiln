@@ -229,29 +229,6 @@ intPercentage :: Int -> Text
 intPercentage i = tshow wholes <> "." <> T.drop 1 (tshow $ 100 + decimals) <> "%"
   where (wholes, decimals) = i `divMod` 100
 
--- | Get or estimate the start time of a period. Return 'Bool' indicates if the date is estimated
-getStartTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
-getStartTimeForPeriod p a as proto
-  | Just a' <- Map.lookup p as = (_amendment_start a', False)
-  | otherwise = (estimate, True)
-  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
-        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
-
--- | Get or estimate the end time of a period. Return 'Bool' indicates if the date is estimated
-getEndTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
-getEndTimeForPeriod p a as proto
-  | Just p' <- safeSucc p, Just a' <- Map.lookup p' as = (_amendment_start a', False)
-  | otherwise = (estimate, True)
-  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
-        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
-
-safeSucc :: (Eq a, Enum a, Bounded a) => a -> Maybe a
-safeSucc a = if a /= maxBound then Just (succ a) else Nothing
-
 -- | Display green progress dots for given cycles
 progressDots
   :: (DomBuilder t m, PostBuild t m, MonadFix m, MonadHold t m)

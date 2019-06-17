@@ -23,12 +23,13 @@ import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErr
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
-import Data.Foldable (foldl')
+import Data.Foldable (foldl', length)
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.These
@@ -43,6 +44,7 @@ import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
+import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -56,13 +58,16 @@ import qualified Tezos.TestChainStatus as Tezos
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
-                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError)
+                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
+                       clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
+import Backend.ViewSelectorHandler (getProposals)
+import Common.App (getStartTimeForPeriod, getEndTimeForPeriod, calculateAmendmentTimings)
 import Common.Schema
 import ExtraPrelude
 
@@ -463,18 +468,57 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
 safePred :: (Eq a, Enum a, Bounded a) => a -> a
 safePred a = if a /= minBound then pred a else minBound
 
+{-
+Interpretation of a baker's voting state as a function of:
+- the current head state
+- the head state seen when the baker last attempted a vote which is recognized by the current head
+
+This encoding doesn't really enable more code reuse (quite the opposite, at least right now)
+but it does provide a centralized point of reasoning about the pathways voting can take
+and allows the determination of the state to be handled separately from the acting on the state
+
+We treat errors as specific to a single period. If a period starts in an error state,
+a new error will be issued, and all old ones cleared.
+Likewise, transitioning from hasn't-voted to has-voted states also triggers a new error.
+
+Note we could also look at all previous recognized vote attempts rather than just the last
+i.e. consider a vote choice up-to-date if all current proposals
+are contained in the union of seen proposal sets.
+We look only at the last attempt because it is both simpler and less opinionated,
+since a baker might now want to vote for a proposal they previously didn't vote for
+(e.g. because they were hoping better alternatives came along).
+
+We assume votes in an operation are either all accepted or all rejected.
+Kiln enforces this by only allowing the baker to vote once per operation, but that is not the case for tezos-client.
+-}
+
+data BakerVotingState
+  = BakerVotingState_Proposal ProposalVoteState
+  | BakerVotingState_Exploration Bool -- whether baker previously voted
+  | BakerVotingState_Testing () -- no voting takes place
+  | BakerVotingState_Promotion Bool -- whether baker previously voted
+
+data ProposalVoteState
+  = ProposalVotingState_SilentRange -- no alerts during this range
+  | ProposalVotingState_OutOfUpvotes -- no alerts since they're not actionable anyway
+  | ProposalVotingState_CaughtUp -- has voted, and there are no new proposals since
+  | ProposalVotingState_NoPreviousVote -- no votes from this baker are included in current head
+  | ProposalVotingState_OutdatedVote -- some proposals in the current block were not visible at the time of last vote
+
 -- Monitors the amendment process
 amendmentProcessWorker
-  :: NodeDataSource
+  :: AppConfig
+  -> NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
   latestBlock <- throwing $ getBlock (latestHead ^. hash)
   blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
     readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
-  let minLevel = _cachedHistory_minLevel history
+  let chainId = _nodeDataSource_chain nds
+      minLevel = _cachedHistory_minLevel history
   -- The RPCs under /votes/ return the information for the *next block*, not the current block.
   -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
   -- (the last block of the period), but /votes/current_period_kind for that block will return
@@ -485,12 +529,12 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
         $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
 
-      singleVotePeriod pkh periodKindOffset = do
+      singleVotePeriod pkh periodKindOffset mkVotingState = do
         let blk = latestHead ^.hash
         mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
-        let chainId = _nodeDataSource_chain nds
-            -- The voting period of the last proposal period
-            amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+        -- The voting period of the last proposal period
+        let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+
         case mBallot of
           Nothing -> runDb (Identity db) $ do
             deleteAll' @BakerVote Proxy
@@ -509,29 +553,79 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
               , _bakerVote_included = Just blk
               , _bakerVote_attempted = attempted
               }
+
+        pure $ mkVotingState $ isJust mBallot
+
   -- Update baker votes
   mPkh <- runDb (Identity db) $ join <$> project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
     (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-  for_ mPkh $ \pkh -> case currentPeriodKind of
-    VotingPeriodKind_Proposal -> do
-      let blk = latestHead ^. hash
-      proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
-      let proposals = In $ S.toList proposals'
-          chainId = _nodeDataSource_chain nds
-          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+  for_ mPkh $ \pkh -> do
+    votingState <- case currentPeriodKind of
+      VotingPeriodKind_Proposal -> do
+        let blk = latestHead ^. hash
+        proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
+        let proposals = In $ S.toList proposals'
+            votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
 
-      runDb (Identity db) $ do
-        pps <- [queryQ|
-          UPDATE "BakerProposal" SET included = ?blk
-          FROM "PeriodProposal" pp
-          WHERE pp.id = proposal AND pp.hash IN ?proposals AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod
-          RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes
-        |]
-        for_ pps $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
-    VotingPeriodKind_Testing -> pure ()
-    VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1
-    VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3
+        runDb (Identity db) $ do
+          pps <- [queryQ|
+            UPDATE "BakerProposal" SET included = ?blk
+            FROM "PeriodProposal" pp
+            WHERE pp.id = proposal AND pp.hash IN ?proposals AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod
+            RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, attempted
+          |]
+          for_ pps $ \(pid, phash, chain, vp, votes, _ :: Maybe BlockHash) ->
+            notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
+
+          fmap BakerVotingState_Proposal $
+            if currentVotingPosition * 2 < blocksPerVotingPeriod
+            then pure ProposalVotingState_SilentRange
+            else do
+              ps <- getProposals
+              if (length $ filter (isJust . snd . snd) ps) >= maxProposalUpvotes
+                then pure ProposalVotingState_OutOfUpvotes
+                else
+                  case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
+                    Nothing -> pure ProposalVotingState_NoPreviousVote
+                    Just lastAttempt -> do
+                      proposalsWhenLastVoting <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote lastAttempt pkh
+                      let unseenProposals = proposalsWhenLastVoting S.\\ proposals'
+                      pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
+
+      VotingPeriodKind_Testing -> pure $ BakerVotingState_Testing ()
+      VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
+      VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
+
+    runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
+      now <- getTime
+      protoInfo <- liftIO $ atomically $ waitForParams nds
+      as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
+      let as' = Map.fromList $ flip fmap as $ _amendment_period &&& id
+      for_ (maximumByMay (comparing _amendment_period) as') $ \a -> do
+        let
+          startTime = fst $ getStartTimeForPeriod currentPeriodKind a as' protoInfo
+          endTime = fst $ getEndTimeForPeriod currentPeriodKind a as' protoInfo
+          timings = calculateAmendmentTimings now startTime endTime
+
+        let
+          bid = Id pkh
+          singleVotePhase = bool (reportError False) clearAllErrors
+          clearAllErrors = clearPastVotingPeriodErrors timings chainId bid Nothing Nothing
+          reportError previouslyVoted = do
+            clearPastVotingPeriodErrors timings chainId bid (Just currentPeriodKind) (Just previouslyVoted)
+            reportVotingReminderError timings chainId bid currentPeriodKind previouslyVoted
+
+        case votingState of
+          BakerVotingState_Proposal pvs -> case pvs of
+            ProposalVotingState_SilentRange -> clearAllErrors
+            ProposalVotingState_OutOfUpvotes -> clearAllErrors
+            ProposalVotingState_CaughtUp -> clearAllErrors
+            ProposalVotingState_NoPreviousVote -> reportError False
+            ProposalVotingState_OutdatedVote -> reportError True
+          BakerVotingState_Exploration previouslyVoted -> singleVotePhase previouslyVoted
+          BakerVotingState_Testing () -> pure ()
+          BakerVotingState_Promotion previouslyVoted -> singleVotePhase previouslyVoted
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.

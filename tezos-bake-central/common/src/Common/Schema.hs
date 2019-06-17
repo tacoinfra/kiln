@@ -817,6 +817,16 @@ data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
 instance HasId ErrorLogInsufficientFunds where
   type IdData ErrorLogInsufficientFunds = Id ErrorLog
 
+data ErrorLogVotingReminder = ErrorLogVotingReminder
+  { _errorLogVotingReminder_log :: !(Id ErrorLog)
+  , _errorLogVotingReminder_chainId :: !ChainId
+  , _errorLogVotingReminder_baker :: !(Id Baker)
+  , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
+  , _errorLogVotingReminder_previouslyVoted :: !Bool
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogVotingReminder where
+  type IdData ErrorLogVotingReminder = Id ErrorLog
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -929,6 +939,7 @@ data BakerLogTag a where
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
+  BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -968,6 +979,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   , ''Event
   , ''MailServerConfig
   , ''Node
@@ -1030,6 +1042,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
+  , 'ErrorLogVotingReminder
   , 'Event
   , 'MailServerConfig
   , 'Node
@@ -1136,4 +1149,5 @@ errorLogNames =
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   ]

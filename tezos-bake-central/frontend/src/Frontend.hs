@@ -68,6 +68,7 @@ import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter(..))
 import Common.Alerts (BakerErrorDescriptions(..))
+import Common.Alerts (ErrorLogWidgets(..))
 import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
@@ -576,6 +577,7 @@ instance HasAlertMetaData ErrorLogView' where
       BakerLogTag_BakerDeactivationRisk -> def
       BakerLogTag_BakerAccused -> def { _alertMetaData_isEventBased = True }
       BakerLogTag_InsufficientFunds -> def
+      BakerLogTag_VotingReminder -> def { _alertMetaData_isEventBased = True }
     LogTag_BakerNoHeartbeat -> def
     LogTag_NetworkUpdate -> def { _alertMetaData_isEventBased = True }
 
@@ -691,9 +693,10 @@ liveErrorsWidget = void $ do
     ) $
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
-      elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
+      let resolvedDyn = isJust . _errorLog_stopped <$> logDyn
+      elDynAttr "div" (ffor resolvedDyn $ \resolved -> "class" =: ("app-notification ui message " <> if resolved then "success" else "error")) $ do
         wDyn <- holdUniqDyn widgetDyn
-        dyn_ . fmap (either logEntry synthEntry) $ wDyn
+        dyn_ $ ffor2 resolvedDyn wDyn $ \r -> either (logEntry r) synthEntry
         let isEv = _alertMetaData_isEventBased . getAlertMetaData <$> wDyn
         el "div" $ do
           el "label" $ dynText $ ffor isEv $ bool "First Detected" "Detected"
@@ -726,8 +729,8 @@ liveErrorsWidget = void $ do
       el "div" $
         text $ "Kiln cannot gather data about " <> (case NEL.tail pkhs of [] -> "this baker"; _ -> "these bakers") <> " if no nodes are synced with the blockchain."
 
-    logEntry :: ErrorLogView' -> m ()
-    logEntry (ErrorLogView' (logTag :=> Identity log) n') =
+    logEntry :: Bool -> ErrorLogView' -> m ()
+    logEntry resolved (ErrorLogView' (logTag :=> Identity log) n') =
       case logTag of
         LogTag_Node nlt -> case n' of
           Nothing -> blank
@@ -777,6 +780,8 @@ liveErrorsWidget = void $ do
             BakerLogTag_InsufficientFunds -> renderBakerError
               (bakerInsufficientFundsDescriptions log)
               pkh
+            BakerLogTag_VotingReminder -> withAmendmentTimings $ \fraction remaining ->
+              _errorLogWidgets_notification $ mkVotingReminderWidgets fraction remaining resolved log
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
@@ -1662,6 +1667,7 @@ bakersTab =
                     BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
+                    BakerLogTag_VotingReminder -> blank
                   Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> el "span" $ do
                     elClass "span" "ui label circular" $ text $ tshow (length ls)
                     text nbsp
@@ -1727,6 +1733,8 @@ bakersTab =
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
           BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+          BakerLogTag_VotingReminder -> withAmendmentTimings $ \fraction remaining ->
+              _errorLogWidgets_banner $ mkVotingReminderWidgets fraction remaining False log
 
       BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
         tz <- asks (^. timeZone)
@@ -2003,3 +2011,20 @@ semuiTab label k currentTab enabled =
   fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
+
+withAmendmentTimings :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
+                     => (Dynamic t Double -> Dynamic t Integer -> m ()) -> m ()
+withAmendmentTimings w = do
+  currentTime <- asks (^. timer)
+  mProtoInfo <- maybeDyn =<< watchProtoInfo
+  amendments <- watchAmendment
+  mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+  dyn_ $ ffor (liftA2 (,) <$> mProtoInfo <*> mAmendment) $ \case
+    Nothing -> divClass "loading" blank
+    Just (protoInfo, amendment) -> do
+      let
+        p = _amendment_period <$> amendment
+        getTime getter = fmap fst $ getter <$> p <*> amendment <*> amendments <*> protoInfo
+        startTime = getTime getStartTimeForPeriod
+        endTime = getTime getEndTimeForPeriod
+      uncurry w $ splitDynPure $ liftA3 calculateAmendmentTimings currentTime startTime endTime

@@ -41,7 +41,7 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (BakerErrorDescriptions(..), plaintextErrorDescription)
+import Common.Alerts (BakerErrorDescriptions(..), ErrorLogMessage(..), mkVotingReminderMessage, plaintextErrorDescription)
 import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
 import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
@@ -69,6 +69,12 @@ unresolvedBakerAlert dsc = Alert Unresolved (_bakerErrorDescriptions_title dsc) 
 
 resolvedBakerAlert :: BakerErrorDescriptions -> Baker -> Alert
 resolvedBakerAlert dsc = uncurry (Alert Resolved) . _bakerErrorDescriptions_resolved dsc
+
+mkErrorLogAlert :: ErrorLogMessage -> Alert
+mkErrorLogAlert = pure Alert
+  <*> bool Unresolved Resolved . _errorLogMessage_resolved
+  <*> _errorLogMessage_subject
+  <*> _errorLogMessage_content
 
 getBaker :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m (Maybe Baker)
 getBaker pkh = selectSingle $ Baker_publicKeyHashField `in_` [pkh]
@@ -345,6 +351,54 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
       nodeName <> " now meets or exceeds the required minimum number of connected peers."
 
+reportVotingReminderError
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => (Double, Integer) -> ChainId -> Id Baker -> VotingPeriodKind -> Bool -> m ()
+reportVotingReminderError timings chainId bid votingPeriodKind previouslyVoted = do
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogVotingReminder) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogVotingReminder" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t.baker
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+       AND t.chainId = ?chainId
+       AND t."baker" = ?bid
+       AND t."votingPeriodKind" = ?votingPeriodKind
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogVotingReminder_logField
+      [ ErrorLogVotingReminder_previouslyVotedField =. previouslyVoted ]
+    Nothing -> do
+      (logId, log) <- insertErrorLog $ \logId ->
+        ErrorLogVotingReminder logId chainId bid votingPeriodKind previouslyVoted
+      queueAlert (Just logId) $ mkErrorLogAlert $ mkVotingReminderMessage timings False log
+
+clearPastVotingPeriodErrors
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => (Double, Integer) -> ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
+clearPastVotingPeriodErrors timings chainId bid periodKind previouslyVoted = do
+  now <- getTime
+  lids :: [Id ErrorLogVotingReminder] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = ?now
+      FROM "ErrorLogVotingReminder" t
+    WHERE t.log = el.id
+      AND el.stopped IS NULL
+      AND t.chainId = ?chainId
+      AND t."publicKeyHash" = ?bid
+      AND (?periodKind IS NULL OR t."periodKind" <> ?periodKind)
+      AND (?previouslyVoted IS NULL OR t.previouslyVoted <> ?previouslyVoted)
+    RETURNING t.log |]
+  for_ lids notifyDefault
+  log' <- for (listToMaybe lids) $ getBy . fromId
+  for_ (join log') $ \log ->
+    queueAlert Nothing $ mkErrorLogAlert $ mkVotingReminderMessage timings True log
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125

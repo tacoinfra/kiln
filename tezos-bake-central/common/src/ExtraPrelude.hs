@@ -82,10 +82,13 @@ module ExtraPrelude
   , (>>>)
   , ($>)
 
+  , safeSucc
   , tshow
   , when'
   , whenJust
   , whenM
+
+  , _WIP_
   ) where
 
 import Control.Applicative (Const (..), liftA2, liftA3, (<|>))
@@ -120,6 +123,9 @@ import GHC.Generics (Generic)
 
 import qualified Data.Text as T
 
+safeSucc :: (Eq a, Enum a, Bounded a) => a -> Maybe a
+safeSucc a = if a /= maxBound then Just (succ a) else Nothing
+
 tshow :: Show a => a -> Text
 tshow = T.pack . show
 
@@ -132,3 +138,6 @@ whenM x true = if x then true else pure mempty
 
 when' :: (Monad m, Monoid b) => m Bool -> m b -> m b
 when' x true = x >>= \v -> if v then true else pure mempty
+
+_WIP_ :: a
+_WIP_ = undefined

@@ -32,9 +32,11 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
+import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, diffUTCTime)
+import qualified Data.Time as Time
 import Data.Word (Word16)
 import Data.Witherable (Filterable (mapMaybe))
 import Reflex (Additive, Group (..))
@@ -45,7 +47,7 @@ import Rhyolite.Schema (Email, Id(..), IdData)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common (uriHostPortPath)
+import Common (nominalDiffTimeToSeconds, uriHostPortPath)
 import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
@@ -61,6 +63,34 @@ getErrorInterval :: (ErrorLog, ErrorLogView) -> First ((ErrorLog, ErrorLogView),
 getErrorInterval ei@(el, _) = First (ei, ClosedInterval
   (Bounded $ _errorLog_started el)
   (maybe UpperInfinity Bounded $ _errorLog_stopped el))
+
+-- | Get or estimate the start time of a period. Return 'Bool' indicates if the date is estimated
+getStartTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
+getStartTimeForPeriod p a as proto
+  | Just a' <- Map.lookup p as = (_amendment_start a', False)
+  | otherwise = (estimate, True)
+  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
+        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
+
+-- | Get or estimate the end time of a period. Return 'Bool' indicates if the date is estimated
+getEndTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
+getEndTimeForPeriod p a as proto
+  | Just p' <- safeSucc p, Just a' <- Map.lookup p' as = (_amendment_start a', False)
+  | otherwise = (estimate, True)
+  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
+        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
+
+calculateAmendmentTimings :: UTCTime -> UTCTime -> UTCTime -> (Double, Integer)
+calculateAmendmentTimings currentTime startTime endTime = (ellapsedFraction, minutesLeft)
+  where
+    ellapsed = currentTime `diffUTCTime` startTime
+    remaining = endTime `diffUTCTime` currentTime
+    minutesLeft = nominalDiffTimeToSeconds remaining `div` 60
+    ellapsedFraction = realToFrac ellapsed / realToFrac (ellapsed + remaining)
 
 type Deletable a = First (Maybe a)
 
@@ -324,6 +354,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
+  BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
@@ -332,6 +363,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
+  BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
 errorLogIdForNodeLogTag = \case

@@ -53,10 +53,12 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest)
-import Common.Alerts (ErrorDescription(..), standardTimeFormat)
+import Common.Alerts ( ErrorLogMessage(..), ErrorLogWidgets(..), ErrorDescription(..)
+                     , mkVotingReminderMessage, standardTimeFormat)
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
+import Common.Schema hiding (Event)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
@@ -625,6 +627,31 @@ htmlErrorDescription = \case
   ErrorDescription_Plain t -> text t
   ErrorDescription_Emphasis t -> el "strong" $ text t
   ErrorDescription_Concat t t' -> ((*>) `on` htmlErrorDescription) t t'
+
+mkVotingReminderWidgets
+  :: (DomBuilder t m, PostBuild t m)
+  => Dynamic t Double -> Dynamic t Integer -> Bool -> ErrorLogVotingReminder -> ErrorLogWidgets m
+mkVotingReminderWidgets periodFractionEllapsed minutesLeft resolved elog = ErrorLogWidgets
+  { _errorLogWidgets_tile = blank
+  , _errorLogWidgets_notification = dynText $ _errorLogMessage_content <$> msg
+  , _errorLogWidgets_banner = do
+      el "div" $ icon "vote icon"
+      el "div" $ dynText $ _errorLogMessage_subject <$> msg
+      el "div" $ do
+        text "Click the"
+        divClass "ellipsis thing" blank
+        text "button on your Kiln Baker tile to vote, or click “Vote Now”."
+      el "div" $ do
+        el "div" $ do
+          icon "envelope"
+          text "Vote Now"
+        el "div" $ do
+          icon "resolve"
+          text "Resolve"
+  }
+  where
+    msg = mkMsg resolved elog <$> periodFractionEllapsed <*> minutesLeft
+    mkMsg res l frac ms = mkVotingReminderMessage (frac, ms) res l
 
 makeLenses ''FrontendContext
 
