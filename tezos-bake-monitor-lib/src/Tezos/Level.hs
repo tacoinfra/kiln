@@ -15,11 +15,11 @@ import GHC.Generics (Generic)
 import qualified Tezos.Binary as B
 import Tezos.Json
 
--- Units of blocks, not neccesarily absolute level above genesis block
+-- Units of blocks, not necessarily absolute level above genesis block
 newtype RawLevel = RawLevel {unRawLevel :: Int32}
   deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData, Hashable, B.TezosBinary)
 
--- Units of blocksPerCycle, not neccesarily absolute level above genesis block
+-- Units of blocksPerCycle, not necessarily absolute level above genesis block
 newtype Cycle = Cycle {unCycle :: Int32}
   deriving (Show, Eq, Ord, Typeable, Num, Real, Integral, Enum, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Generic, NFData, Hashable)
 
