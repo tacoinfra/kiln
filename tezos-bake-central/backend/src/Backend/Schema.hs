@@ -319,6 +319,12 @@ selectIds
   -> m [(Id v, v)]
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
+data CacheContext = CacheContext
+  { _cacheContext_context :: BlockHash
+  , _cacheContext_cached :: BlockHash
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
@@ -1102,6 +1108,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
       - name: RightNotificationSettingsId
         type: primary
         fields: [_rightNotificationSettings_rightKind]
+  - entity: CacheContext
+    autoKey: null
+    keys:
+      - name: CacheContext_context
+        default: true
+    constructors:
+      - name: CacheContext
+        uniques:
+          - name: CacheContext_context
+            type: primary
+            fields: [_cacheContext_context]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
