@@ -83,10 +83,10 @@ import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client (clientWorker)
+--import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient
+import Backend.Workers.TezosClient (tezosClientWorker)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
@@ -307,7 +307,6 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
-
       let
         appConfig = AppConfig
           { _appConfig_emailFromAddress = emailFromAddress
@@ -353,7 +352,7 @@ backendImpl cfg serve = do
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
-      addFinalizer =<< clientWorker appConfig dataSrc
+      --addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
@@ -363,13 +362,13 @@ backendImpl cfg serve = do
         -- Square roots of rationals are the most effective for this because number theory.
 
       when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+       addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \v -> do
-        addFinalizer =<< internalNodeWorker appConfig logger db v
-        addFinalizer =<< protocolMonitorWorker dataSrc db
-        addFinalizer =<< bakerDaemonProcess appConfig logger db v
-        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
+       addFinalizer =<< internalNodeWorker appConfig logger db v
+       addFinalizer =<< protocolMonitorWorker dataSrc db
+       addFinalizer =<< bakerDaemonProcess appConfig logger db v
+       addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

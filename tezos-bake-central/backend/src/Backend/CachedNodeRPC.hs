@@ -56,7 +56,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLogger, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLogger, logDebug, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -81,6 +81,7 @@ import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
+import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import Database.Groundhog.Postgresql
@@ -147,6 +148,7 @@ data NodeQuery a where
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
 deriving instance Show (NodeQuery a)
+deriving instance Typeable (NodeQuery a)
 
 toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
@@ -259,6 +261,7 @@ instance MonadNodeQuery NodeQueryQueued where
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
   nodeRPCOrBust qBranch q = do
+    $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: ${qBranch} ${tshow q}|]
     dsrc <- askNodeDataSource
     nodesToTry <- NodeQueryQueued $ atomicallyWith $ pickNode qBranch >>= \case
       Nothing -> fmap Map.keys $ readTVar' $ _nodeDataSource_nodes dsrc
@@ -328,7 +331,7 @@ instance PersistBackend m => PersistBackend (NodeQueryT m) where
   count = lift . count
   countAll = lift . countAll
   project p o = lift $ project p o
-  migrate i v = S.mapStateT lift $ migrate i v
+  migrate u v = S.mapStateT lift $ migrate u v
   executeRaw c q p = lift $ executeRaw c q p
   queryRaw c q p f = NodeQueryT $ \k -> do
     queryRaw c q p $ \rp -> unNodeQueryT (f $ lift rp) k
@@ -477,23 +480,27 @@ mapNodeQueryT f m = NodeQueryT $ f . unNodeQueryT m
 -}
 runNodeQueryT
   :: forall a s e m.
-    ( MonadIO m, MonadBaseNoPureAborts IO m
+    ( HasCallStack
+    , MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
+    , Show e
     )
   => NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> ExceptT e m a
 runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
   where
     go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
     go n bad = do
-      $(logDebugSH) ("RPC monad attempt number" :: Text, n :: Int, "starting" :: Text)
+      $(logDebug) [i|RPC monad attempt number ${n} starting|]
       tryNodeQueryTWithDb bad f >>= \case
-        Left e -> return $ Left e
+        Left e -> do
+          $(logDebug) [i|RPC monad attempt number ${n}: failed: ${tshow e}: ${prettyCallStack callStack}|]
+          return $ Left e
         Right (NodeQueryTResult_Done v) -> do
-          $(logDebugSH) ("RPC monad attempt number" :: Text, n, "succeeded" :: Text)
+          $(logDebug) [i|RPC monad attempt number ${n}: succeeded|]
           return $ Right v
         Right (NodeQueryTResult_Query h q) -> do
-          $(logDebugSH) ("RPC monad attempt number" :: Text, n, "retry for query" :: Text, q)
+          $(logDebug) [i|RPC monad attempt number ${n}: retrying for query: ${tshow q}|]
           -- just get it into cache
           runExceptT (nodeQueryDataSource q) >>= \case
             Right _ -> go (n + 1) bad
@@ -617,6 +624,17 @@ getLatestProtocolX nds = runMaybeT $ do
   blockVar <- MaybeT $ view _1 <$> nodeQueryDataSourceSTM @NodeQueryQueued nds (branch ^. hash) (NodeQuery_Block $ branch ^. hash)
   block <- unpackCacheResult blockVar
   MaybeT $ getProtocolConstantsX nds (block ^. block_protocol)
+
+getLatestProtocol
+  :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
+  => NodeQueryT m (WithProtocolHash (ProtoInfo, VeryBlockLike))
+getLatestProtocol = do
+  histVar <- asksNodeDataSource _nodeDataSource_history
+  hist <- nqAtomically $ readTVar' histVar
+  branchBlock <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $ fittestBranchInHistory hist
+  protoConstants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ branchBlock ^. hash
+  pure $ WithProtocolHash (protoConstants, branchBlock ^. withProtocolHash_value) (branchBlock ^. protocolHash)
+
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
@@ -883,7 +901,8 @@ nodeQueryDataSource
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = do
-  view (nodeDataSource . nodeDataSource_logger) >>= flip runLoggingEnv ($(logDebugSH) ("nodeQueryDataSource called" :: Text,q))
+  view (nodeDataSource . nodeDataSource_logger) >>=
+    flip runLoggingEnv ($(logDebug) [i|nodeQueryDataSource: ${tshow q}|])
   NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw q
   now <- liftIO getCurrentTime
   timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
@@ -904,7 +923,7 @@ nodeQueryDataSourceSafe
     )
   => NodeQuery a -> NodeQueryT m a
 nodeQueryDataSourceSafe q = do
-  $(logDebugSH) ("nodeQueryDataSourceSafe called" :: Text,q)
+  $(logDebug) [i|nodeQueryDataSourceSafe ${tshow q}|]
   unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
 
 -- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
@@ -917,7 +936,7 @@ nodeQueryDataSourceImmediate
     )
   => NodeQuery a -> m a
 nodeQueryDataSourceImmediate q = runNodeQueryQueued $ do
-  $(logDebugSH) ("nodeQueryDataSourceImmediate called" :: Text,q)
+  $(logDebug) [i|nodeQueryDataSourceImmediate: ${tshow q}|]
   unNodeQueryImmediate $ unNodeQueryImmediateAnswerM <$> nodeQueryDataSourceRaw q
 
 nodeQueryDataSourceRaw
@@ -927,10 +946,11 @@ nodeQueryDataSourceRaw
     )
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q' = do
-  $(logDebugSH) ("nodeQueryDataSourceRaw called" :: Text,q')
+  $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q'}|]
   (qBranch, q) <- optimizeCacheKey q'
   dsrc <- asksNodeDataSource id
   view _2 <=< nqAtomically $ nodeQueryDataSourceSTM dsrc qBranch q
+
 
 -- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
 -- Returns the raw cache value (if found) and an action that will wait on the cache
@@ -1015,7 +1035,7 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggingEnv logger ($(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
+nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = preamble $ case q of
   NodeQuery_ProtocolFirstBlock protoHash -> do
     hist <- liftIO $ readTVarIO $ dsrc ^. nodeDataSource_history
     let
@@ -1068,6 +1088,7 @@ nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggin
       Just pk -> pure pk
   where
     chainId = dsrc ^. nodeDataSource_chain
+    preamble f = runExceptT $ runLoggingEnv logger ($(logDebug) [i|nodeQueryDataSourceImpl: ${tshow q}|]) *> f
 
     nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
@@ -1084,7 +1105,7 @@ nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runExceptT $ runLoggin
       . toList
 
     makeBlanks :: BlockHash -> RawLevel -> Priority -> V.Vector BakingRights
-    makeBlanks branch targetLevel prio = V.generate priorityChunkSize $ \i -> throw $ NoRightsException branch targetLevel $ prio + fromIntegral i
+    makeBlanks branch targetLevel prio = V.generate priorityChunkSize $ \x -> throw $ NoRightsException branch targetLevel $ prio + fromIntegral x
 
 {-
 calculateBakerStats ::
@@ -1175,7 +1196,7 @@ tryFetchFromCache chainId q = do
     FROM "GenericCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
+    |] <&> fmap (\(id_, c, k, v) -> (id_, GenericCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
     Just ((rid, result) :| _) -> case requestResponseFromJSON q of

@@ -43,6 +43,7 @@ library
     , groundhog
     , groundhog-postgresql
     , groundhog-th
+    , here
     , hashable
     , http-client
     , http-client-tls
