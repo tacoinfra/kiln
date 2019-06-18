@@ -547,23 +547,23 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
         let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
             endBlockLevel = startBlockLevel + blocksPerVotingPeriod - 1
-        startBlock <- getBlock startBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
+        startBlock <- getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
           levelAncestor history startBlockLevel (latestBlock ^. hash)
         endBlock <- getBlock endBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
           -- Calc the blockLevel at the start of the current voting period, move
           -- back by periodDiff voting periods, and move to the end of that period
           levelAncestor history endBlockLevel (latestBlock ^. hash)
-        predBlock <- getBlock (pred endBlockLevel) $ endBlock ^. predecessor
+        predBlock <- getBlockHeader $ endBlock ^. predecessor
         pure (startBlock, predBlock, endBlock)
       updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
       let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
-      startBlock <- throwing $ getBlock startBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
+      startBlock <- throwing $ getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
         levelAncestor history startBlockLevel (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
-        then throwing $ getBlock (pred $ latestBlock ^. level) $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure latestBlock
+        then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
+        else pure $ (latestBlock ^. hash, _block_header latestBlock)
       updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -577,6 +577,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   where
 
     getBlock lvl hash' = nodeQueryDataSource $ NodeQuery_Block hash' lvl
+    getBlockHeader hash' = (nodeQueryDataSource $ NodeQuery_BlockHeader hash') >>= pure . (hash',)
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
@@ -654,7 +655,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
 
-    handleVotingPeriod :: PersistEntity a => Block -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
