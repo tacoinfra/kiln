@@ -23,10 +23,7 @@ import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
-import Data.Binary.Get (bytesRead)
-import Data.Binary.Builder (toLazyByteString)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BSL
 import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (traverse_, toList)
 import Data.Sequence (Seq)
@@ -39,7 +36,6 @@ import GHC.Word
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Vector as Vector
-import Numeric.Natural (Natural)
 
 import Tezos.BalanceUpdate
 import Tezos.Base16ByteString
@@ -182,9 +178,9 @@ data OpContentsEndorsement = OpContentsEndorsement
 data OpContentsManager op = OpContentsManager
   { _opContentsManager_source :: !ContractId
   , _opContentsManager_fee :: !Tez
-  , _opContentsManager_counter :: !Natural
-  , _opContentsManager_gasLimit :: !Natural
-  , _opContentsManager_storageLimit :: !Natural
+  , _opContentsManager_counter :: !TezosWord64
+  , _opContentsManager_gasLimit :: !TezosWord64
+  , _opContentsManager_storageLimit :: !TezosWord64
   , _opContentsManager_operation :: !op
   }
   deriving (Eq, Ord, Show, Typeable)
@@ -588,33 +584,19 @@ instance B.TezosBinary OpContentsOrigination where
     <*> B.get
     <*> B.get
 
-newtype TenByteNatural = TenByteNatural { unTenByteNatural :: Natural }
-  deriving (Eq, Ord, Show, Typeable)
-
-instance B.TezosBinary TenByteNatural where
-  build (TenByteNatural n) =
-    let x = B.build n in
-      if BSL.null $ BSL.drop 10 $ toLazyByteString x then x else error "number too big (>10 bytes)"
-  get = do
-    start <- bytesRead
-    n <- B.get @Natural
-    end <- bytesRead
-    if end - 10 > start then fail "number too big (>10 bytes)"
-      else return $ TenByteNatural n
-
 instance B.TezosBinary op => B.TezosBinary (OpContentsManager op) where
   put = B.puts _opContentsManager_source
     <** B.puts _opContentsManager_fee
-    <** B.puts (TenByteNatural . _opContentsManager_counter)
-    <** B.puts (TenByteNatural . _opContentsManager_gasLimit)
-    <** B.puts (TenByteNatural . _opContentsManager_storageLimit)
+    <** B.puts _opContentsManager_counter
+    <** B.puts _opContentsManager_gasLimit
+    <** B.puts _opContentsManager_storageLimit
     <** B.puts _opContentsManager_operation
   get = pure OpContentsManager
     <*> B.get
     <*> B.get
-    <*> fmap unTenByteNatural B.get
-    <*> fmap unTenByteNatural B.get
-    <*> fmap unTenByteNatural B.get
+    <*> B.get
+    <*> B.get
+    <*> B.get
     <*> B.get
 
 instance FromJSON op => FromJSON (OpContentsManager op) where
