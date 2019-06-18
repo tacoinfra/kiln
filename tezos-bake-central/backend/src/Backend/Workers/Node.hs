@@ -22,6 +22,7 @@ import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
+import Control.Lens ((&))
 import Data.Align
 import Data.Foldable (foldl')
 import Data.Functor.Apply
@@ -125,14 +126,16 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mcp = do
     project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
       [] -> insert $ NodeDetails
         { _nodeDetails_id = nodeId
-        , _nodeDetails_data = mkNodeDetails
+        , _nodeDetails_data = (mkNodeDetails
           { _nodeDetailsData_headLevel = Just (headBlockInfo ^. monitorBlock_level)
           , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. monitorBlock_hash)
           , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. monitorBlock_timestamp)
           , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
           , _nodeDetailsData_updated = Just now
           , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
-          }
+          }) & \nd -> case mcp of
+            Nothing -> nd
+            Just cp -> nd { _nodeDetailsData_checkpoint = DeletableRow cp False }
         }
       (_:_) -> update
         ([ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
@@ -143,7 +146,10 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mcp = do
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
         ] ++ (case mcp of
                 Nothing -> []
-                Just cp -> [ p NodeDetailsData_checkpointSelector ~> DeletableRow_dataSelector ~> Checkpoint_savePointSelector =. cp ^. checkpoint_savePoint ]
+                Just cp ->
+                  [ p NodeDetailsData_checkpointSelector ~> DeletableRow_dataSelector ~> Checkpoint_savePointSelector =. cp ^. checkpoint_savePoint
+                  , p NodeDetailsData_checkpointSelector ~> DeletableRow_deletedSelector =. False
+                  ]
              ))
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
