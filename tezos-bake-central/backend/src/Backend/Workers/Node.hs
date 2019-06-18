@@ -544,18 +544,21 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   for_ [minBound..maxBound] $ \p -> case compare p currentPeriodKind of
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
-      (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
-        let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
-            endBlockLevel = startBlockLevel + blocksPerVotingPeriod - 1
-        startBlock <- getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
-          levelAncestor history startBlockLevel (latestBlock ^. hash)
-        endBlock <- getBlock endBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
-          -- Calc the blockLevel at the start of the current voting period, move
-          -- back by periodDiff voting periods, and move to the end of that period
-          levelAncestor history endBlockLevel (latestBlock ^. hash)
-        predBlock <- getBlockHeader $ endBlock ^. predecessor
-        pure (startBlock, predBlock, endBlock)
-      updateTo periodStartBlock periodEndBlockPred periodEndBlock p
+          startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+          endBlockLevel = startBlockLevel + blocksPerVotingPeriod - 1
+
+      -- Ignore the update if the block cannot be obtained from current set of nodes
+      mEndBlock <- flip runReaderT nds . runExceptT @CacheError $ getBlock endBlockLevel $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
+        -- Calc the blockLevel at the start of the current voting period, move
+        -- back by periodDiff voting periods, and move to the end of that period
+        levelAncestor history endBlockLevel (latestBlock ^. hash)
+      for_ mEndBlock $ \endBlock -> do
+        (periodStartBlock, periodEndBlockPred) <- throwing $ do
+          startBlock <- getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
+            levelAncestor history startBlockLevel (latestBlock ^. hash)
+          predBlock <- getBlockHeader $ endBlock ^. predecessor
+          pure (startBlock, predBlock)
+        updateTo periodStartBlock periodEndBlockPred endBlock p
     EQ -> do
       let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
       startBlock <- throwing $ getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
