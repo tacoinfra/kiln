@@ -54,6 +54,7 @@ data ChainTag
   = ChainTag_Main
   | ChainTag_Test
   | ChainTag_Hash ChainId
+  deriving (Eq, Ord, Generic, Typeable, Read, Show)
 
 toChainTagText :: ChainTag -> Text
 toChainTagText = \case
