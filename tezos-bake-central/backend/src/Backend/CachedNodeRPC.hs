@@ -58,6 +58,7 @@ import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH,
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
+import qualified Control.Monad.State as S
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
@@ -79,17 +80,18 @@ import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
+import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Network.HTTP.Client as Http (Manager)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
-import Safe (headMay)
+import Safe (headMay, minimumMay)
 import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -386,6 +388,33 @@ instance MonadMask m => MonadMask (NodeQueryT m) where
 
 instance (Monad m, PostgresRaw m) => PostgresRaw (NodeQueryT m)
 
+instance PersistBackend m => PersistBackend (NodeQueryT m) where
+  type PhantomDb (NodeQueryT m) = PhantomDb m
+  type TableAnalysis (NodeQueryT m) = TableAnalysis m
+  insert = lift . insert
+  insert_ = lift . insert_
+  insertBy u v = lift $ insertBy u v
+  insertByAll = lift . insertByAll
+  replace k v = lift $ replace k v
+  replaceBy u v = lift $ replaceBy u v
+  select = lift . select
+  selectAll = lift selectAll
+  get = lift . get
+  getBy = lift . getBy
+  update us c = lift $ update us c
+  delete = lift . delete
+  deleteBy = lift . deleteBy
+  deleteAll = lift . deleteAll
+  count = lift . count
+  countAll = lift . countAll
+  project p o = lift $ project p o
+  migrate i v = S.mapStateT lift $ migrate i v
+  executeRaw c q p = lift $ executeRaw c q p
+  queryRaw c q p f = NodeQueryT $ \k -> do
+    queryRaw c q p $ \rp -> unNodeQueryT (f $ lift rp) k
+  insertList = lift . insertList
+  getList = lift . getList
+
 -- | Map the unwrapped computation using the given function.
 --
 -- * @'unNodeQueryT' ('mapNodeQueryT' f m) = f ('unNodeQueryT' m)@
@@ -666,8 +695,9 @@ levelAncestor hist lvl ctx = ctxBlockHash
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
-rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> Maybe BlockHash
-rightsContext params hist ctx lvl = levelAncestor hist (rightsContextLevel params lvl) ctx
+rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> (RawLevel, Maybe BlockHash)
+rightsContext params hist ctx lvl = (ctxLvl, levelAncestor hist ctxLvl ctx)
+  where ctxLvl = rightsContextLevel params lvl
 
 -- | Round the second argument to the next lower multiple of the first
 floorBy :: Integral a => a -> a -> a
@@ -677,7 +707,13 @@ priorityChunkSize :: Num a => a
 priorityChunkSize = 64
 
 -- Recontextualize a query for maximum cache friendliness, and also return the least block
-optimizeCacheKey :: forall m a. MonadNodeQuery m => ProtoInfo -> NodeQuery a -> m (BlockHash, NodeQuery a)
+optimizeCacheKey
+  :: forall m a .
+  ( MonadNodeQuery m
+  )
+  => ProtoInfo
+  -> NodeQuery a
+  -> m (BlockHash, NodeQuery a)
 optimizeCacheKey protoInfo q = case q of
   NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> getRightsContext ctx lvl
   NodeQuery_BakingRights1 ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRights1 ctx' lvl prio)) <$> getRightsContext ctx lvl
@@ -702,22 +738,61 @@ optimizeCacheKey protoInfo q = case q of
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
 
-    maybeToErr = maybe (nqThrowError CacheError_NotEnoughHistory) pure
-
-    getFittestBranch = maybeToErr =<< do
+    getFittestBranch :: m BlockHash
+    getFittestBranch = do
       hist <- getHist
       let branches = _cachedHistory_branches hist
-      pure $ view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
+          mHash = view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
+      maybe (nqThrowError CacheError_NotEnoughHistory) pure mHash
       -- pure $ v
 
+    -- (ctxLvl, ctx) -> Rights Context based on the level and protocol constants
+    -- ctxCp -> Context which is valid for the current checkpoint state of the nodes
     getRightsContext :: BlockHash -> RawLevel -> m BlockHash
-    getRightsContext blk lvl = maybeToErr =<< do
+    getRightsContext blk lvl = do
       hist <- getHist
-      let actualContext = rightsContext protoInfo hist blk lvl
-      pure actualContext
-      -- search db (actualContext, level)
+      let (ctxLvl, mCtx) = rightsContext protoInfo hist blk lvl
+      case mCtx of
+        Nothing -> nqThrowError CacheError_NotEnoughHistory
+        Just ctx -> do
+          mCtxDb :: [BlockHash] <- nqInDB $ [queryQ|
+            SELECT "cached"
+            FROM "CacheContext"
+            WHERE "context" = ?ctx
+            |] <&> fmap (\(Only v) -> v)
+          case mCtxDb of
+            (c:_) -> pure c
+            [] -> do
+              cpVar <- asksNodeDataSource _nodeDataSource_nodeCheckpoints
+              nodesVar <- asksNodeDataSource _nodeDataSource_nodes
+              (cp, nodes) <- nqAtomically $ do
+                cp <- readTVar' cpVar
+                nodes <- readTVar' nodesVar
+                pure (cp, nodes)
+              let
+                fitNodes :: [URI]
+                fitNodes = map fst $
+                  filter (\(_, mb) -> (mb ^? _Just . level) >= Just ctxLvl) $ Map.assocs nodes
+                mCtxCp = getContextFromCheckpoints fitNodes cp
+                             (\l -> levelAncestor hist l blk) ctxLvl
+              for_ mCtxCp $ \ctxCp -> nqInDB $ void [executeQ|
+                INSERT into "CacheContext" ("cached", "context")
+                values (?ctxCp, ?ctx)
+                |]
+              case fitNodes of
+                [] -> nqThrowError CacheError_NoSuitableNode
+                _ -> maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtxCp
 
-
+-- Perhaps we should check if the node is on same branch
+getContextFromCheckpoints
+  :: [URI]
+  -> Map URI (Maybe RawLevel)
+  -> (RawLevel -> Maybe BlockHash)
+  -> RawLevel
+  -> Maybe BlockHash
+getContextFromCheckpoints fitNodes checkpoints getHash ctxLvl = getHash =<< cpForContext
+  where
+    cpForContext = fmap (max ctxLvl) $ minimumMay $ catMaybes $ map (\n -> join $ Map.lookup n checkpoints) fitNodes
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -843,9 +918,9 @@ unliftEither action = (Right <$> action) `catchError` (pure . Left)
 
 -- Check the level of the query and determine the nodes which could service the queries
 validNodes
-  :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
+  :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
-validNodes = \case
+validNodes q = case q of
   NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_BakingRights1 _ctx lvl _prio -> findNode $ Just lvl
   NodeQuery_BakingRightsChunk _ctx lvl _prio -> findNode $ Just lvl
@@ -864,6 +939,7 @@ validNodes = \case
   NodeQuery_DelegateInfo _ctx lvl _pkh -> findNode $ Just lvl
   NodeQuery_PublicKey _ -> findNode Nothing
   where
+    findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
     findNode mLvl = do
       dsrc <- asks (^. nodeDataSource)
       nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
