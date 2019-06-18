@@ -950,10 +950,11 @@ validNodes q = case q of
         (_, Just (RawLevel 0)) -> pure $ Right nodes
         (_, Just lvl) -> do
           nodeCheckpoints <- readTVar' $ _nodeDataSource_nodeCheckpoints dsrc
-          let f v@(nUri, blk) = case Map.lookup nUri nodeCheckpoints of
+          let f v@(nUri, _) = case Map.lookup nUri nodeCheckpoints of
                 Nothing -> Just v
                 Just Nothing -> Just v
-                Just (Just sp) -> if sp <= lvl && lvl <= blk ^. level
+                -- TODO perhaps add a check for upper bound of lvl
+                Just (Just sp) -> if sp <= lvl
                   then Just v
                   else Nothing
           pure $ case catMaybes $ map f nodes of
