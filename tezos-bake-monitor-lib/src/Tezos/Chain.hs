@@ -6,15 +6,16 @@
 
 module Tezos.Chain where
 
-import Control.Monad.Except (MonadError, throwError)
-import Data.Aeson (FromJSON, ToJSON)
+import Control.Monad ((<=<))
+import Control.Monad.Except (MonadError, runExceptT, throwError)
+import Data.Aeson (FromJSON, ToJSON, parseJSON, toJSON)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
-import Tezos.Base58Check (ChainId, fromBase58, toBase58Text)
+import Tezos.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58Text)
 
 data NamedChain
   = NamedChain_Mainnet
@@ -48,3 +49,26 @@ parseChain x = case parseNamedChain x of
 
 mainnetChainId :: ChainId
 mainnetChainId = "NetXdQprcVkpaWU"
+
+data ChainTag
+  = ChainTag_Main
+  | ChainTag_Test
+  | ChainTag_Hash ChainId
+
+toChainTagText :: ChainTag -> Text
+toChainTagText = \case
+  ChainTag_Main -> "main"
+  ChainTag_Test -> "test"
+  ChainTag_Hash h -> toBase58Text h
+
+parseChainTagText :: MonadError HashBase58Error m => Text -> m ChainTag
+parseChainTagText t
+  | t == "main" = pure ChainTag_Main
+  | t == "test" = pure ChainTag_Test
+  | otherwise = either throwError (pure . ChainTag_Hash) $ fromBase58 $ T.encodeUtf8 t
+
+instance ToJSON ChainTag where
+  toJSON = toJSON . toChainTagText
+
+instance FromJSON ChainTag where
+  parseJSON = either (fail . show) pure <=< (runExceptT . parseChainTagText) <=< parseJSON
