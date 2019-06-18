@@ -27,6 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
+import Tezos.Chain (ChainTag(ChainTag_Hash))
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Operation (Ballot)
 import Tezos.Types
@@ -39,6 +40,8 @@ class QueryBlock repr where
   type BlockType repr
   rHead :: ChainId -> repr (BlockType repr)
   rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
+  rBlock = rBlock' . ChainTag_Hash
+  rBlock' :: ChainTag -> BlockHash -> repr (BlockType repr)
 
 class QueryHistory repr where -- blockscale
   rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
@@ -96,7 +99,7 @@ instance QueryBlock RpcQuery where
   type BlockType RpcQuery = Block
   --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
   rHead = chainAPI "/blocks/head"
-  rBlock = blockAPI ""
+  rBlock' = blockAPI' ""
 
 instance QueryHistory RpcQuery where
   rBlockPred (RawLevel levelsBack) = blockAPI $ "~" <> T.pack (show levelsBack)
@@ -129,7 +132,10 @@ chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a
 chainAPI path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> path
 
 blockAPI :: FromJSON a => Text -> ChainId -> BlockHash -> RpcQuery a
-blockAPI path chainId blockHash = plainNodeRequest Http.methodGet (chainBlockUrl chainId blockHash <> path)
+blockAPI = (. ChainTag_Hash) . blockAPI'
+
+blockAPI' :: FromJSON a => Text -> ChainTag -> BlockHash -> RpcQuery a
+blockAPI' path chainId blockHash = plainNodeRequest Http.methodGet (chainBlockUrl' chainId blockHash <> path)
 
 instance QueryNode RpcQuery where
   rConnections = decoder <$> plainNodeRequest Http.methodGet "/network/connections"
@@ -142,7 +148,10 @@ instance MonitorHeads PlainNodeStream where
   rMonitorHeads chainId = PlainNodeStream $ plainNodeRequest Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
 
 chainBlockUrl :: ChainId -> BlockHash -> Text
-chainBlockUrl chainId blockHash = "/chains/" <> toBase58Text chainId <> "/blocks/" <> toBase58Text blockHash
+chainBlockUrl = chainBlockUrl' . ChainTag_Hash
+
+chainBlockUrl' :: ChainTag -> BlockHash -> Text
+chainBlockUrl' chainId blockHash = "/chains/" <> toChainTagText chainId <> "/blocks/" <> toBase58Text blockHash
 
 dynamicParamRightsRangeToQueryArg :: Either RawLevel Cycle -> Text
 dynamicParamRightsRangeToQueryArg = \case
