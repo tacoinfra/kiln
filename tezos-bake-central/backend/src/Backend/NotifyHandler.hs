@@ -9,6 +9,7 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Control.Monad.Catch (MonadMask)
 import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
@@ -43,7 +44,7 @@ import Common.Vassal
 import ExtraPrelude
 
 notifyHandler
-  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => NodeDataSource
   -> DbNotification NotifyTag
   -> BakeViewSelector a
@@ -178,7 +179,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
 
-    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
+    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
                 => Id Baker -> Maybe BakerData -> m' (BakeView a)
     handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
       case mBaker of
@@ -188,14 +189,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
         Just _ -> handleBakerAddress pkh
 
-    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
+    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
                        => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
       bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
 
     -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
-    alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m') => m' (BakeView a)
+    alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => m' (BakeView a)
     alsoEveryBakerSummary = do
       bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddressesVS) $
         toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
@@ -230,14 +231,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         }
 
     handleErrorLog
-      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
       => (e -> Id ErrorLog) -> LogTag e -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
       :: forall e m2
-      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
       => (e -> m2 (BakeView a))
       -> (e -> Id ErrorLog)
       -> LogTag e

@@ -64,7 +64,7 @@ clientWorker
   -> IO (IO ())
 clientWorker appCfg nds =
   worker' $ (*> waitForNewHeadWithTimeout nds) $ do
-    protoInfo <- atomicallyWithTime (maybe retry' pure =<< getLatestProtocol nds)
+    protoInfo <- atomicallyWithTime (maybe retry' pure =<< getLatestProtocolX nds)
     runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity (_nodeDataSource_pool nds)) $
       runReaderT (doUpdate protoInfo) (ClientWorkerContext appCfg nds)
 

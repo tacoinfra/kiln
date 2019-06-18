@@ -55,7 +55,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     (params, dsh) <- liftIO $ atomicallyWithTime $
-      (,) <$> (maybe retry' pure =<< getLatestProtocol nds) <*> dataSourceHead nds
+      (,) <$> (maybe retry' pure =<< getLatestProtocolX nds) <*> dataSourceHead nds
     let headLevelMay = (^. level) <$> dsh
     let cutoffLevel = maybe 0 (rightsContextLevel params) headLevelMay
 

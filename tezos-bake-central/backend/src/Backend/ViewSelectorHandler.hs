@@ -17,7 +17,9 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
+import Control.Exception.Safe (MonadMask)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
@@ -77,7 +79,6 @@ import Tezos.Types
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
-import Backend.STM (atomicallyWithTime)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -89,7 +90,7 @@ import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => FrontendConfig
   -> Maybe NamedChain
   -> NodeDataSource
@@ -426,7 +427,7 @@ getAlertCount =
     WHERE el.stopped IS NULL|]
 
 getBakerAddresses
-  :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)
+  :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)
   => NodeDataSource
   -> Maybe PublicKeyHash
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
@@ -494,21 +495,22 @@ getBakerAddresses nds bid = do
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
-  maxProgress_rightsInfo :: Either CacheError (Maybe RawLevel, [RightsCycleInfo]) <- case latestHead' of
+  maxProgress_rightsInfo :: Either CacheError (Maybe (Maybe RawLevel, [RightsCycleInfo])) <- case latestHead' of
     Nothing -> pure $ Left CacheError_NotEnoughHistory
-    Just latestHead -> tryNodeQueryT $ flip runReaderT nds $ runExceptT $ do
+    Just latestHead -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
       rightsInfo <- cycleStartHashes $ latestHead ^. hash
       -- WARNING: We're looking up information in the future which might be wrong. We assume the following
       -- protocol constants won't ever change, even with a new protocol:
       --    $PRESERVED_CYCLES
       --    $BLOCKS_PER_CYCLE
+      headProtoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ latestHead ^. hash
       maxProgress <- for (maximumMay $ _rightsCycleInfo_cycle <$> rightsInfo) $ \highestRightsCycle ->
-        lastLevelInCycle latestHead $ highestRightsCycle + protoInfo ^. protoInfo_preservedCycles + 1
+        lastLevelInCycle (latestHead ^. hash) $ highestRightsCycle + headProtoInfo ^. protoInfo_preservedCycles + 1
       pure (maxProgress, rightsInfo)
 
   let
-    maxProgress = maxProgress_rightsInfo ^? _Right . _1
-    rightsInfo = fromMaybe [] $ maxProgress_rightsInfo ^? _Right . _2
+    maxProgress = maxProgress_rightsInfo ^? _Right . _Just . _1 . _Just
+    rightsInfo = fromMaybe [] $ maxProgress_rightsInfo ^? _Right . _Just . _2
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
@@ -549,7 +551,7 @@ getBakerAddresses nds bid = do
         -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) nextBakeRightsL
-    result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
+    result = fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
         (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)

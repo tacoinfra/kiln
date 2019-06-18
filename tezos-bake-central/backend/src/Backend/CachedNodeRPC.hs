@@ -603,20 +603,20 @@ waitForAnyHead nds = do
 
 
 -- PROBABLY DELETE THESE OR AT LEAST HUGE COMMENT
-getProtocolConstants :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> ProtocolHash -> m (Maybe ProtoInfo)
-getProtocolConstants nds protocol = runMaybeT $ do
+getProtocolConstantsX :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> ProtocolHash -> m (Maybe ProtoInfo)
+getProtocolConstantsX nds protocol = runMaybeT $ do
   branch <- MaybeT $ fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
   firstBlockVar <- MaybeT $ view _1 <$> nodeQueryDataSourceSTM @NodeQueryQueued nds (branch ^. hash) (NodeQuery_ProtocolFirstBlock protocol)
   firstBlock <- unpackCacheResult firstBlockVar
   protoInfoVar <- MaybeT $ view _1 <$> nodeQueryDataSourceSTM @NodeQueryQueued nds firstBlock (NodeQuery_ProtocolConstants firstBlock)
   unpackCacheResult protoInfoVar
 
-getLatestProtocol :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> m (Maybe ProtoInfo)
-getLatestProtocol nds = runMaybeT $ do
+getLatestProtocolX :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> m (Maybe ProtoInfo)
+getLatestProtocolX nds = runMaybeT $ do
   branch <- MaybeT $ fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
   blockVar <- MaybeT $ view _1 <$> nodeQueryDataSourceSTM @NodeQueryQueued nds (branch ^. hash) (NodeQuery_Block $ branch ^. hash)
   block <- unpackCacheResult blockVar
-  MaybeT $ getProtocolConstants nds (block ^. block_protocol)
+  MaybeT $ getProtocolConstantsX nds (block ^. block_protocol)
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
@@ -697,26 +697,33 @@ data RightsCycleInfo = RightsCycleInfo
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 
+levelToCycle
+  :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
+  => RawLevel -> NodeQueryT m Cycle
+levelToCycle lvl = do
+  histVar <- asksNodeDataSource _nodeDataSource_history
+  hist <- nqAtomically $ readTVar' histVar
+  lvlBlockHash <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $
+    levelAncestor hist lvl . view hash =<< fittestBranchInHistory hist
+  fmap (view _2) $ getPositionOfBlockFaster lvlBlockHash
+
 -- | Tries to be more efficient about finding the level and cycle of a block by using
 -- protocol data from the latest head block before resorting to querying the
 -- block itself.
 -- TODO: Actually write the faster version of this.
 getPositionOfBlockFaster
-  :: ( HasNodeDataSource nds, MonadReader nds m
-     , MonadIO m, PostgresRaw m, MonadMask m
-     , MonadError e m, AsCacheError e
-     )
+  :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
   => BlockHash -> NodeQueryT m (RawLevel, Cycle)
 getPositionOfBlockFaster blkHash =
   -- NOTE: Level can always be calculated from history, but we're querying the block anyway
   -- so might as well get it this way.
-  level &&& block_metadata . blockMetadata_level . level_cycle <$>
+  (view level &&& view (block_metadata . blockMetadata_level . level_cycle)) <$>
     nodeQueryDataSourceSafe (NodeQuery_Block blkHash)
 
 firstLevelInCycle
-  :: ( HasNodeDataSource nds, MonadReader nds m
-     , MonadIO m, PostgresRaw m, MonadMask m
-     , MonadError e m, AsCacheError e
+  :: ( HasNodeDataSource s, MonadReader s m
+     , MonadNodeQuery (NodeQueryT m)
+     , MonadMask m
      )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 firstLevelInCycle branch c = do
@@ -761,19 +768,19 @@ firstLevelInCycle branch c = do
               maybe (nqThrowError CacheError_NotEnoughHistory) (`firstLevelInCycle` c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
 
 lastLevelInCycle
-  :: ( HasNodeDataSource nds, MonadReader nds m
-      , MonadIO m, PostgresRaw m, MonadMask m
-      , MonadError e m, AsCacheError e
-      )
+  :: ( HasNodeDataSource s, MonadReader s m
+     , MonadNodeQuery (NodeQueryT m)
+     , MonadMask m
+     )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 lastLevelInCycle branch c = fmap pred $ firstLevelInCycle branch (c + 1)
 
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
 cycleStartHashes
-  :: forall nds e m
-   . ( HasNodeDataSource nds, MonadReader nds m
-     , MonadIO m, PostgresRaw m, MonadMask m
-     , MonadError e m, AsCacheError e
+  :: forall s m
+   . ( HasNodeDataSource s, MonadReader s m
+     , MonadNodeQuery (NodeQueryT m)
+     , MonadMask m
      )
   => BlockHash -> NodeQueryT m [RightsCycleInfo]
 cycleStartHashes blkHash = do

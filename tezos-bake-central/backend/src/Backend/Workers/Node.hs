@@ -29,7 +29,6 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -332,7 +331,7 @@ publicNodesWorker nds = foldMap workerForSource
         mLastBlock <- project1 PublicNodeHead_headBlockField $
           PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
         pure (now, mLastBlock)
-      timeBetweenBlocks <- maybe 5 calcTimeBetweenBlocks <$> atomicallyWithTime (getLatestProtocol nds)
+      timeBetweenBlocks <- maybe 5 calcTimeBetweenBlocks <$> atomicallyWithTime (getLatestProtocolX nds)
       let secsSinceLastBlock = maybe 0 (\v -> _veryBlockLike_timestamp v `diffUTCTime` now) mLastBlock
           secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
               -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
@@ -608,7 +607,6 @@ protocolMonitorWorker
   -> Pool Postgresql
   -> IO (IO ())
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  protoInfo <- throwing $ nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case
@@ -681,17 +679,13 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
           | otherwise -> stopAlt >> setMainProto
 
   -- Wait till the end of this cycle
-  let
-    levelToCycle = undefined
-    currentLvl = latestHead ^. level
-    nextCycle = 1 + levelToCycle protoInfo currentLvl
-    nextCheckLvl = firstLevelInCycle protoInfo nextCycle
-    delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
-    oneBlockTime :: TezosWord64
-    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
-  $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
-  threadDelay' delay
-
-  where
-    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+  --  let
+  --    levelToCycle = undefined
+  --    currentLvl = latestHead ^. level
+  --    nextCycle = 1 + levelToCycle protoInfo currentLvl
+  --    nextCheckLvl = firstLevelInCycle protoInfo nextCycle
+  --    delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
+  --    oneBlockTime :: TezosWord64
+  --    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
+  --  $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
+  threadDelay' 60 -- TODO: Come up with a semantic check and look at latest head until it's what we want.

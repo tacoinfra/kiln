@@ -59,7 +59,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
 
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
-      liftIO (atomicallyWithTime $ getLatestProtocol dataSrc) >>= \case
+      liftIO (atomicallyWithTime $ getLatestProtocolX dataSrc) >>= \case
         Nothing -> Snap.modifyResponse (Snap.setResponseCode 503) *> Snap.writeLBS "Cache Not Ready"
         Just ps -> either sulk (Snap.writeLBS . Aeson.encode) =<< runReaderT (x ps) dataSrc
 
@@ -187,5 +187,5 @@ withCacheIO
   => a -> (ProtoInfo -> m a) -> m a
 withCacheIO dft action = do
   dsrc <- asks (^. nodeDataSource)
-  protoInfo <- liftIO $ atomicallyWithTime $ getLatestProtocol dsrc
+  protoInfo <- liftIO $ atomicallyWithTime $ getLatestProtocolX dsrc
   fromMaybe dft <$> traverse action protoInfo

@@ -46,15 +46,14 @@ accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds
         order by a.level asc
       |]
 
-      let levelToCycle = undefined
       for_ alertData $ \(aHash, aBlockHash, aIsBake, aBaker, aOccurredLevel, aLevel) -> do
-        params <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants aBlockHash
+        (aOccurredCycle, aCycle) <- liftA2 (,) (levelToCycle aOccurredLevel) (levelToCycle aLevel)
         flip runReaderT appConfig $ reportAccusation
           aHash
           aBlockHash
           (bool RightKind_Endorsing RightKind_Baking aIsBake)
           aBaker
           aOccurredLevel
-          (levelToCycle params aOccurredLevel) -- TODO: This assumes that even some variables are actually constant
+          aOccurredCycle
           aLevel
-          (levelToCycle params aLevel) -- TODO: This assumes that even some variables are actually constant
+          aCycle

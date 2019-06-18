@@ -80,7 +80,7 @@ import Common.Alerts (networkUpdateDescription)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Calculations (levelToCycle)
+import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -366,7 +366,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
         infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle knownProto latestHead
+        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
         whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
           text $ either ("Error: " <>) (tshow . unCycle) c
 
