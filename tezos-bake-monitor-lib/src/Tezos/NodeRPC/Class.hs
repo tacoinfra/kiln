@@ -39,6 +39,8 @@ class QueryChain repr where
 class QueryBlock repr where
   type BlockType repr
   rHead :: ChainId -> repr (BlockType repr)
+  rHead = rHead' . ChainTag_Hash
+  rHead' :: ChainTag -> repr (BlockType repr)
   rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
   rBlock = rBlock' . ChainTag_Hash
   rBlock' :: ChainTag -> BlockHash -> repr (BlockType repr)
@@ -98,7 +100,7 @@ instance QueryChain RpcQuery where
 instance QueryBlock RpcQuery where
   type BlockType RpcQuery = Block
   --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  rHead = chainAPI "/blocks/head"
+  rHead' = chainAPI' "/blocks/head"
   rBlock' = blockAPI' ""
 
 instance QueryHistory RpcQuery where
@@ -129,7 +131,10 @@ instance QueryHistory RpcQuery where
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
 
 chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a
-chainAPI path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toBase58Text chainId <> path
+chainAPI = (. ChainTag_Hash) . chainAPI'
+
+chainAPI' :: FromJSON a => Text -> ChainTag -> RpcQuery a
+chainAPI' path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toChainTagText chainId <> path
 
 blockAPI :: FromJSON a => Text -> ChainId -> BlockHash -> RpcQuery a
 blockAPI = (. ChainTag_Hash) . blockAPI'
