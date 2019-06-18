@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TypeApplications #-}
 module Tezos.Binary where
 
 import Control.Applicative (many)
@@ -23,6 +24,7 @@ import Data.Word
 import qualified Data.Text
 import qualified Data.Text.Encoding as TE
 
+import Tezos.Json (TezosWord64(..))
 import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- FIXME there are a million places integer overflow should be checked, just
@@ -147,6 +149,17 @@ instance TezosBinary Data.Text.Text where
   get = fmap TE.decodeUtf8' get >>= \case
     Left err -> fail $ show err
     Right answer -> pure answer
+
+instance TezosBinary TezosWord64 where
+  build (TezosWord64 n) =
+    let x = writeZ 0 n in
+      if LBS.null $ LBS.drop 10 $ toLazyByteString x then x else error "number too big (>10 bytes)"
+  get = do
+    start <- bytesRead
+    n <- get @Natural
+    end <- bytesRead
+    if end - 10 > start then fail "number too big (>10 bytes)"
+      else return $ TezosWord64 $ fromIntegral n
 
 -- we all scream for ice cream
 (<**) :: (Applicative f, Applicative g) => f (g a) -> f (g b) -> f (g a)
