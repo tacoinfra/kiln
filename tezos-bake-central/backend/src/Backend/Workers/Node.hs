@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -49,7 +49,7 @@ import qualified Text.URI as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat)
+                      rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
@@ -271,13 +271,12 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
       let reconnectDelay = 5
-      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-        let
           nodeQuery :: RpcQuery a -> IO (Either RpcError a)
           nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
+      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
@@ -295,7 +294,19 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
                 reportInaccessibleNodeError nodeId
             | otherwise -> reportNodeWrongChainError nodeId chainId actualChainId
 
-      let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
+      killMonitor2 <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+        liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+          Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
+          Right cp -> liftIO $ atomically $
+            modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr $ Just $ _checkpoint_savePoint cp)
+        mBlk <- fmap (join . Map.lookup nodeAddr) $ liftIO $ readTVarIO (_nodeDataSource_nodes nds)
+        case mBlk of
+          Nothing -> threadDelay' reconnectDelay
+          Just blk -> do
+            protoInfo <- liftIO $ atomically $ waitForParams nds
+            threadDelayTillNextCycle protoInfo $ blk ^. level
+
+      let cleanup = killMonitor *> killMonitor2 *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
       liftIO $ addFinalizer cleanup
       $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
@@ -742,13 +753,15 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
           | otherwise -> stopAlt >> setMainProto
 
   -- Wait till the end of this cycle
+  $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
+  threadDelayTillNextCycle protoInfo $ latestHead ^. level
+
+threadDelayTillNextCycle :: (MonadIO m) => ProtoInfo -> RawLevel -> m ()
+threadDelayTillNextCycle protoInfo currentLvl = do
   let
-    currentLvl = latestHead ^. level
     nextCycle = 1 + levelToCycle protoInfo currentLvl
     nextCheckLvl = firstLevelInCycle protoInfo nextCycle
     delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
     oneBlockTime :: TezosWord64
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
-  $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
-
