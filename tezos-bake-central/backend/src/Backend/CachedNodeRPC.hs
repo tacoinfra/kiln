@@ -56,7 +56,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLogger, logDebug, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -488,7 +488,6 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
   where
     go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
     go n bad = do
-      threadDelay' 4
       $(logDebug) [i|RPC monad attempt number ${n} starting: ${prettyCallStack callStack}|]
       tryNodeQueryTWithDb bad f >>= \case
         Left e -> do
