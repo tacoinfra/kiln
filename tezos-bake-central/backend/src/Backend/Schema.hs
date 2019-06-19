@@ -417,7 +417,6 @@ instance FromField Micro where
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
-instance NeverNull Checkpoint
 instance NeverNull Cycle
 instance NeverNull Fitness
 instance NeverNull LedgerIdentifier
@@ -627,11 +626,6 @@ instance ToField RightKind where
   toField = toField . show
 instance FromField RightKind where
   fromField f b = maybe (fail "Invalid value for RightKind") pure . readMaybe =<< fromField f b
-
-instance ToField HistoryMode where
-  toField = toField . show
-instance FromField HistoryMode where
-  fromField f b = maybe (fail "Invalid value for HistoryMode") pure . readMaybe =<< fromField f b
 
 
 instance ToField URI where
@@ -860,8 +854,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
-  - embedded: Checkpoint
-  - primitive: HistoryMode
   - entity: Parameters
     constructors:
       - name: Parameters
