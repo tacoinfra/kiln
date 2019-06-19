@@ -261,7 +261,7 @@ instance MonadNodeQuery NodeQueryQueued where
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
   nodeRPCOrBust qBranch q = do
-    $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: ${qBranch} ${tshow q}|]
+    $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
     dsrc <- askNodeDataSource
     nodesToTry <- NodeQueryQueued $ atomicallyWith $ pickNode qBranch >>= \case
       Nothing -> fmap Map.keys $ readTVar' $ _nodeDataSource_nodes dsrc
@@ -346,9 +346,10 @@ instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCac
   nqInDB = id
   answerImmediate getResult = return $ fmap NodeQueryTAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
-  nodeRPCOrBust h q = NodeQueryT $ \bad -> case DMap.lookup q bad >>= pure . getConst >>= Map.lookup h of
-    Just e -> throwError $ e ^. re asCacheError
-    Nothing -> pure $ NodeQueryTResult_Query h q
+  nodeRPCOrBust h q = NodeQueryT $ \bad ->
+    case DMap.lookup q bad >>= pure . getConst >>= Map.lookup h of
+      Just e -> throwError $ e ^. re asCacheError
+      Nothing -> pure $ NodeQueryTResult_Query h q
 
 instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m) where
   monadLoggerLog a b c d = do
@@ -443,9 +444,7 @@ instance (MonadMask m, PostgresLargeObject m, HasPgConn m, MonadIO m) => Postgre
       toOid (LargeObjectId n) = PG.Oid (fromIntegral n)
 
       genericLiftWithConn :: (PG.Connection -> IO a) -> m a
-      genericLiftWithConn f = do
-        conn <- askPgConn
-        liftIO $ f conn
+      genericLiftWithConn f = liftIO . f =<< askPgConn
 
 -- Would much rather write this instance for any @PostgresLargeObject m@ but neither
 -- 'PostgresLargeObject' nor 'PostgresRaw' have a way to get the @Connection@ directly
@@ -460,9 +459,7 @@ instance (MonadMask m, PostgresLargeObject m, HasPgConn m, MonadIO m) => Postgre
       toOid (LargeObjectId n) = PG.Oid (fromIntegral n)
 
       genericLiftWithConn :: (PG.Connection -> IO a) -> m a
-      genericLiftWithConn f = do
-        conn <- askPgConn
-        liftIO $ f conn
+      genericLiftWithConn f = liftIO . f =<< askPgConn
 
 -- | Map the unwrapped computation using the given function.
 --
@@ -491,7 +488,8 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
   where
     go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
     go n bad = do
-      $(logDebug) [i|RPC monad attempt number ${n} starting|]
+      threadDelay' 4
+      $(logDebug) [i|RPC monad attempt number ${n} starting: ${prettyCallStack callStack}|]
       tryNodeQueryTWithDb bad f >>= \case
         Left e -> do
           $(logDebug) [i|RPC monad attempt number ${n}: failed: ${tshow e}: ${prettyCallStack callStack}|]
@@ -602,12 +600,12 @@ withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. no
 
 -}
 
--- | Retries in STM until there is at least one fittest head in the history.
-waitForAnyHead :: (HasNodeDataSource nds, MonadSTM m) => nds -> m (WithProtocolHash VeryBlockLike)
-waitForAnyHead nds = do
-  hist <- readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
-  maybe retry' pure $ fittestBranchInHistory hist
-
+fittestHead
+  :: (HasNodeDataSource nds, MonadReader nds m, MonadSTM m)
+  => m (Maybe (WithProtocolHash VeryBlockLike))
+fittestHead = do
+  hist <- asks (^. nodeDataSource . nodeDataSource_history)
+  fittestBranchInHistory <$> readTVar' hist
 
 -- PROBABLY DELETE THESE OR AT LEAST HUGE COMMENT
 getProtocolConstantsX :: (HasNodeDataSource nds, MonadSTM m, MonadReader UTCTime m) => nds -> ProtocolHash -> m (Maybe ProtoInfo)
@@ -640,7 +638,7 @@ getLatestProtocol = do
 waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
 waitForNewHeadWithTimeout nds = do
   -- First wait at most 'defaultTimeLimit' to get the fittest head.
-  headBlock' <- timeout' defaultTimeLimit $ atomically $ waitForAnyHead nds
+  headBlock' <- timeout' defaultTimeLimit $ atomically $ maybe retry' pure =<< runReaderT fittestHead nds
   case headBlock' of
     Nothing -> pure () -- We've already waited for a while so return immediately.
     Just headBlock -> do
@@ -739,8 +737,7 @@ getPositionOfBlockFaster blkHash =
     nodeQueryDataSourceSafe (NodeQuery_Block blkHash)
 
 firstLevelInCycle
-  :: ( HasNodeDataSource s, MonadReader s m
-     , MonadNodeQuery (NodeQueryT m)
+  :: ( MonadNodeQuery (NodeQueryT m)
      , MonadMask m
      )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
@@ -781,13 +778,12 @@ firstLevelInCycle branch c = do
           case cycleOfFirstBlockOnProtocol < c of
             True -> pure $ levelOfFirstBlockOnProtocol + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - cycleOfFirstBlockOnProtocol)
             False -> do
-              nds <- asks (^. nodeDataSource)
+              nds <- asksNodeDataSource id
               hist <- nqAtomically $ readTVar' $ nds ^. nodeDataSource_history
               maybe (nqThrowError CacheError_NotEnoughHistory) (`firstLevelInCycle` c) $ levelAncestor hist 1 firstBlockHashOfBranchProtocol
 
 lastLevelInCycle
-  :: ( HasNodeDataSource s, MonadReader s m
-     , MonadNodeQuery (NodeQueryT m)
+  :: ( MonadNodeQuery (NodeQueryT m)
      , MonadMask m
      )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
@@ -1035,38 +1031,46 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = preamble $ case q of
+nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = runLoggingEnv logger $ (introLog *>) $ runExceptT $ case q of
   NodeQuery_ProtocolFirstBlock protoHash -> do
-    hist <- liftIO $ readTVarIO $ dsrc ^. nodeDataSource_history
-    let
-      ancestorOf blk lvls = levelAncestor hist
-        (case blk ^. level - lvls >= hist ^. cachedHistory_minLevel of
-          True -> lvls
-          False -> blk ^. level - hist ^. cachedHistory_minLevel)
-        (blk ^. hash)
+   hist <- liftIO $ readTVarIO $ dsrc ^. nodeDataSource_history
+   let
+     ancestorOf blk lvls = if blk ^. level - lvls < 0
+       then Nothing
+       else
+         levelAncestor hist (max (blk ^. level - lvls) (hist ^. cachedHistory_minLevel)) (blk ^. hash)
 
-      -- TODO: This is a LINEAR search backward. Improve somehow? (Binary search?)
-      go :: BlockHash -> "candidate" :! Maybe Block -> ExceptT CacheError IO (Maybe BlockHash)
-      go branch (Arg candidate') = do
-        let votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
-        blk <- self $ NodeQuery_Block branch
-        let lastBlockHashInPreviousVotingPeriod = ancestorOf blk (blk ^. votingPeriodPosition - 1)
-        case (blk ^. block_protocol == protoHash, candidate') of
-          -- Our branch isn't on the protocol we're looking for and we have no candidate block so keep searching backward
-          (False, Nothing) -> maybe (pure Nothing) (go ! #candidate Nothing) lastBlockHashInPreviousVotingPeriod
-          -- Our branch isn't on the protocol we're looking for, but our previous iteration was, so we have found the switch-over point!
-          (False, Just candidate) -> pure $ ancestorOf candidate (candidate ^. votingPeriodPosition)
-          -- Our branch is on the protocol we're looking for, so this block is our candidate but we need to keep looking until we find the switch-over point.
-          (True, _) -> maybe (pure Nothing) (go ! #candidate (Just blk)) lastBlockHashInPreviousVotingPeriod
+     -- WARNING: This is a LINEAR search backward.
+     go :: BlockHash -> "candidate" :! Maybe Block -> ExceptT CacheError (LoggingT IO) (Maybe BlockHash)
+     go branch (Arg candidate') = do
+       let votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
+       blk <- self $ NodeQuery_Block branch
+       let lastBlockHashInPreviousVotingPeriod = ancestorOf blk (blk ^. votingPeriodPosition + 1)
+       case (blk ^. block_protocol == protoHash, candidate') of
+         -- Our branch isn't on the protocol we're looking for and we have no candidate block so keep searching backward
+         (False, Nothing) -> do
+           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: No candidate, on branch ${toBase58Text branch}|]
+           maybe (pure Nothing) (go ! #candidate Nothing) lastBlockHashInPreviousVotingPeriod
+         -- Our branch isn't on the protocol we're looking for, but our previous iteration was, so we have found the switch-over point!
+         (False, Just candidate) -> do
+           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: Found switchover: Candidate is ${toBase58Text $ candidate ^. hash}, on branch ${toBase58Text branch}|]
+           pure $ ancestorOf candidate (candidate ^. votingPeriodPosition)
+         -- Our branch is on the protocol we're looking for, so this block is our candidate but we need to keep looking until we find the switch-over point.
+         (True, _) -> do
+           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: On desired protocol. Searching for switchover. On branch ${toBase58Text branch}|]
+           maybe (pure Nothing) (go ! #candidate (Just blk)) lastBlockHashInPreviousVotingPeriod
 
-    maybe (throwError CacheError_NotEnoughHistory) pure =<< go qBranch ! #candidate Nothing
+   maybe (throwError CacheError_NotEnoughHistory) pure =<< go qBranch ! #candidate Nothing
 
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
 
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_BakingRights1 branch targetLevel prio ->
-    ExceptT $ fmap join $ runExceptT $ fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $ self $ NodeQuery_BakingRightsChunk branch targetLevel prio
+    ExceptT $ fmap join $
+      runExceptT $
+        fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $
+          self $ NodeQuery_BakingRightsChunk branch targetLevel prio
   NodeQuery_BakingRightsChunk branch targetLevel prio ->
     fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio) chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -1088,14 +1092,14 @@ nodeQueryDataSourceImpl dsrc qBranch ctx logger self' q = preamble $ case q of
       Just pk -> pure pk
   where
     chainId = dsrc ^. nodeDataSource_chain
-    preamble f = runExceptT $ runLoggingEnv logger ($(logDebug) [i|nodeQueryDataSourceImpl: ${tshow q}|]) *> f
+    introLog = $(logDebug) [i|nodeQueryDataSourceImpl: ${tshow q}|]
 
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
-    nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
+    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError (LoggingT IO) c
+    nodeRPC' q' = runReaderT (nodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
-    self :: forall b. NodeQuery b -> ExceptT CacheError IO b
-    self = ExceptT . self'
+    self :: forall b. NodeQuery b -> ExceptT CacheError (LoggingT IO) b
+    self = ExceptT . lift . self'
 
     fillChunk :: BlockHash -> RawLevel -> Priority -> Seq BakingRights -> V.Vector BakingRights
     fillChunk branch targetLevel prio
