@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
