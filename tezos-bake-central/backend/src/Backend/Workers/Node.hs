@@ -29,7 +29,6 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.These
@@ -299,12 +298,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
           Right cp -> liftIO $ atomically $
             modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr $ Just $ _checkpoint_savePoint cp)
-        mBlk <- fmap (join . Map.lookup nodeAddr) $ liftIO $ readTVarIO (_nodeDataSource_nodes nds)
-        case mBlk of
-          Nothing -> threadDelay' reconnectDelay
-          Just blk -> do
-            protoInfo <- liftIO $ atomically $ waitForParams nds
-            threadDelayTillNextCycle protoInfo $ blk ^. level
+        waitTillNextCycle nds (Just nodeAddr)
 
       let cleanup = killMonitor *> killMonitor2 *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
@@ -680,7 +674,6 @@ protocolMonitorWorker
   -> Pool Postgresql
   -> IO (IO ())
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  protoInfo <- liftIO $ atomically $ waitForParams nds
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case
@@ -754,14 +747,23 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
-  threadDelayTillNextCycle protoInfo $ latestHead ^. level
+  waitTillNextCycle nds Nothing
 
-threadDelayTillNextCycle :: (MonadIO m) => ProtoInfo -> RawLevel -> m ()
-threadDelayTillNextCycle protoInfo currentLvl = do
+waitTillNextCycle :: (MonadIO m) => NodeDataSource -> Maybe URI -> m ()
+waitTillNextCycle nds mNodeAddr = do
   let
-    nextCycle = 1 + levelToCycle protoInfo currentLvl
-    nextCheckLvl = firstLevelInCycle protoInfo nextCycle
-    delay = fromInteger $ toInteger (nextCheckLvl - currentLvl) * toInteger oneBlockTime
-    oneBlockTime :: TezosWord64
-    oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
-  threadDelay' delay
+    defaultDelay = 5
+    currentHead = liftIO $ case mNodeAddr of
+      Nothing -> readTVarIO (_nodeDataSource_latestHead nds)
+      Just nodeAddr -> join . Map.lookup nodeAddr <$> readTVarIO (_nodeDataSource_nodes nds)
+  protoInfo <- liftIO $ atomically $ waitForParams nds
+  mBlk <- currentHead
+  case mBlk of
+    Nothing -> threadDelay' defaultDelay
+    Just blk -> loop
+      where
+        nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
+        nextCycleLvl = firstLevelInCycle protoInfo nextCycle
+        loop = threadDelay' defaultDelay >> currentHead >>= \case
+          Nothing -> pure ()
+          Just cBlk -> when (cBlk ^. level < nextCycleLvl) loop
