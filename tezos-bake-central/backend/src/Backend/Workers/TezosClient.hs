@@ -11,21 +11,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Workers.TezosClient where
 
+import Control.Concurrent.STM (atomically)
 import Control.Exception (catchJust)
 import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
+import Control.Monad.Trans.Maybe (MaybeT(..))
 import Data.Maybe (mapMaybe)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog
-import Database.Groundhog.Postgresql (Postgresql, in_)
+import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -33,6 +36,7 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id (..))
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
+import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
 import System.Timeout (timeout)
 import System.Which
@@ -46,6 +50,7 @@ import qualified System.Process as Process
 import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
+import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
@@ -53,14 +58,27 @@ import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterS
 import Common.Schema
 import ExtraPrelude
 
+startBaking :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m ()
+startBaking pkh = do
+  addBakerImpl pkh (Just "Kiln Baker")
+  bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
+  let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
+        [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
+        , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
+        ]
+  update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
+        , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
+  update [ProcessData_controlField =. ProcessControl_Run] $ AutoKeyField `in_` processes
+
 tezosClientWorker
   :: NominalDiffTime
   -> LoggingEnv
+  -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> Either NamedChain BinaryPaths
   -> IO (IO ())
-tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
+tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logDebug) "Tezos client worker"
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
@@ -100,21 +118,12 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
             Just (fee, pkh) -> do
               let sk = _ledgerAccount_secretKey la
               inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
-              registerKeyAsDelegate appConfig chain fee >>= \result -> inDb $ do
+              registerKeyAsDelegate logger db nds sk pkh appConfig chain fee >>= \result -> inDb $ do
                 update
                   [LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                 notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First result })
-                when (result == RegisterStep_Registered) $ do
-                  addBakerImpl pkh (Just "Kiln Baker")
-                  bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
-                  let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
-                        [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-                        , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-                        ]
-                  update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
-                        , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
-                  update [ProcessData_controlField =. ProcessControl_Run] $ AutoKeyField `in_` processes
+                when (result == RegisterStep_Registered) $ startBaking pkh
 
           -- run appropriate 'show ledger' commands, but only do one at a time
           -- to allow other commands to take precedence
@@ -165,6 +174,16 @@ tezosClientWorker delay logger appConfig db chain = runLoggingEnv logger $ do
                 setHighWaterMark appConfig chain sk hwm >>= \i -> inDb $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
+
+          -- check if the baker is already registered, start baking if already registered
+          inDb (selectSingle $ LedgerAccount_checkIfRegisteredField /=. (Nothing :: Maybe PublicKeyHash)) >>= \mla ->
+            for_ mla $ \la -> case _ledgerAccount_checkIfRegistered la of
+              Nothing -> pure () -- shouldn't happen
+              Just pkh -> do
+                isReg <- checkIfRegistered nds pkh
+                inDb $ do
+                  update [LedgerAccount_checkIfRegisteredField =. (Nothing :: Maybe PublicKeyHash)] CondEmpty
+                  notify NotifyTag_BakerRegistered (pkh, isReg)
 
           -- do any voting
           let selectProposal = [queryQ|
@@ -276,9 +295,7 @@ getConnectedLedger appConfig chain = do
         , ledger <- T.takeWhile (/= '/') ledger'
         , [_1, _2, _3, _4] <- T.splitOn "-" ledger -- sanity check formatting of ledger
         -> pure $ Just (LedgerIdentifier ledger, app, version)
-      xs -> do
-        $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
-        pure $ Nothing
+      xs -> getKungFuNameZeronet xs
     getLedgerZeronet = fmap (T.takeWhile (/= '`')) . T.stripPrefix "## Ledger `"
     getKungFuNameZeronet = \case
       ledgerName : foundApp : _blank : _ : _ : _
@@ -332,7 +349,7 @@ showLedger appConfig chain sk = do
         , Just pkht <- T.stripPrefix "Tezos address at this path/curve: " pkh'
         , Right pkh <- tryReadPublicKeyHashText pkht
         -> Just pkh
-      _ -> Nothing
+      xs -> getPublicKeyHashZeronet xs
 
 importSecretKey :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> m ImportSecretKeyStep
 importSecretKey appConfig chain sk = do
@@ -382,48 +399,75 @@ setupLedgerToBake appConfig chain = do
     | otherwise -> Left SetupLedgerToBakeStep_Failed
   pure $ either id (const SetupLedgerToBakeStep_Done) e
 
+checkIfRegistered :: MonadIO m => NodeDataSource -> PublicKeyHash -> m Bool
+checkIfRegistered nds pkh = do
+  mDelegateInfo <- runMaybeT $ do
+    headBlock <- MaybeT $ liftIO $ atomically $ dataSourceHead nds
+    MaybeT $ runMaybe $ nodeQueryDataSource $ NodeQuery_DelegateInfo (headBlock ^. hash) (headBlock ^. level) pkh
+  pure $ case mDelegateInfo of
+    Just delegateInfo | not (_cacheDelegateInfo_deactivated delegateInfo) -> True
+    _ -> False
+  where
+    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
+    runMaybe = fmap (either (const Nothing) Just) . flip runReaderT nds . runExceptT
+
 -- If node isn't synced, this command will block while it waits for the node to
 -- get up-to-date. We detect that case and just return an error.
--- Also, if we are already registered as a delegate, the tezos-client command
--- succeeds without re-registering.
-registerKeyAsDelegate :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> Tez -> m RegisterStep
-registerKeyAsDelegate appConfig chain fee
+registerKeyAsDelegate
+  :: (MonadIO m, MonadLogger m)
+  => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> Either NamedChain BinaryPaths -> Tez -> m RegisterStep
+registerKeyAsDelegate logger db nds sk pkh appConfig chain fee
   | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
-  | otherwise = do
-  let p = (Process.proc (clientPath chain) ["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
-        { Process.std_err = Process.CreatePipe
-        , Process.std_out = Process.CreatePipe
-        }
-  result <- liftIO $ Process.withCreateProcess p $ \_mstdin mstdout mstderr ph -> case liftA2 (,) mstdout mstderr of
-    Nothing -> pure RegisterStep_Failed
-    Just (stdout, stderr) -> do
-      line <- catchJust (guard . isEOFError) (T.hGetLine stdout) $ \() -> pure ""
-      case T.strip line of
-        "Waiting for the node to be bootstrapped before injection..." -> pure RegisterStep_NodeNotReady
-        _ -> Process.waitForProcess ph >>= \case
-          ExitFailure _ -> do
-            err <- T.hGetContents stderr
-            pure $ if
-              | T.isInfixOf "Ledger Application level error (sign): Unregistered status message" err
-              -> RegisterStep_FeeTooHigh fee
-              | T.isInfixOf "Ledger Application level error (sign): Conditions of use not satisfied" err
-              -> RegisterStep_Declined
-              | T.isInfixOf "Ledger Transport level error:" err
-              -> RegisterStep_Disconnected
-              | fatal : _ <- drop 1 $ dropWhile (/= "Fatal error:") $ T.lines err
-              , Just fee' <- T.stripPrefix "The proposed fee " (T.strip fatal)
-              , T.isPrefixOf " are lower than the fee that baker expect by default " (T.dropWhile (/= ' ') fee')
-              -> RegisterStep_FeeTooLow fee
-              | T.isInfixOf "Empty implicit contract " err
-              -> RegisterStep_NotEnoughFunds 0
-              -- Balance of contract tz1VeX1Wso2LRGW2rpgKHoyFkHUxJpvSxLWP too low (860) to spend 1000
-              | Just pkhBalance <- T.stripPrefix "Balance of contract " err
-              , Just bal <- readMaybe (T.unpack $ T.takeWhile (/= ')') $ T.drop 1 $ T.dropWhile (/= '(') pkhBalance)
-              -> RegisterStep_NotEnoughFunds $ Tez bal
-              | otherwise -> RegisterStep_Failed -- err
-          ExitSuccess -> pure RegisterStep_Registered -- Succeeds if already registered too
-  $(logWarn) $ T.pack $ show result
-  pure result
+  | otherwise = checkIfRegistered nds pkh >>= \case
+    True -> pure RegisterStep_AlreadyRegistered
+    False -> do
+      -- withCreateProcess will close these automatically
+      (readPipe, writePipe) <- liftIO Process.createPipe
+      let p = (Process.proc (clientPath chain) ["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
+            { Process.std_err = Process.UseHandle writePipe
+            , Process.std_out = Process.UseHandle writePipe
+            }
+      result <- liftIO $ Process.withCreateProcess p $ \_ _ _ ph -> runLoggingEnv logger $ do
+        let notifyStep rs = runDb (Identity db) $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First rs })
+            go mrs' = liftIO (hIsEOF readPipe) >>= \case
+              True -> liftIO (Process.waitForProcess ph) >>= \case
+                ExitFailure _ -> pure $ fromMaybe RegisterStep_Failed mrs'
+                ExitSuccess -> pure RegisterStep_Registered -- Succeeds if already registered too
+              False -> do
+                t <- liftIO $ catchJust (guard . isEOFError) (T.hGetLine readPipe) (\() -> pure "")
+                let mrs = parseRegisterStep fee t
+                $(logInfo) $ "registerKeyAsDelegate: " <> t <> " -> " <> T.pack (show mrs)
+                traverse_ notifyStep mrs
+                case mrs of
+                  Just RegisterStep_NodeNotReady -> pure RegisterStep_NodeNotReady
+                  _ -> go $ mrs' <|> mrs
+        go Nothing
+      $(logWarn) $ T.pack $ show result
+      pure result
+
+parseRegisterStep :: Tez -> Text -> Maybe RegisterStep
+parseRegisterStep fee (T.strip -> err)
+  | T.isInfixOf "Ledger Application level error (sign): Unregistered status message" err
+  = Just $ RegisterStep_FeeTooHigh fee
+  | T.isInfixOf "Ledger Application level error (sign): Conditions of use not satisfied" err
+  = Just RegisterStep_Declined
+  | T.isInfixOf "Ledger Transport level error:" err
+  = Just RegisterStep_Disconnected
+  | fatal : _ <- drop 1 $ dropWhile (/= "Fatal error:") $ T.lines err
+  , Just fee' <- T.stripPrefix "The proposed fee " (T.strip fatal)
+  , T.isPrefixOf " are lower than the fee that baker expect by default " (T.dropWhile (/= ' ') fee')
+  = Just $ RegisterStep_FeeTooLow fee
+  | T.isInfixOf "Empty implicit contract " err
+  = Just $ RegisterStep_NotEnoughFunds 0
+  -- Balance of contract tz1VeX1Wso2LRGW2rpgKHoyFkHUxJpvSxLWP too low (860) to spend 1000
+  | Just pkhBalance <- T.stripPrefix "Balance of contract " err
+  , Just bal <- readMaybe (T.unpack $ T.takeWhile (/= ')') $ T.drop 1 $ T.dropWhile (/= '(') pkhBalance)
+  = Just $ RegisterStep_NotEnoughFunds $ Tez bal
+  | err == "Waiting for the operation to be included..."
+  = Just RegisterStep_WaitingForInclusion
+  | err == "Waiting for the node to be bootstrapped before injection..."
+  = Just RegisterStep_NodeNotReady
+  | otherwise = Nothing
 
 setHighWaterMark :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> RawLevel -> m SetHWMStep
 setHighWaterMark appConfig chain sk bl = do

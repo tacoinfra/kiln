@@ -73,7 +73,6 @@ h6.ui.header {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  max-width: 100%;
   max-height: 100%;
   background-color: #FFF;
   box-shadow: 0 @15px @40px 0 rgba(0,0,0,0.2);
@@ -228,6 +227,7 @@ h6.ui.header {
   }
   .proposals {
     margin: 0 -@10px;
+    .no-proposals { font-size: @16px; }
     table {
       margin-top: @20px;
       width: 100%;
@@ -393,6 +393,13 @@ h6.ui.header {
   }
 }
 
+.no-proposals {
+  color: #898989;
+  text-align: center;
+  font-weight: bold;
+  margin-top: @20px;
+}
+
 i.ui.icon.icon-arrow-up.upgrade-icon {
   border-radius: 50%;
   font-size: @10px;
@@ -495,6 +502,8 @@ i.ui.icon.icon-arrow-up.upgrade-icon {
 body {
   height: 100%;
   width: 100%;
+  min-width: 70rem;
+  overflow-x: auto;
 }
 
 .app-frame {
@@ -880,6 +889,11 @@ body {
         color: @black;
         font-size: @12px;
 
+        * {
+          text-overflow: ellipsis;
+          overflow: hidden;
+        }
+
         > * {
           margin-top: @3px;
           margin-bottom: @3px;
@@ -1172,6 +1186,15 @@ img.credits-obsidian {
 
   > .ui.card.node-tile {
     width: unit(200 / @emSize, rem);
+    .generating-icons {
+      margin-top: @15px;
+      margin-bottom: @19px;
+      .icon-id-badge { color: #d8dce6; }
+    }
+    .content > .title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
 
   > .ui.card.baker-tile {
@@ -1389,6 +1412,10 @@ h4.dashboard-section-title {
 
     .add-internal {
       width: unit(279 / @emSize, rem);
+      img.app-logo {
+        margin-bottom: -@3px;
+        margin-right: @12px;
+      }
     }
 
     .add-external {
@@ -1555,7 +1582,7 @@ h4.dashboard-section-title {
 
 .modal-box.add-baker {
   width: unit(766 / @emSize, rem);
-  max-width: 95%;
+  max-width: none;
 
   h3 {
     font-size: unit(24 / @emSize, rem);

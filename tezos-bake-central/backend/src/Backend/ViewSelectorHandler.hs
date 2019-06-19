@@ -364,6 +364,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_prompting = prompting
     , _bakeView_votePrompting = votePrompting
     , _bakeView_rightNotificationSettings = rightNotificationSettings
+    , _bakeView_bakerRegistered = mempty
     }
 
 getErrorLogs

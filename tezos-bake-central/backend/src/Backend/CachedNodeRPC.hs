@@ -488,10 +488,10 @@ lookupBlock nds x = do
   let xPath = Map.lookup x $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> IO NodeDataSource
-blankNodeDataSource db chain protoInfo' mgr logger = do
+blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> RawLevel -> IO NodeDataSource
+blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
   nodes <- newTVarIO mempty
-  hist <- newTVarIO emptyCache
+  hist <- newTVarIO $ emptyCache minLevel
   cache <- newTVarIO mempty
   protoInfoVar <- newTVarIO protoInfo'
   latestHead <- newTVarIO Nothing
@@ -528,10 +528,12 @@ waitForNewHeadWithTimeout nds = do
 -- Returns most recently seen head.
 waitForNewHead :: NodeDataSource -> IO VeryBlockLike
 waitForNewHead nds = do
+  history <- readTVarIO (_nodeDataSource_history nds)
+  let minLevel =  _cachedHistory_minLevel history
   oldHead <- readTVarIO (_nodeDataSource_latestHead nds)
   atomically $ do
     newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
-    when (oldHead == Just newHead) retry
+    when (oldHead == Just newHead || newHead ^. level <= minLevel) retry
     pure newHead
 
 -- turn the result of an LCA.uncons on the block history into a VeryBlockLike

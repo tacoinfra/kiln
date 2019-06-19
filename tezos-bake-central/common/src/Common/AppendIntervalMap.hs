@@ -32,8 +32,8 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.These (These (That, These, This))
 import Data.Typeable (Typeable)
+import Data.Witherable (Filterable(..))
 import GHC.Generics (Generic, Generic1)
-import Reflex.FunctorMaybe (FunctorMaybe (fmapMaybe))
 
 type IsInterval i e = IntervalClass.Interval i e
 
@@ -71,8 +71,8 @@ instance (IsInterval k e, Ord k) => Align (AppendIntervalMap k) where
     where merge (This m') (That n') = These m' n'
           merge _ _ = error "Impossible: Align AppendIntervalMap merge"
 
-instance (IsInterval k e) => FunctorMaybe (AppendIntervalMap k) where
-  fmapMaybe f v = AppendIntervalMap $ IMap.mapMaybe f (unAppendIntervalMap v)
+instance (IsInterval k e) => Filterable (AppendIntervalMap k) where
+  mapMaybe f v = AppendIntervalMap $ IMap.mapMaybe f (unAppendIntervalMap v)
 
 instance (IsInterval k e, Ord k, ToJSON k, ToJSON v) => ToJSON (AppendIntervalMap k v) where
   toJSON = toJSON . IMap.toAscList . unAppendIntervalMap

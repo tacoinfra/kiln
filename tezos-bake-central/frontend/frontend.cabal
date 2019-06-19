@@ -33,6 +33,7 @@ library
     , common
     , containers
     , data-default
+    , dependent-map
     , dependent-sum
     , dependent-sum-template
     , exceptions

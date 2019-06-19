@@ -36,7 +36,8 @@ import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
 import Data.Time (UTCTime)
 import Data.Word (Word16)
-import Reflex (Additive, FunctorMaybe (..), Group (..))
+import Data.Witherable (Filterable (mapMaybe))
+import Reflex (Additive, Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
 import Rhyolite.Schema (Email, Id(..), IdData)
@@ -243,6 +244,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
   , _bakeViewSelector_votePrompting :: !(RangeSelector SecretKey (Deletable VoteState) a)
   , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
+  , _bakeViewSelector_bakerRegistered :: !(RangeSelector' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data BakeView a = BakeView
@@ -284,6 +286,7 @@ data BakeView a = BakeView
   , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
   , _bakeView_votePrompting :: !(RangeView SecretKey (Deletable VoteState) a)
   , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
+  , _bakeView_bakerRegistered :: !(RangeView' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 data MailServerView = MailServerView
@@ -395,40 +398,42 @@ cropBakeView vs v = BakeView
   , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
   , _bakeView_votePrompting = cropView (_bakeViewSelector_votePrompting vs) (_bakeView_votePrompting v)
   , _bakeView_rightNotificationSettings = cropView (_bakeViewSelector_rightNotificationSettings vs) (_bakeView_rightNotificationSettings v)
+  , _bakeView_bakerRegistered = cropView (_bakeViewSelector_bakerRegistered vs) (_bakeView_bakerRegistered v)
   }
 
-instance FunctorMaybe BakeViewSelector where
-  fmapMaybe f a = BakeViewSelector
-    { _bakeViewSelector_config = fmapMaybe f $ _bakeViewSelector_config a
-    , _bakeViewSelector_clientAddresses = fmapMaybe f $ _bakeViewSelector_clientAddresses a
-    , _bakeViewSelector_clients = fmapMaybe f $ _bakeViewSelector_clients a
-    , _bakeViewSelector_parameters = fmapMaybe f $ _bakeViewSelector_parameters a
-    , _bakeViewSelector_publicNodeConfig = fmapMaybe f $ _bakeViewSelector_publicNodeConfig a
-    , _bakeViewSelector_publicNodeHeads = fmapMaybe f $ _bakeViewSelector_publicNodeHeads a
-    , _bakeViewSelector_nodeDetails = fmapMaybe f $ _bakeViewSelector_nodeDetails a
-    , _bakeViewSelector_bakerAddresses = fmapMaybe f $ _bakeViewSelector_bakerAddresses a
-    , _bakeViewSelector_bakerDetails = fmapMaybe f $ _bakeViewSelector_bakerDetails a
-    , _bakeViewSelector_bakerStats = fmapMaybe f $ _bakeViewSelector_bakerStats a
-    , _bakeViewSelector_mailServer = fmapMaybe f $ _bakeViewSelector_mailServer a
-    , _bakeViewSelector_summary = fmapMaybe f $ _bakeViewSelector_summary a
-    , _bakeViewSelector_nodeAddresses = fmapMaybe f $ _bakeViewSelector_nodeAddresses a
-    , _bakeViewSelector_errors = (fmap.fmapMaybe) f $ _bakeViewSelector_errors a
-    , _bakeViewSelector_latestHead = fmapMaybe f $ _bakeViewSelector_latestHead a
-    , _bakeViewSelector_amendment = fmapMaybe f $ _bakeViewSelector_amendment a
-    , _bakeViewSelector_proposals = fmapMaybe f $ _bakeViewSelector_proposals a
-    , _bakeViewSelector_bakerVote = fmapMaybe f $ _bakeViewSelector_bakerVote a
-    , _bakeViewSelector_periodTestingVote = fmapMaybe f $ _bakeViewSelector_periodTestingVote a
-    , _bakeViewSelector_periodTesting = fmapMaybe f $ _bakeViewSelector_periodTesting a
-    , _bakeViewSelector_periodPromotionVote = fmapMaybe f $ _bakeViewSelector_periodPromotionVote a
-    , _bakeViewSelector_upstreamVersion = fmapMaybe f $ _bakeViewSelector_upstreamVersion a
-    , _bakeViewSelector_telegramConfig = fmapMaybe f (_bakeViewSelector_telegramConfig a)
-    , _bakeViewSelector_telegramRecipients = fmapMaybe f (_bakeViewSelector_telegramRecipients a)
-    , _bakeViewSelector_alertCount = fmapMaybe f (_bakeViewSelector_alertCount a)
-    , _bakeViewSelector_connectedLedger = fmapMaybe f (_bakeViewSelector_connectedLedger a)
-    , _bakeViewSelector_showLedger = fmapMaybe f (_bakeViewSelector_showLedger a)
-    , _bakeViewSelector_prompting = fmapMaybe f (_bakeViewSelector_prompting a)
-    , _bakeViewSelector_votePrompting = fmapMaybe f (_bakeViewSelector_votePrompting a)
-    , _bakeViewSelector_rightNotificationSettings = fmapMaybe f $ _bakeViewSelector_rightNotificationSettings a
+instance Filterable BakeViewSelector where
+  mapMaybe f a = BakeViewSelector
+    { _bakeViewSelector_config = mapMaybe f $ _bakeViewSelector_config a
+    , _bakeViewSelector_clientAddresses = mapMaybe f $ _bakeViewSelector_clientAddresses a
+    , _bakeViewSelector_clients = mapMaybe f $ _bakeViewSelector_clients a
+    , _bakeViewSelector_parameters = mapMaybe f $ _bakeViewSelector_parameters a
+    , _bakeViewSelector_publicNodeConfig = mapMaybe f $ _bakeViewSelector_publicNodeConfig a
+    , _bakeViewSelector_publicNodeHeads = mapMaybe f $ _bakeViewSelector_publicNodeHeads a
+    , _bakeViewSelector_nodeDetails = mapMaybe f $ _bakeViewSelector_nodeDetails a
+    , _bakeViewSelector_bakerAddresses = mapMaybe f $ _bakeViewSelector_bakerAddresses a
+    , _bakeViewSelector_bakerDetails = mapMaybe f $ _bakeViewSelector_bakerDetails a
+    , _bakeViewSelector_bakerStats = mapMaybe f $ _bakeViewSelector_bakerStats a
+    , _bakeViewSelector_mailServer = mapMaybe f $ _bakeViewSelector_mailServer a
+    , _bakeViewSelector_summary = mapMaybe f $ _bakeViewSelector_summary a
+    , _bakeViewSelector_nodeAddresses = mapMaybe f $ _bakeViewSelector_nodeAddresses a
+    , _bakeViewSelector_errors = (fmap.mapMaybe) f $ _bakeViewSelector_errors a
+    , _bakeViewSelector_latestHead = mapMaybe f $ _bakeViewSelector_latestHead a
+    , _bakeViewSelector_amendment = mapMaybe f $ _bakeViewSelector_amendment a
+    , _bakeViewSelector_proposals = mapMaybe f $ _bakeViewSelector_proposals a
+    , _bakeViewSelector_bakerVote = mapMaybe f $ _bakeViewSelector_bakerVote a
+    , _bakeViewSelector_periodTestingVote = mapMaybe f $ _bakeViewSelector_periodTestingVote a
+    , _bakeViewSelector_periodTesting = mapMaybe f $ _bakeViewSelector_periodTesting a
+    , _bakeViewSelector_periodPromotionVote = mapMaybe f $ _bakeViewSelector_periodPromotionVote a
+    , _bakeViewSelector_upstreamVersion = mapMaybe f $ _bakeViewSelector_upstreamVersion a
+    , _bakeViewSelector_telegramConfig = mapMaybe f (_bakeViewSelector_telegramConfig a)
+    , _bakeViewSelector_telegramRecipients = mapMaybe f (_bakeViewSelector_telegramRecipients a)
+    , _bakeViewSelector_alertCount = mapMaybe f (_bakeViewSelector_alertCount a)
+    , _bakeViewSelector_connectedLedger = mapMaybe f (_bakeViewSelector_connectedLedger a)
+    , _bakeViewSelector_showLedger = mapMaybe f (_bakeViewSelector_showLedger a)
+    , _bakeViewSelector_prompting = mapMaybe f (_bakeViewSelector_prompting a)
+    , _bakeViewSelector_votePrompting = mapMaybe f (_bakeViewSelector_votePrompting a)
+    , _bakeViewSelector_rightNotificationSettings = mapMaybe f $ _bakeViewSelector_rightNotificationSettings a
+    , _bakeViewSelector_bakerRegistered = mapMaybe f $ _bakeViewSelector_bakerRegistered a
     }
 
 instance Align BakeViewSelector where
@@ -463,6 +468,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_prompting = nil
     , _bakeViewSelector_votePrompting = nil
     , _bakeViewSelector_rightNotificationSettings = nil
+    , _bakeViewSelector_bakerRegistered = nil
     }
 
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
@@ -497,47 +503,49 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
     , _bakeViewSelector_votePrompting = f' _bakeViewSelector_votePrompting
     , _bakeViewSelector_rightNotificationSettings = f' _bakeViewSelector_rightNotificationSettings
+    , _bakeViewSelector_bakerRegistered = f' _bakeViewSelector_bakerRegistered
     }
     where
       f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
       f' p = alignWith f (p xs) (p ys)
 
-instance FunctorMaybe BakeView where
-  fmapMaybe f a = BakeView
-    { _bakeView_config = fmapMaybe f $ _bakeView_config a
-    , _bakeView_clientAddresses = fmapMaybe f $ _bakeView_clientAddresses a
-    , _bakeView_clients = fmapMaybe f $ _bakeView_clients a
-    , _bakeView_parameters = fmapMaybe f $ _bakeView_parameters a
-    , _bakeView_publicNodeConfig = fmapMaybe f $ _bakeView_publicNodeConfig a
-    , _bakeView_publicNodeHeads = fmapMaybe f $ _bakeView_publicNodeHeads a
-    , _bakeView_nodeDetails = fmapMaybe f $ _bakeView_nodeDetails a
-    , _bakeView_bakerAddresses = fmapMaybe f $ _bakeView_bakerAddresses a
-    , _bakeView_bakerDetails = fmapMaybe f $ _bakeView_bakerDetails a
-    , _bakeView_bakerStats = fmapMaybe f $ _bakeView_bakerStats a
-    , _bakeView_mailServer = fmapMaybe f $ _bakeView_mailServer a
-    , _bakeView_summary = fmapMaybe f $ _bakeView_summary a
-    , _bakeView_nodeAddresses = fmapMaybe f $ _bakeView_nodeAddresses a
-    , _bakeView_errors = (fmap.fmapMaybe) f $ _bakeView_errors a
-    , _bakeView_latestHead = fmapMaybe f $ _bakeView_latestHead a
-    , _bakeView_amendment = fmapMaybe f $ _bakeView_amendment a
-    , _bakeView_proposals = fmapMaybe f $ _bakeView_proposals a
-    , _bakeView_bakerVote = fmapMaybe f $ _bakeView_bakerVote a
-    , _bakeView_periodTestingVote = fmapMaybe f $ _bakeView_periodTestingVote a
-    , _bakeView_periodTesting = fmapMaybe f $ _bakeView_periodTesting a
-    , _bakeView_periodPromotionVote = fmapMaybe f $ _bakeView_periodPromotionVote a
-    , _bakeView_upstreamVersion = fmapMaybe f $ _bakeView_upstreamVersion a
-    , _bakeView_telegramConfig = fmapMaybe f $ _bakeView_telegramConfig a
-    , _bakeView_telegramRecipients = fmapMaybe f $ _bakeView_telegramRecipients a
-    , _bakeView_alertCount = fmapMaybe f $ _bakeView_alertCount a
-    , _bakeView_connectedLedger = fmapMaybe f $ _bakeView_connectedLedger a
-    , _bakeView_showLedger = fmapMaybe f $ _bakeView_showLedger a
-    , _bakeView_prompting = fmapMaybe f $ _bakeView_prompting a
-    , _bakeView_votePrompting = fmapMaybe f $ _bakeView_votePrompting a
-    , _bakeView_rightNotificationSettings = fmapMaybe f $ _bakeView_rightNotificationSettings a
+instance Filterable BakeView where
+  mapMaybe f a = BakeView
+    { _bakeView_config = mapMaybe f $ _bakeView_config a
+    , _bakeView_clientAddresses = mapMaybe f $ _bakeView_clientAddresses a
+    , _bakeView_clients = mapMaybe f $ _bakeView_clients a
+    , _bakeView_parameters = mapMaybe f $ _bakeView_parameters a
+    , _bakeView_publicNodeConfig = mapMaybe f $ _bakeView_publicNodeConfig a
+    , _bakeView_publicNodeHeads = mapMaybe f $ _bakeView_publicNodeHeads a
+    , _bakeView_nodeDetails = mapMaybe f $ _bakeView_nodeDetails a
+    , _bakeView_bakerAddresses = mapMaybe f $ _bakeView_bakerAddresses a
+    , _bakeView_bakerDetails = mapMaybe f $ _bakeView_bakerDetails a
+    , _bakeView_bakerStats = mapMaybe f $ _bakeView_bakerStats a
+    , _bakeView_mailServer = mapMaybe f $ _bakeView_mailServer a
+    , _bakeView_summary = mapMaybe f $ _bakeView_summary a
+    , _bakeView_nodeAddresses = mapMaybe f $ _bakeView_nodeAddresses a
+    , _bakeView_errors = (fmap.mapMaybe) f $ _bakeView_errors a
+    , _bakeView_latestHead = mapMaybe f $ _bakeView_latestHead a
+    , _bakeView_amendment = mapMaybe f $ _bakeView_amendment a
+    , _bakeView_proposals = mapMaybe f $ _bakeView_proposals a
+    , _bakeView_bakerVote = mapMaybe f $ _bakeView_bakerVote a
+    , _bakeView_periodTestingVote = mapMaybe f $ _bakeView_periodTestingVote a
+    , _bakeView_periodTesting = mapMaybe f $ _bakeView_periodTesting a
+    , _bakeView_periodPromotionVote = mapMaybe f $ _bakeView_periodPromotionVote a
+    , _bakeView_upstreamVersion = mapMaybe f $ _bakeView_upstreamVersion a
+    , _bakeView_telegramConfig = mapMaybe f $ _bakeView_telegramConfig a
+    , _bakeView_telegramRecipients = mapMaybe f $ _bakeView_telegramRecipients a
+    , _bakeView_alertCount = mapMaybe f $ _bakeView_alertCount a
+    , _bakeView_connectedLedger = mapMaybe f $ _bakeView_connectedLedger a
+    , _bakeView_showLedger = mapMaybe f $ _bakeView_showLedger a
+    , _bakeView_prompting = mapMaybe f $ _bakeView_prompting a
+    , _bakeView_votePrompting = mapMaybe f $ _bakeView_votePrompting a
+    , _bakeView_rightNotificationSettings = mapMaybe f $ _bakeView_rightNotificationSettings a
+    , _bakeView_bakerRegistered = mapMaybe f $ _bakeView_bakerRegistered a
     }
 
-fmapMaybeSnd :: FunctorMaybe f => (a -> Maybe b) -> f (e, a) -> f (e, b)
-fmapMaybeSnd f = fmapMaybe $ \(e, a) -> case f a of
+mapMaybeSnd :: Filterable f => (a -> Maybe b) -> f (e, a) -> f (e, b)
+mapMaybeSnd f = mapMaybe $ \(e, a) -> case f a of
   Nothing -> Nothing
   Just b -> Just (e, b)
 
@@ -576,6 +584,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
     , _bakeViewSelector_votePrompting = (<>) (_bakeViewSelector_votePrompting u) (_bakeViewSelector_votePrompting v)
     , _bakeViewSelector_rightNotificationSettings = (<>) (_bakeViewSelector_rightNotificationSettings u) (_bakeViewSelector_rightNotificationSettings v)
+    , _bakeViewSelector_bakerRegistered = (<>) (_bakeViewSelector_bakerRegistered u) (_bakeViewSelector_bakerRegistered v)
     }
 
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
@@ -610,6 +619,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_prompting = mempty
     , _bakeViewSelector_votePrompting = mempty
     , _bakeViewSelector_rightNotificationSettings = mempty
+    , _bakeViewSelector_bakerRegistered = mempty
     }
   mappend = (<>)
 
@@ -653,6 +663,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_prompting = mempty
     , _bakeView_votePrompting = mempty
     , _bakeView_rightNotificationSettings = mempty
+    , _bakeView_bakerRegistered = mempty
     }
   mappend u v = u <> v
 
@@ -690,6 +701,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v
     , _bakeView_votePrompting = _bakeView_votePrompting u <> _bakeView_votePrompting v
     , _bakeView_rightNotificationSettings = _bakeView_rightNotificationSettings u <> _bakeView_rightNotificationSettings v
+    , _bakeView_bakerRegistered = _bakeView_bakerRegistered u <> _bakeView_bakerRegistered v
     }
 
 instance (Monoid a, Semigroup a) => Query (BakeViewSelector a) where

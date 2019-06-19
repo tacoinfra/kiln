@@ -461,6 +461,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
   blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
     readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
   history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+  let minLevel = _cachedHistory_minLevel history
   -- The RPCs under /votes/ return the information for the *next block*, not the current block.
   -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
   -- (the last block of the period), but /votes/current_period_kind for that block will return
@@ -496,20 +497,28 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       let blk = latestHead ^.hash
       mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
       let chainId = _nodeDataSource_chain nds
-          votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
-      for_ mBallot $ \ballot -> runDb (Identity db) $ do
-        pps <- [queryQ|
-          UPDATE "BakerVote" SET included = ?blk
-          FROM "PeriodProposal" pp
-          WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod AND ballot = ?ballot AND pkh = ?pkh
-          RETURNING proposal
-        |]
-        for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
-          { _bakerVote_pkh = pkh
-          , _bakerVote_proposal = proposal
-          , _bakerVote_ballot = ballot
-          , _bakerVote_included = Just blk
-          }
+          -- The voting period of the last proposal period
+          amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - case currentPeriodKind of
+            VotingPeriodKind_TestingVote -> 1
+            VotingPeriodKind_PromotionVote -> 3
+            _ -> 0 -- impossible
+      case mBallot of
+        Nothing -> runDb (Identity db) $ do
+          deleteAll' @BakerVote Proxy
+          notify NotifyTag_BakerVote Nothing
+        Just ballot -> runDb (Identity db) $ do
+          pps <- [queryQ|
+            UPDATE "BakerVote" SET included = ?blk
+            FROM "PeriodProposal" pp
+            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
+            RETURNING proposal
+          |]
+          for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+            { _bakerVote_pkh = pkh
+            , _bakerVote_proposal = proposal
+            , _bakerVote_ballot = ballot
+            , _bakerVote_included = Just blk
+            }
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.
@@ -519,7 +528,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
       (periodStartBlock, periodEndBlockPred, periodEndBlock) <- throwing $ do
-        let startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+        let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
         startBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
           levelAncestor history startBlockLevel (latestBlock ^. hash)
         endBlock <- getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
@@ -530,8 +539,9 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         pure (startBlock, predBlock, endBlock)
       updateTo periodStartBlock periodEndBlockPred periodEndBlock p
     EQ -> do
+      let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
       startBlock <- throwing $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
-        levelAncestor history (latestBlock ^. level - currentVotingPosition) (latestBlock ^. hash)
+        levelAncestor history startBlockLevel (latestBlock ^. hash)
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlock $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
@@ -594,9 +604,10 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
               INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
               VALUES (?, ?, ?, ?)
               ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
-              RETURNING id, hash, "chainId", "votingPeriod", votes
+              RETURNING id, hash, "chainId", "votingPeriod", votes, (SELECT bp.pkh FROM "BakerProposal" bp WHERE bp.proposal = id), (SELECT bp.included FROM "BakerProposal" bp WHERE bp.proposal = id)
             |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
-            for_ inserted $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Nothing))
+            for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
+              notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
         VotingPeriodKind_Testing -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash) (predBlk ^. level)
           for_ mProposal $ \proposal -> do

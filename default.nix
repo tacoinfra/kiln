@@ -3,8 +3,9 @@
 , pkgs ? obelisk.reflex-platform.nixpkgs
 }:
 let
-  obApp = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = false; };
-  obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod; supportGargoyle = true; };
+  inherit (obelisk.reflex-platform) hackGet;
+  obApp = distMethod: import ./tezos-bake-central { inherit system distMethod tezosScopedKit; supportGargoyle = false; };
+  obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod tezosScopedKit; supportGargoyle = true; };
 
   distroMethods = {
     source = null;
@@ -14,6 +15,10 @@ let
 
   tezos-bake-platform = import dep/public-nodes/tezos-baking-platform {};
   tezos = tezos-bake-platform.tezos;
+  tezosScopedKit = import ./tezos-bake-central/scoped-tzkits.nix {
+    inherit pkgs;
+    tezos-baking-platform = import (hackGet ./dep/tezos-baking-platform) {};
+  };
 
   nodeConfigOptions = {
     zeronet = {
@@ -37,6 +42,7 @@ let
       rpcPort = 8732;
       tzKit = tezos.mainnet.kit;
       monitorPort = 8000;
+      histMode = "archive";
     };
   };
 
@@ -423,7 +429,8 @@ in (obApp distroMethods.source) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
+    nodeKit = tezosScopedKit;
     pkgName = "kiln";
-    version = "0.5.2";
+    version = "0.5.3";
   }).kiln-debian;
 }

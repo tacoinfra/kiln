@@ -102,6 +102,11 @@ onRpcError = either (throwError . tshow) pure
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
 
+resolveKnownChains :: Either NamedChain ChainId -> Either NamedChain ChainId
+resolveKnownChains = \case
+  Right chainId | chainId == mainnetChainId -> Left NamedChain_Mainnet
+  x -> x
+
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
@@ -120,7 +125,7 @@ backendImpl cfg serve = do
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
-  !(chain :: Either NamedChain ChainId) <- fmap (fromMaybe Config.defaultChain) $ liftA2 (<|>)
+  !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
@@ -301,7 +306,12 @@ backendImpl cfg serve = do
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger
+    let
+      minLevel :: RawLevel
+      minLevel = case maybeNamedChain of
+        Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
+        _ -> 2
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -345,7 +355,7 @@ backendImpl cfg serve = do
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
-        (requestHandler upgradeBranch emailFromAddress dataSrc publicDataSources)
+        (requestHandler appConfig upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
@@ -371,7 +381,7 @@ backendImpl cfg serve = do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
-        addFinalizer =<< tezosClientWorker 1.3 logger appConfig db v
+        addFinalizer =<< tezosClientWorker 1.3 logger dataSrc appConfig db v
 
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()

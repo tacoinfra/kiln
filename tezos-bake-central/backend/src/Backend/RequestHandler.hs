@@ -19,7 +19,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo)
+import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug)
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
@@ -39,17 +39,18 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
+import System.Directory (removeDirectoryRecursive)
 import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Backend.Workers.TezosClient (addBakerImpl)
-import Backend.Common
+import Backend.Workers.TezosClient (addBakerImpl, startBaking)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -57,12 +58,13 @@ import ExtraPrelude
 
 requestHandler
   :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
-  => Text
+  => AppConfig
+  -> Text
   -> Address
   -> NodeDataSource
   -> [DataSource]
   -> RequestHandler Bake m
-requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
+requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -91,6 +93,7 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldSetHWM = Nothing
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
+            , _ledgerAccount_checkIfRegistered = Nothing
             }
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -98,6 +101,9 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
         update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
         update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_CheckIfRegistered sk pkh -> inDb $ do
+        update [LedgerAccount_checkIfRegisteredField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_StartBaking pkh -> inDb $ startBaking pkh
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
@@ -167,56 +173,43 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify NotifyTag_NodeExternal . (nid,) . Just)
 
-      PublicRequest_UpdateInternalWorker workerType shouldRun -> case workerType of
+      PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
         WorkerType_Node
-          | shouldRun -> void $ updateNode True -- Only start node
+          | shouldRun -> updateNode -- Only start node
           | otherwise -> do -- On stopping node, stop the baker also (if running)
-          updateBaker False (Nothing :: Maybe (Id ProcessData))
-          void $ updateNode False
+              updateBakerDaemon
+              updateNode
         WorkerType_Baker
-          | not shouldRun -> updateBaker False (Nothing :: Maybe (Id ProcessData)) -- Only stop baker
+          | not shouldRun -> updateBakerDaemon -- Only stop baker
           | otherwise -> do -- On starting baker, start the node also (if stopped)
-          updateNode True >>= updateBaker True
+              updateNode
+              updateBakerDaemon
         where
-          updateBaker shouldRun' mPid = if shouldRun'
-            then mapM_ waitForNodeToStart mPid
-            else updateBakerDaemon shouldRun'
-            where
-              waitForNodeToStart pid =
-                inDb (project1 ProcessData_stateField
-                  (AutoKeyField ==. fromId pid)) >>= \case
-                Nothing -> return ()
-                Just ProcessState_Failed -> return ()
-                Just ProcessState_Running -> updateBakerDaemon shouldRun'
-                _ -> threadDelay' 1 *> waitForNodeToStart pid
-
-          updateBakerDaemon shouldRun' = inDb $
+          c = if shouldRun then ProcessControl_Run else ProcessControl_Stop
+          updateBakerDaemon = do
             project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
               >>= traverse_ (\bdid -> do
                 let bPid = _bakerDaemonInternalData_bakerProcessData bdid
                     ePid = _bakerDaemonInternalData_endorserProcessData bdid
-                    c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
                 update [ProcessData_controlField =. c]
                   (AutoKeyField `in_` map fromId [bPid, ePid]))
 
-          updateNode shouldRun' = inDb $
-            (getInternalNode >>=) $ traverse $ \(nid, nodeData) -> do
+          updateNode = do
+            (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
               let pid = _deletableRow_data nodeData
-                  c = if shouldRun' then ProcessControl_Run else ProcessControl_Stop
               update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
-              return pid
 
-      PublicRequest_RemoveNode node -> inDb $ case node of
-        Left addr -> do
+      PublicRequest_RemoveNode node -> case node of
+        Left addr -> inDb $ do
           nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
           for_ nids $ \nid -> do
             update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
             notify NotifyTag_NodeExternal (nid, Nothing)
             clearErrors nid
         Right () -> do
-          getInternalNode >>= \case
+          inDb $ getInternalNode >>= \case
             Nothing -> pure ()
             Just (nid, nodeData) -> do
               update
@@ -227,7 +220,12 @@ requestHandler upgradeBranch emailFromAddr nds publicNodeSources =
               update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
+          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ removeDataDir
         where
+          removeDataDir = do
+            let dataDir = nodeDataDir appConfig
+            $(logDebug) ("Removing Kiln node's data dir: " <> (tshow dataDir))
+            liftIO $ removeDirectoryRecursive dataDir
           clearErrors nid = do
             let
               deleteLogs :: forall cstr m' t.

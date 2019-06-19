@@ -150,22 +150,24 @@ withLoader f d = maybeDyn d >>= \m -> dyn_ $ ffor m $ \case
   Nothing -> divClass "ui active loader" blank
   Just a -> f a
 
--- TODO: do we display *all* proposals? what to display when there are no proposals?
 periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m))
   => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
-periodProposals proposals' = el "table" $ do
-  el "thead" $ do
-    el "tr" $ do
-      el "th" $ text "Proposal Hash"
-      el "th" $ text "Votes"
+periodProposals proposals' = do
   let proposals = sortBy (comparing $ Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
-  el "tbody" $ void $ simpleList proposals $ \proposal -> el "tr" $ do
-    el "td" $ do
-      let protocolHash = toBase58Text . _periodProposal_hash . fst <$> proposal
-      copyButton $ current protocolHash
-      dynText protocolHash
-    el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> proposal
+  el "table" $ do
+    el "thead" $ do
+      el "tr" $ do
+        el "th" $ text "Proposal Hash"
+        el "th" $ text "Votes"
+    el "tbody" $ void $ simpleList proposals $ \proposal -> el "tr" $ do
+      el "td" $ do
+        let protocolHash = toBase58Text . _periodProposal_hash . fst <$> proposal
+        copyButton $ current protocolHash
+        dynText protocolHash
+      el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> proposal
+  elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
+    text "No proposals have been submitted for this voting period yet."
 
 periodTest
   :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
@@ -176,19 +178,10 @@ periodTest test = el "dl" $ do
     let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> test
     copyButton $ current proposalHash
     dynText proposalHash
-  mChain <- maybeDyn $ _periodTesting_testChainId . snd <$> test
-  whenJustDyn mChain $ \chainId -> do
-    el "dt" $ text "Chain ID"
-    el "dd" $ dynText $ toBase58Text <$> chainId
   mBlockLevel <- maybeDyn $ _periodTesting_startingLevel . snd <$> test
   whenJustDyn mBlockLevel $ \lvl -> do
     el "dt" $ text "Starting Block Level"
     el "dd" $ dynText $ textWithCommas . fromIntegral . unRawLevel <$> lvl
-  el "dt" $ text "Chain Status"
-  el "dd" $ dynText $ ffor test $ \(_,t) -> case _periodTesting_status t of
-    TestChainStatus_Running -> "Running"
-    TestChainStatus_Forking -> "Forking"
-    TestChainStatus_NotRunning -> "Not yet started"
 
 periodVote
   :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
@@ -380,6 +373,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
                   Just False -> "Pending"
                 pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
           pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
+        elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
+          text "No proposals have been submitted for this voting period yet."
         pure (never, waitForWalletAppFlow . (castVoteFlow False Nothing) <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
