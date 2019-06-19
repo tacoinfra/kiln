@@ -52,6 +52,8 @@ class QueryHistory repr where -- blockscale
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
   rAnyConstants :: ChainId -> repr ProtoInfo
   rContract :: ContractId -> ChainId -> BlockHash -> repr Account
+  rContract = (. ChainTag_Hash) . rContract'
+  rContract' :: ContractId -> ChainTag -> BlockHash -> repr Account
 
   rBallots :: ChainId -> BlockHash -> repr Ballots
   rListings :: ChainId -> BlockHash -> repr (Seq VoterDelegate)
@@ -113,7 +115,7 @@ instance QueryHistory RpcQuery where
       blk2param blkHash = "&head=" <> toBase58Text blkHash
   rProtoConstants = blockAPI "/context/constants"
   rAnyConstants = chainAPI "/blocks/head/context/constants"
-  rContract contractId = blockAPI ("/context/contracts/" <> toContractIdText contractId)
+  rContract' contractId = blockAPI' ("/context/contracts/" <> toContractIdText contractId)
   rBallots = blockAPI "/votes/ballots/"
   rListings = blockAPI "/votes/listings/"
   rProposals = blockAPI "/votes/proposals/"
