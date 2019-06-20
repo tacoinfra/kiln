@@ -319,11 +319,19 @@ selectIds
   -> m [(Id v, v)]
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
-data CacheContext = CacheContext
-  { _cacheContext_context :: BlockHash
-  , _cacheContext_cached :: BlockHash
+data CacheBakingRights = CacheBakingRights
+  { _cacheBakingRights_context :: !BlockHash
+  , _cacheBakingRights_level :: !RawLevel
+  , _cacheBakingRights_result :: !(Json Aeson.Value)
   }
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Show, Typeable)
+
+data CacheEndorsingRights = CacheEndorsingRights
+  { _cacheEndorsingRights_context :: !BlockHash
+  , _cacheEndorsingRights_level :: !RawLevel
+  , _cacheEndorsingRights_result :: !(Json Aeson.Value)
+  }
+  deriving (Eq, Show, Typeable)
 
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
@@ -1100,17 +1108,22 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
       - name: RightNotificationSettingsId
         type: primary
         fields: [_rightNotificationSettings_rightKind]
-  - entity: CacheContext
+  - entity: CacheBakingRights
     autoKey: null
-    keys:
-      - name: CacheContext_context
-        default: true
     constructors:
-      - name: CacheContext
+      - name: CacheBakingRights
         uniques:
-          - name: CacheContext_context
+          - name: CacheBakingRights_context
             type: primary
-            fields: [_cacheContext_context]
+            fields: [_cacheBakingRights_context, _cacheBakingRights_level]
+  - entity: CacheEndorsingRights
+    autoKey: null
+    constructors:
+      - name: CacheEndorsingRights
+        uniques:
+          - name: CacheEndorsingRights_context
+            type: primary
+            fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
