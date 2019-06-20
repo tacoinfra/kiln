@@ -964,7 +964,7 @@ validNodes q = case q of
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => BlockHash -> [(URI, VeryBlockLike)] -> m (Maybe URI)
-pickNode branch = fmap (headMay . catMaybes . toList) . traverse (\(nodeUri, nodeHead) -> bool (Just nodeUri) Nothing <$> containsBranch nodeHead)
+pickNode branch = fmap (headMay . catMaybes . toList) . traverse (\(nodeUri, nodeHead) -> bool Nothing (Just nodeUri) <$> containsBranch nodeHead)
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
