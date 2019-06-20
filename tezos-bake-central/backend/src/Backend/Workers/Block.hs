@@ -17,7 +17,7 @@ module Backend.Workers.Block where
 
 import Control.Concurrent.STM (atomically, readTVarIO)
 import Control.Monad.Except (runExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logInfoSH)
 import Control.Monad.Logger (logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Data.Maybe (fromMaybe)
@@ -90,9 +90,13 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
       couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock) (fromIntegral $ _blockTodo_level queuedBlock)
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
-          $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+          $(logErrorSH) ("blockWorker"::Text,"Error (404) in retrieving block from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left CacheError_NoSuitableNode ->
-          $(logWarnSH) ("blockWorker"::Text,"block cannot be retrieved from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+          $(logWarnSH) ("blockWorker"::Text,"No suitable node to obtain block:"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+        Left CacheError_NotEnoughHistory ->
+          -- Should we remove the block from the queue?
+          -- We would anyways stop queries this block after moving ahead a few cycle (see rightsContextLevel check above)
+          $(logInfoSH) ("blockWorker"::Text,"Block is not available from full nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left e -> nqThrowError e
         Right block -> do
           let blockHash = _block_hash block
