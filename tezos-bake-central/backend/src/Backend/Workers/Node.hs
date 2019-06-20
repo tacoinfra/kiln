@@ -25,6 +25,7 @@ import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl')
 import Data.Functor.Apply
+import Data.IORef
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -269,18 +270,43 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
+      checkpointUpdateLvlRef <- liftIO $ newIORef Nothing
       let reconnectDelay = 5
           nodeQuery :: RpcQuery a -> IO (Either RpcError a)
           nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
+          updateCheckpointImpl blk = do
+            $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+            liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+              Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
+              Right cp -> liftIO $ atomically $
+                modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr $ Just $ _checkpoint_savePoint cp)
+            mParams <- liftIO $ atomically $ readTVar $ _nodeDataSource_parameters nds
+            -- If we dont have params, then dont update the checkpointUpdateLvlRef
+            -- and do the updateCheckpoint again for the next block
+            for mParams $ \protoInfo ->
+              let
+                nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
+                nextCycleLvl = firstLevelInCycle protoInfo nextCycle
+              in pure $ nextCycleLvl
+          updateCheckpoint blk = do
+            mLvl <- liftIO $ readIORef checkpointUpdateLvlRef
+            newVal <- case mLvl of
+              Nothing -> updateCheckpointImpl blk
+              Just lvl -> if (blk ^. level >= lvl)
+                then updateCheckpointImpl blk
+                else pure mLvl
+            liftIO $ writeIORef checkpointUpdateLvlRef newVal
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
-          runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
-            clearInaccessibleNodeError nodeId
-            clearNodeWrongChainError nodeId
+          runLoggingEnv (_nodeDataSource_logger nds) $ do
+            inDb $ do
+              clearInaccessibleNodeError nodeId
+              clearNodeWrongChainError nodeId
+            updateCheckpoint block
 
           nodeMonitor nds appConfig nodeAddr nodeId block
 
@@ -293,14 +319,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
                 reportInaccessibleNodeError nodeId
             | otherwise -> reportNodeWrongChainError nodeId chainId actualChainId
 
-      killMonitor2 <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-        liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-          Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
-          Right cp -> liftIO $ atomically $
-            modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr $ Just $ _checkpoint_savePoint cp)
-        waitTillNextCycle nds (Just nodeAddr)
-
-      let cleanup = killMonitor *> killMonitor2 *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
+      let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
       liftIO $ addFinalizer cleanup
       $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
