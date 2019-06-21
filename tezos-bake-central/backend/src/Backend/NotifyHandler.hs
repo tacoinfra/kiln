@@ -58,7 +58,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_BakerRightsProgress :=> Identity (_x, y, _z) -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
-    NotifyTag_KnownProtocol :=> Identity eid -> handleParameters eid
+    NotifyTag_ProtocolIndex :=> Identity eid -> handleParameters eid
     NotifyTag_MailServerConfig :=> Identity (_eid, cfg) -> handleMailServer cfg
     NotifyTag_NodeExternal :=> Identity (eid, ent) -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
     NotifyTag_NodeInternal :=> Identity (eid, ent) -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
@@ -132,9 +132,11 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     paramsVS = _bakeViewSelector_parameters aggVS
 
     handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
-    handleParameters (Id (chainId, protoHash)) = whenM (viewSelects protoHash paramsVS) $ do
+    handleParameters (Id (chainId, protoHash, firstBlockHash)) = whenM (viewSelects protoHash paramsVS) $ do
       newProto :: Maybe ProtocolIndex <- selectSingle $
-        ProtocolIndex_hashField ==. protoHash &&. ProtocolIndex_chainIdField ==. chainId
+        ProtocolIndex_hashField ==. protoHash &&.
+        ProtocolIndex_chainIdField ==. chainId &&.
+        ProtocolIndex_firstBlockHashField ==. firstBlockHash
       pure mempty
         { _bakeView_parameters = toRangeView1 paramsVS protoHash newProto
         }

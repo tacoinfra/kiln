@@ -120,7 +120,7 @@ data NotifyTag a where
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
   NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
-  NotifyTag_KnownProtocol :: NotifyTag (Id ProtocolIndex)
+  NotifyTag_ProtocolIndex :: NotifyTag (Id ProtocolIndex)
   NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
   NotifyTag_MailServerConfig :: NotifyTag (Id MailServerConfig, MailServerConfig)
   NotifyTag_NodeExternal :: NotifyTag (Id Node, Maybe NodeExternalData)
@@ -194,6 +194,7 @@ instance HasDefaultNotify (DSum NodeLogTag Id) where
 instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
+instance HasDefaultNotify (Id ProtocolIndex)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
@@ -206,6 +207,9 @@ instance HasDefaultNotify (Id ErrorLogBakerMissed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
+
+instance HasNotification NotifyTag ProtocolIndex where
+  notification _ = NotifyTag_ProtocolIndex
 
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
@@ -628,10 +632,6 @@ instance Field1 (a :. b) (a' :. b) a a' where
 instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
---        - name: LedgerAccount_secretKey
---          type: primary
---          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
-
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - embedded: ProtoInfo
   - entity: ProtocolIndex
@@ -644,7 +644,10 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: ProtocolIndexKey
             type: primary
-            fields: [_protocolIndex_chainId, _protocolIndex_hash]
+            fields:
+              - _protocolIndex_chainId
+              - _protocolIndex_hash
+              - _protocolIndex_firstBlockHash
 
   - primitive: VotingPeriodKind
   - embedded: Ballots
@@ -1053,8 +1056,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   ]
 
 instance DefaultKeyId ProtocolIndex where
-  toIdData _ (ProtocolIndexKeyKey chainId protoHash) = (chainId, protoHash)
-  fromIdData _ = uncurry ProtocolIndexKeyKey
+  toIdData _ (ProtocolIndexKeyKey chainId protoHash firstBlockHash) = (chainId, protoHash, firstBlockHash)
+  fromIdData _ (chainId, protoHash, firstBlockHash) = ProtocolIndexKeyKey chainId protoHash firstBlockHash
 
 instance DefaultKeyId Accusation where
   toIdData _ (Accusation_hashKey oh bh) = (oh, bh)
@@ -1302,7 +1305,7 @@ instance ArgDict NotifyTag where
         BakerLogTag_BakerDeactivationRisk -> Dict
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
-    NotifyTag_KnownProtocol -> Dict
+    NotifyTag_ProtocolIndex -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict
     NotifyTag_NodeExternal -> Dict

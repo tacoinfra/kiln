@@ -4,12 +4,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE QuasiQuotes #-}
 
 module Backend.IndexQueries where
 
@@ -28,6 +29,8 @@ import Database.Groundhog.Postgresql (PersistBackend, insert, select, (&&.), (==
 import Named
 import Tezos.History
 import Tezos.Types
+
+import Rhyolite.Schema (Id (..))
 
 import Backend.CachedNodeRPC
   ( CachedHistory'
@@ -109,13 +112,17 @@ getProtocolIndex branch protoHash = do
                 { _protocolIndex_chainId = chainId
                 , _protocolIndex_hash = firstBlock ^. protocolHash
                 , _protocolIndex_constants = constants
-                , _protocolIndex_firstBlock = mkVeryBlockLike firstBlock
-                , _protocolIndex_firstCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
+                , _protocolIndex_firstBlockHash = firstBlock ^. hash
+                , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
+                , _protocolIndex_firstBlockLevel = firstBlock ^. level
+                , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
+                , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
+                , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
                 }
 
           for_ protoIndexes $ \protoIndex -> do
             insert protoIndex
-            -- NOTIFY
+            notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
 
           maybe (nqThrowError CacheError_NotEnoughHistory) pure $
             find ((protoHash ==) . view protocolHash) protoIndexes
@@ -199,41 +206,6 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
             | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway
             | otherwise -> pure Nothing
 
-
--- getFirstBlockOfProtocol
---   :: forall m
---    . (MonadNodeQuery (NodeQueryT m), MonadMask m)
---   => BlockHash -> ProtocolHash -> CachedHistory' -> NodeQueryT m (Maybe (BlockHash, Maybe ProtocolHash))
--- getFirstBlockOfProtocol qBranch protoHash hist = do
---   let
---     levelsBefore blk lvls = if blk ^. level - lvls < 0
---       then Nothing
---       else
---         levelAncestor hist (max (blk ^. level - lvls) (hist ^. cachedHistory_minLevel)) (blk ^. hash)
-
---     -- WARNING: This is a LINEAR search backward.
---     go :: BlockHash -> "candidate" :! Maybe Block -> NodeQueryT m (Maybe (BlockHash, Maybe ProtocolHash))
---     go branch (Arg candidate') = do
---       let votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
---       blk <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
---       let lastBlockHashInPreviousVotingPeriod = levelsBefore blk (blk ^. votingPeriodPosition + 1)
---       case (blk ^. block_protocol == protoHash, candidate') of
---         -- Our branch isn't on the protocol we're looking for and we have no candidate block so keep searching backward.
---         (False, Nothing) -> do
---           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: No candidate, on branch ${toBase58Text branch}|]
---           maybe (pure Nothing) (go ! #candidate Nothing) lastBlockHashInPreviousVotingPeriod
---         -- Our branch isn't on the protocol we're looking for, but our previous iteration was, so we have found the switch-over point!
---         (False, Just candidate) -> do
---           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: Found switchover: Candidate is ${toBase58Text $ candidate ^. hash}, on branch ${toBase58Text branch}|]
---           let priorProtocol = if candidate ^. level - candidate ^. votingPeriodPosition <= 0 then Nothing else Just und
---           pure $ (,) <$> levelsBefore candidate (candidate ^. votingPeriodPosition)
---         -- Our branch is on the protocol we're looking for, so this block is our candidate but we need to keep looking until we find the switch-over point.
---         (True, _) -> do
---           $(logDebug) [i|NodeQuery_ProtocolFirstBlock: On desired protocol. Searching for switchover. On branch ${toBase58Text branch}|]
---           maybe (pure Nothing) (go ! #candidate (Just blk)) lastBlockHashInPreviousVotingPeriod
-
---   go qBranch ! #candidate Nothing
-
 levelToCycle
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
   => RawLevel -> NodeQueryT m Cycle
@@ -295,10 +267,10 @@ firstLevelInCycle branch c = do
           -- See if going all the way back to the beginning of this protocol is enough.
           -- If not, we'll have to recurse starting with the block that preceeds the
           -- first block of this protocol.
-          case protocolIndex ^. protocolIndex_firstCycle < c of
+          case protocolIndex ^. protocolIndex_firstBlockCycle < c of
             True ->
               -- We can use the protocol constants of this block to calculate.
-              pure $ protocolIndex ^. level + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - protocolIndex ^. protocolIndex_firstCycle)
+              pure $ protocolIndex ^. level + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - protocolIndex ^. protocolIndex_firstBlockCycle)
             False -> do
               -- We can't use the protocol constants of this block so recurse backward starting
               -- with the last block in the previous protocol.
