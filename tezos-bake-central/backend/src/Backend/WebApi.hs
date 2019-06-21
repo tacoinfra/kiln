@@ -20,6 +20,7 @@ import Data.Sequence (Seq)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Snap.Core (MonadSnap, route)
 import qualified Snap.Core as Snap
 
@@ -143,24 +144,36 @@ snapBlock = do
     asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block dummyLevel
 
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
-snapBakingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredQueryParam "branch"
-  levelBS <- requiredQueryParam "level"
-
-  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
-
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BakingRights branch blockLevel
+snapBakingRights = snapRights NodeQueryIx_BakingRights
 
 snapEndorsingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq EndorsingRights))
-snapEndorsingRights = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredQueryParam "branch"
-  levelBS <- requiredQueryParam "level"
+snapEndorsingRights = snapRights NodeQueryIx_EndorsingRights
 
-  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
+snapRights :: forall a r m .
+  ( MonadSnap m
+  , MonadReader r m
+  , HasNodeDataSource r
+  , Aeson.FromJSON a, Aeson.ToJSON a
+  )
+  => (BlockHash -> RawLevel -> NodeQueryIx a)
+  -> m (Either Text a)
+snapRights f = withCacheIO (Left "nocache") $ \_proto -> do
+  mBranch <- runExceptT $ do
+    branchBS <- requiredQueryParam "branch"
+    levelBS <- requiredQueryParam "level"
 
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_EndorsingRights branch blockLevel
+    branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
+    blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
+    pure (branch, blockLevel)
+
+  dsrc <- asks (^. nodeDataSource)
+  let
+    runNodeQueryIx x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
+  (fmap join) $ for mBranch $ \(branch, blockLevel) -> do
+    (res :: Either CacheError a) <- runNodeQueryIx $ nodeQueryIx $ f branch blockLevel
+    case res of
+      Left e -> pure $ Left $ tshow e
+      Right v -> pure $ Right v
 
 snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
 snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
