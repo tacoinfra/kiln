@@ -55,6 +55,7 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..))
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, getPositionOfBlockFaster, lastLevelInCycle)
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)

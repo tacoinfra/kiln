@@ -37,6 +37,7 @@ module ExtraPrelude
   , catMaybes
   , coerce
   , def
+  , find
   , first
   , fold
   , foldM
@@ -105,7 +106,7 @@ import Data.Bool (bool)
 import Data.Coerce (Coercible, coerce)
 import Data.Default (def)
 import Data.Either (isLeft, isRight)
-import Data.Foldable (fold, for_, toList, traverse_)
+import Data.Foldable (find, fold, for_, toList, traverse_)
 import Data.Function (on)
 import Data.Functor (void, ($>))
 import Data.Functor.Compose (Compose (..))

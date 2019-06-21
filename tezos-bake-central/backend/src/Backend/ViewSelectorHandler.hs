@@ -78,6 +78,7 @@ import Tezos.Types
 
 import Backend.BalanceTracking
 import Backend.CachedNodeRPC
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
 import Backend.Schema
 import Common.Alerts(AlertsFilter(..))
 import Common.App
@@ -124,8 +125,10 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     let selectedProtocols :: [ProtocolHash] =
           map (\(ClosedInterval l r) -> if l == r then r else error "Protocols don't actually support range")
           <$> AppendIMap.keys $ unRangeSelector paramsVS
-    knownProtos :: [KnownProtocol] <- select (KnownProtocol_hashField `in_` selectedProtocols)
-    pure $ toRangeView paramsVS [(_knownProtocol_hash x, x) | x <- knownProtos]
+    protocols :: [ProtocolIndex] <- select
+      ( ProtocolIndex_hashField `in_` selectedProtocols &&.
+        ProtocolIndex_chainIdField ==. _nodeDataSource_chain nds)
+    pure $ toRangeView paramsVS [(_protocolIndex_hash x, x) | x <- protocols]
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do

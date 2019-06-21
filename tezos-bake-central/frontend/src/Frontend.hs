@@ -379,7 +379,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         mKnownProto <- maybeDyn knownProto
         mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
         whenJustDyn ((liftA2 . liftA2) (,) mKnownProto mAmendment) $ \(proto, amendment) -> do
-          let protoInfo = view knownProtocol_constants <$> proto
+          let protoInfo = view protocolIndex_constants <$> proto
           let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
           tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments proto) $ divClass "content" $ do
             kind <- holdUniqDyn $ _amendment_period <$> amendment
@@ -1766,7 +1766,7 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view knownProtocol_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
@@ -1885,7 +1885,7 @@ bakerTab pkh = do
         elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
           text "Current Balance: "
           text (tez tz)
-        dyn_ $ ffor knownProto $ traverse $ \(view knownProtocol_constants -> protoInfo) -> do
+        dyn_ $ ffor knownProto $ traverse $ \(view protocolIndex_constants -> protoInfo) -> do
           let bSD = _protoInfo_blockSecurityDeposit protoInfo
               eSD = _protoInfo_endorsementSecurityDeposit protoInfo
               failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
@@ -1965,7 +1965,7 @@ clientTab cid addr = do
             el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
             el "td" $ text $ tshow $ blockLevel b
             el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
-            el "td" $ dyn_ $ ffor knownProto $ traverse $ \(view knownProtocol_constants -> protoInfo) ->
+            el "td" $ dyn_ $ ffor knownProto $ traverse $ \(view protocolIndex_constants -> protoInfo) ->
               text $ tez $ blockRewards b protoInfo
 
 waitingForResponse :: DomBuilder t m => m ()

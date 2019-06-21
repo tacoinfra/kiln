@@ -14,7 +14,7 @@ import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..), select)
+import Database.Groundhog.Postgresql (PersistBackend, get, project, (&&.), (==.), Cond(..), select)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
@@ -131,9 +131,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     paramsVS = _bakeViewSelector_parameters aggVS
 
-    handleParameters :: PersistBackend m' => Id KnownProtocol -> m' (BakeView a)
-    handleParameters (Id protoHash) = whenM (viewSelects protoHash paramsVS) $ do
-      newProto :: Maybe KnownProtocol <- selectSingle (KnownProtocol_hashField ==. protoHash)
+    handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
+    handleParameters (Id (chainId, protoHash)) = whenM (viewSelects protoHash paramsVS) $ do
+      newProto :: Maybe ProtocolIndex <- selectSingle $
+        ProtocolIndex_hashField ==. protoHash &&. ProtocolIndex_chainIdField ==. chainId
       pure mempty
         { _bakeView_parameters = toRangeView1 paramsVS protoHash newProto
         }

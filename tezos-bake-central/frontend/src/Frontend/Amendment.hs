@@ -64,7 +64,7 @@ amendmentPopup
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
   -- ^ All periods we know about (past + current)
-  -> Dynamic t KnownProtocol
+  -> Dynamic t ProtocolIndex
   -- ^ Protocol information
   -> m ()
 amendmentPopup amendment amendments knownProto = divClass "amendment-popup" $ do
@@ -122,7 +122,7 @@ amendmentPopup amendment amendments knownProto = divClass "amendment-popup" $ do
   pure ()
   where
     periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
-    protoInfo = view knownProtocol_constants <$> knownProto
+    protoInfo = view protocolIndex_constants <$> knownProto
 
 -- | Display a natural number with comma separation
 textWithCommas :: Int -> Text

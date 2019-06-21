@@ -37,6 +37,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
+import Backend.IndexQueries (getLatestBlockWithProtocol)
 import Common.Schema hiding (blockLevel)
 import ExtraPrelude
 
@@ -51,7 +52,7 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     queuedBlockOrNot :: Either CacheError [BlockTodo] <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
-      WithProtocolHash (protocolConstants, headBlock) _protoHash <- getLatestProtocol
+      (headBlock, protocolConstants) <- ((^. _1) &&& (^. _2 . protocolIndex_constants)) <$> getLatestBlockWithProtocol
       let cutoffLevel = rightsContextLevel protocolConstants (headBlock ^. level)
       [queryQ|
         update "BlockTodo"

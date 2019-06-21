@@ -355,7 +355,7 @@ backendImpl cfg serve = do
       --addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
-      addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
+      addFinalizer =<< blockWorker 1000000 {- 0.3 -}dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.

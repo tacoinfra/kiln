@@ -47,7 +47,7 @@ watchFrontendConfig =
     { _bakeViewSelector_config = viewJust 1
     }
 
-watchProtocolConstants :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe KnownProtocol))
+watchProtocolConstants :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe ProtocolIndex))
 watchProtocolConstants protocol = do
   mmap <- (fmap . fmap) (getRangeView . _bakeView_parameters) $
     watchViewSelector $
@@ -58,11 +58,11 @@ watchProtocolConstants protocol = do
 
 watchHeadWithProtocol
   :: forall t m. MonadRhyoliteFrontendWidget Bake t m
-  => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe KnownProtocol))
+  => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe ProtocolIndex))
 watchHeadWithProtocol = do
   latestHead <- watchLatestHead
   protoHash' <- maybeDyn $ (fmap.fmap) (^. protocolHash) latestHead
-  protoConstantsEvt :: Event t (Dynamic t (Maybe KnownProtocol)) <- dyn $ ffor protoHash' $ \case
+  protoConstantsEvt :: Event t (Dynamic t (Maybe ProtocolIndex)) <- dyn $ ffor protoHash' $ \case
     Nothing -> pure $ pure Nothing
     Just protoHash -> do
       protoHashUniq <- holdUniqDyn protoHash

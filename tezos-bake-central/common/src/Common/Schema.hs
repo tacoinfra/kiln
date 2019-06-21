@@ -102,6 +102,7 @@ data CacheError
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException
   | CacheError_UnrevealedPublicKey !ContractId
+  | CacheError_UnknownProtocol !ProtocolHash
   deriving (Show, Generic, Typeable)
 instance Exception CacheError
 makePrisms ''CacheError
@@ -140,13 +141,6 @@ mkErr err = Error
   { _error_time = _event_time err
   , _error_text = _errorEvent_message $ _event_detail err
   }
-
--- TODO: move to ~-lib
-knownProtocols :: [ProtocolHash]
-knownProtocols =
-  [ "PrihK96nBAFSxVL1GLJTVhu9YnzkMFiBeuJRPA8NwuZVZCE1L6i" -- GENESIS
-  , "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -- MAINNET
-  ]
 
 data BlockBaker = BlockBaker
   { _blockBaker_publicKeyHash :: !PublicKeyHash
@@ -392,14 +386,15 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
-data KnownProtocol = KnownProtocol
-  { _knownProtocol_hash :: !ProtocolHash
-  , _knownProtocol_constants :: !ProtoInfo
-  , _knownProtocol_firstBlock :: !VeryBlockLike
-  , _knownProtocol_firstCycle :: !Cycle
+data ProtocolIndex = ProtocolIndex
+  { _protocolIndex_chainId :: !ChainId
+  , _protocolIndex_hash :: !ProtocolHash
+  , _protocolIndex_constants :: !ProtoInfo
+  , _protocolIndex_firstBlock :: !VeryBlockLike
+  , _protocolIndex_firstCycle :: !Cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId KnownProtocol where
-  type IdData KnownProtocol = ProtocolHash
+instance HasId ProtocolIndex where
+  type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
 data PublicNodeConfig = PublicNodeConfig
   { _publicNodeConfig_source :: !PublicNode
@@ -994,7 +989,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''Event
-  , ''KnownProtocol
+  , ''ProtocolIndex
   , ''MailServerConfig
   , ''Node
   , ''NodeDetails
@@ -1060,7 +1055,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
   , 'Event
-  , 'KnownProtocol
   , 'MailServerConfig
   , 'Node
   , 'NodeDetails
@@ -1074,6 +1068,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'PeriodTestingVote
   , 'PeriodVote
   , 'ProcessData
+  , 'ProtocolIndex
   , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report
@@ -1142,15 +1137,15 @@ instance BlockLike PublicNodeHead where
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
 
-instance BlockLike KnownProtocol where
-  hash = knownProtocol_firstBlock . hash
-  predecessor = knownProtocol_firstBlock . predecessor
-  fitness = knownProtocol_firstBlock . fitness
-  level = knownProtocol_firstBlock . level
-  timestamp = knownProtocol_firstBlock . timestamp
+instance BlockLike ProtocolIndex where
+  hash = protocolIndex_firstBlock . hash
+  predecessor = protocolIndex_firstBlock . predecessor
+  fitness = protocolIndex_firstBlock . fitness
+  level = protocolIndex_firstBlock . level
+  timestamp = protocolIndex_firstBlock . timestamp
 
-instance HasProtocolHash KnownProtocol where
-  protocolHash = knownProtocol_hash
+instance HasProtocolHash ProtocolIndex where
+  protocolHash = protocolIndex_hash
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =
