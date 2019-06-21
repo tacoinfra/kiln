@@ -744,17 +744,6 @@ getContext = \case
           mHash = view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
       maybe (nqThrowError CacheError_NotEnoughHistory) pure mHash
 
--- Perhaps we should check if the node is on same branch
-getContextFromCheckpoints
-  :: [URI]
-  -> Map URI (Maybe RawLevel)
-  -> (RawLevel -> Maybe BlockHash)
-  -> RawLevel
-  -> Maybe BlockHash
-getContextFromCheckpoints fitNodes checkpoints getHash ctxLvl = getHash =<< cpForContext
-  where
-    cpForContext = fmap (max ctxLvl) $ minimumMay $ catMaybes $ map (\n -> join $ Map.lookup n checkpoints) fitNodes
-
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
   :: forall a s e m.
@@ -914,7 +903,6 @@ validNodes q = case q of
           let f v@(nUri, _) = case Map.lookup nUri nodeCheckpoints of
                 Nothing -> Just v
                 Just Nothing -> Just v
-                -- TODO perhaps add a check for upper bound of lvl
                 Just (Just sp) -> if sp <= lvl
                   then Just v
                   else Nothing
@@ -1007,6 +995,17 @@ nodeQueryIx q = do
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
   let
+    -- Perhaps we should check if the node is on same branch
+    getContextFromCheckpoints
+      :: [URI]
+      -> Map URI (Maybe RawLevel)
+      -> (RawLevel -> Maybe BlockHash)
+      -> RawLevel
+      -> Maybe BlockHash
+    getContextFromCheckpoints fitNodes checkpoints getHash ctxLvl = getHash =<< cpForContext
+      where
+        cpForContext = fmap (max ctxLvl) $ minimumMay $ catMaybes $ map (\n -> join $ Map.lookup n checkpoints) fitNodes
+
     getRightsContext ctx lvl = maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtx
       where (_, mCtx) = rightsContext protoInfo hist ctx lvl
     getCheckpointContext ctx lvl = do
