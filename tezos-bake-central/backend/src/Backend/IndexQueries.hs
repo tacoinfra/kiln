@@ -73,8 +73,9 @@ getProtocolIndex branch protoHash = do
   case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
     Just existing -> pure existing
     Nothing -> do
+      -- Search until we have the history up to the desired protocol.
       protocolHistory <- buildProtocolHistoryUntil
-        ! #predicate (\blk -> blk ^. level < 100)
+        ! #predicate (\blk -> blk ^. protocolHash == protoHash)
         ! #branch branch
         ! #history history
 
