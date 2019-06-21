@@ -120,7 +120,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
                 let
                   accusedLevel = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_level
                   accusedPriority = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_priority
-                baker <- fmap _bakingRights_delegate $ nodeQueryDataSourceSafe $ NodeQuery_BakingRights1 blockHash accusedLevel accusedPriority
+                baker <- fmap _bakingRights_delegate $ nodeQueryIx $ NodeQueryIx_BakingRights1 blockHash accusedLevel accusedPriority
                 void [executeQ|
                   insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
                   values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, true)
@@ -129,7 +129,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
               OperationContents_DoubleEndorsementEvidence ev -> do
                 let
                   accusedLevel = ev ^. operationContentsDoubleEndorsementEvidence_op1 . inlinedEndorsement_operations . inlinedEndorsementContents_level
-                possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryDataSourceSafe $ NodeQuery_EndorsingRights blockHash accusedLevel
+                possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash accusedLevel
                 possiblesKeys <- traverse (nodeQueryDataSourceSafe . NodeQuery_PublicKey . Implicit) possibles
                 let
                   encodedOp1 = TBin.encode $ Envelope_Endorsement chainId $ outlineEndorsement $ ev ^. operationContentsDoubleEndorsementEvidence_op1

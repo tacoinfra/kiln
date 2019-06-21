@@ -123,12 +123,12 @@ data NoRightsException = NoRightsException BlockHash RawLevel Priority
 instance Exception NoRightsException
 
 data NodeQuery a where
-  -- NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_BakingRights1   :: BlockHash -> RawLevel -> Priority -> NodeQuery BakingRights
     -- Baking rights for a specific priority.
   NodeQuery_BakingRightsChunk :: BlockHash -> RawLevel -> Priority -> NodeQuery (V.Vector BakingRights)
     -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
-  -- NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
+  NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> RawLevel -> ContractId -> NodeQuery Account
   NodeQuery_Ballots         :: BlockHash -> RawLevel -> NodeQuery Ballots
   NodeQuery_Ballot          :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Ballot)
@@ -146,6 +146,10 @@ deriving instance Show (NodeQuery a)
 
 data NodeQueryIx a where
   NodeQueryIx_BakingRights    :: BlockHash -> RawLevel -> NodeQueryIx (Seq BakingRights)
+  NodeQueryIx_BakingRights1   :: BlockHash -> RawLevel -> Priority -> NodeQueryIx BakingRights
+    -- Baking rights for a specific priority.
+  NodeQueryIx_BakingRightsChunk :: BlockHash -> RawLevel -> Priority -> NodeQueryIx (V.Vector BakingRights)
+    -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQueryIx_EndorsingRights :: BlockHash -> RawLevel -> NodeQueryIx (Seq EndorsingRights)
 deriving instance Show (NodeQueryIx a)
 
@@ -711,82 +715,34 @@ floorBy k n = n - n `mod` k
 priorityChunkSize :: Num a => a
 priorityChunkSize = 64
 
--- Recontextualize a query for maximum cache friendliness, and also return the least block
-optimizeCacheKey
-  :: forall m a .
-  ( MonadNodeQuery m
-  )
-  => ProtoInfo
-  -> NodeQuery a
-  -> m (BlockHash, NodeQuery a)
-optimizeCacheKey protoInfo q = case q of
-  -- NodeQuery_BakingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_BakingRights ctx' lvl)) <$> getRightsContext ctx lvl
-  NodeQuery_BakingRights1 ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRights1 ctx' lvl prio)) <$> getRightsContext ctx lvl
-  NodeQuery_BakingRightsChunk ctx lvl prio -> (\ctx' -> (ctx' , NodeQuery_BakingRightsChunk ctx' lvl (floorBy priorityChunkSize prio))) <$> getRightsContext ctx lvl
-  -- NodeQuery_EndorsingRights ctx lvl -> (\ctx' -> (ctx' , NodeQuery_EndorsingRights ctx' lvl)) <$> getRightsContext ctx lvl
-  NodeQuery_Block ctx _lvl -> pure (ctx, q)
-  NodeQuery_BlockHeader ctx -> pure (ctx, q)
-  NodeQuery_Account ctx _lvl _contractId -> pure (ctx, q)
-  NodeQuery_Ballots ctx _lvl -> pure (ctx, q)
-  NodeQuery_Ballot ctx _lvl _pkh -> pure (ctx, q)
-  NodeQuery_ProposalVote ctx _lvl _pkh -> pure (ctx, q)
-  NodeQuery_Listings ctx _lvl -> pure (ctx, q)
-  NodeQuery_Proposals ctx _lvl -> pure (ctx, q)
-  NodeQuery_CurrentProposal ctx _lvl -> pure (ctx, q)
-  NodeQuery_CurrentQuorum ctx _lvl -> pure (ctx, q)
-  NodeQuery_BlockBaker ctx _lvl -> pure (ctx, q)
-  NodeQuery_DelegateInfo ctx _lvl _pkh -> pure (ctx, q)
-  NodeQuery_PublicKey _ -> getFittestBranch <&> (, q)
+getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
+getContext = \case
+  NodeQuery_BakingRights ctx _lvl -> pure ctx
+  NodeQuery_BakingRights1 ctx _lvl _prio -> pure ctx
+  NodeQuery_BakingRightsChunk ctx _lvl _prio -> pure ctx
+  NodeQuery_EndorsingRights ctx _lvl -> pure ctx
+  NodeQuery_Block ctx _lvl -> pure ctx
+  NodeQuery_BlockHeader ctx -> pure ctx
+  NodeQuery_Account ctx _lvl _contractId -> pure ctx
+  NodeQuery_Ballots ctx _lvl -> pure ctx
+  NodeQuery_Ballot ctx _lvl _pkh -> pure ctx
+  NodeQuery_ProposalVote ctx _lvl _pkh -> pure ctx
+  NodeQuery_Listings ctx _lvl -> pure ctx
+  NodeQuery_Proposals ctx _lvl -> pure ctx
+  NodeQuery_CurrentProposal ctx _lvl -> pure ctx
+  NodeQuery_CurrentQuorum ctx _lvl -> pure ctx
+  NodeQuery_BlockBaker ctx _lvl -> pure ctx
+  NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
+  NodeQuery_PublicKey _ -> getFittestBranch
 
   where
-    getHist = do
-      histVar <- asksNodeDataSource _nodeDataSource_history
-      nqAtomically $ readTVar' histVar
-
     getFittestBranch :: m BlockHash
     getFittestBranch = do
-      hist <- getHist
+      histVar <- asksNodeDataSource _nodeDataSource_history
+      hist <- nqAtomically $ readTVar' histVar
       let branches = _cachedHistory_branches hist
           mHash = view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
       maybe (nqThrowError CacheError_NotEnoughHistory) pure mHash
-      -- pure $ v
-
-    -- (ctxLvl, ctx) -> Rights Context based on the level and protocol constants
-    -- ctxCp -> Context which is valid for the current checkpoint state of the nodes
-    getRightsContext :: BlockHash -> RawLevel -> m BlockHash
-    getRightsContext blk lvl = do
-      hist <- getHist
-      let (ctxLvl, mCtx) = rightsContext protoInfo hist blk lvl
-      case mCtx of
-        Nothing -> nqThrowError CacheError_NotEnoughHistory
-        Just ctx -> do
-          mCtxDb :: [BlockHash] <- nqInDB $ [queryQ|
-            SELECT "cached"
-            FROM "CacheContext"
-            WHERE "context" = ?ctx
-            |] <&> fmap (\(Only v) -> v)
-          case mCtxDb of
-            (c:_) -> pure c
-            [] -> do
-              cpVar <- asksNodeDataSource _nodeDataSource_nodeCheckpoints
-              nodesVar <- asksNodeDataSource _nodeDataSource_nodes
-              (cp, nodes) <- nqAtomically $ do
-                cp <- readTVar' cpVar
-                nodes <- readTVar' nodesVar
-                pure (cp, nodes)
-              let
-                fitNodes :: [URI]
-                fitNodes = map fst $
-                  filter (\(_, mb) -> (mb ^? _Just . level) >= Just ctxLvl) $ Map.assocs nodes
-                mCtxCp = getContextFromCheckpoints fitNodes cp
-                             (\l -> levelAncestor hist l blk) ctxLvl
-              for_ mCtxCp $ \ctxCp -> nqInDB $ void [executeQ|
-                INSERT into "CacheContext" ("cached", "context")
-                values (?ctxCp, ?ctx)
-                |]
-              case fitNodes of
-                [] -> nqThrowError CacheError_NoSuitableNode
-                _ -> maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtxCp
 
 -- Perhaps we should check if the node is on same branch
 getContextFromCheckpoints
@@ -852,11 +808,11 @@ nodeQueryDataSourceRaw
     , MonadMask m
     )
   => NodeQuery a -> m (AnswerM m a)
-nodeQueryDataSourceRaw q' = do
-  $(logDebugSH) ("nodeQueryDataSourceRaw called" :: Text,q')
+nodeQueryDataSourceRaw q = do
+  $(logDebugSH) ("nodeQueryDataSourceRaw called" :: Text,q)
   dsrc <- asksNodeDataSource id
   protoInfo <- nqAtomically (maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc))
-  (qBranch, q) <- optimizeCacheKey protoInfo q'
+  qBranch <- getContext q
   view _2 <=< nqAtomically $ nodeQueryDataSourceSTM dsrc protoInfo qBranch q
 
 -- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
@@ -926,10 +882,10 @@ validNodes
   :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
 validNodes q = case q of
-  -- NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
+  NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_BakingRights1 _ctx lvl _prio -> findNode $ Just lvl
   NodeQuery_BakingRightsChunk _ctx lvl _prio -> findNode $ Just lvl
-  -- NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
+  NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_Block _ctx lvl -> findNode $ Just lvl
   NodeQuery_BlockHeader _ctx -> findNode Nothing
   NodeQuery_Account _ctx lvl _contractId -> findNode $ Just lvl
@@ -984,14 +940,14 @@ nodeQueryDataSourceImpl
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
-  -- NodeQuery_BakingRights branch targetLevel ->
-  --   nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
+  NodeQuery_BakingRights branch targetLevel ->
+    nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_BakingRights1 branch targetLevel prio ->
     ExceptT $ fmap join $ runExceptT $ fmap (maybe (Left $ CacheError_SomeException $ toException $ NoRightsException branch targetLevel prio) Right . (V.!? fromIntegral (prio `mod` priorityChunkSize))) $ self $ NodeQuery_BakingRightsChunk branch targetLevel prio
   NodeQuery_BakingRightsChunk branch targetLevel prio ->
     fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio) chainId branch
-  -- NodeQuery_EndorsingRights branch targetLevel ->
-  --   nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
+  NodeQuery_EndorsingRights branch targetLevel ->
+    nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_Account branch _lvl contractId ->
     nodeRPC' $ rContract contractId chainId branch
   NodeQuery_Ballots branch _lvl -> nodeRPC' $ rBallots chainId branch
@@ -1018,15 +974,15 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     self :: forall b. NodeQuery b -> ExceptT CacheError IO b
     self = ExceptT . self'
 
-    fillChunk :: BlockHash -> RawLevel -> Priority -> Seq BakingRights -> V.Vector BakingRights
-    fillChunk branch targetLevel prio
-      = (makeBlanks branch targetLevel prio V.//)
-      . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
-      . filter (\x -> _bakingRights_priority x >= prio)
-      . toList
+fillChunk :: BlockHash -> RawLevel -> Priority -> Seq BakingRights -> V.Vector BakingRights
+fillChunk branch targetLevel prio
+  = (makeBlanks branch targetLevel prio V.//)
+  . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
+  . filter (\x -> _bakingRights_priority x >= prio)
+  . toList
 
-    makeBlanks :: BlockHash -> RawLevel -> Priority -> V.Vector BakingRights
-    makeBlanks branch targetLevel prio = V.generate priorityChunkSize $ \i -> throw $ NoRightsException branch targetLevel $ prio + fromIntegral i
+makeBlanks :: BlockHash -> RawLevel -> Priority -> V.Vector BakingRights
+makeBlanks branch targetLevel prio = V.generate priorityChunkSize $ \i -> throw $ NoRightsException branch targetLevel $ prio + fromIntegral i
 
 withCache
   :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)
@@ -1038,49 +994,61 @@ withCache nds dft action = do
 
 nodeQueryIx
   :: forall a m.
-    ( MonadIO m
-    -- , MonadBaseNoPureAborts IO m, MonadLogger m
-    -- , MonadReader s m, HasNodeDataSource s
+    ( MonadNodeQuery (NodeQueryT m)
+    , MonadMask m
     , Aeson.FromJSON a, Aeson.ToJSON a
-    , MonadNodeQuery m
-    -- , MonadError e m, AsCacheError e
     )
-  -- :: forall a m.
-  --   ( MonadIO m, HasNodeDataSource m
-  --   )
-  => NodeQueryIx a -> m a
+  => NodeQueryIx a -> NodeQueryT m a
 nodeQueryIx q = do
-   -- fmap (either (error . show) id) . runExceptT @CacheError $ runNodeQueryT $ do
-  -- view (nodeDataSource . nodeDataSource_logger) >>= flip runLoggingEnv ($(logWarnSH) ("nodeQueryIx called" :: Text,q))
+  $(logDebugSH) ("nodeQueryIx called" :: Text,q)
   dsrc <- askNodeDataSource
   protoInfo <- nqAtomically (maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc))
   hist <- do
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
   let
-    getRightsContext ctx lvl = pure $ maybe (error "ll") id $ snd $ rightsContext protoInfo hist ctx lvl
-    getCheckpointContext  = getRightsContext
+    getRightsContext ctx lvl = maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtx
+      where (_, mCtx) = rightsContext protoInfo hist ctx lvl
+    getCheckpointContext ctx lvl = do
+      let (ctxLvl, _) = rightsContext protoInfo hist ctx lvl
+      cpVar <- asksNodeDataSource _nodeDataSource_nodeCheckpoints
+      nodesVar <- asksNodeDataSource _nodeDataSource_nodes
+      (cp, nodes) <- nqAtomically $ do
+        cp <- readTVar' cpVar
+        nodes <- readTVar' nodesVar
+        pure (cp, nodes)
+      let
+        fitNodes :: [URI]
+        fitNodes = map fst $
+          filter (\(_, mb) -> (mb ^? _Just . level) >= Just ctxLvl) $ Map.assocs nodes
+        mCtxCp = getContextFromCheckpoints fitNodes cp (\l -> levelAncestor hist l ctx) ctxLvl
+      case fitNodes of
+        [] -> nqThrowError CacheError_NoSuitableNode
+        _ -> maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtxCp
 
-  nodeHeads <- liftIO $ atomically $ readTVar' $ _nodeDataSource_nodes dsrc
-  let
-    (anyNode:_) = map fst $ Map.toList $ Map.mapMaybe id nodeHeads
-    ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
   q1 <- modifyContext getRightsContext q
-  v1 <- nqInDB $ checkCacheDb q1
-  case v1 of
+  mRes <- nqInDB $ checkCacheDb q1
+  case mRes of
     Just v -> pure v
     Nothing -> do
       q2 <- modifyContext getCheckpointContext q
-      mResult <- liftIO $ nodeQueryIxDoRPC (_nodeDataSource_chain dsrc) ctx (_nodeDataSource_logger dsrc) q2
-      case mResult of
-        Right result -> (nqInDB $ addToDb result q1) >> pure result
-        Left e -> nqThrowError e
-
+      result <- nodeQueryDataSourceSafe $ getNodeQuery q2
+      nqInDB $ addToDb result q1
+      pure result
 
 modifyContext :: Functor m => (BlockHash -> RawLevel -> m (BlockHash)) -> NodeQueryIx a -> m (NodeQueryIx a)
 modifyContext f = \case
   NodeQueryIx_BakingRights ctx lvl -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvl) <$> f ctx lvl
+  NodeQueryIx_BakingRights1 ctx lvl prio -> (\ctx' -> NodeQueryIx_BakingRights1 ctx' lvl prio) <$> f ctx lvl
+  NodeQueryIx_BakingRightsChunk ctx lvl prio -> (\ctx' -> NodeQueryIx_BakingRightsChunk ctx' lvl prio) <$> f ctx lvl
   NodeQueryIx_EndorsingRights ctx lvl -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvl) <$> f ctx lvl
+
+getNodeQuery :: NodeQueryIx a -> NodeQuery a
+getNodeQuery = \case
+  NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
+  NodeQueryIx_BakingRights1 ctx lvl prio -> NodeQuery_BakingRights1 ctx lvl prio
+  NodeQueryIx_BakingRightsChunk ctx lvl prio -> NodeQuery_BakingRightsChunk ctx lvl prio
+  NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
 
 checkCacheDb
   :: forall a m .
@@ -1089,17 +1057,27 @@ checkCacheDb
   , MonadLogger m
   , Aeson.FromJSON a)
   => NodeQueryIx a -> m (Maybe a)
-checkCacheDb q = (\rs -> fmap join $ traverse getResult $ headMay rs) =<< case q of
-  NodeQueryIx_BakingRights ctx lvl -> [queryQ|
+checkCacheDb q = case q of
+  NodeQueryIx_BakingRights ctx lvl -> do
+    res <- [queryQ|
             SELECT "result"
             FROM "CacheBakingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
             |] <&> fmap (\(Only v) -> v)
-  NodeQueryIx_EndorsingRights ctx lvl -> [queryQ|
+    (fmap join) $ traverse getResult $ headMay res
+  NodeQueryIx_BakingRights1 ctx lvl prio -> do
+    mRes <- checkCacheDb (NodeQueryIx_BakingRightsChunk ctx lvl prio)
+    pure $ join $ for mRes (V.!? fromIntegral (prio `mod` priorityChunkSize))
+  NodeQueryIx_BakingRightsChunk ctx lvl prio -> do
+    mRes <- checkCacheDb (NodeQueryIx_BakingRights ctx lvl)
+    pure $ fmap (fillChunk ctx lvl prio) mRes
+  NodeQueryIx_EndorsingRights ctx lvl -> do
+    res <- [queryQ|
             SELECT "result"
             FROM "CacheEndorsingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
             |] <&> fmap (\(Only v) -> v)
+    (fmap join) $ traverse getResult $ headMay res
   where
     getResult json = case Aeson.fromJSON (unJson json) of
         Aeson.Success v -> return $ Just v
@@ -1118,24 +1096,9 @@ addToDb result' = \case
                 INSERT into "CacheEndorsingRights" ("context", "level", "result")
                 values (?ctx, ?lvl, ?result)
                 |]
+  _ -> pure () -- TODO
   where result = Json $ Aeson.toJSON result'
 
-nodeQueryIxDoRPC
-  :: forall a.
-     ChainId
-  -> NodeRPCContext
-  -> LoggingEnv
-  -> NodeQueryIx a
-  -> IO (Either CacheError a)
-nodeQueryIxDoRPC chainId ctx logger q = runExceptT $ (runLoggingEnv logger $ $(logWarnSH) ("nodeQueryIxDoRPC called" :: Text,q)) *> case q of
-  NodeQueryIx_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRights (Set.singleton $ Left targetLevel) chainId branch
-  NodeQueryIx_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
-  where
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
-    nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
-    {-# INLINE nodeRPC' #-}
 {-
 calculateBakerStats ::
   ( TraversableWithIndex (PublicKeyHash, RawLevel) f

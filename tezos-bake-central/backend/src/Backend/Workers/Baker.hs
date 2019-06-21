@@ -164,8 +164,10 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
       for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
-        reqBakers <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
-        reqEndorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash lvl
+        (reqBakers, reqEndorsers) <- runNodeQueryT $ do
+          bs <- nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
+          es <- nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl
+          pure (bs, es)
         let
           pri1baker :: Maybe BakingRights
           pri1baker = fmap NonEmpty.head . nonEmpty . (filter $ (flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
@@ -258,7 +260,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
+      res <- runExceptT $ getWantedAction nds protoInfo headBlock baker details isInternal
       case res of
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
@@ -287,8 +289,8 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
-getWantedAction protoInfo headBlock baker details isInternal = do
+  => NodeDataSource -> ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
+getWantedAction nds protoInfo headBlock baker details isInternal = do
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
@@ -313,7 +315,9 @@ getWantedAction protoInfo headBlock baker details isInternal = do
     <$> enumerateBranches headHash detailsBranch
   $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
   bakingEndorsingAlerts :: [mCommit ()] <- for headBranch $ \(lvl, thisHash) -> do
-    bakingRights <- nodeQueryDataSource $ NodeQuery_BakingRights headHash lvl
+    let
+      runNodeQueryIx x =  either (throwError) pure =<< (liftIO $ runLoggingEnv (_nodeDataSource_logger nds) $ flip runReaderT nds $ runExceptT (runNodeQueryT x))
+    (bakingRights :: Seq BakingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
     bakingAlerts :: [mCommit ()]
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash lvl
@@ -326,7 +330,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
       return $ pure action
 
     -- endorsements *on* this block are *of* the previos block
-    endorsers <- nodeQueryDataSource $ NodeQuery_EndorsingRights headHash (lvl - 1)
+    (endorsers :: Seq EndorsingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash lvl
