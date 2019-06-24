@@ -1811,12 +1811,20 @@ bakersTab =
           dmBakerVote <- watchBakerVote
           dproposals <- watchProposals
           let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+              bakerOutOfVotes n = (divClass "detail" $ text msg, True <$ guard (n >= maxProposalUpvotes))
+                where msg = T.intercalate " "
+                        [ "You have upvoted"
+                        , tshow n
+                        , "proposals of"
+                        , tshow maxProposalUpvotes
+                        , "allowed."
+                        ]
           maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
             Nothing -> Nothing
             Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
                 n | n == 0 -> bakerNotVoted
-                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n >= 20))
+                  | otherwise -> bakerOutOfVotes n
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ case mBakerVote of
                 Nothing -> bakerNotVoted
