@@ -472,6 +472,30 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
       currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
         $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
 
+      singleVotePeriod pkh periodKindOffset = do
+        let blk = latestHead ^.hash
+        mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+        let chainId = _nodeDataSource_chain nds
+            -- The voting period of the last proposal period
+            amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+        case mBallot of
+          Nothing -> runDb (Identity db) $ do
+            deleteAll' @BakerVote Proxy
+            notify NotifyTag_BakerVote Nothing
+          Just ballot -> runDb (Identity db) $ do
+            pps <- [queryQ|
+              UPDATE "BakerVote" SET included = ?blk
+              FROM "PeriodProposal" pp
+              WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
+              RETURNING proposal
+            |]
+            for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+              { _bakerVote_pkh = pkh
+              , _bakerVote_proposal = proposal
+              , _bakerVote_ballot = ballot
+              , _bakerVote_included = Just blk
+              }
+
   -- Update baker votes
   mPkh <- runDb (Identity db) $ join <$> project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
@@ -493,32 +517,8 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
         |]
         for_ pps $ \(pid, phash, chain, vp, votes) -> notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
     VotingPeriodKind_Testing -> pure ()
-    _ -> do
-      let blk = latestHead ^.hash
-      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
-      let chainId = _nodeDataSource_chain nds
-          -- The voting period of the last proposal period
-          amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - case currentPeriodKind of
-            VotingPeriodKind_TestingVote -> 1
-            VotingPeriodKind_PromotionVote -> 3
-            _ -> 0 -- impossible
-      case mBallot of
-        Nothing -> runDb (Identity db) $ do
-          deleteAll' @BakerVote Proxy
-          notify NotifyTag_BakerVote Nothing
-        Just ballot -> runDb (Identity db) $ do
-          pps <- [queryQ|
-            UPDATE "BakerVote" SET included = ?blk
-            FROM "PeriodProposal" pp
-            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
-            RETURNING proposal
-          |]
-          for_ pps $ \(Only proposal) -> notify NotifyTag_BakerVote $ Just $ BakerVote
-            { _bakerVote_pkh = pkh
-            , _bakerVote_proposal = proposal
-            , _bakerVote_ballot = ballot
-            , _bakerVote_included = Just blk
-            }
+    VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1
+    VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.
@@ -743,4 +743,3 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     oneBlockTime = NonEmpty.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text, currentLvl, nextCheckLvl, delay, oneBlockTime)
   threadDelay' delay
-
