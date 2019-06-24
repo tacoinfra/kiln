@@ -336,9 +336,10 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       proposals <- watchProposals
       headerWithCycles
         "Proposal Period"
-        "During the Proposal Period a baker may upvote up to 20 proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested."
+        ("During the Proposal Period a baker may upvote up to " <> tshow maxProposalUpvotes <> " proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested.")
         (divClass "item" $ do
-          divClass "title" $ dynText $ ffor proposals $ \ps -> tshow (Map.size $ Map.filter (isJust . snd) ps) <> " / 20"
+          divClass "title" $ dynText $ ffor proposals $ \ps ->
+            tshow (Map.size $ Map.filter (isJust . snd) ps) <> " / " <> tshow maxProposalUpvotes
           divClass "detail" $ text "Votes Cast")
       divClass "proposals" $ do
         el "label" $ text "Filter Proposals by Hash"
