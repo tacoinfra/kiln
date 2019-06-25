@@ -259,7 +259,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- runExceptT $ getWantedAction nds protoInfo headBlock baker details isInternal
+      res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
       case res of
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
@@ -288,8 +288,9 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => NodeDataSource -> ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
-getWantedAction nds protoInfo headBlock baker details isInternal = do
+  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
+getWantedAction protoInfo headBlock baker details isInternal = do
+  nds <- asks (^. nodeDataSource)
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
