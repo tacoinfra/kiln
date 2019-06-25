@@ -1054,7 +1054,7 @@ checkCacheDb q = case q of
             SELECT "result"
             FROM "CacheBakingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
-            |] <&> fmap (\(Only v) -> v)
+            |] <&> stripOnly
     (fmap join) $ traverse getResult $ headMay res
   NodeQueryIx_BakingRights1 ctx lvl prio -> do
     mRes <- checkCacheDb (NodeQueryIx_BakingRightsChunk ctx lvl prio)
@@ -1067,7 +1067,7 @@ checkCacheDb q = case q of
             SELECT "result"
             FROM "CacheEndorsingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
-            |] <&> fmap (\(Only v) -> v)
+            |] <&> stripOnly
     (fmap join) $ traverse getResult $ headMay res
   where
     getResult json = case Aeson.fromJSON (unJson json) of
