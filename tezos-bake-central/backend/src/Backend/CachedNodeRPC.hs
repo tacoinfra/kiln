@@ -1073,7 +1073,7 @@ checkCacheDb q = case q of
     getResult json = case Aeson.fromJSON (unJson json) of
         Aeson.Success v -> return $ Just v
         Aeson.Error bad -> do
-          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
+          $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
           return Nothing
 
 
@@ -1087,7 +1087,7 @@ addToDb result' = \case
                 INSERT into "CacheEndorsingRights" ("context", "level", "result")
                 values (?ctx, ?lvl, ?result)
                 |]
-  _ -> pure () -- TODO
+  _ -> pure () -- Ignore as we expect BakingRights to cover the BakingRights1 and BakingRightsChunk
   where result = Json $ Aeson.toJSON result'
 
 {-
