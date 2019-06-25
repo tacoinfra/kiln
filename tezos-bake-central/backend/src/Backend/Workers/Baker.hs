@@ -320,7 +320,7 @@ getWantedAction nds protoInfo headBlock baker details isInternal = do
     (bakingRights :: Seq BakingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
     bakingAlerts :: [mCommit ()]
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
-      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash lvl
+      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
             bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
@@ -333,7 +333,7 @@ getWantedAction nds protoInfo headBlock baker details isInternal = do
     (endorsers :: Seq EndorsingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
-      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash lvl
+      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action = bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
                    (headBlock ^. fitness)
                    RightKind_Endorsing
@@ -349,7 +349,7 @@ getWantedAction nds protoInfo headBlock baker details isInternal = do
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
   delegate <- _accountDelegate_value . _account_delegate <$>
-    nodeQueryDataSource (NodeQuery_Account headHash headLvl (Implicit pkh))
+    nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []
     Just delegatePkh -> do

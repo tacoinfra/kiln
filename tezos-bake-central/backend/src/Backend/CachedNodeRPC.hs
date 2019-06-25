@@ -129,15 +129,15 @@ data NodeQuery a where
   NodeQuery_BakingRightsChunk :: BlockHash -> RawLevel -> Priority -> NodeQuery (V.Vector BakingRights)
     -- Baking rights for a chunk of 64 priorities including the indicated one.  You probably shouldn't use this directly.
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
-  NodeQuery_Account         :: BlockHash -> RawLevel -> ContractId -> NodeQuery Account
-  NodeQuery_Ballots         :: BlockHash -> RawLevel -> NodeQuery Ballots
-  NodeQuery_Ballot          :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Ballot)
-  NodeQuery_ProposalVote    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
-  NodeQuery_Listings        :: BlockHash -> RawLevel -> NodeQuery (Seq VoterDelegate)
-  NodeQuery_Proposals       :: BlockHash -> RawLevel -> NodeQuery (Seq ProposalVotes)
+  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
+  NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
+  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
+  NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
-  NodeQuery_CurrentQuorum   :: BlockHash -> RawLevel -> NodeQuery Int
-  NodeQuery_Block           :: BlockHash -> RawLevel -> NodeQuery Block
+  NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
+  NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
@@ -721,16 +721,16 @@ getContext = \case
   NodeQuery_BakingRights1 ctx _lvl _prio -> pure ctx
   NodeQuery_BakingRightsChunk ctx _lvl _prio -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
-  NodeQuery_Block ctx _lvl -> pure ctx
+  NodeQuery_Block ctx -> pure ctx
   NodeQuery_BlockHeader ctx -> pure ctx
-  NodeQuery_Account ctx _lvl _contractId -> pure ctx
-  NodeQuery_Ballots ctx _lvl -> pure ctx
-  NodeQuery_Ballot ctx _lvl _pkh -> pure ctx
-  NodeQuery_ProposalVote ctx _lvl _pkh -> pure ctx
-  NodeQuery_Listings ctx _lvl -> pure ctx
-  NodeQuery_Proposals ctx _lvl -> pure ctx
+  NodeQuery_Account ctx _contractId -> pure ctx
+  NodeQuery_Ballots ctx -> pure ctx
+  NodeQuery_Ballot ctx _pkh -> pure ctx
+  NodeQuery_ProposalVote ctx _pkh -> pure ctx
+  NodeQuery_Listings ctx -> pure ctx
+  NodeQuery_Proposals ctx -> pure ctx
   NodeQuery_CurrentProposal ctx _lvl -> pure ctx
-  NodeQuery_CurrentQuorum ctx _lvl -> pure ctx
+  NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_BlockBaker ctx _lvl -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_PublicKey _ -> getFittestBranch
@@ -875,20 +875,25 @@ validNodes q = case q of
   NodeQuery_BakingRights1 _ctx lvl _prio -> findNode $ Just lvl
   NodeQuery_BakingRightsChunk _ctx lvl _prio -> findNode $ Just lvl
   NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
-  NodeQuery_Block _ctx lvl -> findNode $ Just lvl
+  NodeQuery_Block ctx -> findNode =<< getLvl ctx
   NodeQuery_BlockHeader _ctx -> findNode Nothing
-  NodeQuery_Account _ctx lvl _contractId -> findNode $ Just lvl
-  NodeQuery_Ballots _ctx lvl -> findNode $ Just lvl
-  NodeQuery_Ballot _ctx lvl _pkh -> findNode $ Just lvl
-  NodeQuery_ProposalVote _ctx lvl _pkh -> findNode $ Just lvl
-  NodeQuery_Listings _ctx lvl -> findNode $ Just lvl
-  NodeQuery_Proposals _ctx lvl -> findNode $ Just lvl
+  NodeQuery_Account ctx _contractId -> findNode =<< getLvl ctx
+  NodeQuery_Ballots ctx -> findNode =<< getLvl ctx
+  NodeQuery_Ballot ctx _pkh -> findNode =<< getLvl ctx
+  NodeQuery_ProposalVote ctx _pkh -> findNode =<< getLvl ctx
+  NodeQuery_Listings ctx -> findNode =<< getLvl ctx
+  NodeQuery_Proposals ctx -> findNode =<< getLvl ctx
   NodeQuery_CurrentProposal _ctx lvl -> findNode $ Just lvl
-  NodeQuery_CurrentQuorum _ctx lvl -> findNode $ Just lvl
+  NodeQuery_CurrentQuorum ctx -> findNode =<< getLvl ctx
   NodeQuery_BlockBaker _ctx lvl -> findNode $ Just lvl
   NodeQuery_DelegateInfo _ctx lvl _pkh -> findNode $ Just lvl
   NodeQuery_PublicKey _ -> findNode Nothing
   where
+    getLvl :: BlockHash -> m (Maybe RawLevel)
+    getLvl ctx = do
+      dsrc <- asks (^. nodeDataSource)
+      (fmap $ view level) <$> lookupBlock dsrc ctx
+
     findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
     findNode mLvl = do
       dsrc <- asks (^. nodeDataSource)
@@ -936,18 +941,18 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
     fmap (fillChunk branch targetLevel prio) $ nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) (priorityChunkSize + fromIntegral prio) chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
     nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
-  NodeQuery_Account branch _lvl contractId ->
+  NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId chainId branch
-  NodeQuery_Ballots branch _lvl -> nodeRPC' $ rBallots chainId branch
-  NodeQuery_Ballot branch _lvl pkh -> nodeRPC' $ rBallot chainId branch pkh
-  NodeQuery_ProposalVote branch _lvl pkh -> nodeRPC' $ rProposalVote chainId branch pkh
-  NodeQuery_Listings branch _lvl -> nodeRPC' $ rListings chainId branch
-  NodeQuery_Proposals branch _lvl -> nodeRPC' $ rProposals chainId branch
+  NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
+  NodeQuery_Ballot branch pkh -> nodeRPC' $ rBallot chainId branch pkh
+  NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
+  NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
+  NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
-  NodeQuery_CurrentQuorum branch _lvl -> nodeRPC' $ rCurrentQuorum chainId branch
-  NodeQuery_Block branch _lvl -> nodeRPC' $ rBlock chainId branch
+  NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
+  NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader chainId branch
-  NodeQuery_BlockBaker branch lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch lvl
+  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
