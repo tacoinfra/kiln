@@ -37,6 +37,8 @@ import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
 -- import Control.Lens (TraversableWithIndex)
+import Control.Lens ((&))
+import Control.Lens ((?~))
 import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
@@ -179,9 +181,15 @@ data CacheLine a = CacheLine
   , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
   }
 
+data NodeDataSourceData = NodeDataSourceData
+  { _nodeDataSourceData_latestHead :: Maybe VeryBlockLike
+  , _nodeDataSourceData_savePoint :: Maybe RawLevel
+  } deriving (Typeable, Generic)
+makeLenses 'NodeDataSourceData
+
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
-  , _nodeDataSource_nodes :: !(TVar (Map URI (Maybe VeryBlockLike)))
+  , _nodeDataSource_nodes :: !(TVar (Map URI NodeDataSourceData))
   , _nodeDataSource_cache :: !(TVar (DMap NodeQuery (Compose TVar CacheLine)))
   , _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_parameters :: !(TVar (Maybe ProtoInfo))
@@ -190,7 +198,6 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
-  , _nodeDataSource_nodeCheckpoints :: !(TVar (Map URI (Maybe RawLevel)))
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -538,7 +545,6 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
   protoInfoVar <- newTVarIO protoInfo'
   latestHead <- newTVarIO Nothing
   ioQueue <- newTQueueIO
-  nodeCheckpoints <- newTVarIO mempty
 
   return NodeDataSource
     { _nodeDataSource_history = hist
@@ -551,7 +557,6 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
     , _nodeDataSource_latestHead = latestHead
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
-    , _nodeDataSource_nodeCheckpoints = nodeCheckpoints
     }
 {-
 
@@ -592,7 +597,11 @@ updateNodeDataSource
   => nds -> URI -> b -> m ()
 updateNodeDataSource nds nodeAddr blk = do
   let nodesVar = nds ^. nodeDataSource . nodeDataSource_nodes
-  modifyTVar_' nodesVar $ pure . Map.insert nodeAddr (Just $ mkVeryBlockLike blk)
+      f = Just . \case
+        Nothing -> NodeDataSourceData (Just $ mkVeryBlockLike blk) Nothing
+        Just v -> v & nodeDataSourceData_latestHead ?~ mkVeryBlockLike blk
+
+  modifyTVar_' nodesVar $ pure . Map.alter f nodeAddr
 
 -- Make sure that the protocol parameters have been loaded and the datasource initialized.
 initParams :: Foldable f => NodeDataSource -> f (Maybe PublicNode, URI) -> IO Bool
@@ -897,19 +906,16 @@ validNodes q = case q of
     findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
     findNode mLvl = do
       dsrc <- asks (^. nodeDataSource)
-      nodeHeads <- readTVar' $ _nodeDataSource_nodes dsrc
-      let nodes = Map.toList $ Map.mapMaybe id nodeHeads
+      nodes <- Map.assocs <$> readTVar' (_nodeDataSource_nodes dsrc)
       case (nodes, mLvl) of
         ([], _) -> pure $ Left CacheError_NoSuitableNode
-        (_, Nothing) -> pure $ Right nodes
-        (_, Just (RawLevel 0)) -> pure $ Right nodes
+        (_, Nothing) -> pure $ Right $ catMaybes $
+          map (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
         (_, Just lvl) -> do
-          nodeCheckpoints <- readTVar' $ _nodeDataSource_nodeCheckpoints dsrc
-          let f v@(nUri, _) = case Map.lookup nUri nodeCheckpoints of
-                Nothing -> Just v
-                Just Nothing -> Just v
-                Just (Just sp) -> if sp <= lvl
-                  then Just v
+          let f (nUri, NodeDataSourceData h mSp) = case mSp of
+                Nothing -> (nUri,) <$> h
+                Just sp -> if sp <= lvl
+                  then (nUri,) <$> h
                   else Nothing
           pure $ case catMaybes $ map f nodes of
             [] -> Left CacheError_NotEnoughHistory
@@ -1000,32 +1006,16 @@ nodeQueryIx q = do
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
   let
-    -- Perhaps we should check if the node is on same branch
-    getContextFromCheckpoints
-      :: [URI]
-      -> Map URI (Maybe RawLevel)
-      -> (RawLevel -> Maybe BlockHash)
-      -> RawLevel
-      -> Maybe BlockHash
-    getContextFromCheckpoints fitNodes checkpoints getHash ctxLvl = getHash =<< cpForContext
-      where
-        cpForContext = fmap (max ctxLvl) $ minimumMay $ catMaybes $ map (\n -> join $ Map.lookup n checkpoints) fitNodes
-
     getRightsContext ctx lvl = maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtx
       where (_, mCtx) = rightsContext protoInfo hist ctx lvl
     getCheckpointContext ctx lvl = do
       let (ctxLvl, _) = rightsContext protoInfo hist ctx lvl
-      cpVar <- asksNodeDataSource _nodeDataSource_nodeCheckpoints
-      nodesVar <- asksNodeDataSource _nodeDataSource_nodes
-      (cp, nodes) <- nqAtomically $ do
-        cp <- readTVar' cpVar
-        nodes <- readTVar' nodesVar
-        pure (cp, nodes)
+      nodes <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_nodes
       let
-        fitNodes :: [URI]
-        fitNodes = map fst $
-          filter (\(_, mb) -> (mb ^? _Just . level) >= Just ctxLvl) $ Map.assocs nodes
-        mCtxCp = getContextFromCheckpoints fitNodes cp (\l -> levelAncestor hist l ctx) ctxLvl
+        fitNodes :: [(URI, NodeDataSourceData)]
+        fitNodes = filter (\v -> (v ^? _2 . nodeDataSourceData_latestHead . _Just . level) >= Just ctxLvl) $ Map.assocs nodes
+        mCtxCp = (\l -> levelAncestor hist l ctx) =<< (fmap (max ctxLvl) $ minimumMay $
+          catMaybes $ map (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
       case fitNodes of
         [] -> nqThrowError CacheError_NoSuitableNode
         _ -> maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtxCp

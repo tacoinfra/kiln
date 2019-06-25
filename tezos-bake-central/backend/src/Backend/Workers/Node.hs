@@ -18,6 +18,8 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar)
+import Control.Lens ((&))
+import Control.Lens ((?~))
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -280,8 +282,12 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
             liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
               Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
-              Right cp -> liftIO $ atomically $
-                modifyTVar (_nodeDataSource_nodeCheckpoints nds) (Map.insert nodeAddr $ Just $ _checkpoint_savePoint cp)
+              Right cp -> do
+                let f = Just . \case
+                      Nothing -> NodeDataSourceData Nothing (Just sp)
+                      Just v -> v & nodeDataSourceData_savePoint ?~ sp
+                    sp = _checkpoint_savePoint cp
+                liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) (Map.alter f nodeAddr)
             mParams <- liftIO $ atomically $ readTVar $ _nodeDataSource_parameters nds
             -- If we dont have params, then dont update the checkpointUpdateLvlRef
             -- and do the updateCheckpoint again for the next block
@@ -772,7 +778,8 @@ waitTillNextCycle nds mNodeAddr = do
     defaultDelay = 5
     currentHead = liftIO $ case mNodeAddr of
       Nothing -> readTVarIO (_nodeDataSource_latestHead nds)
-      Just nodeAddr -> join . Map.lookup nodeAddr <$> readTVarIO (_nodeDataSource_nodes nds)
+      Just nodeAddr -> join . (fmap _nodeDataSourceData_latestHead) . Map.lookup nodeAddr
+        <$> readTVarIO (_nodeDataSource_nodes nds)
   protoInfo <- liftIO $ atomically $ waitForParams nds
   mBlk <- currentHead
   case mBlk of
