@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar, retry)
 import Control.Lens ((&))
 import Control.Lens ((?~))
 import Control.Monad.Except (ExceptT, runExceptT, unless)
@@ -759,24 +759,18 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
-  waitTillNextCycle nds Nothing
+  liftIO $ waitTillNextCycle nds
 
-waitTillNextCycle :: (MonadIO m) => NodeDataSource -> Maybe URI -> m ()
-waitTillNextCycle nds mNodeAddr = do
-  let
-    defaultDelay = 5
-    currentHead = liftIO $ case mNodeAddr of
-      Nothing -> readTVarIO (_nodeDataSource_latestHead nds)
-      Just nodeAddr -> join . (fmap _nodeDataSourceData_latestHead) . Map.lookup nodeAddr
-        <$> readTVarIO (_nodeDataSource_nodes nds)
-  protoInfo <- liftIO $ atomically $ waitForParams nds
-  mBlk <- currentHead
-  case mBlk of
-    Nothing -> threadDelay' defaultDelay
-    Just blk -> loop
-      where
-        nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
-        nextCycleLvl = firstLevelInCycle protoInfo nextCycle
-        loop = threadDelay' defaultDelay >> currentHead >>= \case
-          Nothing -> pure ()
-          Just cBlk -> when (cBlk ^. level < nextCycleLvl) loop
+waitTillNextCycle :: NodeDataSource -> IO ()
+waitTillNextCycle nds = do
+  v <- atomically $ do
+    h <- readTVar $ _nodeDataSource_latestHead nds
+    p <- readTVar $ _nodeDataSource_parameters nds
+    pure $ (,) <$> h <*> p
+  for_ v $ \(blk, protoInfo) -> do
+    let
+      nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
+      nextCycleLvl = firstLevelInCycle protoInfo nextCycle
+    atomically $ do
+      newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
+      when (newHead ^. level < (pred nextCycleLvl)) retry
