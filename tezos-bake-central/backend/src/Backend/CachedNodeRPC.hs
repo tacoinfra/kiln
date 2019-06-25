@@ -1002,6 +1002,56 @@ nodeQueryIx q = do
       result <- nodeQueryDataSourceSafe $ getNodeQuery q2
       nqInDB $ addToDb result q1
       pure result
+  where
+    modifyContext :: Functor f => (BlockHash -> RawLevel -> f BlockHash) -> NodeQueryIx a -> f (NodeQueryIx a)
+    modifyContext f = \case
+      NodeQueryIx_BakingRights ctx lvl -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvl) <$> f ctx lvl
+      NodeQueryIx_EndorsingRights ctx lvl -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvl) <$> f ctx lvl
+
+    getNodeQuery :: NodeQueryIx a -> NodeQuery a
+    getNodeQuery = \case
+      NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
+      NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
+
+    checkCacheDb
+      :: ( Monad m1
+      , PostgresRaw m1
+      , MonadLogger m1)
+      => NodeQueryIx a -> m1 (Maybe a)
+    checkCacheDb = \case
+      NodeQueryIx_BakingRights ctx lvl -> do
+        res <- [queryQ|
+                SELECT "result"
+                FROM "CacheBakingRights"
+                WHERE "context" = ?ctx AND "level" = ?lvl
+                |] <&> stripOnly
+        fmap join $ traverse getResult $ headMay res
+      NodeQueryIx_EndorsingRights ctx lvl -> do
+        res <- [queryQ|
+                SELECT "result"
+                FROM "CacheEndorsingRights"
+                WHERE "context" = ?ctx AND "level" = ?lvl
+                |] <&> stripOnly
+        fmap join $ traverse getResult $ headMay res
+      where
+        getResult json = case Aeson.fromJSON (unJson json) of
+            Aeson.Success v -> return $ Just v
+            Aeson.Error bad -> do
+              $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
+              return Nothing
+
+    addToDb :: (Monad m1, PostgresRaw m1) => a -> NodeQueryIx a -> m1 ()
+    addToDb result' = \case
+      NodeQueryIx_BakingRights ctx lvl -> void [executeQ|
+                    INSERT into "CacheBakingRights" ("context", "level", "result")
+                    values (?ctx, ?lvl, ?result)
+                    |]
+      NodeQueryIx_EndorsingRights ctx lvl -> void [executeQ|
+                    INSERT into "CacheEndorsingRights" ("context", "level", "result")
+                    values (?ctx, ?lvl, ?result)
+                    |]
+      where result = Json $ Aeson.toJSON result'
+
 
 nodeQueryIxBakingRights1
   :: forall m.
@@ -1025,58 +1075,6 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
       throw $ NoRightsException ctx lvl $ prio + fromIntegral i
 
   maybe (nqThrowError $ CacheError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
-
-modifyContext :: Functor m => (BlockHash -> RawLevel -> m BlockHash) -> NodeQueryIx a -> m (NodeQueryIx a)
-modifyContext f = \case
-  NodeQueryIx_BakingRights ctx lvl -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvl) <$> f ctx lvl
-  NodeQueryIx_EndorsingRights ctx lvl -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvl) <$> f ctx lvl
-
-getNodeQuery :: NodeQueryIx a -> NodeQuery a
-getNodeQuery = \case
-  NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
-  NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
-
-checkCacheDb
-  :: forall a m .
-  ( Monad m
-  , PostgresRaw m
-  , MonadLogger m
-  , Aeson.FromJSON a)
-  => NodeQueryIx a -> m (Maybe a)
-checkCacheDb q = case q of
-  NodeQueryIx_BakingRights ctx lvl -> do
-    res <- [queryQ|
-            SELECT "result"
-            FROM "CacheBakingRights"
-            WHERE "context" = ?ctx AND "level" = ?lvl
-            |] <&> stripOnly
-    fmap join $ traverse getResult $ headMay res
-  NodeQueryIx_EndorsingRights ctx lvl -> do
-    res <- [queryQ|
-            SELECT "result"
-            FROM "CacheEndorsingRights"
-            WHERE "context" = ?ctx AND "level" = ?lvl
-            |] <&> stripOnly
-    fmap join $ traverse getResult $ headMay res
-  where
-    getResult json = case Aeson.fromJSON (unJson json) of
-        Aeson.Success v -> return $ Just v
-        Aeson.Error bad -> do
-          $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
-          return Nothing
-
-
-addToDb :: forall a m . (Monad m, PostgresRaw m, Aeson.ToJSON a) => a -> NodeQueryIx a -> m ()
-addToDb result' = \case
-  NodeQueryIx_BakingRights ctx lvl -> void [executeQ|
-                INSERT into "CacheBakingRights" ("context", "level", "result")
-                values (?ctx, ?lvl, ?result)
-                |]
-  NodeQueryIx_EndorsingRights ctx lvl -> void [executeQ|
-                INSERT into "CacheEndorsingRights" ("context", "level", "result")
-                values (?ctx, ?lvl, ?result)
-                |]
-  where result = Json $ Aeson.toJSON result'
 
 {-
 calculateBakerStats ::
