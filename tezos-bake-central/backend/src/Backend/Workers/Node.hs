@@ -18,8 +18,6 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar, retry)
-import Control.Lens ((&))
-import Control.Lens ((?~))
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -271,28 +269,36 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
-      let reconnectDelay = 5
-          nodeQuery :: RpcQuery a -> IO (Either RpcError a)
-          nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
-          chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
-          chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
-          updateCheckpoint blk = do
-            mParams <- liftIO $ atomically $ readTVar $ _nodeDataSource_parameters nds
-            let doUpdate = maybe True checkCycle mParams
-                checkCycle protoInfo = thisCycle /= predCycle
-                  where
-                    thisCycle = levelToCycle protoInfo (blk ^. level)
-                    predCycle = levelToCycle protoInfo $ pred (blk ^. level)
-            when doUpdate $ do
-              $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
-              liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-                Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
-                Right cp -> do
-                  let f = Just . \case
-                        Nothing -> NodeDataSourceData Nothing (Just sp)
-                        Just v -> v & nodeDataSourceData_savePoint ?~ sp
-                      sp = _checkpoint_savePoint cp
-                  liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) (Map.alter f nodeAddr)
+      let
+        reconnectDelay = 5
+
+        nodeQuery :: RpcQuery a -> IO (Either RpcError a)
+        nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
+
+        chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
+        chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
+
+        updateCheckpoint blk = do
+          mParams <- liftIO $ readTVarIO $ _nodeDataSource_parameters nds
+          let
+            shouldUpdate = maybe True checkCycle mParams
+            checkCycle protoInfo = thisCycle /= predCycle
+              where
+                thisCycle = levelToCycle protoInfo (blk ^. level)
+                predCycle = levelToCycle protoInfo $ pred (blk ^. level)
+
+          when shouldUpdate $ do
+            $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+            newSavePoint <- liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+              Left e ->
+                Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
+              Right checkpoint ->
+                pure $ Just $ _checkpoint_savePoint checkpoint
+
+            liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) $
+              flip Map.alter nodeAddr $ Just . \case
+                Nothing -> NodeDataSourceData Nothing newSavePoint
+                Just v -> v & nodeDataSourceData_savePoint .~ newSavePoint
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
@@ -759,18 +765,17 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
-  liftIO $ waitTillNextCycle nds
+  waitTillNextCycle nds
 
-waitTillNextCycle :: NodeDataSource -> IO ()
-waitTillNextCycle nds = do
-  v <- atomically $ do
-    h <- readTVar $ _nodeDataSource_latestHead nds
-    p <- readTVar $ _nodeDataSource_parameters nds
-    pure $ (,) <$> h <*> p
+waitTillNextCycle :: MonadIO m => NodeDataSource -> m ()
+waitTillNextCycle nds = liftIO $ do
+  v <- atomically $ (liftA2 . liftA2) (,)
+    (readTVar $ _nodeDataSource_latestHead nds)
+    (readTVar $ _nodeDataSource_parameters nds)
   for_ v $ \(blk, protoInfo) -> do
     let
       nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
       nextCycleLvl = firstLevelInCycle protoInfo nextCycle
     atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
-      when (newHead ^. level < (pred nextCycleLvl)) retry
+      when (newHead ^. level < pred nextCycleLvl) retry

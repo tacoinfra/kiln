@@ -18,7 +18,8 @@ import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at
 import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (guard, mzero)
-import Control.Monad.Except (MonadError, runExceptT, throwError, ExceptT(..))
+import Control.Monad.Catch (MonadMask)
+import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
@@ -39,7 +40,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
 import Reflex (fforMaybe, fmapMaybe)
-import Rhyolite.Backend.DB (runDb, selectMap)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, In(..))
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -254,12 +255,13 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
           (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
-        (BakerDetails_publicKeyHashField `in_` (Map.keys bakers))
+        (BakerDetails_publicKeyHashField `in_` Map.keys bakers)
       return $ (bakerInt,) $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- runExceptT $ getWantedAction protoInfo headBlock baker details isInternal
+      res <- (Right <$> getWantedAction protoInfo headBlock baker details isInternal)
+        `catchError` (pure . Left)
       case res of
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
@@ -283,14 +285,14 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 -- nothing if the data gathered in mPrepare can be stale
 {-# INLINE getWantedAction #-}
 getWantedAction
-  :: forall mPrepare e rP mCommit rC blk.
+  :: forall mPrepare rP mCommit rC blk.
   ( BlockLike blk
-  , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare, MonadError e mPrepare, AsCacheError e
+  , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
+  , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> mPrepare (mCommit ())
+  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
 getWantedAction protoInfo headBlock baker details isInternal = do
-  nds <- asks (^. nodeDataSource)
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
@@ -315,9 +317,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
     <$> enumerateBranches headHash detailsBranch
   $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
   bakingEndorsingAlerts :: [mCommit ()] <- for headBranch $ \(lvl, thisHash) -> do
-    let
-      runNodeQueryIx x =  either (throwError) pure =<< (liftIO $ runLoggingEnv (_nodeDataSource_logger nds) $ flip runReaderT nds $ runExceptT (runNodeQueryT x))
-    (bakingRights :: Seq BakingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
+    bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
     bakingAlerts :: [mCommit ()]
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
@@ -330,7 +330,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
       return $ pure action
 
     -- endorsements *on* this block are *of* the previos block
-    (endorsers :: Seq EndorsingRights) <- runNodeQueryIx $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
+    endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash

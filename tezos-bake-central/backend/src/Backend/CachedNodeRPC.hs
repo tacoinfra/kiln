@@ -76,6 +76,7 @@ import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
@@ -901,22 +902,23 @@ validNodes q = case q of
     getLvl :: BlockHash -> m (Maybe RawLevel)
     getLvl ctx = do
       dsrc <- asks (^. nodeDataSource)
-      (fmap $ view level) <$> lookupBlock dsrc ctx
+      fmap (view level) <$> lookupBlock dsrc ctx
 
     findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
     findNode mLvl = do
       dsrc <- asks (^. nodeDataSource)
       nodes <- Map.assocs <$> readTVar' (_nodeDataSource_nodes dsrc)
-      case (nodes, mLvl) of
-        (_, Nothing) -> pure $ Right $ catMaybes $
-          map (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
-        (_, Just lvl) -> do
-          let f (nUri, NodeDataSourceData h mSp) = case mSp of
-                Nothing -> (nUri,) <$> h
-                Just sp -> if sp <= lvl
-                  then (nUri,) <$> h
+      case mLvl of
+        Nothing -> pure $ Right $ mapMaybe
+          (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
+        Just lvl -> do
+          let
+            candidateNodes = flip mapMaybe nodes $
+              \(nUri, NodeDataSourceData mHead mSavepoint) -> mSavepoint >>= \sp ->
+                if sp <= lvl
+                  then (nUri,) <$> mHead
                   else Nothing
-          pure $ case catMaybes $ map f nodes of
+          pure $ case candidateNodes of
             [] -> Left CacheError_NoSuitableNode
             ns -> Right ns
 
@@ -1013,8 +1015,8 @@ nodeQueryIx q = do
       let
         fitNodes :: [(URI, NodeDataSourceData)]
         fitNodes = filter (\v -> (v ^? _2 . nodeDataSourceData_latestHead . _Just . level) >= Just ctxLvl) $ Map.assocs nodes
-        mCtxCp = (\l -> levelAncestor hist l ctx) =<< (fmap (max ctxLvl) $ minimumMay $
-          catMaybes $ map (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
+        mCtxCp = (\l -> levelAncestor hist l ctx) =<< fmap (max ctxLvl) (minimumMay $
+          mapMaybe (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
       maybe (nqThrowError CacheError_NoSuitableNode) pure mCtxCp
 
   q1 <- modifyContext getRightsContext q
@@ -1027,7 +1029,7 @@ nodeQueryIx q = do
       nqInDB $ addToDb result q1
       pure result
 
-modifyContext :: Functor m => (BlockHash -> RawLevel -> m (BlockHash)) -> NodeQueryIx a -> m (NodeQueryIx a)
+modifyContext :: Functor m => (BlockHash -> RawLevel -> m BlockHash) -> NodeQueryIx a -> m (NodeQueryIx a)
 modifyContext f = \case
   NodeQueryIx_BakingRights ctx lvl -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvl) <$> f ctx lvl
   NodeQueryIx_BakingRights1 ctx lvl prio -> (\ctx' -> NodeQueryIx_BakingRights1 ctx' lvl prio) <$> f ctx lvl
@@ -1055,7 +1057,7 @@ checkCacheDb q = case q of
             FROM "CacheBakingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
             |] <&> stripOnly
-    (fmap join) $ traverse getResult $ headMay res
+    fmap join $ traverse getResult $ headMay res
   NodeQueryIx_BakingRights1 ctx lvl prio -> do
     mRes <- checkCacheDb (NodeQueryIx_BakingRightsChunk ctx lvl prio)
     pure $ join $ for mRes (V.!? fromIntegral (prio `mod` priorityChunkSize))
@@ -1068,7 +1070,7 @@ checkCacheDb q = case q of
             FROM "CacheEndorsingRights"
             WHERE "context" = ?ctx AND "level" = ?lvl
             |] <&> stripOnly
-    (fmap join) $ traverse getResult $ headMay res
+    fmap join $ traverse getResult $ headMay res
   where
     getResult json = case Aeson.fromJSON (unJson json) of
         Aeson.Success v -> return $ Just v
