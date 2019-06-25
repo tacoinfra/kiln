@@ -82,6 +82,9 @@ import Tezos.Types
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
 
+maxProposalUpvotes :: Int
+maxProposalUpvotes = 20
+
 data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger

@@ -69,6 +69,7 @@ in {
       --pause-on-error true \
       --root-path "$root_path" \
       --waiting-attempts 2000 \
+      --extra-dummy-proposals=3 \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
