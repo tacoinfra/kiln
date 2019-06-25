@@ -280,9 +280,10 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
         updateCheckpoint blk = do
           mParams <- liftIO $ readTVarIO $ _nodeDataSource_parameters nds
+          nData <- Map.lookup nodeAddr <$> (liftIO $ readTVarIO $ _nodeDataSource_nodes nds)
           let
-            shouldUpdate = maybe True checkCycle mParams
-            checkCycle protoInfo = thisCycle /= predCycle
+            shouldUpdate = maybe True checkCycle (liftA2 (,) mParams nData)
+            checkCycle (protoInfo, (NodeDataSourceData _ mSp)) = mSp == Nothing || thisCycle /= predCycle
               where
                 thisCycle = levelToCycle protoInfo (blk ^. level)
                 predCycle = levelToCycle protoInfo $ pred (blk ^. level)
