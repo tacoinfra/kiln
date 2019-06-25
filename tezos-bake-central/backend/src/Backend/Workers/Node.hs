@@ -27,7 +27,6 @@ import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl')
 import Data.Functor.Apply
-import Data.IORef
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -272,38 +271,28 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
-      checkpointUpdateLvlRef <- liftIO $ newIORef Nothing
       let reconnectDelay = 5
           nodeQuery :: RpcQuery a -> IO (Either RpcError a)
           nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
           chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ()) --(Either RpcError a)
           chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
-          updateCheckpointImpl blk = do
-            $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
-            liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-              Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
-              Right cp -> do
-                let f = Just . \case
-                      Nothing -> NodeDataSourceData Nothing (Just sp)
-                      Just v -> v & nodeDataSourceData_savePoint ?~ sp
-                    sp = _checkpoint_savePoint cp
-                liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) (Map.alter f nodeAddr)
-            mParams <- liftIO $ atomically $ readTVar $ _nodeDataSource_parameters nds
-            -- If we dont have params, then dont update the checkpointUpdateLvlRef
-            -- and do the updateCheckpoint again for the next block
-            for mParams $ \protoInfo ->
-              let
-                nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
-                nextCycleLvl = firstLevelInCycle protoInfo nextCycle
-              in pure $ nextCycleLvl
           updateCheckpoint blk = do
-            mLvl <- liftIO $ readIORef checkpointUpdateLvlRef
-            newVal <- case mLvl of
-              Nothing -> updateCheckpointImpl blk
-              Just lvl -> if (blk ^. level >= lvl)
-                then updateCheckpointImpl blk
-                else pure mLvl
-            liftIO $ writeIORef checkpointUpdateLvlRef newVal
+            mParams <- liftIO $ atomically $ readTVar $ _nodeDataSource_parameters nds
+            let doUpdate = maybe True checkCycle mParams
+                checkCycle protoInfo = thisCycle /= predCycle
+                  where
+                    thisCycle = levelToCycle protoInfo (blk ^. level)
+                    predCycle = levelToCycle protoInfo $ pred (blk ^. level)
+            when doUpdate $ do
+              $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+              liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+                Left _e -> $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr)
+                Right cp -> do
+                  let f = Just . \case
+                        Nothing -> NodeDataSourceData Nothing (Just sp)
+                        Just v -> v & nodeDataSourceData_savePoint ?~ sp
+                      sp = _checkpoint_savePoint cp
+                  liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) (Map.alter f nodeAddr)
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
