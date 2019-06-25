@@ -908,7 +908,6 @@ validNodes q = case q of
       dsrc <- asks (^. nodeDataSource)
       nodes <- Map.assocs <$> readTVar' (_nodeDataSource_nodes dsrc)
       case (nodes, mLvl) of
-        ([], _) -> pure $ Left CacheError_NoSuitableNode
         (_, Nothing) -> pure $ Right $ catMaybes $
           map (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
         (_, Just lvl) -> do
@@ -918,7 +917,7 @@ validNodes q = case q of
                   then (nUri,) <$> h
                   else Nothing
           pure $ case catMaybes $ map f nodes of
-            [] -> Left CacheError_NotEnoughHistory
+            [] -> Left CacheError_NoSuitableNode
             ns -> Right ns
 
 pickNode
@@ -1016,9 +1015,7 @@ nodeQueryIx q = do
         fitNodes = filter (\v -> (v ^? _2 . nodeDataSourceData_latestHead . _Just . level) >= Just ctxLvl) $ Map.assocs nodes
         mCtxCp = (\l -> levelAncestor hist l ctx) =<< (fmap (max ctxLvl) $ minimumMay $
           catMaybes $ map (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
-      case fitNodes of
-        [] -> nqThrowError CacheError_NoSuitableNode
-        _ -> maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtxCp
+      maybe (nqThrowError CacheError_NoSuitableNode) pure mCtxCp
 
   q1 <- modifyContext getRightsContext q
   mRes <- nqInDB $ checkCacheDb q1
