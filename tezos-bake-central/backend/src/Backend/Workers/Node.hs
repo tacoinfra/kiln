@@ -67,7 +67,7 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
 import Backend.ViewSelectorHandler (getProposals)
-import Common.App (getStartTimeForPeriod, getEndTimeForPeriod, calculateAmendmentTimings)
+import Common.App (getStartTimeForPeriod, getEndTimeForPeriod, calculatePeriodProgress)
 import Common.Schema
 import ExtraPrelude
 
@@ -606,15 +606,15 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         let
           startTime = fst $ getStartTimeForPeriod currentPeriodKind a as' protoInfo
           endTime = fst $ getEndTimeForPeriod currentPeriodKind a as' protoInfo
-          timings = calculateAmendmentTimings now startTime endTime
+          progress = calculatePeriodProgress now startTime endTime
 
         let
           bid = Id pkh
           singleVotePhase = bool (reportError False) clearAllErrors
-          clearAllErrors = clearPastVotingPeriodErrors timings chainId bid Nothing Nothing
+          clearAllErrors = clearPastVotingPeriodErrors chainId bid Nothing Nothing
           reportError previouslyVoted = do
-            clearPastVotingPeriodErrors timings chainId bid (Just currentPeriodKind) (Just previouslyVoted)
-            reportVotingReminderError timings chainId bid currentPeriodKind previouslyVoted
+            clearPastVotingPeriodErrors chainId bid (Just currentPeriodKind) (Just previouslyVoted)
+            reportVotingReminderError progress chainId bid currentPeriodKind previouslyVoted
 
         case votingState of
           BakerVotingState_Proposal pvs -> case pvs of

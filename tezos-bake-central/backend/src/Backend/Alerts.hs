@@ -355,8 +355,8 @@ reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => (Double, Integer) -> ChainId -> Id Baker -> VotingPeriodKind -> Bool -> m ()
-reportVotingReminderError timings chainId bid votingPeriodKind previouslyVoted = do
+  => (Double, NominalDiffTime) -> ChainId -> Id Baker -> VotingPeriodKind -> Bool -> m ()
+reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid votingPeriodKind previouslyVoted = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogVotingReminder) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -372,18 +372,21 @@ reportVotingReminderError timings chainId bid votingPeriodKind previouslyVoted =
     |]
   case existingLog of
     Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogVotingReminder_logField
-      [ ErrorLogVotingReminder_previouslyVotedField =. previouslyVoted ]
+      [ ErrorLogVotingReminder_previouslyVotedField =. previouslyVoted
+      , ErrorLogVotingReminder_periodEllapsedFractionField =. periodEllapsedFraction
+      , ErrorLogVotingReminder_periodEndsInField =. periodEndsIn
+      ]
     Nothing -> do
       (logId, log) <- insertErrorLog $ \logId ->
-        ErrorLogVotingReminder logId chainId bid votingPeriodKind previouslyVoted
-      queueAlert (Just logId) $ mkErrorLogAlert $ mkVotingReminderMessage timings False log
+        ErrorLogVotingReminder logId chainId bid votingPeriodKind previouslyVoted periodEllapsedFraction periodEndsIn
+      queueAlert (Just logId) $ mkErrorLogAlert $ mkVotingReminderMessage (periodEllapsedFraction, periodEndsIn) False log
 
 clearPastVotingPeriodErrors
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => (Double, Integer) -> ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
-clearPastVotingPeriodErrors timings chainId bid periodKind previouslyVoted = do
+  => ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
+clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
   now <- getTime
   lids :: [Id ErrorLogVotingReminder] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
@@ -398,7 +401,10 @@ clearPastVotingPeriodErrors timings chainId bid periodKind previouslyVoted = do
   for_ lids notifyDefault
   log' <- for (listToMaybe lids) $ getBy . fromId
   for_ (join log') $ \log ->
-    queueAlert Nothing $ mkErrorLogAlert $ mkVotingReminderMessage timings True log
+    queueAlert Nothing $ mkErrorLogAlert $ mkVotingReminderMessage
+      (_errorLogVotingReminder_periodEllapsedFraction log, _errorLogVotingReminder_periodEndsIn log)
+      True
+      log
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125

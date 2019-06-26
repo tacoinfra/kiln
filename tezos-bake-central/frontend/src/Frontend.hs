@@ -780,7 +780,7 @@ liveErrorsWidget = void $ do
             BakerLogTag_InsufficientFunds -> renderBakerError
               (bakerInsufficientFundsDescriptions log)
               pkh
-            BakerLogTag_VotingReminder -> withAmendmentTimings $ \fraction remaining ->
+            BakerLogTag_VotingReminder -> withAmendmentPeriodProgress $ \fraction remaining ->
               _errorLogWidgets_notification $ mkVotingReminderWidgets fraction remaining resolved log
             where
               pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
@@ -1733,7 +1733,7 @@ bakersTab =
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
           BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
-          BakerLogTag_VotingReminder -> withAmendmentTimings $ \fraction remaining ->
+          BakerLogTag_VotingReminder -> withAmendmentPeriodProgress $ \fraction remaining ->
               _errorLogWidgets_banner $ mkVotingReminderWidgets fraction remaining False log
 
       BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
@@ -2012,9 +2012,9 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
-withAmendmentTimings :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
-                     => (Dynamic t Double -> Dynamic t Integer -> m ()) -> m ()
-withAmendmentTimings w = do
+withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
+                     => (Dynamic t Double -> Dynamic t Time.NominalDiffTime -> m ()) -> m ()
+withAmendmentPeriodProgress w = do
   currentTime <- asks (^. timer)
   mProtoInfo <- maybeDyn =<< watchProtoInfo
   amendments <- watchAmendment
@@ -2027,4 +2027,4 @@ withAmendmentTimings w = do
         getTime getter = fmap fst $ getter <$> p <*> amendment <*> amendments <*> protoInfo
         startTime = getTime getStartTimeForPeriod
         endTime = getTime getEndTimeForPeriod
-      uncurry w $ splitDynPure $ liftA3 calculateAmendmentTimings currentTime startTime endTime
+      uncurry w $ splitDynPure $ liftA3 calculatePeriodProgress currentTime startTime endTime

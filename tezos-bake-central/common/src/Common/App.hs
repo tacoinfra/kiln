@@ -48,7 +48,7 @@ import Rhyolite.Schema (Email, Id(..), IdData)
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
-import Common (nominalDiffTimeToSeconds, uriHostPortPath)
+import Common (uriHostPortPath)
 import Common.Alerts (AlertsFilter (..))
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (FrontendConfig)
@@ -85,12 +85,11 @@ getEndTimeForPeriod p a as proto
         timeBetweenBlocks = calcTimeBetweenBlocks proto
         periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
 
-calculateAmendmentTimings :: UTCTime -> UTCTime -> UTCTime -> (Double, Integer)
-calculateAmendmentTimings currentTime startTime endTime = (ellapsedFraction, minutesLeft)
+calculatePeriodProgress :: UTCTime -> UTCTime -> UTCTime -> (Double, Time.NominalDiffTime)
+calculatePeriodProgress currentTime startTime endTime = (ellapsedFraction, remaining)
   where
     ellapsed = currentTime `diffUTCTime` startTime
     remaining = endTime `diffUTCTime` currentTime
-    minutesLeft = nominalDiffTimeToSeconds remaining `div` 60
     ellapsedFraction = realToFrac ellapsed / realToFrac (ellapsed + remaining)
 
 type Deletable a = First (Maybe a)

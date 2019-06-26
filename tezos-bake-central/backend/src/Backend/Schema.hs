@@ -36,7 +36,7 @@ module Backend.Schema
   ) where
 
 import Control.Lens (Field1, Field2)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, NominalDiffTime)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -53,7 +53,7 @@ import Data.Dependent.Sum (ShowTag)
 import Data.Dependent.Sum (compareTagged)
 import Data.Dependent.Sum (eqTagged)
 import Data.Dependent.Sum (showTaggedPrec)
-import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
@@ -339,6 +339,9 @@ instance FromField Word64 where
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
+instance FromField (Fixed a) where
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
+
 instance HasResolution a => PrimitivePersistField (Fixed a) where
   toPrimitivePersistValue p (MkFixed x) = toPrimitivePersistValue p (fromInteger x :: Int64)
   fromPrimitivePersistValue p x = MkFixed (toInteger (fromPrimitivePersistValue p x :: Int64))
@@ -352,6 +355,19 @@ instance HasResolution a => PersistField (Fixed a) where
 instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
+
+instance FromField NominalDiffTime where
+  fromField f b = toEnum <$> fromField f b
+
+instance PrimitivePersistField NominalDiffTime where
+  toPrimitivePersistValue p x = toPrimitivePersistValue p $ fromEnum x
+  fromPrimitivePersistValue p v = toEnum $ fromPrimitivePersistValue p v
+
+instance PersistField NominalDiffTime where
+  persistName _ = "NominalDiffTime"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = dbType p (fromEnum x)
 
 instance PersistField NamedChainOrChainId where
   persistName _ = "NamedChainOrChainId"
@@ -423,9 +439,6 @@ instance PersistField PeriodSequence where
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
-
-instance FromField Micro where
-  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)

@@ -823,6 +823,8 @@ data ErrorLogVotingReminder = ErrorLogVotingReminder
   , _errorLogVotingReminder_baker :: !(Id Baker)
   , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
   , _errorLogVotingReminder_previouslyVoted :: !Bool
+  , _errorLogVotingReminder_periodEllapsedFraction :: !Double
+  , _errorLogVotingReminder_periodEndsIn :: !NominalDiffTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogVotingReminder where
   type IdData ErrorLogVotingReminder = Id ErrorLog

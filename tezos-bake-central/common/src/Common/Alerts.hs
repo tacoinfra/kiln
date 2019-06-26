@@ -23,6 +23,7 @@ import Tezos.Chain (NamedChain, showNamedChain)
 import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
+import Common (nominalDiffTimeToSeconds)
 import Common.Schema
 import ExtraPrelude
 
@@ -158,8 +159,8 @@ data ErrorLogWidgets m = ErrorLogWidgets
   , _errorLogWidgets_banner :: m ()
   }
 
-mkVotingReminderMessage :: (Double, Integer) -> Bool -> ErrorLogVotingReminder -> ErrorLogMessage
-mkVotingReminderMessage (periodFractionEllapsed, minutesLeft) resolved elog = ErrorLogMessage
+mkVotingReminderMessage :: (Double, Time.NominalDiffTime) -> Bool -> ErrorLogVotingReminder -> ErrorLogMessage
+mkVotingReminderMessage (periodFractionEllapsed, periodEndsIn) resolved elog = ErrorLogMessage
   { _errorLogMessage_resolved = resolved
   , _errorLogMessage_subject = title & if resolved then ("Resolved: " <>) else id
   , _errorLogMessage_content = "Open the menu on your Kiln baker tile and click “Vote” to vote."
@@ -168,7 +169,7 @@ mkVotingReminderMessage (periodFractionEllapsed, minutesLeft) resolved elog = Er
     previouslyVoted = _errorLogVotingReminder_previouslyVoted elog
     periodKind = _errorLogVotingReminder_periodKind elog
 
-    timeLeft = case (minutesLeft `divMod` 60) of
+    timeLeft = case (nominalDiffTimeToSeconds periodEndsIn `divMod` 3600) of
       (0, m) -> tshow m <> " minutes"
       (h, _) -> tshow h <> " hours"
 

@@ -630,8 +630,8 @@ htmlErrorDescription = \case
 
 mkVotingReminderWidgets
   :: (DomBuilder t m, PostBuild t m)
-  => Dynamic t Double -> Dynamic t Integer -> Bool -> ErrorLogVotingReminder -> ErrorLogWidgets m
-mkVotingReminderWidgets periodFractionEllapsed minutesLeft resolved elog = ErrorLogWidgets
+  => Dynamic t Double -> Dynamic t Time.NominalDiffTime -> Bool -> ErrorLogVotingReminder -> ErrorLogWidgets m
+mkVotingReminderWidgets periodFractionEllapsed periodEndsIn resolved elog = ErrorLogWidgets
   { _errorLogWidgets_tile = blank
   , _errorLogWidgets_notification = dynText $ _errorLogMessage_content <$> msg
   , _errorLogWidgets_banner = do
@@ -650,7 +650,7 @@ mkVotingReminderWidgets periodFractionEllapsed minutesLeft resolved elog = Error
           text "Resolve"
   }
   where
-    msg = mkMsg resolved elog <$> periodFractionEllapsed <*> minutesLeft
+    msg = mkMsg resolved elog <$> periodFractionEllapsed <*> periodEndsIn
     mkMsg res l frac ms = mkVotingReminderMessage (frac, ms) res l
 
 makeLenses ''FrontendContext
