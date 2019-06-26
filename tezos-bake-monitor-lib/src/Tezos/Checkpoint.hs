@@ -17,7 +17,7 @@ data Checkpoint = Checkpoint
   { _checkpoint_savePoint :: !RawLevel
   , _checkpoint_caboose :: !RawLevel
   , _checkpoint_historyMode :: !HistoryMode
-  , _checkpoint_blockHeaderShell :: !BlockHeaderShell
+  , _checkpoint_block :: !BlockHeaderShell
   }
   deriving (Show, Eq, Ord, Generic, Typeable)
 instance NFData Checkpoint
