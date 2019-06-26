@@ -30,8 +30,7 @@ import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
-import Data.List (intersperse, sortBy)
-import Data.List.NonEmpty (nonEmpty)
+import Data.List (intersperse, sortBy, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -40,6 +39,7 @@ import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Time as Time
+import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
@@ -73,10 +73,12 @@ import Common.Alerts (badNodeHeadMessage)
 import Common.Alerts (bakerAccusedDescriptions)
 import Common.Alerts (bakerDeactivatedDescriptions)
 import Common.Alerts (bakerDeactivationRiskDescriptions)
+import Common.Alerts (bakerGroupedMissedDescriptions)
 import Common.Alerts (bakerInsufficientFundsDescriptions)
 import Common.Alerts (bakerMissedDescriptions)
 import Common.Alerts (isUserResolvable)
 import Common.Alerts (networkUpdateDescription)
+import Common.Alerts (standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -496,7 +498,7 @@ networkUpdateAlert elua = do
   let namedChain = _errorLogNetworkUpdate_namedChain elua
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (LogTag_NetworkUpdate :=> pure elua)
+    (pure (LogTag_NetworkUpdate :=> pure elua))
     (icon "icon-alert-badge big blue")
     header
     Nothing
@@ -1590,6 +1592,33 @@ data BakersBanner
   | BakersBanner_CannotGather
   deriving (Eq, Ord, Show)
 
+data BakerAlert
+  = BakerAlert_Alert (DSum BakerLogTag Identity)
+  | BakerAlert_GroupedAlert (RawLevel, UTCTime) (RawLevel, UTCTime) (NonEmpty ErrorLogBakerMissed)
+  deriving (Eq, Ord, Show)
+
+groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
+groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (group endorseMiss)
+  where
+    (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
+    partitionF
+      :: (a ~ (DSum BakerLogTag Identity), c ~ ErrorLogBakerMissed)
+      => ([a], [(b, c)], [(b, c)])
+      -> (b, a)
+      -> ([a], [(b, c)], [(b, c)])
+    partitionF (os, bms, ems) (elog, v@(lTag :=> Identity log)) = case lTag of
+      BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right log of
+        RightKind_Baking -> (os, (elog, log) : bms, ems)
+        RightKind_Endorsing -> (os, bms, (elog, log) : ems)
+      _ -> (v : os, bms, ems)
+
+    group ls' = case NEL.nonEmpty ls' of
+      Nothing -> []
+      Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
+      Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) $ fmap snd ls]
+        where
+          applyF f = (\(e, log) -> (_errorLogBakerMissed_level log, _errorLog_started e)) $ f (comparing fst) ls
+
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -1606,13 +1635,13 @@ bakersTab =
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerErrorLogView)) <- snd <$$$$> watchErrorsByBaker alertWindow
+      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))) <- watchErrorsByBaker alertWindow
       dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . concat . (fmap NEL.toList) <$> dEbb
+            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concat . (fmap NEL.toList) <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
@@ -1620,7 +1649,7 @@ bakersTab =
             toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1637,8 +1666,8 @@ bakersTab =
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
           dyn_ $ ffor bakersBanner $ mkBakersBanner
 
-          let notifications :: Dynamic t (Map.Map (Down (DSum BakerLogTag Identity)) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems <$> dEbb
+          let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . (fmap (groupBakerAlerts . NEL.toList)) <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
@@ -1649,15 +1678,15 @@ bakersTab =
               let
                 renderBakerError = text . _bakerErrorDescriptions_tile
 
-                connectivityAndUnresolvedAlerts = (++)
+                bakerAlerts = (++)
                   <$> (ffor dCollectiveNodesStatus $ \case
                           Left e -> [Left e]
                           Right _ -> [])
-                  <*> (Right <$$> unresolvedAlerts)
+                  <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor connectivityAndUnresolvedAlerts $ fmap $ \case
+                errorMessages = ffor bakerAlerts $ fmap $ \case
                   Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
-                  Right (lTag :=> Identity log) -> case lTag of
+                  Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
                     BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
                     BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
                       where
@@ -1668,6 +1697,14 @@ bakersTab =
                     BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
+                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> el "span" $ do
+                    elClass "span" "ui label circular" $ text $ tshow (length ls)
+                    text nbsp
+                    text $ "Missed " <> aRight <> "."
+                    where
+                      aRight = case _errorLogBakerMissed_right log of
+                        RightKind_Baking -> "a bake"
+                        RightKind_Endorsing -> "an endorsement"
 
               let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
               titleUniq <- holdUniqDyn title
@@ -1713,22 +1750,30 @@ bakersTab =
                text " "
                ensureHealthyNodes)
 
-    splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerErrorLogView -> m ()
-    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \errorView@(bTag :=> Identity log) ->
-      let
-        pkh = bakerIdForBakerErrorLogView errorView
-        ev = LogTag_Baker bTag :=> Identity log
-      in case bTag of
-        -- TODO
-        BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
-        BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
-        BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
-        BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
-        BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
-        BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+    splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerAlert -> m ()
+    splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+      BakerAlert_Alert errorView@(bTag :=> Identity log) ->
+        let
+          pkh = bakerIdForBakerErrorLogView errorView
+          ev = (LogTag_Baker bTag :=> Identity log) :| []
+        in case bTag of
+          -- TODO
+          BakerLogTag_MultipleBakersForSameBaker -> text "Multiple bakers for same baker."
+          BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
+          BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
+          BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
+          BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
+          BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+
+      BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
+        tz <- asks (^. timeZone)
+        let
+          pkh = unId $ _errorLogBakerMissed_baker log
+          ev = (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Identity l) <$> ls
+        renderBakerError ev (bakerGroupedMissedDescriptions tz (length ls) first' latest' log) pkh
 
       where
-        renderBakerError :: ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
+        renderBakerError :: NonEmpty ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
           let warning = _bakerErrorDescriptions_warning dsc
           renderResolvableSplashAlert ev
@@ -1766,12 +1811,20 @@ bakersTab =
           dmBakerVote <- watchBakerVote
           dproposals <- watchProposals
           let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
+              bakerOutOfVotes n = (divClass "detail" $ text msg, True <$ guard (n >= maxProposalUpvotes))
+                where msg = T.intercalate " "
+                        [ "You have upvoted"
+                        , tshow n
+                        , "proposals of"
+                        , tshow maxProposalUpvotes
+                        , "allowed."
+                        ]
           maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
             Nothing -> Nothing
             Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
                 n | n == 0 -> bakerNotVoted
-                  | otherwise -> (divClass "detail" $ text $ "You have upvoted " <> tshow n <> " proposals of 20 allowed.", True <$ guard (n >= 20))
+                  | otherwise -> bakerOutOfVotes n
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ case mBakerVote of
                 Nothing -> bakerNotVoted
@@ -1914,20 +1967,21 @@ bakersTab =
               *> text "Gathering baker data."
 
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
-  => ErrorLogView
+  => NonEmpty ErrorLogView
   -> m () -- ^ Alert icon
   -> Text -- ^ Title
   -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> m ()
-renderResolvableSplashAlert e@(etag :=> _) splashIcon title entity desc = do
+renderResolvableSplashAlert es@((etag :=> _) :| _) splashIcon title entity desc = do
   renderSplashAlert splashIcon (text title) entity $ do
     desc
     when (isUserResolvable etag) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"
-      void $ requestingIdentity $ public (PublicRequest_ResolveAlert e) <$ resolve
+      void $ requestingIdentity $ public (PublicRequest_ResolveAlerts es') <$ resolve
+  where es' = (\e -> etag :=> (Const $ errorLogIdForErrorLogView e)) <$> NEL.toList es
 
 renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => m () -- ^ Alert icon
@@ -1977,111 +2031,6 @@ tileMenu content =
         }) $ do
           SemUi.list (def & SemUi.listConfig_link SemUi.|~ True & SemUi.listConfig_divided SemUi.|~ True) content
     pure ()
-
-bakerTab
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => PublicKeyHash
-  -> m ()
-bakerTab pkh = do
-  bakers <- watchBakerStats $ pure $ Set.singleton pkh
-  dparameters <- watchProtoInfo
-    -- TODO: this could be a maybeDyn of some sort so that we don't redraw the dom for each balance change/block baked.
-  thisBaker <- (maybeDyn <=< holdDyn Nothing <=< updatedWithInit)  $ MMap.lookup pkh <$> bakers
-  dyn_ $ ffor thisBaker $ \case
-    Nothing -> waitingForResponse
-    Just d -> dyn_ $ ffor d $ \(bakeEfficiency, account) -> divClass "ui grid" $ do
-      divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ publicKeyHashLink pkh
-
-        let tz = _account_balance account
-        elAttr "div" ("class" =: "balance" <> "data-tooltip" =: "This is the current number of tez in the account that this baker is using.") $ do
-          text "Current Balance: "
-          text (tez tz)
-        dyn_ $ ffor dparameters $ traverse $ \protoInfo -> do
-          let bSD = _protoInfo_blockSecurityDeposit protoInfo
-              eSD = _protoInfo_endorsementSecurityDeposit protoInfo
-              failures = ["baking or endorsement" | tz < min bSD eSD] <> ["baking" | tz < bSD] <> ["endorsement" | tz < eSD]
-          case failures of
-            (t:_) -> do
-              text $ "The identity in use by this baker has not enough tez to pay the security deposit for " <> t <> ". "
-                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                <> "You'll need to transfer sufficient tez into the account before it can continue."
-            [] | tz < 4 * (bSD + eSD) -> do
-              text $ "The identity in use by this baker is running somewhat low on tez. "
-                <> "The security deposit for baking is currently " <> tez bSD <> " and for endorsement is currently " <> tez eSD <> ". "
-                <> "Be sure to keep enough tez in the account to pay the security deposits on blocks you'll be baking or endorsing."
-            _ -> blank
-
-        elClass "p" "efficiency" $ do
-          elClass "h4" "ui medium header" $ text "Efficiency"
-          elClass "td" "right aligned" $ do
-            let baked = _bakeEfficiency_bakedBlocks bakeEfficiency
-            let rights = _bakeEfficiency_bakingRights bakeEfficiency
-            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker either baked or was beaten by higher proiry baker (over past preserved cycles)") $
-              text $ tshow baked
-            text " of "
-            elAttr "span" ("data-tooltip"=:"Number of blocks where this baker had rights to bake at any priority (over past preserved cycles)") $
-              text $ tshow rights
-            when (rights /= 0) $ do
-              text " ("
-              text $ tshow (round (fromIntegral baked / fromIntegral rights * 100 :: Double) :: Int)
-              text "%)"
-
-clientTab
-  :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r
-    )
-  => Id BakerDaemon -> URI -> m ()
-clientTab cid addr = do
-  clients <- watchClient (pure cid)
-  dyn_ $ ffor (MMap.lookup cid <$> clients) $ \case
-    Nothing -> waitingForResponse
-    Just clientInfo -> divClass "ui grid" $ do
-      dparameters <- watchProtoInfo
-      let report = unJson (_bakerDaemonInfoData_report clientInfo)
-          baked = sortBy (flip (comparing _event_time)) (_report_baked report)
-          errors = sortBy (flip (comparing _error_time)) (map mkErr (_report_errors report))
-      divClass "eight wide column" $ do
-        elClass "h3" "ui medium header" $ text $ Uri.render addr
-        _ <- divClass "bakers" $ do
-          text "ID: "
-          sequenceA $ intersperse (text " ") (fmap publicKeyHashLink $ _clientConfig_bakers $ unJson $ _bakerDaemonInfoData_config clientInfo)
-
-        elClass "p" "counts" $ do
-          tooltip "This counts the number of errors that this baker has encountered since it began running." $
-            text $ "Errors: " <> tshow (length errors)
-
-        for_ (nonEmpty errors) $ \es -> elClass "p" "errors" $ do
-          elClass "h4" "ui medium header" $ text "Errors"
-          elClass "table" "ui celled striped table" $ do
-            el "thead" . el "tr" $ do
-              elClass "th" "four wide" $ text "Time"
-              el "th" $ text "Message"
-            for_ es $ \e -> do
-              el "tr" $ do
-                el "td" . el "strong" . text . T.pack . formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" . _error_time $ e
-                el "td" $ do
-                  for_ (T.lines (_error_text e)) $ \t ->
-                    divClass "errorLine" $ text t
-
-      divClass "eight wide column" $ do
-        divClass "ui medium header" $ text "Activity"
-        elAttr "table" ("class" =: "ui celled striped table") $ do
-          el "thead" . el "tr" $ do
-            elClass "th" "four wide" $ text "Time"
-            el "th" $ text "Level"
-            el "th" $ text "Block Hash"
-            el "th" $ text "Reward"
-          for_ baked $ \b -> el "tr" $ do
-            el "td" $ el "strong" $ text $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%d at %H:%M" $ _event_time b
-            el "td" $ text $ tshow $ blockLevel b
-            el "td" $ blockHashLink $ pure $ _bakedEvent_hash $ _event_detail b
-            el "td" $ dyn_ $ ffor dparameters $ traverse $ \protoInfo ->
-              text $ tez $ blockRewards b protoInfo
 
 waitingForResponse :: DomBuilder t m => m ()
 waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"

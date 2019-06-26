@@ -1,5 +1,5 @@
 name: backend
-version: 0.5.2
+version: 0.5.3
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -97,9 +97,9 @@ library
     , transformers-base
     , unix
     , universe
+    , unordered-containers
     , uri-encode
     , vector
-    , unordered-containers
 
   exposed-modules:
     Backend

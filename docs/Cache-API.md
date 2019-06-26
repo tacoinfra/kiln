@@ -144,7 +144,7 @@ Retrieve the all baking rights at a specific level as seen by a given branch.
 
   * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
-  * Replace `151128` with a level that is at or before the block hash used as the branch.
+  * Replace `151128` with the level for desired baking rights data.
 
 > `GET /api/v1/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
@@ -183,7 +183,7 @@ Retrieve the all endorsing rights at a specific level as seen by a given branch.
 
   * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
-  * Replace `151128` with a level that is at or before the block hash used as the branch.
+  * Replace `151128` with the level for desired endorsing rights data.
 
 > `GET /api/v1/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
