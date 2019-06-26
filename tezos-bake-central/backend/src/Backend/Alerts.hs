@@ -367,6 +367,7 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
        AND t.chainId = ?chainId
        AND t."baker" = ?bid
        AND t."votingPeriodKind" = ?votingPeriodKind
+       AND t."previouslyVoted" = ?previouslyVoted
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
