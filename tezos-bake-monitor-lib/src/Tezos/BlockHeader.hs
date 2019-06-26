@@ -44,6 +44,19 @@ data BlockHeader = BlockHeader
   deriving (Show, Eq, Ord, Generic, Typeable)
 instance NFData BlockHeader
 
+data BlockHeaderShell = BlockHeaderShell
+  { _blockHeaderShell_level :: !RawLevel
+  , _blockHeaderShell_proto :: !Word8
+  , _blockHeaderShell_predecessor :: !BlockHash
+  , _blockHeaderShell_timestamp :: !UTCTime
+  , _blockHeaderShell_validationPass :: !Word8
+  , _blockHeaderShell_operationsHash :: !OperationListListHash
+  , _blockHeaderShell_fitness :: !Fitness
+  , _blockHeaderShell_context :: !ContextHash
+  }
+  deriving (Show, Eq, Ord, Generic, Typeable)
+instance NFData BlockHeaderShell
+
 newtype Priority = Priority { unPriority :: Word16 }
   deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable, Enum, Num, Integral, Real, Bits, B.TezosBinary)
 
@@ -76,5 +89,5 @@ instance B.TezosUnsignedBinary BlockHeader where
         <*> B.get -- seedNonceHash
         <*> pure Nothing -- no signature yet, because it's unsigned
 
-concat <$> traverse deriveTezosJson [ ''BlockHeader ]
-concat <$> traverse makeLenses [ 'BlockHeader ]
+concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderShell]
+concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderShell ]
