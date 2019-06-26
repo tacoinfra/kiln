@@ -11,13 +11,13 @@ import GHC.Generics (Generic)
 
 import Tezos.Json
 import Tezos.Level
+import Tezos.BlockHeader
 
 data Checkpoint = Checkpoint
   { _checkpoint_savePoint :: !RawLevel
   , _checkpoint_caboose :: !RawLevel
   , _checkpoint_historyMode :: !HistoryMode
-  -- Refactor this: https://app.asana.com/0/921278819572674/1126733534168491/f
-  -- , _checkpoint_block :: !BlockHeaderShell
+  , _checkpoint_block :: !BlockHeaderShell
   }
   deriving (Show, Eq, Ord, Generic, Typeable)
 instance NFData Checkpoint
