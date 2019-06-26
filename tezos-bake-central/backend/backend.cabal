@@ -97,9 +97,9 @@ library
     , transformers-base
     , unix
     , universe
+    , unordered-containers
     , uri-encode
     , vector
-    , unordered-containers
 
   exposed-modules:
     Backend
