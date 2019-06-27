@@ -932,7 +932,23 @@ nodeQueryDataSourceImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
+nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC
+
+nodeQueryImpl
+  :: forall a repr.
+       (BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, QueryHistory repr, QueryBlock repr)
+  => (forall c m s e.
+       ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
+     => repr c -> m c)
+  -> ChainId
+  -> BlockHash
+  -> ProtoInfo
+  -> NodeRPCContext
+  -> LoggingEnv
+  -> (forall b. NodeQuery b -> IO (Either CacheError b))
+  -> NodeQuery a
+  -> IO (Either CacheError a)
+nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryDataSourceImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -956,8 +972,8 @@ nodeQueryDataSourceImpl chainId qBranch _proto ctx logger self' q = runExceptT $
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure pk
   where
-    nodeRPC' :: forall c. (forall repr. (BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, QueryNode repr, QueryHistory repr, QueryBlock repr) => repr c) -> ExceptT CacheError IO c
-    nodeRPC' q' = runReaderT (runLoggingEnv logger $ nodeRPC q') ctx
+    nodeRPC' :: forall c. Aeson.FromJSON c => (forall repr1. (BlockType repr1 ~ Block, BlockHeaderType repr1 ~ BlockHeader, QueryHistory repr1, QueryBlock repr1) => repr1 c) -> ExceptT CacheError IO c
+    nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
     self :: forall b. NodeQuery b -> ExceptT CacheError IO b
@@ -970,6 +986,18 @@ withCache nds dft action = do
   let dsrc = nds ^. nodeDataSource
   protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
+
+nodeQueryOsPubNodeImpl
+  :: forall a.
+     ChainId
+  -> BlockHash
+  -> ProtoInfo
+  -> NodeRPCContext
+  -> LoggingEnv
+  -> (forall b. NodeQuery b -> IO (Either CacheError b))
+  -> NodeQuery a
+  -> IO (Either CacheError a)
+nodeQueryOsPubNodeImpl = nodeQueryImpl osPubNodeRPC
 
 osPubNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
