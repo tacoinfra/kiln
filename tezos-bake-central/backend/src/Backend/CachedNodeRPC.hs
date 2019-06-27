@@ -1022,35 +1022,35 @@ nodeQueryIx q = do
     checkCacheDb = \case
       NodeQueryIx_BakingRights ctx lvl -> do
         res <- [queryQ|
-                SELECT "result"
-                FROM "CacheBakingRights"
-                WHERE "context" = ?ctx AND "level" = ?lvl
-                |] <&> stripOnly
+          SELECT "result"
+          FROM "CacheBakingRights"
+          WHERE "context" = ?ctx AND "level" = ?lvl
+        |] <&> stripOnly
         fmap join $ traverse getResult $ headMay res
       NodeQueryIx_EndorsingRights ctx lvl -> do
         res <- [queryQ|
-                SELECT "result"
-                FROM "CacheEndorsingRights"
-                WHERE "context" = ?ctx AND "level" = ?lvl
-                |] <&> stripOnly
+          SELECT "result"
+          FROM "CacheEndorsingRights"
+          WHERE "context" = ?ctx AND "level" = ?lvl
+        |] <&> stripOnly
         fmap join $ traverse getResult $ headMay res
       where
         getResult json = case Aeson.fromJSON (unJson json) of
-            Aeson.Success v -> return $ Just v
-            Aeson.Error bad -> do
-              $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
-              return Nothing
+          Aeson.Success v -> return $ Just v
+          Aeson.Error bad -> do
+            $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
+            return Nothing
 
     addToDb :: (Monad m1, PostgresRaw m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
       NodeQueryIx_BakingRights ctx lvl -> void [executeQ|
-                    INSERT into "CacheBakingRights" ("context", "level", "result")
-                    values (?ctx, ?lvl, ?result)
-                    |]
+        INSERT INTO "CacheBakingRights" ("context", "level", "result")
+        values (?ctx, ?lvl, ?result)
+      |]
       NodeQueryIx_EndorsingRights ctx lvl -> void [executeQ|
-                    INSERT into "CacheEndorsingRights" ("context", "level", "result")
-                    values (?ctx, ?lvl, ?result)
-                    |]
+        INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
+        values (?ctx, ?lvl, ?result)
+      |]
       where result = Json $ Aeson.toJSON result'
 
 
@@ -1167,7 +1167,7 @@ tryFetchFromCache chainId q = do
     FROM "GenericCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
+  |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
     Just ((rid, result) :| _) -> case requestResponseFromJSON q of
