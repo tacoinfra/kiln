@@ -1062,12 +1062,12 @@ instance QueryHistory OsNodeQuery where
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
 
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
-  rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\block ->
-    [("block", toBase58Text block), ("level", tshow lvl)])
+  rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\branch ->
+    [("branch", toBase58Text branch), ("level", tshow lvl)])
     where lvl = maybe (error "rBakingRights set empty")
             (either unRawLevel (error "rBakingRights cycle not handled")) $ headMay $ Set.toList levelSet
-  rEndorsingRights levelSet = chainApi2 "/endorsing-rights" (\block ->
-    [("block", toBase58Text block), ("level", tshow lvl)])
+  rEndorsingRights levelSet = chainApi2 "/endorsing-rights" (\branch ->
+    [("branch", toBase58Text branch), ("level", tshow lvl)])
     where lvl = maybe (error "rEndorsingRights set empty")
             (either unRawLevel (error "rEndorsingRights cycle not handled")) $ headMay $ Set.toList levelSet
 
