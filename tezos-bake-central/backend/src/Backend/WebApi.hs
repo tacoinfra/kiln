@@ -48,7 +48,8 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
   , ( chainTXT <> "/ballot", writeJSON $ const snapBallot )
   , ( chainTXT <> "/ballots", writeJSON $ const snapBallots )
-  , ( chainTXT <> "/block", writeJSON $ const snapBlock )
+  , ( chainTXT <> "/block",     writeJSON $ const snapVeryBlockLike )
+  , ( chainTXT <> "/block-full", writeJSON $ const snapBlock )
   , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
   , ( chainTXT <> "/block-header", writeJSON $ const snapBlockHeader )
   , ( chainTXT <> "/current-proposal", writeJSON $ const snapCurrentProposal )
@@ -62,7 +63,6 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/proposals", writeJSON $ const snapProposals )
   , ( chainTXT <> "/proposal-vote", writeJSON $ const snapProposalVote )
   , ( chainTXT <> "/public-key", writeJSON $ const snapPublicKey )
-  , ( chainTXT <> "/veryblocklike",     writeJSON $ const snapVeryBlockLike )
   ]
   where
     chain = _nodeDataSource_chain dataSrc

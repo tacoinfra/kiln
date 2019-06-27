@@ -307,4 +307,4 @@ getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_a
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
-    ("/v1/" <> toBase58Text chainId <> "/veryblocklike/?block=" <> toBase58Text blockHash)
+    ("/v1/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
