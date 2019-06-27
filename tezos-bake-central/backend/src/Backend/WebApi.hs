@@ -50,6 +50,7 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/ballots", writeJSON $ const snapBallots )
   , ( chainTXT <> "/block", writeJSON $ const snapBlock )
   , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
+  , ( chainTXT <> "/block-header", writeJSON $ const snapBlockHeader )
   , ( chainTXT <> "/current-proposal", writeJSON $ const snapCurrentProposal )
   , ( chainTXT <> "/current-quorum", writeJSON $ const snapCurrentQuorum )
   , ( chainTXT <> "/delegate-info", writeJSON $ const snapDelegateInfo )
@@ -158,6 +159,14 @@ snapBlock = do
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
     asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block
+
+snapBlockHeader :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockHeader)
+snapBlockHeader = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "hash"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockHeader block
 
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
 snapBakingRights = snapRights NodeQueryIx_BakingRights
