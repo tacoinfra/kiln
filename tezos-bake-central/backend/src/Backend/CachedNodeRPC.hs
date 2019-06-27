@@ -36,6 +36,7 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
+import Control.Exception.Safe (try)
 -- import Control.Lens (TraversableWithIndex)
 import Control.Lens ((&))
 import Control.Lens ((?~))
@@ -56,7 +57,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH, logInfoS, logErrorS, logDebugS)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -65,6 +66,7 @@ import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Encoding (emptyObject_)
 import Data.Constraint (Dict (..))
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -81,12 +83,15 @@ import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
-import qualified Network.HTTP.Client as Http (Manager)
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Types.Method as Http (methodGet)
+import qualified Network.HTTP.Types.Status as Http (Status (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
@@ -965,6 +970,33 @@ withCache nds dft action = do
   let dsrc = nds ^. nodeDataSource
   protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
+
+osPubNodeRPC
+  :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
+  => OsNodeQuery a -> m a
+osPubNodeRPC (OsNodeQuery route params) = do
+  mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
+
+  let rpcUrl = "http://localhost:8001/api/v1/" <> route
+        <> (mconcat $ map (\(k, v) -> "?" <> k <> "=" <> v) params)
+  $(logErrorS) "OSNODERPC" $ rpcUrl
+
+  let
+    request = rpcBoilerplate Http.methodGet emptyObject_ $ Http.parseRequest_ $ T.unpack rpcUrl
+
+  liftIO (try @_ @Http.HttpException $ Http.httpLbs request mgr) >>= \case
+    Left err -> throwError $ rpcResponse_HttpException (T.pack $ show err)
+    Right result -> case Http.responseStatus result of
+      Http.Status 200 _ -> do
+        let body = Http.responseBody result
+        case Aeson.eitherDecode' body of
+          Left err -> throwError $ rpcResponse_NonJSON err body
+          Right v -> return v
+      Http.Status code phrase -> do
+        $(logInfoS) "OSNODERPC" $ T.pack $ show $ Http.responseStatus result
+        $(logDebugS) "OSNODERPC" $ T.pack $ show $ Http.responseBody result
+
+        throwError $ rpcResponse_UnexpectedStatus code phrase
 
 data OsNodeQuery a = OsNodeQuery
   { _osNodeQuery_route :: Text
