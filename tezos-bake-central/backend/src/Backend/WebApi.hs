@@ -240,13 +240,13 @@ snapListings = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
 
 snapCurrentProposal :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Maybe ProtocolHash))
 snapCurrentProposal = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredQueryParam "branch"
+  blockBS <- requiredQueryParam "block"
   levelBS <- requiredQueryParam "level"
 
-  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_CurrentProposal branch blockLevel
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_CurrentProposal block blockLevel
 
 snapCurrentQuorum :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Int)
 snapCurrentQuorum = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
