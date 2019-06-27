@@ -76,6 +76,7 @@ import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.List (genericTake)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
@@ -1005,8 +1006,8 @@ osPubNodeRPC
 osPubNodeRPC (OsNodeQuery route params) = do
   mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
 
-  let rpcUrl = "http://localhost:8001/api/v1/" <> route
-        <> (mconcat $ map (\(k, v) -> "?" <> k <> "=" <> v) params)
+  let rpcUrl = "http://localhost:8001/api/v1/" <> route <> paramsE
+      paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
   $(logErrorS) "OSNODERPC" $ rpcUrl
 
   let
