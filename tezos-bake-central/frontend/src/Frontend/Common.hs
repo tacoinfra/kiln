@@ -639,14 +639,14 @@ mkVotingReminderWidgets periodFractionEllapsed periodEndsIn resolved elog = Erro
       el "div" $ dynText $ _errorLogMessage_subject <$> msg
       el "div" $ do
         text "Click the"
-        divClass "ellipsis thing" blank
+        divClass "ellipsis" blank
         text "button on your Kiln Baker tile to vote, or click “Vote Now”."
       el "div" $ do
         el "div" $ do
-          icon "envelope"
+          icon "icon-envelope"
           text "Vote Now"
         el "div" $ do
-          icon "resolve"
+          icon "icon-check"
           text "Resolve"
   }
   where

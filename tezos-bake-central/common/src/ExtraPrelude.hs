@@ -87,8 +87,6 @@ module ExtraPrelude
   , when'
   , whenJust
   , whenM
-
-  , _WIP_
   ) where
 
 import Control.Applicative (Const (..), liftA2, liftA3, (<|>))
@@ -138,6 +136,3 @@ whenM x true = if x then true else pure mempty
 
 when' :: (Monad m, Monoid b) => m Bool -> m b -> m b
 when' x true = x >>= \v -> if v then true else pure mempty
-
-_WIP_ :: a
-_WIP_ = undefined
