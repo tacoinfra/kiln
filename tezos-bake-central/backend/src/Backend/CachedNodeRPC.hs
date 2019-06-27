@@ -139,7 +139,7 @@ data NodeQuery a where
   NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
   NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
-  NodeQuery_CurrentProposal :: BlockHash -> RawLevel -> NodeQuery (Maybe ProtocolHash)
+  NodeQuery_CurrentProposal :: BlockHash -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
@@ -734,7 +734,7 @@ getContext = \case
   NodeQuery_ProposalVote ctx _pkh -> pure ctx
   NodeQuery_Listings ctx -> pure ctx
   NodeQuery_Proposals ctx -> pure ctx
-  NodeQuery_CurrentProposal ctx _lvl -> pure ctx
+  NodeQuery_CurrentProposal ctx -> pure ctx
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_BlockBaker ctx _lvl -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
@@ -886,7 +886,7 @@ validNodes q = case q of
   NodeQuery_ProposalVote ctx _pkh -> findNode =<< getLvl ctx
   NodeQuery_Listings ctx -> findNode =<< getLvl ctx
   NodeQuery_Proposals ctx -> findNode =<< getLvl ctx
-  NodeQuery_CurrentProposal _ctx lvl -> findNode $ Just lvl
+  NodeQuery_CurrentProposal ctx -> findNode =<< getLvl ctx
   NodeQuery_CurrentQuorum ctx -> findNode =<< getLvl ctx
   NodeQuery_BlockBaker _ctx lvl -> findNode $ Just lvl
   NodeQuery_DelegateInfo _ctx lvl _pkh -> findNode $ Just lvl
@@ -960,7 +960,7 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
   NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
-  NodeQuery_CurrentProposal branch _lvl -> nodeRPC' $ rCurrentProposal chainId branch
+  NodeQuery_CurrentProposal branch -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader chainId branch
