@@ -970,6 +970,7 @@ nodeQueryIx
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , PostgresRaw m
     , Aeson.FromJSON a, Aeson.ToJSON a
     )
   => NodeQueryIx a -> NodeQueryT m a
@@ -994,13 +995,13 @@ nodeQueryIx q = do
       maybe (nqThrowError CacheError_NoSuitableNode) pure mCtxCp
 
   q1 <- modifyContext getRightsContext q
-  mRes <- nqInDB $ checkCacheDb q1
+  mRes <- checkCacheDb q1
   case mRes of
     Just v -> pure v
     Nothing -> do
       q2 <- modifyContext getCheckpointContext q
       result <- nodeQueryDataSourceSafe $ getNodeQuery q2
-      nqInDB $ addToDb result q1
+      addToDb result q1
       pure result
   where
     modifyContext :: Functor f => (BlockHash -> RawLevel -> f BlockHash) -> NodeQueryIx a -> f (NodeQueryIx a)
@@ -1057,6 +1058,7 @@ nodeQueryIxBakingRights1
   :: forall m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , PostgresRaw m
     )
   => BlockHash -> RawLevel -> Priority -> NodeQueryT m BakingRights
 nodeQueryIxBakingRights1 ctx lvl prio = do
