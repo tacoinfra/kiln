@@ -966,6 +966,68 @@ withCache nds dft action = do
   protoInfo <- readTVar' $ _nodeDataSource_parameters dsrc
   fromMaybe dft <$> traverse action protoInfo
 
+data OsNodeQuery a = OsNodeQuery
+  { _osNodeQuery_route :: Text
+  , _osNodeQuery_params :: [(Text, Text)]
+  }
+
+instance QueryChain OsNodeQuery where
+  rChain = OsNodeQuery "chains" []
+
+instance QueryBlock OsNodeQuery where
+  type BlockType OsNodeQuery = Block
+  type BlockHeaderType OsNodeQuery = BlockHeader
+  rHead = chainApi1 "head"
+  rBlock = chainApi2 "/block-full" $ \h -> [("hash", toBase58Text h)]
+  rBlockHeader = chainApi2 "/block-header" $ \h -> [("hash", toBase58Text h)]
+
+instance QueryHistory OsNodeQuery where
+  rBlocks = error "rBlocks NYI for OsNodeQuery"
+  rBlockPred = error "rBlockPred NYI for OsNodeQuery"
+  rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
+  rContract = error "rContract NYI for OsNodeQuery"
+  rManagerKey = error "rManagerKey NYI for OsNodeQuery"
+
+  rAnyConstants = chainApi1 "/params"
+
+  rBallots = blockApi1 "/ballots"
+  rListings = blockApi1 "/listings"
+  rProposals = blockApi1 "/proposals"
+  rCurrentProposal = blockApi1 "/current-proposal"
+  rCurrentQuorum = blockApi1 "/current-quorum"
+  rBallot = chainApi3 "/ballot" $ \block pkh ->
+    [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
+  rProposalVote = chainApi3 "/proposal-vote" $ \block pkh ->
+    [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
+
+  rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
+  rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\block ->
+    [("block", toBase58Text block), ("level", tshow lvl)])
+    where lvl = maybe (error "rBakingRights set empty")
+            (either unRawLevel (error "rBakingRights cycle not handled")) $ headMay $ Set.toList levelSet
+  rEndorsingRights levelSet = chainApi2 "/endorsing-rights" (\block ->
+    [("block", toBase58Text block), ("level", tshow lvl)])
+    where lvl = maybe (error "rEndorsingRights set empty")
+            (either unRawLevel (error "rEndorsingRights cycle not handled")) $ headMay $ Set.toList levelSet
+
+  rDelegateInfo pkh = chainApi2 "/deletegate-info" (\branch ->
+    [("branch", toBase58Text branch), ("delegate", toPublicKeyHashText pkh)])
+
+chainApi1 :: Text -> ChainId -> OsNodeQuery a
+chainApi1 path chainId = chainApi2 path (const []) chainId ()
+
+chainApi2 :: Text -> (b -> [(Text, Text)]) -> ChainId -> b -> OsNodeQuery a
+chainApi2 path getParams chainId b = OsNodeQuery route (getParams b)
+  where route = toBase58Text chainId <> path
+
+chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
+chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
+  where route = toBase58Text chainId <> path
+
+blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
+blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
+
+-- queryOsPublicNode :: OsNodeQuery
 nodeQueryIx
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
