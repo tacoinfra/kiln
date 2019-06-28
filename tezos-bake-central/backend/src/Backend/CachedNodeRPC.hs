@@ -1098,7 +1098,7 @@ nodeQueryIx q = do
         fitNodes = filter (\v -> (v ^? _2 . nodeDataSourceData_latestHead . _Just . level) >= Just ctxLvl) $ Map.assocs nodes
         mCtxCp = (\l -> levelAncestor hist l ctx) =<< fmap (max ctxLvl) (minimumMay $
           mapMaybe (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
-      maybe (nqThrowError CacheError_NoSuitableNode) pure mCtxCp
+      pure $ fromMaybe ctx mCtxCp
 
   q1 <- modifyContext getRightsContext q
   mRes <- nqInDB $ checkCacheDb q1
