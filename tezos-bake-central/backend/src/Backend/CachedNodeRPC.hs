@@ -1015,7 +1015,7 @@ data OsNodeQuery a = OsNodeQuery
   }
 
 instance QueryChain OsNodeQuery where
-  rChain = OsNodeQuery "/chains" []
+  rChain = OsNodeQuery "/v1/chain" []
 
 instance QueryBlock OsNodeQuery where
   type BlockType OsNodeQuery = Block
@@ -1067,7 +1067,7 @@ chainApi2 path getParams chainId = chainApi3 path (const getParams) chainId ()
 
 chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
 chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
-  where route = "/" <> toBase58Text chainId <> path
+  where route = "/v1/" <> toBase58Text chainId <> path
 
 blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
 blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
