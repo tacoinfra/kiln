@@ -36,7 +36,6 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
-import Control.Exception.Safe (try)
 -- import Control.Lens (TraversableWithIndex)
 import Control.Lens ((&))
 import Control.Lens ((?~))
@@ -57,7 +56,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH, logInfoS, logErrorS, logDebugS)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logDebugSH, logErrorSH, logInfo, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -79,12 +78,11 @@ import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, maybeToList)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
-import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
 import Database.Groundhog.Core
@@ -92,7 +90,6 @@ import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Method as Http (methodGet)
-import qualified Network.HTTP.Types.Status as Http (Status (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
@@ -197,6 +194,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
+  , _nodeDataSource_osPublicNode :: Maybe URI
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -275,9 +273,17 @@ instance MonadNodeQuery NodeQueryQueued where
     dsrc <- askNodeDataSource
     mNodesToTry <- NodeQueryQueued $ atomicallyWith $ (validNodes q >>= \case
       Left e -> pure $ Left e
-      Right nodes -> Right . maybe (map fst nodes) (:[]) <$> pickNode qBranch nodes)
+      Right nodes -> Right . maybeToList <$> pickNode qBranch nodes)
     result <- case mNodesToTry of
       Left e -> pure $ Left e
+      Right [] -> case _nodeDataSource_osPublicNode dsrc of
+        Nothing -> pure $ Left CacheError_NoSuitableNode
+        Just uri ->
+          let
+            ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
+            nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
+            nodeQueryViaCache _ = pure $ Left CacheError_NoSuitableNode
+          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
       Right nodesToTry -> foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
         answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
         Left _ -> \anyNode -> do
@@ -536,8 +542,8 @@ lookupBlock nds x = do
   let xPath = Map.lookup x $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> RawLevel -> IO NodeDataSource
-blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
+blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> RawLevel -> Maybe URI -> IO NodeDataSource
+blankNodeDataSource db chain protoInfo' mgr logger minLevel osPubNode = do
   nodes <- newTVarIO mempty
   hist <- newTVarIO $ emptyCache minLevel
   cache <- newTVarIO mempty
@@ -556,6 +562,7 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel = do
     , _nodeDataSource_latestHead = latestHead
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
+    , _nodeDataSource_osPublicNode = osPubNode
     }
 {-
 
@@ -905,16 +912,13 @@ validNodes q = case q of
       case mLvl of
         Nothing -> pure $ Right $ mapMaybe
           (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
-        Just lvl -> do
-          let
+        Just lvl -> pure $ Right candidateNodes
+          where
             candidateNodes = flip mapMaybe nodes $
               \(nUri, NodeDataSourceData mHead mSavepoint) -> mSavepoint >>= \sp ->
                 if sp <= lvl
                   then (nUri,) <$> mHead
                   else Nothing
-          pure $ case candidateNodes of
-            [] -> Left CacheError_NoSuitableNode
-            ns -> Right ns
 
 pickNode
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -1003,29 +1007,10 @@ nodeQueryOsPubNodeImpl = nodeQueryImpl osPubNodeRPC
 osPubNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
   => OsNodeQuery a -> m a
-osPubNodeRPC (OsNodeQuery route params) = do
-  mgr <- asks (_nodeRPCContext_httpManager . view nodeRPCContext)
-
-  let rpcUrl = "http://localhost:8001/api/v1/" <> route <> paramsE
-      paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
-  $(logErrorS) "OSNODERPC" $ rpcUrl
-
-  let
-    request = rpcBoilerplate Http.methodGet emptyObject_ $ Http.parseRequest_ $ T.unpack rpcUrl
-
-  liftIO (try @_ @Http.HttpException $ Http.httpLbs request mgr) >>= \case
-    Left err -> throwError $ rpcResponse_HttpException (T.pack $ show err)
-    Right result -> case Http.responseStatus result of
-      Http.Status 200 _ -> do
-        let body = Http.responseBody result
-        case Aeson.eitherDecode' body of
-          Left err -> throwError $ rpcResponse_NonJSON err body
-          Right v -> return v
-      Http.Status code phrase -> do
-        $(logInfoS) "OSNODERPC" $ T.pack $ show $ Http.responseStatus result
-        $(logDebugS) "OSNODERPC" $ T.pack $ show $ Http.responseBody result
-
-        throwError $ rpcResponse_UnexpectedStatus code phrase
+osPubNodeRPC (OsNodeQuery route params) = nodeRPCImpl' Aeson.eitherDecode emptyObject_ Http.methodGet rpcSelector
+  where
+    rpcSelector = route <> paramsE
+    paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
 
 data OsNodeQuery a = OsNodeQuery
   { _osNodeQuery_route :: Text
@@ -1033,12 +1018,12 @@ data OsNodeQuery a = OsNodeQuery
   }
 
 instance QueryChain OsNodeQuery where
-  rChain = OsNodeQuery "chains" []
+  rChain = OsNodeQuery "/chains" []
 
 instance QueryBlock OsNodeQuery where
   type BlockType OsNodeQuery = Block
   type BlockHeaderType OsNodeQuery = BlockHeader
-  rHead = chainApi1 "head"
+  rHead = chainApi1 "/head"
   rBlock = chainApi2 "/block-full" $ \h -> [("hash", toBase58Text h)]
   rBlockHeader = chainApi2 "/block-header" $ \h -> [("hash", toBase58Text h)]
 
@@ -1078,12 +1063,11 @@ chainApi1 :: Text -> ChainId -> OsNodeQuery a
 chainApi1 path chainId = chainApi2 path (const []) chainId ()
 
 chainApi2 :: Text -> (b -> [(Text, Text)]) -> ChainId -> b -> OsNodeQuery a
-chainApi2 path getParams chainId b = OsNodeQuery route (getParams b)
-  where route = toBase58Text chainId <> path
+chainApi2 path getParams chainId = chainApi3 path (const getParams) chainId ()
 
 chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
 chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
-  where route = toBase58Text chainId <> path
+  where route = "/" <> toBase58Text chainId <> path
 
 blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
 blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])

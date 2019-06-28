@@ -311,7 +311,7 @@ backendImpl cfg serve = do
       minLevel = case maybeNamedChain of
         Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
         _ -> 2
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel (NonEmpty.head <$> obsidianApi)
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
