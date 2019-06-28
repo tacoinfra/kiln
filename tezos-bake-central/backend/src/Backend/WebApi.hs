@@ -32,7 +32,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (BlockBaker, CacheDelegateInfo, CacheError)
+import Common.Schema (BlockBaker, CacheDelegateInfo(..), CacheError)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
@@ -253,7 +253,7 @@ snapCurrentQuorum = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
 
   asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_CurrentQuorum block
 
-snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text CacheDelegateInfo)
+snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text DelegateInfo)
 snapDelegateInfo = do
   nds <- asks (^. nodeDataSource)
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
@@ -264,7 +264,17 @@ snapDelegateInfo = do
     delegate <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash delegateBS
     blockLevel <- maybe (throwError "block unknown") (return . view level) =<< liftIO (atomically $ lookupBlock nds branch)
 
-    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
+    cd <- asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
+    pure $ DelegateInfo
+      { _delegateInfo_balance = _cacheDelegateInfo_balance cd
+      , _delegateInfo_frozenBalance = _cacheDelegateInfo_frozenBalance cd
+      , _delegateInfo_frozenBalanceByCycle = _cacheDelegateInfo_frozenBalanceByCycle cd
+      , _delegateInfo_stakingBalance = _cacheDelegateInfo_stakingBalance cd
+      , _delegateInfo_delegatedContracts = mempty
+      , _delegateInfo_delegatedBalance = _cacheDelegateInfo_delegatedBalance cd
+      , _delegateInfo_deactivated = _cacheDelegateInfo_deactivated cd
+      , _delegateInfo_gracePeriod = _cacheDelegateInfo_gracePeriod cd
+      }
 
 snapPublicKey :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text PublicKey)
 snapPublicKey = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
