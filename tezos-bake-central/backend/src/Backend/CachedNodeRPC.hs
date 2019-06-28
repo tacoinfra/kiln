@@ -543,7 +543,7 @@ lookupBlock nds x = do
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
 blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> RawLevel -> Maybe URI -> IO NodeDataSource
-blankNodeDataSource db chain protoInfo' mgr logger minLevel osPubNode = do
+blankNodeDataSource db chain protoInfo' mgr logger minLevel osPublicNode = do
   nodes <- newTVarIO mempty
   hist <- newTVarIO $ emptyCache minLevel
   cache <- newTVarIO mempty
@@ -562,7 +562,7 @@ blankNodeDataSource db chain protoInfo' mgr logger minLevel osPubNode = do
     , _nodeDataSource_latestHead = latestHead
     , _nodeDataSource_logger = logger
     , _nodeDataSource_ioQueue = ioQueue
-    , _nodeDataSource_osPublicNode = osPubNode
+    , _nodeDataSource_osPublicNode = osPublicNode
     }
 {-
 
@@ -999,12 +999,12 @@ nodeQueryOsPubNodeImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryOsPubNodeImpl = nodeQueryImpl osPubNodeRPC
+nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC
 
-osPubNodeRPC
+osPublicNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
   => OsNodeQuery a -> m a
-osPubNodeRPC (OsNodeQuery route params) = nodeRPCImpl' Aeson.eitherDecode emptyObject_ Http.methodGet rpcSelector
+osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' Aeson.eitherDecode emptyObject_ Http.methodGet rpcSelector
   where
     rpcSelector = route <> paramsE
     paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
@@ -1029,9 +1029,9 @@ instance QueryHistory OsNodeQuery where
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
   rManagerKey = error "rManagerKey NYI for OsNodeQuery"
+  rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
 
   rAnyConstants = chainApi1 "/params"
-
   rBallots = blockApi1 "/ballots"
   rContract contractId = case contractId of
     Implicit pkh -> chainApi2 "/account" $ \block ->
@@ -1046,7 +1046,6 @@ instance QueryHistory OsNodeQuery where
   rProposalVote = chainApi3 "/proposal-vote" $ \block pkh ->
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
 
-  rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
   rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\branch ->
     [("branch", toBase58Text branch), ("level", tshow lvl)])
     where lvl = maybe (error "rBakingRights set empty")
@@ -1072,7 +1071,6 @@ chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
 blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
 blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
 
--- queryOsPublicNode :: OsNodeQuery
 nodeQueryIx
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
