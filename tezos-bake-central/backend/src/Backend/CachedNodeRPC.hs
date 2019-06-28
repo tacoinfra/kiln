@@ -141,7 +141,6 @@ data NodeQuery a where
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery Block
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
-  NodeQuery_BlockBaker      :: BlockHash -> RawLevel -> NodeQuery BlockBaker
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
 deriving instance Show (NodeQuery a)
@@ -281,6 +280,7 @@ instance MonadNodeQuery NodeQueryQueued where
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
+            -- Currently we dont use the 'self' in nodeQueryImpl
             nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
             nodeQueryViaCache _ = pure $ Left CacheError_NoSuitableNode
           in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
@@ -744,7 +744,6 @@ getContext = \case
   NodeQuery_Proposals ctx -> pure ctx
   NodeQuery_CurrentProposal ctx -> pure ctx
   NodeQuery_CurrentQuorum ctx -> pure ctx
-  NodeQuery_BlockBaker ctx _lvl -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_PublicKey _ -> getFittestBranch
 
@@ -896,7 +895,6 @@ validNodes q = case q of
   NodeQuery_Proposals ctx -> findNode =<< getLvl ctx
   NodeQuery_CurrentProposal ctx -> findNode =<< getLvl ctx
   NodeQuery_CurrentQuorum ctx -> findNode =<< getLvl ctx
-  NodeQuery_BlockBaker _ctx lvl -> findNode $ Just lvl
   NodeQuery_DelegateInfo _ctx lvl _pkh -> findNode $ Just lvl
   NodeQuery_PublicKey _ -> findNode Nothing
   where
@@ -969,7 +967,6 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger self' q = runExceptT $
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader chainId branch
-  NodeQuery_BlockBaker branch _lvl -> fmap getBakerFromBlock $ self $ NodeQuery_Block branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
@@ -981,8 +978,8 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger self' q = runExceptT $
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
-    self :: forall b. NodeQuery b -> ExceptT CacheError IO b
-    self = ExceptT . self'
+    -- self :: forall b. NodeQuery b -> ExceptT CacheError IO b
+    -- self = ExceptT . self'
 
 withCache
   :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)

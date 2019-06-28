@@ -32,7 +32,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (BlockBaker, CacheDelegateInfo(..), CacheError)
+import Common.Schema (CacheDelegateInfo(..), CacheError)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
@@ -50,7 +50,6 @@ v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
   , ( chainTXT <> "/ballots", writeJSON $ const snapBallots )
   , ( chainTXT <> "/block",     writeJSON $ const snapVeryBlockLike )
   , ( chainTXT <> "/block-full", writeJSON $ const snapBlock )
-  , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
   , ( chainTXT <> "/block-header", writeJSON $ const snapBlockHeader )
   , ( chainTXT <> "/current-proposal", writeJSON $ const snapCurrentProposal )
   , ( chainTXT <> "/current-quorum", writeJSON $ const snapCurrentQuorum )
@@ -200,16 +199,6 @@ snapRights f = withCacheIO (Left "nocache") $ \_proto -> do
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
-
-snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
-snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredQueryParam "branch"
-  levelBS <- requiredQueryParam "level"
-
-  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
-
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel
 
 snapAccount :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Account)
 snapAccount = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
