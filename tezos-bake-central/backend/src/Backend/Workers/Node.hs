@@ -460,21 +460,6 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
--- updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
--- updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
---   latestBlock' <- liftIO $ atomically $ do
---     let latestHeadTVar = _nodeDataSource_latestHead nds
---     latestHead <- readTVar latestHeadTVar
---     if Just (blk ^. fitness) > latestHead ^? _Just . fitness
---       then do
---         writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
---         pure $ Just $ mkVeryBlockLike blk
---       else
---         pure Nothing
-
---   for_ latestBlock' $ \latestBlock ->
---     $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
-
 safePred :: (Eq a, Enum a, Bounded a) => a -> a
 safePred a = if a /= minBound then pred a else minBound
 
