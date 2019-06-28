@@ -1031,12 +1031,15 @@ instance QueryHistory OsNodeQuery where
   rBlocks = error "rBlocks NYI for OsNodeQuery"
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
-  rContract = error "rContract NYI for OsNodeQuery"
   rManagerKey = error "rManagerKey NYI for OsNodeQuery"
 
   rAnyConstants = chainApi1 "/params"
 
   rBallots = blockApi1 "/ballots"
+  rContract contractId = case contractId of
+    Implicit pkh -> chainApi2 "/account" $ \block ->
+      [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
+    _ -> error "rContract only support Implicit"
   rListings = blockApi1 "/listings"
   rProposals = blockApi1 "/proposals"
   rCurrentProposal = blockApi1 "/current-proposal"
@@ -1056,7 +1059,7 @@ instance QueryHistory OsNodeQuery where
     where lvl = maybe (error "rEndorsingRights set empty")
             (either unRawLevel (error "rEndorsingRights cycle not handled")) $ headMay $ Set.toList levelSet
 
-  rDelegateInfo pkh = chainApi2 "/deletegate-info" (\branch ->
+  rDelegateInfo pkh = chainApi2 "/delegate-info" (\branch ->
     [("branch", toBase58Text branch), ("delegate", toPublicKeyHashText pkh)])
 
 chainApi1 :: Text -> ChainId -> OsNodeQuery a
