@@ -951,7 +951,7 @@ nodeQueryImpl
   -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger _self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
