@@ -359,7 +359,9 @@ updateDataSource
   :: forall m. (MonadIO m, MonadBaseNoPureAborts IO m)
   => NodeDataSource -> DataSource -> m ()
 updateDataSource nds (pn, chain, uri) = do
-  enabled <- publicNodeEnabled
+  enabled <- if pn == PublicNode_Obsidian && (_nodeDataSource_osPublicNode nds /= Nothing)
+    then pure True
+    else publicNodeEnabled
   -- TODO: prefer to get this from the database, or from private nodes before
   when enabled $ do
     _ <- liftIO $ initParams nds (Identity (Just pn, uri))
