@@ -413,3 +413,9 @@ validatingRange f v =
   if null $ _rangeView_support v
     then Nothing
     else Just $ f v
+
+watchUsingOsPublicNode :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Bool))
+watchUsingOsPublicNode = holdUniqDyn <=<
+  (fmap . fmap) (getMaybeView . _bakeView_usingOsPublicNode) $
+    watchViewSelector $ pure $ mempty
+      { _bakeViewSelector_usingOsPublicNode = viewJust 1 }
