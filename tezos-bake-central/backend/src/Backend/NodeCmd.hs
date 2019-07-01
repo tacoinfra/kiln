@@ -15,7 +15,7 @@
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (throwIO)
+import Control.Exception.Safe (catch, throwIO)
 import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
@@ -168,15 +168,12 @@ initNode
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `combine` "identity.json"
-  v <- liftIO $ getVersion appConfig
-  case v of
-    Just ver -> do
-      when (not $ hasHistoryModes ver) $
-        runCommandWithLogging nodePath
-          ["upgrade", "storage", "--data-dir", T.pack dataDir]
-    Nothing -> do
-      runCommandWithLogging nodePath
+      upgrade = runCommandWithLogging nodePath
+        ["upgrade", "storage", "--data-dir", T.pack dataDir]
+      showConfig = runCommandWithLogging nodePath
         ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+
+  upgrade `catch` (\(_ :: ExitCode) -> showConfig)
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
