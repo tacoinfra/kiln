@@ -172,8 +172,7 @@ backendImpl cfg serve = do
   let
     maybeNamedChain = either Just (const Nothing) chain
     maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
-    maybeNamedChainOrPaths = either (Just . Left)
-      (const $ fmap Right binaryPaths) chain
+    maybeNamedChainOrPaths = fmap Right binaryPaths <|> fmap Left maybeNamedChain
 
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
