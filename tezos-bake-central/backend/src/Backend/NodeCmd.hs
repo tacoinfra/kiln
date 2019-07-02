@@ -15,7 +15,7 @@
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (throwIO)
+import Control.Exception.Safe (catch, throwIO)
 import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
@@ -46,6 +46,9 @@ import Tezos.Chain (NamedChain(..))
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.Schema
+
+hasHistoryModes :: Version -> Bool
+hasHistoryModes = (>= Version [0,0,3] [])
 
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
@@ -83,6 +86,12 @@ tezosBinaryPaths =
 internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
 internalNodeWorker appConfig logger db namedChainOrPaths = do
+  let useArchiveMode = True
+  archiveArgs <- liftIO $ getVersion appConfig <&> \case
+    Nothing -> []
+    Just ver -> if hasHistoryModes ver && useArchiveMode
+                then ["--history-mode", "archive"]
+                else []
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -111,7 +120,6 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
-    useArchiveMode = True
     -- use the user supplied config file if specified
     -- we can only specify this option once
     hasUserConfigFile = "--config-file" `elem` nodeExtraArgs
@@ -122,7 +130,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
         "--rpc-addr", "127.0.0.1:" <> nodeRpcPort,
         "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
-      ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
+      ++ archiveArgs
       ++ nodeExtraArgs
 
   processWorker
@@ -136,6 +144,19 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
+getVersion :: AppConfig -> IO (Maybe Version)
+getVersion appConfig = do
+  let dataDir = nodeDataDir appConfig
+  let versionFile = dataDir `combine` "version.json"
+  hasVersionFile <- liftIO $ doesFileExist versionFile
+  case hasVersionFile of
+    False -> pure Nothing
+    True -> do
+      vf <- liftIO $ LBS.readFile versionFile
+      let parse :: Text -> Maybe Version
+          parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
+      pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
+
 initNode
   :: "logger" :! LoggingEnv
   -> "config" :! AppConfig
@@ -146,24 +167,13 @@ initNode
   -> IO FilePath
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
-  let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  hasVersionFile <- liftIO $ doesFileExist versionFile
-  if hasVersionFile
-    then do
-      vf <- liftIO $ LBS.readFile versionFile
-      let
-        v = getVersion =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
-        getVersion :: Text -> Maybe Version
-        getVersion = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
-      case v of
-        Nothing -> pure ()
-        Just ver -> when (ver < (Version [0,0,3] [])) $ do
-          runCommandWithLogging nodePath
-            ["upgrade", "storage", "--data-dir", T.pack dataDir]
-    else do
-      runCommandWithLogging nodePath
+      upgrade = runCommandWithLogging nodePath
+        ["upgrade", "storage", "--data-dir", T.pack dataDir]
+      showConfig = runCommandWithLogging nodePath
         ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+
+  upgrade `catch` (\(_ :: ExitCode) -> showConfig)
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
