@@ -1252,21 +1252,21 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            pure close
 
     startNode = Workflow $ do
-      backEv <- divClass "" $ button "< back"
+      backEv <- backButton
       divClass "ui header" $ text "Start a Kiln Node"
       elClass "h5" "ui header" $ text "Initialize Chain Data From:"
       rec
         useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
         (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
           divClass "" $ text "Snapshot (Recommended)"
-          divClass "" $ do
+          divClass "explanation" $ do
             el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
             el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
             button "Select Snapshot File"
             pure $ pure Nothing
         (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
           divClass "" $ text "Peer to Peer Download"
-          divClass "" $ do
+          divClass "explanation" $ do
             el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
       ev <- tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) <$> button "Continue"
       let next = ffor ev $ \(b, s) -> if b
@@ -1282,7 +1282,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            ])
 
     verifySnapshot smd = Workflow $ do
-      backEv <- divClass "" $ button "< back"
+      backEv <- backButton
       divClass "ui header" $ text "Verify Snapshot"
       divClass "" $ do
         divClass "" $ text "Verifying the Block Hash"
@@ -2130,3 +2130,9 @@ uploadSnapshotForm = do
       formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
   respEv <- postForms uploadUri formUploadEv
   pure ()
+
+backButton = do
+  (e, _) <- el' "span" $ do
+    -- elAttr "img" (("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") <> ("style" =: "transform: scale(-0.5) translate (-1em, -1em);")) blank
+    el "span" $ text "back"
+  pure $ domEvent Click e
