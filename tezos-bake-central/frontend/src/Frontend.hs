@@ -45,7 +45,7 @@ import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.Element (setInnerHTML)
 import qualified GHCJS.DOM.Location as Location
-import GHCJS.DOM.Types (MonadJSM)
+import GHCJS.DOM.Types (MonadJSM, File)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
@@ -58,6 +58,7 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
+import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -202,6 +203,7 @@ appMain
     , MonadJSM (Performable (ModalM m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
+    , HasJSContext (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
@@ -236,6 +238,7 @@ appMain = do
       $ do
         e <- appHeader
         appContentArea
+        uploadSnapshotForm
         pure e
     pure ()
 
@@ -2040,3 +2043,29 @@ semuiTab label k currentTab enabled =
   fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
+
+
+uploadSnapshotForm
+  :: ( DomBuilder t m
+     , TriggerEvent t m
+     , MonadIO (Performable m)
+     , PerformEvent t m
+     , PostBuild t m
+     , MonadHold t m
+     , MonadFix m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     , MonadJSM m
+     , MonadJSM (Performable m)
+     , HasJSContext (Performable m)
+     )
+  => m ()
+uploadSnapshotForm = do
+  fi <- fileInput def
+  uploadEv <- attachWith (\v _ -> headMay v) (current $ value fi) <$> button "Upload"
+  formEv <- performEvent $ ffor (fmapMaybe id uploadEv) $ \f -> do
+    liftIO $ putStrLn "starting file upload"
+    fileToFormValue f
+  let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
+      formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
+  respEv <- postForms uploadUri formUploadEv
+  pure ()

@@ -74,6 +74,7 @@ import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
+import Backend.Snapshot
 import Backend.Supervisor (withTermination)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
@@ -386,6 +387,7 @@ backendImpl cfg serve = do
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
+        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc db
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v1PublicApi dataSrc
           | otherwise -> return ()

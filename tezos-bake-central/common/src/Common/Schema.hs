@@ -935,6 +935,16 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+data SnapshotMeta = SnapshotMeta
+  { _snapshotMeta_filename :: !Text -- user supplied
+  , _snapshotMeta_filepath :: !Text -- where stored
+  , _snapshotMeta_uploadTime :: !UTCTime
+  , _snapshotMeta_headBlock :: !(Maybe BlockHash)
+  , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
+  , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  , _snapshotMeta_chain :: Maybe ChainId
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where

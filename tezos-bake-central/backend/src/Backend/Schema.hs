@@ -1098,6 +1098,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         fields: [_telegramConfig_botApiKey]
   - entity: TelegramMessageQueue
   - entity: TelegramRecipient
+  - entity: SnapshotMeta
   - entity: UpstreamVersion
   - embedded: RightNotificationLimit
   - entity: RightNotificationSettings
