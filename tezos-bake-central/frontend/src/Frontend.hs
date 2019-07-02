@@ -1190,61 +1190,115 @@ nodesList = do
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal close = do
-  divClass "ui header" $ text "Add Nodes"
-  e <- divClass "ui grid stackable divided" $ do
-    addInternal *> addExternal <* addPublic
-  pure (pure ["add-node"], e)
+addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-node":) <$> c, close <> switch (current e))
 
   where
-    section header explanation = do
-      elClass "h5" "ui header" $ text header
-      divClass "explanation" $ text explanation
+    splash = Workflow $ do
+      divClass "ui header" $ text "Add Nodes"
+      divClass "ui grid stackable divided" $ do
+        startNodeEv <- addInternal
+        e <- addExternal
+        addPublic
+        pure ((pure "add-node", e), startNode <$ startNodeEv)
 
-    addPublic = do
-      divClass "add-public column" $ do
-        section
-          "Connect to a Public Node"
-          "We recommend adding all public nodes to enhance monitoring accuracy."
-        publicNodeOptions
+      where
+        section header explanation = do
+          elClass "h5" "ui header" $ text header
+          divClass "explanation" $ text explanation
 
-    addInternal = do
-      divClass "add-internal column" $ do
-        section
-          "Launch a Kiln node"
-          "Launch a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
-        node <- maybeDyn =<< watchInternalNode
-        dyn_ $ ffor node $ \case
-          Nothing -> do
-            launch <- uiButton "primary" "Launch Node"
-            void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+        addPublic = do
+          divClass "add-public column" $ do
+            section
+              "Connect to a Public Node"
+              "We recommend adding all public nodes to enhance monitoring accuracy."
+            publicNodeOptions
 
-          Just _ -> do
-            kilnLogo
-            text "A Kiln node is running."
+        addInternal = do
+          divClass "add-internal column" $ do
+            section
+              "Start a Kiln Node"
+              "Start a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
+            node <- maybeDyn =<< watchInternalNode
+            dEv <- dyn $ ffor node $ \case
+              Nothing -> do
+                uiButton "primary" "Start Node"
 
-    addExternal = do
-     divClass "add-external column" $ mdo
-       let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
-             icon "check blue"
-             text "Node added!"
+              Just _ -> do
+                kilnLogo
+                text "A Kiln node is running."
+                pure never
+            switchHold never dEv
 
-       section
-         "Monitor via Address"
-         "Monitor nodes running locally or remotely via RPC."
+        addExternal = do
+         divClass "add-external column" $ mdo
+           let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+                 icon "check blue"
+                 text "Node added!"
 
-       addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
-         zipFields
-           (zipFields
-             (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
-             (formItem $ aliasField "Public Facing Node 1"))
-           (formItem minConnectionsField)
+           section
+             "Monitor via Address"
+             "Monitor nodes running locally or remotely via RPC."
 
-       showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
-       hideMsg <- delay 3 showMsg
-       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
-       pure close
+           addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
+             zipFields
+               (zipFields
+                 (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
+                 (formItem $ aliasField "Public Facing Node 1"))
+               (formItem minConnectionsField)
 
+           showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
+           hideMsg <- delay 3 showMsg
+           showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+           pure close
+
+    startNode = Workflow $ do
+      e <- divClass "" $ button "X"
+      backEv <- divClass "" $ button "< back"
+      divClass "" $ text "Start a Kiln Node"
+      divClass "" $ text "Initialize Chain Data From:"
+      verifySnapshotEv <- divClass "" $ do
+        divClass "" $ text "Snapshot (Recommended)"
+        divClass "" $ do
+          el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+          el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
+          button "Select Snapshot File"
+      peer2peerEv <- divClass "" $ do
+        divClass "" $ text "Peer to Peer Download"
+        divClass "" $ do
+          el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+          button "Continue"
+      pure ((pure "add-node", e), leftmost
+           [ verifySnapshot <$> verifySnapshotEv
+           , splash <$ backEv
+           , splash <$ peer2peerEv
+           ])
+
+    verifySnapshot smd = Workflow $ do
+      e <- divClass "" $ button "X"
+      backEv <- divClass "" $ button "< back"
+      divClass "" $ text "Verify Snapshot"
+      divClass "" $ do
+        divClass "" $ text "Verifying the Block Hash"
+        divClass "" $ do
+          el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
+          el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
+
+      divClass "" $ do
+        divClass "" $ text "Snapshot's Highest Block Hash:"
+        divClass "" $ text "<>"
+      divClass "" $ do
+        divClass "" $ text "Highest Block Level:"
+        divClass "" $ text "2313"
+      divClass "" $ do
+        divClass "" $ text "Date Baked:"
+        divClass "" $ text "23"
+      launch <- button "Start Node"
+      launchedEv <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+
+      pure ((pure "add-node", e), leftmost
+           [ startNode <$ backEv
+           , splash <$ launchedEv
+           ])
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
