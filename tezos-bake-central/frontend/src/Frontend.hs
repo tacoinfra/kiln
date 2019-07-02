@@ -1252,31 +1252,38 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            pure close
 
     startNode = Workflow $ do
-      e <- divClass "" $ button "X"
       backEv <- divClass "" $ button "< back"
-      divClass "" $ text "Start a Kiln Node"
-      divClass "" $ text "Initialize Chain Data From:"
-      verifySnapshotEv <- divClass "" $ do
-        divClass "" $ text "Snapshot (Recommended)"
-        divClass "" $ do
-          el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-          el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-          button "Select Snapshot File"
-      peer2peerEv <- divClass "" $ do
-        divClass "" $ text "Peer to Peer Download"
-        divClass "" $ do
-          el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
-          button "Continue"
-      pure ((pure "add-node", e), leftmost
+      divClass "ui header" $ text "Start a Kiln Node"
+      elClass "h5" "ui header" $ text "Initialize Chain Data From:"
+      rec
+        useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
+        (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
+          divClass "" $ text "Snapshot (Recommended)"
+          divClass "" $ do
+            el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+            el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
+            button "Select Snapshot File"
+            pure $ pure Nothing
+        (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
+          divClass "" $ text "Peer to Peer Download"
+          divClass "" $ do
+            el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+      ev <- tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) <$> button "Continue"
+      let next = ffor ev $ \(b, s) -> if b
+            then Left s
+            else Right ()
+          launch = filterRight next
+          verifySnapshotEv = fmapMaybe id $ filterLeft next
+      launchedEv <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      pure ((pure "add-node", never), leftmost
            [ verifySnapshot <$> verifySnapshotEv
            , splash <$ backEv
-           , splash <$ peer2peerEv
+           , splash <$ launchedEv
            ])
 
     verifySnapshot smd = Workflow $ do
-      e <- divClass "" $ button "X"
       backEv <- divClass "" $ button "< back"
-      divClass "" $ text "Verify Snapshot"
+      divClass "ui header" $ text "Verify Snapshot"
       divClass "" $ do
         divClass "" $ text "Verifying the Block Hash"
         divClass "" $ do
@@ -1291,11 +1298,11 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
         divClass "" $ text "2313"
       divClass "" $ do
         divClass "" $ text "Date Baked:"
-        divClass "" $ text "23"
+        divClass "" $ text "233"
       launch <- button "Start Node"
       launchedEv <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
 
-      pure ((pure "add-node", e), leftmost
+      pure ((pure "add-node", never), leftmost
            [ startNode <$ backEv
            , splash <$ launchedEv
            ])
