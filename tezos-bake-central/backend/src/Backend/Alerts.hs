@@ -57,9 +57,8 @@ import ExtraPrelude
 
 clearUnrelatedNetworkUpdateError :: (PersistBackend m, PostgresRaw m) => NamedChain -> m ()
 clearUnrelatedNetworkUpdateError namedChain = do
-  now <- getTime
   lids :: [Id ErrorLogNetworkUpdate] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
     FROM "ErrorLogNetworkUpdate" elnu
     WHERE elnu.log = el.id
     AND elnu."namedChain" <> ?namedChain
@@ -118,9 +117,8 @@ clearBakerDeactivated
      )
   => PublicKeyHash -> Fitness -> m ()
 clearBakerDeactivated pkh newFit = do
-  now <- getTime
   lids :: [Id ErrorLogBakerDeactivated] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivated" t
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
@@ -166,9 +164,8 @@ clearBakerDeactivationRisk
      )
   => PublicKeyHash -> Fitness -> m ()
 clearBakerDeactivationRisk pkh newFit = do
-  now <- getTime
   lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBakerDeactivationRisk" t
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
@@ -214,9 +211,8 @@ clearInsufficientFunds
   => Baker -> m ()
 clearInsufficientFunds baker = do
   let pkh = _baker_publicKeyHash baker
-  now <- getTime
   lids :: [Id ErrorLogInsufficientFunds] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInsufficientFunds" t
       WHERE t.log = el.id
       AND t."baker#publicKeyHash" = ?pkh
@@ -256,9 +252,8 @@ clearInaccessibleNodeError
      , MonadReader a m, HasAppConfig a)
   => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
-  now <- getTime
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInaccessibleNode" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
@@ -301,9 +296,8 @@ clearNodeWrongChainError
      , SqlDb (PhantomDb m)
      , MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
-  now <- getTime
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeWrongChain" t
     WHERE t.log = el.id
       AND t.node = ?nodeId
@@ -344,9 +338,8 @@ clearNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a, SqlDb (PhantomDb m)) => Id Node -> m ()
 clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
-  now <- getTime
   lids :: [Id ErrorLogNodeInvalidPeerCount] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeInvalidPeerCount" t
     WHERE t.log = el.id
       AND t.node = ?nodeId
@@ -395,9 +388,8 @@ clearPastVotingPeriodErrors
      )
   => ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
 clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
-  now <- getTime
   lids :: [Id ErrorLogVotingReminder] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogVotingReminder" t
     WHERE t.log = el.id
       AND el.stopped IS NULL
@@ -473,9 +465,8 @@ clearBadNodeHeadError
      , MonadIO m, MonadReader a m, HasAppConfig a)
   => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
-  now <- getTime
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = ?now
+    UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBadNodeHead" t
     WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
     RETURNING t.log |]
@@ -538,7 +529,7 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
             AND el.stopped IS NULL
           WHERE NOT b."data#deleted"
             AND b."publicKeyHash" = ?pkh
-            AND el.started > now() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
+            AND el.started > NOW() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
             AND el."noticeSentAt" IS NULL
         |]
         when (length elIds >= _rightNotificationLimit_amount rnl) $ for_ elIds $ \(eid', lvl') -> queueAlert (Just eid') $ alert lvl'
@@ -600,9 +591,8 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 clearMissedBake f right pkh lvl = do
-  now <- getTime
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
-      UPDATE "ErrorLog" el SET stopped = ?now
+      UPDATE "ErrorLog" el SET stopped = NOW()
         FROM "ErrorLogBakerMissed" elbm
         JOIN "Baker" b
           ON b."publicKeyHash" = elbm."baker#publicKeyHash"
