@@ -495,8 +495,9 @@ Kiln enforces this by only allowing the baker to vote once per operation, but th
 data BakerVotingState
   = BakerVotingState_Proposal ProposalVoteState
   | BakerVotingState_Exploration Bool -- whether baker previously voted
-  | BakerVotingState_Testing () -- no voting takes place
+  | BakerVotingState_Testing -- no voting takes place
   | BakerVotingState_Promotion Bool -- whether baker previously voted
+  deriving (Eq, Ord, Show)
 
 data ProposalVoteState
   = ProposalVotingState_SilentRange -- no alerts during this range
@@ -504,6 +505,7 @@ data ProposalVoteState
   | ProposalVotingState_CaughtUp -- has voted, and there are no new proposals since
   | ProposalVotingState_NoPreviousVote -- no votes from this baker are included in current head
   | ProposalVotingState_OutdatedVote -- some proposals in the current block were not visible at the time of last vote
+  deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- Monitors the amendment process
 amendmentProcessWorker
@@ -535,11 +537,11 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         -- The voting period of the last proposal period
         let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
 
-        case mBallot of
-          Nothing -> runDb (Identity db) $ do
+        runDb (Identity db) $ case mBallot of
+          Nothing -> do
             deleteAll' @BakerVote Proxy
             notify NotifyTag_BakerVote Nothing
-          Just ballot -> runDb (Identity db) $ do
+          Just ballot -> do
             pps <- [queryQ|
               UPDATE "BakerVote" SET included = ?blk
               FROM "PeriodProposal" pp
@@ -583,7 +585,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
             then pure ProposalVotingState_SilentRange
             else do
               ps <- getProposals
-              if (length $ filter (isJust . snd . snd) ps) >= maxProposalUpvotes
+              if length (filter (isJust . snd . snd) ps) >= maxProposalUpvotes
                 then pure ProposalVotingState_OutOfUpvotes
                 else
                   case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
@@ -593,7 +595,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
                       let unseenProposals = proposalsWhenLastVoting S.\\ proposals'
                       pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
-      VotingPeriodKind_Testing -> pure $ BakerVotingState_Testing ()
+      VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
       VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
 
@@ -624,7 +626,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
             ProposalVotingState_NoPreviousVote -> reportError False
             ProposalVotingState_OutdatedVote -> reportError True
           BakerVotingState_Exploration previouslyVoted -> singleVotePhase previouslyVoted
-          BakerVotingState_Testing () -> pure ()
+          BakerVotingState_Testing -> pure ()
           BakerVotingState_Promotion previouslyVoted -> singleVotePhase previouslyVoted
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.

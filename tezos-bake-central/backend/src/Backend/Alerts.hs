@@ -41,8 +41,15 @@ import Tezos.Types
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (HasAppConfig)
 import Backend.Schema
-import Common.Alerts (BakerErrorDescriptions(..), ErrorLogMessage(..), mkVotingReminderMessage, plaintextErrorDescription)
-import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
+import Common.Alerts (
+    BakerErrorDescriptions(..),
+    ErrorLogMessage(..),
+    badNodeHeadMessage,
+    bakerDeactivatedDescriptions,
+    bakerDeactivationRiskDescriptions,
+    mkVotingReminderMessage,
+    plaintextErrorDescription,
+  )
 import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
 import ExtraPrelude
