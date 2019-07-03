@@ -93,7 +93,7 @@ nodeRPCImpl' decoder requestBody method_ rpcSelector = do
   -- sayShow (node, method_, rpcSelector)
 
   let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
-  $(logDebugS) "NODERPC" $ rpcUrl
+  $(logDebugS) "NODERPC" rpcUrl
 
   let
     request = rpcBoilerplate method_ requestBody $ Http.parseRequest_ $ T.unpack rpcUrl
@@ -108,9 +108,8 @@ nodeRPCImpl' decoder requestBody method_ rpcSelector = do
           Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
       Http.Status code phrase -> do
-        $(logInfoS) "NODERPC" $ T.pack $ show $ Http.responseStatus result
-        $(logDebugS) "NODERPC" $ T.pack $ show $ Http.responseBody result -- TODO: find a better way to log this
-
+        $(logDebugS) "NODERPC" $ "Non-200 response for request: " <>
+          T.pack (show request) <> " - " <> T.pack (show $ Http.responseBody result)
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
 nodeRPCChunkedImpl :: forall a r s e m.
