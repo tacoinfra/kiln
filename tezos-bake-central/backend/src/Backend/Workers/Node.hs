@@ -609,7 +609,6 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           endTime = fst $ getEndTimeForPeriod currentPeriodKind a as' protoInfo
           progress = calculatePeriodProgress now startTime endTime
 
-        let
           bid = Id pkh
           singleVotePhase = bool (reportError False) clearAllErrors
           clearAllErrors = clearPastVotingPeriodErrors chainId bid Nothing Nothing
@@ -657,7 +656,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure $ (latestBlock ^. hash, _block_header latestBlock)
+        else pure (latestBlock ^. hash, _block_header latestBlock)
       updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -671,7 +670,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
   where
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
-    getBlockHeader hash' = (nodeQueryDataSource $ NodeQuery_BlockHeader hash') >>= pure . (hash',)
+    getBlockHeader hash' = nodeQueryDataSource (NodeQuery_BlockHeader hash') >>= pure . (hash',)
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
