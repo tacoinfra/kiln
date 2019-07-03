@@ -70,3 +70,77 @@ handleSnapshotUpload appConfig nds db = do
   liftIO $ createDirectoryIfMissing True uploadTmpLocation
   liftIO $ createDirectoryIfMissing True uploadLocation
   void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+
+-- import by using invalid hash
+-- get correct hash from stderr?
+importMetaInfo :: SnapshotMeta -> FilePath -> IO (Either SnapshotError SnapshotMeta)
+importMetaInfo sm parentDir = withTempDirectory parentDir $ \tmpDir -> do
+  let dummyBlockHash = "BLKSXJhUn8L51dWR8L5MPNhTXgeF3MGLPyroBb9oHBtcFUAFze"
+  $(logWarn) $ "importing snapshot meta info: "
+  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
+  (nodePaths chain) (["snapshot", "import", fileName, "--data-dir", tmpDir, "--block", dummyBlockHash) ""
+
+  case exitCode of
+    ExitSuccess -> pure $ T.strip $ T.pack stdout
+    ExitFailure _ -> do
+      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
+
+      let strippedLines = fmap T.strip $ T.lines $ T.pack stderr
+          warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
+          errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
+          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines $ T.pack stdout -- yes, fatal errors go to stdout
+      case handleError warnings (fatal ++ errors) of
+        Right t -> pure t
+        Left e -> do
+          $(logWarn) $ T.pack $ show e
+          throwError e
+
+    getActualHeadHash = \case
+      _importingData : _retrievingData: _context: _store: _computingPreds: _cleaningDir: _error : errMsg : actualBlk : dummyBlkHash: 
+        | T.isPrefixOf "The block contained in the file is" errMsg
+        | T.isPrefixOf (toBase58Text dummyBlk) dummyBlkHash
+        , Just blkHash <- headMay $ T.words actualBlk
+        -> Just blkHash
+      _ -> Nothing
+
+-- Jul  3 03:50:26 - shell.snapshots: Importing data from snapshot file ../alphanet-snapshot-02072019.full
+-- Jul  3 03:50:26 - shell.snapshots: Retrieving and validating data. This can take a while, please bear with us
+-- Context: 333K elements, 26MiB read
+-- Store: 484K elements, 654MiB read
+-- Computing predecessors table 484K elements
+-- Jul  3 03:52:36 - node.main: Cleaning directory ./dir because of failure
+-- tezos-node: Error:
+--               The block contained in the file is
+--             BLmyk5EDbe5DMXzmFhoBKt6DQSLi9AxStGPuPx2KV14cexstcGD instead of
+--             BLKSXJhUn8L51dWR8L5MPNhTXgeF3MGLPyroBb9oHBtcFUAFzeK.
+
+
+-- make sure the current dir is empty/clean dir
+-- change processstate
+-- import data to the dir and start node, 
+importSnapshotData appConfig logger db sm = do
+  let
+    nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
+    dataDir = nodeDataDir appConfig
+  liftIO $ removeDirectoryRecursive dataDir
+  liftIO $ createDirectoryIfMissing True dataDir
+  nodePPid <- project1 (NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+  let
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
+    inDb = runLoggingEnv logger . runDb (Identity db)
+  inDb $ updateProcessState nodePPid ProcessState_Initializing
+  
+  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
+    nodePath (["snapshot", "import", fileName, "--data-dir", dataDir, "--block", headBlock) ""
+
+  case exitCode of
+    ExitSuccess -> do
+          updateNode = do
+            (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
+              let pid = _deletableRow_data nodeData
+              update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
+              processData <- getId $ _deletableRow_data nodeData
+              notify NotifyTag_NodeInternal (nid, processData)
+
+    ExitFailure _ -> do
+      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
