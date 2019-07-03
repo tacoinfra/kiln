@@ -361,12 +361,12 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
     SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogVotingReminder" t ON t.log = el.id
-      JOIN "Baker" b ON b."publicKeyHash" = t.baker
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
-       AND t.chainId = ?chainId
-       AND t."baker" = ?bid
-       AND t."votingPeriodKind" = ?votingPeriodKind
+       AND t."chainId" = ?chainId
+       AND t."baker#publicKeyHash" = ?bid
+       AND t."periodKind" = ?votingPeriodKind
        AND t."previouslyVoted" = ?previouslyVoted
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
@@ -393,10 +393,10 @@ clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
       FROM "ErrorLogVotingReminder" t
     WHERE t.log = el.id
       AND el.stopped IS NULL
-      AND t.chainId = ?chainId
-      AND t."publicKeyHash" = ?bid
+      AND t."chainId" = ?chainId
+      AND t."baker#publicKeyHash" = ?bid
       AND (?periodKind IS NULL OR t."periodKind" <> ?periodKind)
-      AND (?previouslyVoted IS NULL OR t.previouslyVoted <> ?previouslyVoted)
+      AND (?previouslyVoted IS NULL OR t."previouslyVoted" <> ?previouslyVoted)
     RETURNING t.log |]
   for_ lids notifyDefault
   log' <- for (listToMaybe lids) $ getBy . fromId
