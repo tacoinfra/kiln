@@ -587,13 +587,12 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
               ps <- getProposals
               if length (filter (isJust . snd . snd) ps) >= maxProposalUpvotes
                 then pure ProposalVotingState_OutOfUpvotes
-                else
-                  case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
-                    Nothing -> pure ProposalVotingState_NoPreviousVote
-                    Just lastAttempt -> do
-                      proposalsWhenLastVoting <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote lastAttempt pkh
-                      let unseenProposals = proposalsWhenLastVoting S.\\ proposals'
-                      pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
+                else case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
+                  Nothing -> pure $ if null ps then ProposalVotingState_CaughtUp else ProposalVotingState_NoPreviousVote
+                  Just lastAttempt -> do
+                    proposalsWhenLastVoting <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote lastAttempt pkh
+                    let unseenProposals = proposalsWhenLastVoting S.\\ proposals'
+                    pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
