@@ -83,7 +83,6 @@ import Backend.WebApi (v1PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Client (clientWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient
@@ -364,7 +363,6 @@ backendImpl cfg serve = do
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
-      addFinalizer =<< clientWorker appConfig dataSrc
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db

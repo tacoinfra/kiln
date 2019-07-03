@@ -116,7 +116,6 @@ stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
 
 data NotifyTag a where
-  NotifyTag_BakerDaemonExternal :: NotifyTag (Id BakerDaemon, Maybe BakerDaemonExternalData)
   NotifyTag_Baker :: NotifyTag (Id Baker, Maybe BakerData)
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
@@ -202,7 +201,6 @@ instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
-instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker)
 instance HasDefaultNotify (Id ErrorLogBakerAccused)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk)
@@ -220,8 +218,6 @@ instance HasNotification NotifyTag ErrorLogBadNodeHead where
 instance HasNotification NotifyTag ErrorLogInaccessibleNode where
   notification _ = mkNodeNotify NodeLogTag_InaccessibleNode
 
-instance HasNotification NotifyTag ErrorLogMultipleBakersForSameBaker where
-  notification _ = mkBakerNotify BakerLogTag_MultipleBakersForSameBaker
 instance HasNotification NotifyTag ErrorLogBakerAccused where
   notification _ = mkBakerNotify BakerLogTag_BakerAccused
 instance HasNotification NotifyTag ErrorLogBakerDeactivated where
@@ -625,11 +621,6 @@ instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
-instance ToField ClientWorker where
-  toField = toField . show
-instance FromField ClientWorker where
-  fromField f b = maybe (fail "Invalid value for ClientWorker") pure . readMaybe =<< fromField f b
-
 instance ToField RightKind where
   toField = toField . show
 instance FromField RightKind where
@@ -764,18 +755,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: BakerDaemon
     constructors:
       - name: BakerDaemon
-  - entity: BakerDaemonExternal
-    autoKey: null
-    constructors:
-      - name: BakerDaemonExternal
-        uniques:
-          - name: BakerDaemonExternalId
-            type: primary
-            fields: [_bakerDaemonExternal_id]
-          - name: BakerDaemonExternal_uniqueness
-            type: constraint
-            fields: [_bakerDaemonExternal_data] #data#address
-  - embedded: BakerDaemonExternalData
   - entity: BakerDaemonInternal
     autoKey: null
     keys:
@@ -788,23 +767,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_bakerDaemonInternal_id]
   - embedded: BakerDaemonInternalData
-  - entity: BakerDaemonInfo
-    autoKey: null
-    keys:
-      - name: BakerDaemonInfoId
-        default: true
-    constructors:
-      - name: BakerDaemonInfo
-        uniques:
-          - name: BakerDaemonInfoId
-            type: primary
-            fields: [_bakerDaemonInfo_id]
-        fields:
-          - name: _bakerDaemonInfo_id
-            reference:
-              table: BakerDaemon
-              onDelete: cascade
-  - embedded: BakerDaemonInfoData
   - entity: Node
     constructors:
       - name: Node
@@ -933,7 +895,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: Bool
             default: "True"
   - primitive: RightKind
-  - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
   - primitive: NamedChain
@@ -972,17 +933,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInaccessibleNodeId
             type: primary
             fields: [_errorLogInaccessibleNode_log]
-  - entity: ErrorLogMultipleBakersForSameBaker
-    autoKey: null
-    keys:
-      - name: ErrorLogMultipleBakersForSameBakerId
-        default: true
-    constructors:
-      - name: ErrorLogMultipleBakersForSameBaker
-        uniques:
-          - name: ErrorLogMultipleBakersForSameBakerId
-            type: primary
-            fields: [_errorLogMultipleBakersForSameBaker_log]
   - entity: ErrorLogBakerAccused
     autoKey: null
     keys:
@@ -1178,9 +1128,6 @@ instance DefaultKeyId ErrorLogBakerNoHeartbeat where
 instance DefaultKeyId ErrorLogInaccessibleNode where
   toIdData _ (ErrorLogInaccessibleNodeIdKey eid) = eid
   fromIdData _ = ErrorLogInaccessibleNodeIdKey
-instance DefaultKeyId ErrorLogMultipleBakersForSameBaker where
-  toIdData _ (ErrorLogMultipleBakersForSameBakerIdKey eid) = eid
-  fromIdData _ = ErrorLogMultipleBakersForSameBakerIdKey
 instance DefaultKeyId ErrorLogBakerAccused where
   toIdData _ (ErrorLogBakerAccusedIdKey eid) = eid
   fromIdData _ = ErrorLogBakerAccusedIdKey
@@ -1248,7 +1195,6 @@ nodeLogAssume = \case
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
-  BakerLogTag_MultipleBakersForSameBaker -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
@@ -1316,7 +1262,6 @@ nodeLogDep = \case
 
 bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
 bakerLogDep = \case
-  BakerLogTag_MultipleBakersForSameBaker -> depBakerAlert ErrorLogMultipleBakersForSameBaker_publicKeyHashField
   BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
@@ -1336,8 +1281,7 @@ embeddedSecretKeyEquals f sk =
 
 instance ArgDict NotifyTag where
   type ConstraintsFor NotifyTag c =
-    ( c (Id BakerDaemon, Maybe BakerDaemonExternalData)
-    , c (Id Baker, Maybe BakerData)
+    ( c (Id Baker, Maybe BakerData)
     , c BakerDetails
     , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
     , c (Id ErrorLogNetworkUpdate)
@@ -1346,7 +1290,6 @@ instance ArgDict NotifyTag where
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogBadNodeHead)
-    , c (Id ErrorLogMultipleBakersForSameBaker)
     , c (Id ErrorLogBakerMissed)
     , c (Id ErrorLogBakerDeactivated)
     , c (Id ErrorLogBakerDeactivationRisk)
@@ -1378,7 +1321,6 @@ instance ArgDict NotifyTag where
     , c (PublicKeyHash, Bool)
     )
   argDict = \case
-    NotifyTag_BakerDaemonExternal -> Dict
     NotifyTag_Baker -> Dict
     NotifyTag_BakerDetails -> Dict
     NotifyTag_BakerRightsProgress -> Dict
@@ -1391,7 +1333,6 @@ instance ArgDict NotifyTag where
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
       LogTag_Baker t -> case t of
-        BakerLogTag_MultipleBakersForSameBaker -> Dict
         BakerLogTag_BakerMissed -> Dict
         BakerLogTag_BakerDeactivated -> Dict
         BakerLogTag_BakerDeactivationRisk -> Dict
