@@ -163,20 +163,20 @@ mkVotingReminderMessage :: (Double, Time.NominalDiffTime) -> Bool -> ErrorLogVot
 mkVotingReminderMessage (periodFractionEllapsed, periodEndsIn) resolved elog = ErrorLogMessage
   { _errorLogMessage_resolved = resolved
   , _errorLogMessage_subject = title & if resolved then ("Resolved: " <>) else id
-  , _errorLogMessage_content = "Open the menu on your Kiln baker tile and click “Vote” to vote."
+  , _errorLogMessage_content = if resolved then "" else "Open the menu on your Kiln baker tile and click “Vote” to vote."
   }
   where
     previouslyVoted = _errorLogVotingReminder_previouslyVoted elog
     periodKind = _errorLogVotingReminder_periodKind elog
 
-    timeLeft = case (nominalDiffTimeToSeconds periodEndsIn `divMod` 3600) of
-      (0, m) -> tshow m <> " minutes"
-      (h, _) -> tshow h <> " hours"
+    timeLeft = case nominalDiffTimeToSeconds periodEndsIn `divMod` (60 * 60) of
+      (0, m) -> tshow (max 0 m) <> " minutes"
+      (h, _) -> tshow (max 0 h) <> " hours"
 
     singleVotePeriod periodName =
-      if | periodFractionEllapsed >= 0.9 -> periodName <> " Period ends in " <> timeLeft <> "; Remember to vote!"
-         | periodFractionEllapsed >= 0.5 -> "You have not yet voted in this " <> periodName <> " Period; Remember to vote!"
-         | otherwise                     -> periodName <> " Period has begun; Remember to vote!"
+      if | periodFractionEllapsed >= 0.9 -> periodName <> " Period ends in " <> timeLeft <> ". Remember to vote!"
+         | periodFractionEllapsed >= 0.5 -> "You have not yet voted in this " <> periodName <> " Period. Remember to vote!"
+         | otherwise                     -> periodName <> " Period has begun. Remember to vote!"
 
     title = case periodKind of
       VotingPeriodKind_Proposal -> state <> if resolved
