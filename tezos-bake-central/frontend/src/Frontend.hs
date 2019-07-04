@@ -1476,6 +1476,7 @@ nodesTab =
             isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
+          mUsingOsPubNode <- watchUsingOsPublicNode
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1488,7 +1489,12 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
+                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
+                  then do
+                    text "This Node can only be turned off via "
+                    let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#bakers-publickeyhashes"
+                    elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
+                  else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile
               title
