@@ -463,13 +463,15 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
+  mUsingOsPubNode <- watchUsingOsPublicNode
+
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
         (fmap . fmap) (not . null) bakersMaybe
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-      onlyOsPubNode = ffor publicNodesMaybe $ fmap $ \pNodes ->
+      onlyOsPubNode = ffor2 publicNodesMaybe mUsingOsPubNode $ liftA2 $ \pNodes usingOs -> usingOs &&
         (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
           && maybe False (_publicNodeConfig_enabled . snd)
             (headMay (filter ((== PublicNode_Obsidian) . fst) $ MMap.assocs pNodes))
