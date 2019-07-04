@@ -47,7 +47,7 @@ import Common.Alerts (
     badNodeHeadMessage,
     bakerDeactivatedDescriptions,
     bakerDeactivationRiskDescriptions,
-    mkVotingReminderMessage,
+    bakerVotingReminderDescriptions,
     plaintextErrorDescription,
   )
 import Common.App (errorLogIdForErrorLogView)
@@ -380,11 +380,15 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
     Nothing -> do
       (logId, log) <- insertErrorLog $ \logId ->
         ErrorLogVotingReminder logId chainId bid votingPeriodKind previouslyVoted periodEllapsedFraction periodEndsIn
-      queueAlert (Just logId) $ mkErrorLogAlert $ mkVotingReminderMessage (periodEllapsedFraction, periodEndsIn) False log
+
+      let desc = bakerVotingReminderDescriptions (periodEllapsedFraction, periodEndsIn) log
+      queueAlert (Just logId) $ Alert Unresolved
+        (_bakerErrorDescriptions_title desc)
+        ""
 
 clearPastVotingPeriodErrors
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+  :: ( Monad m, MonadIO m
+     , PersistBackend m, PostgresLargeObject m
      )
   => ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
 clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
@@ -399,12 +403,6 @@ clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
       AND (?previouslyVoted IS NULL OR t."previouslyVoted" <> ?previouslyVoted)
     RETURNING t.log |]
   for_ lids notifyDefault
-  log' <- for (listToMaybe lids) $ getBy . fromId
-  for_ (join log') $ \log ->
-    queueAlert Nothing $ mkErrorLogAlert $ mkVotingReminderMessage
-      (_errorLogVotingReminder_periodEllapsedFraction log, _errorLogVotingReminder_periodEndsIn log)
-      True
-      log
 
 badNodeHeadErrorDelaySeconds :: NominalDiffTime
 badNodeHeadErrorDelaySeconds = 125

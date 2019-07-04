@@ -26,6 +26,7 @@ import Data.Align
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -564,35 +565,37 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ mPkh $ \pkh -> do
     votingState <- case currentPeriodKind of
-      VotingPeriodKind_Proposal -> do
+      VotingPeriodKind_Proposal -> throwing $ runNodeQueryT $ do
         let blk = latestHead ^. hash
-        proposals' <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote blk pkh
-        let proposals = In $ S.toList proposals'
+        proposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
+        let inProposals = In $ S.toList proposals
             votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
 
-        runDb (Identity db) $ do
-          pps <- [queryQ|
-            UPDATE "BakerProposal" SET included = ?blk
-            FROM "PeriodProposal" pp
-            WHERE pp.id = proposal AND pp.hash IN ?proposals AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?votingPeriod
-            RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, attempted
-          |]
-          for_ pps $ \(pid, phash, chain, vp, votes, _ :: Maybe BlockHash) ->
-            notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
+        pps <- [queryQ|
+          UPDATE "BakerProposal" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp.hash IN ?inProposals
+            AND pp."chainId" = ?chainId
+            AND pp."votingPeriod" = ?votingPeriod
+          RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, attempted
+        |]
+        for_ pps $ \(pid, phash, chain, vp, votes, _ :: Maybe BlockHash) ->
+          notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
 
-          fmap BakerVotingState_Proposal $
-            if currentVotingPosition * 2 < blocksPerVotingPeriod
-            then pure ProposalVotingState_SilentRange
-            else do
-              ps <- getProposals
-              if length (filter (isJust . snd . snd) ps) >= maxProposalUpvotes
-                then pure ProposalVotingState_OutOfUpvotes
-                else case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
-                  Nothing -> pure $ if null ps then ProposalVotingState_CaughtUp else ProposalVotingState_NoPreviousVote
-                  Just lastAttempt -> do
-                    proposalsWhenLastVoting <- throwing $ nodeQueryDataSource $ NodeQuery_ProposalVote lastAttempt pkh
-                    let unseenProposals = proposalsWhenLastVoting S.\\ proposals'
-                    pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
+        fmap BakerVotingState_Proposal $
+          if currentVotingPosition * 2 < blocksPerVotingPeriod
+          then pure ProposalVotingState_SilentRange
+          else fmap NE.nonEmpty getProposals >>= \case
+            Nothing -> pure ProposalVotingState_CaughtUp
+            Just ps
+              | length (NE.filter (isJust . snd . snd) ps) >= maxProposalUpvotes ->
+                pure ProposalVotingState_OutOfUpvotes
+              | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
+                Nothing -> pure ProposalVotingState_NoPreviousVote
+                Just lastAttempt -> do
+                  proposalsWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote lastAttempt pkh
+                  let unseenProposals = proposalsWhenLastVoting S.\\ proposals
+                  pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
