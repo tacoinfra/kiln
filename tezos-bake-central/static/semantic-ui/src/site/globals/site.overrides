@@ -93,17 +93,17 @@ h6.ui.header {
       }
     }
   }
+}
 
-  > .modal-close {
-    ._link-like();
-    padding: @10px;
-    height: @30px;
-    width: @30px;
-    float: right;
+.modal-close {
+  ._link-like();
+  padding: @10px;
+  height: @30px;
+  width: @30px;
+  float: right;
 
-    > i.fitted {
-      transform: translate(-@2px, -@2px);
-    }
+  > i.fitted {
+    transform: translate(-@2px, -@2px);
   }
 }
 

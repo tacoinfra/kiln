@@ -58,6 +58,7 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
+import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -468,8 +469,12 @@ nodesTabOrWelcome = do
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
+      onlyOsPubNode = ffor publicNodesMaybe $ fmap $ \pNodes ->
+        (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
+          && maybe False (_publicNodeConfig_enabled . snd)
+            (headMay (filter ((== PublicNode_Obsidian) . fst) $ MMap.assocs pNodes))
   haveBakersHaveNodesMaybe <- holdUniqDyn $
-    (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+    (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   whenJust mchain $ \chain -> do
@@ -488,8 +493,18 @@ nodesTabOrWelcome = do
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just (False,False) -> divClass "app-content app-welcome" welcomeScreen
-    Just (haveBakers, haveNodes) -> divClass "app-content" $ do
+    Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
+    Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
+      let
+        welcomeSplashAlert =
+          divClass "app-content app-welcome" $ divClass "dashboard-section dashboard-section-global-alerts" $ do
+            SemUi.segment def $ do
+              (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+              welcomeScreen True
+              pure $ domEvent Click closeEl
+      when (onlyOsNode && (not haveBakers)) $ mdo
+        closeEv <- switch . current <$> widgetHold welcomeSplashAlert (pure never <$ closeEv)
+        pure ()
       when haveBakers bakersTab
       when haveNodes nodesTab
 
@@ -509,8 +524,8 @@ networkUpdateAlert elua = do
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
 
-welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
-welcomeScreen = do
+welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
+welcomeScreen hasOsPubNode = do
   SemUi.header
     (def
       & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
@@ -519,7 +534,8 @@ welcomeScreen = do
         text $ "Welcome to " <> appName <> "."
   divClass "welcome-description" $ do
     el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
-    el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+    el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+      <> (if hasOsPubNode then " The Obsidian public node has been added to provide a baseline source of network data." else "")
     el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
 
 summaryTab
