@@ -79,7 +79,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.WebApi (v1PublicApi)
+import Backend.WebApi (v2PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
@@ -406,7 +406,7 @@ backendImpl cfg serve = do
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_PublicCacheApi :=> _
-          | serveNodeCache -> v1PublicApi dataSrc
+          | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
 
 backend :: Backend BackendRoute AppRoute
