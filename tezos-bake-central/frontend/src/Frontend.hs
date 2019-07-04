@@ -497,16 +497,7 @@ nodesTabOrWelcome = do
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
     Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
-      let
-        welcomeSplashAlert =
-          divClass "app-content app-welcome" $ divClass "dashboard-section dashboard-section-global-alerts" $ do
-            SemUi.segment def $ do
-              (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
-              welcomeScreen True
-              pure $ domEvent Click closeEl
-      when (onlyOsNode && (not haveBakers)) $ mdo
-        closeEv <- switch . current <$> widgetHold welcomeSplashAlert (pure never <$ closeEv)
-        pure ()
+      when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
 
@@ -527,18 +518,24 @@ networkUpdateAlert elua = do
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
-welcomeScreen hasOsPubNode = do
-  SemUi.header
-    (def
-      & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
-      )
-    $ do
-        text $ "Welcome to " <> appName <> "."
-  divClass "welcome-description" $ do
-    el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
-    el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-      <> (if hasOsPubNode then " The Obsidian public node has been added to provide a baseline source of network data." else "")
-    el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
+welcomeScreen hasOsPubNode = mdo
+  closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
+  pure ()
+  where
+    banner = divClass "app-content app-welcome" $ divClass "dashboard-section dashboard-section-global-alerts" $ SemUi.segment def $ do
+      (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+      SemUi.header
+        (def
+          & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
+          )
+        $ do
+            text $ "Welcome to " <> appName <> "."
+      divClass "welcome-description" $ do
+        el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
+        el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+          <> (if hasOsPubNode then " The Obsidian public node has been added to provide a baseline source of network data." else "")
+        el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
+      pure $ domEvent Click closeEl
 
 summaryTab
   :: forall r m t.
