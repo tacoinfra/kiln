@@ -47,7 +47,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
+import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
@@ -292,7 +292,9 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
             newSavePoint <- liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
               Left e ->
-                Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
+                case e of
+                  RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
+                  _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
               Right checkpoint ->
                 pure $ Just $ _checkpoint_savePoint checkpoint
 

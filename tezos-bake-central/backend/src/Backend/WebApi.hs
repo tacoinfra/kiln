@@ -194,8 +194,8 @@ snapRights f = withCacheIO (Left "nocache") $ \_proto -> do
   let
     -- To do this without liftIO we would have to add MonadBaseNoPureAborts instance for MonadSnap
     runNodeQueryIx x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
-  (fmap join) $ for mBranch $ \(branch, blockLevel) -> do
-    (res :: Either CacheError a) <- runNodeQueryIx $ nodeQueryIx $ f branch blockLevel
+  fmap join $ for mBranch $ \(branch, blockLevel) -> do
+    res :: Either CacheError a <- runNodeQueryIx $ nodeQueryIx $ f branch blockLevel
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
