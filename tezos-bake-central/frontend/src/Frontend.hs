@@ -1258,6 +1258,12 @@ addNodeModal close = do
        pure close
 
 
+osPublicNodeRemoveMessage :: DomBuilder t m => m ()
+osPublicNodeRemoveMessage = do
+  text "This Node can only be turned off via "
+  let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#bakers-publickeyhashes"
+  elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
+
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
   let
@@ -1272,11 +1278,14 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
-      PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
-      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro"
+      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
+        Just True -> osPublicNodeRemoveMessage
+        _ -> pure ()
+      PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
+      PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
+  mUsingOsPubNode <- watchUsingOsPublicNode
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
     (element', ()) <- SemUi.ui' "div"
@@ -1286,9 +1295,11 @@ publicNodeOptions = do
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
-        divClass "description" $ text $ describePublicNode pn
+        divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
+    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
+          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
+          $ tag (current mUsingOsPubNode) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1487,10 +1498,7 @@ nodesTab =
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
                 dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
-                  then do
-                    text "This Node can only be turned off via "
-                    let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#bakers-publickeyhashes"
-                    elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
+                  then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile
