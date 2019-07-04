@@ -280,20 +280,13 @@ instance MonadNodeQuery NodeQueryQueued where
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
-            -- Currently we dont use the 'self' in nodeQueryImpl
-            nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-            nodeQueryViaCache _ = pure $ Left CacheError_NoSuitableNode
-          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) q
       Right nodesToTry -> foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
         answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
         Left _ -> \anyNode -> do
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-
-            nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-            nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
-
-          NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+          NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) q
     nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
@@ -932,7 +925,6 @@ nodeQueryDataSourceImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC
@@ -948,10 +940,9 @@ nodeQueryImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger _self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -978,9 +969,6 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger _self' q = runExceptT 
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
-    -- self :: forall b. NodeQuery b -> ExceptT CacheError IO b
-    -- self = ExceptT . self'
-
 withCache
   :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> a -> (ProtoInfo -> m a) -> m a
@@ -996,7 +984,6 @@ nodeQueryOsPubNodeImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC
