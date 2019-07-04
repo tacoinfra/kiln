@@ -280,20 +280,13 @@ instance MonadNodeQuery NodeQueryQueued where
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
-            -- Currently we dont use the 'self' in nodeQueryImpl
-            nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-            nodeQueryViaCache _ = pure $ Left CacheError_NoSuitableNode
-          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) q
       Right nodesToTry -> foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
         answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
         Left _ -> \anyNode -> do
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-
-            nodeQueryViaCache :: forall b. NodeQuery b -> IO (Either CacheError b)
-            nodeQueryViaCache qInner = runReaderT (runExceptT $ nodeQueryDataSourceImmediate qInner) dsrc
-
-          NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) nodeQueryViaCache q
+          NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch protoInfo ctx (_nodeDataSource_logger dsrc) q
     nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
@@ -932,7 +925,6 @@ nodeQueryDataSourceImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC
@@ -948,10 +940,9 @@ nodeQueryImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger _self' q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -978,9 +969,6 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger _self' q = runExceptT 
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
-    -- self :: forall b. NodeQuery b -> ExceptT CacheError IO b
-    -- self = ExceptT . self'
-
 withCache
   :: forall nds a m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> a -> (ProtoInfo -> m a) -> m a
@@ -996,7 +984,6 @@ nodeQueryOsPubNodeImpl
   -> ProtoInfo
   -> NodeRPCContext
   -> LoggingEnv
-  -> (forall b. NodeQuery b -> IO (Either CacheError b))
   -> NodeQuery a
   -> IO (Either CacheError a)
 nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC
@@ -1015,7 +1002,7 @@ data OsNodeQuery a = OsNodeQuery
   }
 
 instance QueryChain OsNodeQuery where
-  rChain = OsNodeQuery "/v1/chain" []
+  rChain = OsNodeQuery "/v2/chain" []
 
 instance QueryBlock OsNodeQuery where
   type BlockType OsNodeQuery = Block
@@ -1066,7 +1053,7 @@ chainApi2 path getParams chainId = chainApi3 path (const getParams) chainId ()
 
 chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
 chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
-  where route = "/v1/" <> toBase58Text chainId <> path
+  where route = "/v2/" <> toBase58Text chainId <> path
 
 blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
 blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
@@ -1075,6 +1062,7 @@ nodeQueryIx
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , PostgresRaw m
     , Aeson.FromJSON a, Aeson.ToJSON a
     )
   => NodeQueryIx a -> NodeQueryT m a
@@ -1099,13 +1087,13 @@ nodeQueryIx q = do
       pure $ fromMaybe ctx mCtxCp
 
   q1 <- modifyContext getRightsContext q
-  mRes <- nqInDB $ checkCacheDb q1
+  mRes <- checkCacheDb q1
   case mRes of
     Just v -> pure v
     Nothing -> do
       q2 <- modifyContext getCheckpointContext q
       result <- nodeQueryDataSourceSafe $ getNodeQuery q2
-      nqInDB $ addToDb result q1
+      addToDb result q1
       pure result
   where
     modifyContext :: Functor f => (BlockHash -> RawLevel -> f BlockHash) -> NodeQueryIx a -> f (NodeQueryIx a)
@@ -1126,35 +1114,35 @@ nodeQueryIx q = do
     checkCacheDb = \case
       NodeQueryIx_BakingRights ctx lvl -> do
         res <- [queryQ|
-                SELECT "result"
-                FROM "CacheBakingRights"
-                WHERE "context" = ?ctx AND "level" = ?lvl
-                |] <&> stripOnly
+          SELECT "result"
+          FROM "CacheBakingRights"
+          WHERE "context" = ?ctx AND "level" = ?lvl
+        |] <&> stripOnly
         fmap join $ traverse getResult $ headMay res
       NodeQueryIx_EndorsingRights ctx lvl -> do
         res <- [queryQ|
-                SELECT "result"
-                FROM "CacheEndorsingRights"
-                WHERE "context" = ?ctx AND "level" = ?lvl
-                |] <&> stripOnly
+          SELECT "result"
+          FROM "CacheEndorsingRights"
+          WHERE "context" = ?ctx AND "level" = ?lvl
+        |] <&> stripOnly
         fmap join $ traverse getResult $ headMay res
       where
         getResult json = case Aeson.fromJSON (unJson json) of
-            Aeson.Success v -> return $ Just v
-            Aeson.Error bad -> do
-              $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
-              return Nothing
+          Aeson.Success v -> return $ Just v
+          Aeson.Error bad -> do
+            $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
+            return Nothing
 
     addToDb :: (Monad m1, PostgresRaw m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
       NodeQueryIx_BakingRights ctx lvl -> void [executeQ|
-                    INSERT into "CacheBakingRights" ("context", "level", "result")
-                    values (?ctx, ?lvl, ?result)
-                    |]
+        INSERT INTO "CacheBakingRights" ("context", "level", "result")
+        values (?ctx, ?lvl, ?result)
+      |]
       NodeQueryIx_EndorsingRights ctx lvl -> void [executeQ|
-                    INSERT into "CacheEndorsingRights" ("context", "level", "result")
-                    values (?ctx, ?lvl, ?result)
-                    |]
+        INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
+        values (?ctx, ?lvl, ?result)
+      |]
       where result = Json $ Aeson.toJSON result'
 
 
@@ -1162,6 +1150,7 @@ nodeQueryIxBakingRights1
   :: forall m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , PostgresRaw m
     )
   => BlockHash -> RawLevel -> Priority -> NodeQueryT m BakingRights
 nodeQueryIxBakingRights1 ctx lvl prio = do
@@ -1270,7 +1259,7 @@ tryFetchFromCache chainId q = do
     FROM "GenericCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
+  |] <&> fmap (\(i, c, k, v) -> (i, GenericCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
     Just ((rid, result) :| _) -> case requestResponseFromJSON q of

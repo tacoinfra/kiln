@@ -190,39 +190,6 @@ data BakerDaemon = BakerDaemon
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDaemon
 
--- data BakerDaemonExternal = BakerDaemonExternal (WithId (Id BakerDaemon) (Deletable BakerDaemonExternal'))
-
-data BakerDaemonExternal = BakerDaemonExternal
-  { _bakerDaemonExternal_id :: !(Id BakerDaemon)
-  , _bakerDaemonExternal_data :: !(DeletableRow BakerDaemonExternalData)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonExternal where
-  -- Should be the same as `IdData BakerDaemonExternalData` always.
-  type IdData BakerDaemonExternal = Id BakerDaemon
-
-data BakerDaemonExternalData = BakerDaemonExternalData
-  { _bakerDaemonExternalData_address :: !URI
-  , _bakerDaemonExternalData_alias :: !(Maybe Text)
-  , _bakerDaemonExternalData_updated :: !(Maybe UTCTime)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonExternalData where
-  type IdData BakerDaemonExternalData = Id BakerDaemon
-
--- data BakerDaemonDetails = BakerDaemonDetails (WithId (Id BakerDaemon) BakerDaemonDetails')
-
-data BakerDaemonInfo = BakerDaemonInfo
-  { _bakerDaemonInfo_id :: !(Id BakerDaemon)
-  , _bakerDaemonInfo_data :: !BakerDaemonInfoData
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-
-data BakerDaemonInfoData = BakerDaemonInfoData
-  { _bakerDaemonInfoData_report :: !(Json Report)
-  , _bakerDaemonInfoData_config :: !(Json ClientConfig)
-  -- , _bakerDaemonInfo_node :: Id Node
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonInfoData where
-  type IdData BakerDaemonInfoData = Id BakerDaemon
-
 data BakerDaemonInternal = BakerDaemonInternal
   { _bakerDaemonInternal_id :: !(Id BakerDaemon)
   , _bakerDaemonInternal_data :: !(DeletableRow BakerDaemonInternalData)
@@ -777,18 +744,6 @@ data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
 instance HasId ErrorLogBakerNoHeartbeat where
   type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
 
-data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
-  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
-
-data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
-  { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
-  , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameBaker_client :: !(Id BakerDaemon)
-  , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogMultipleBakersForSameBaker where
-  type IdData ErrorLogMultipleBakersForSameBaker = Id ErrorLog
-
 data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
   , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
@@ -965,7 +920,6 @@ deriving instance Show (NodeLogTag a)
 -- of a background process and a delegate. we should really rename one or both
 -- to minimize confusion between these two ideas.
 data BakerLogTag a where
-  BakerLogTag_MultipleBakersForSameBaker :: BakerLogTag ErrorLogMultipleBakersForSameBaker
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
@@ -985,10 +939,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEventOperation
   , ''Baker
   , ''BakerDaemon
-  , ''BakerDaemonExternal
-  , ''BakerDaemonExternalData
-  , ''BakerDaemonInfo
-  , ''BakerDaemonInfoData
   , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
@@ -999,9 +949,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BlockBaker
   , ''BlockTodo
   , ''CacheDelegateInfo
-  , ''ClientConfig
-  , ''ClientDaemonWorker
-  , ''ClientWorker
   , ''DeletableRow
   , ''EndorseEvent
   , ''ErrorEvent
@@ -1014,7 +961,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
-  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
@@ -1056,10 +1002,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEventOperation
   , 'Baker
   , 'BakerDaemon
-  , 'BakerDaemonExternal
-  , 'BakerDaemonExternalData
-  , 'BakerDaemonInfo
-  , 'BakerDaemonInfoData
   , 'BakerDaemonInternalData
   , 'BakerData
   , 'BakerDetails
@@ -1081,7 +1023,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
-  , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
@@ -1188,7 +1129,6 @@ errorLogNames =
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
-  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain

@@ -4,6 +4,10 @@
 
 These builds have only been tested on Linux.
 
+### Install the [Nix](https://nixos.org/nix/) Package Manager
+
+You can install from https://nixos.org/nix/ or by running `install-nix/install` in the root of this repository.
+
 ### Configuring the Nix cache (Recommended)
 
 If you have not done so already, we recommend you add our Nix caches to your Nix configuration to drastically reduce your build time. Please see instructions in [Tezos Baking Platform](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/README.md#setting-up-nix-caching-recommended).

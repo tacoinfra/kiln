@@ -74,7 +74,6 @@ import Safe (minimumByMay)
 import Tezos.PublicKeyHash
 import Tezos.Types
 
-import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.STM (atomicallyWith)
@@ -105,19 +104,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     maybeViewHandler getVS xs = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> xs
 
-  let clientAddresses = mempty
-  -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
-  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.data#deleted|]
-  --   return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
-  -- clients <- do
-  --   let selClients = In (Map.keys (_bakeViewSelector_clients vs))
-  --   rs <- [queryQ| SELECT c.id, i.report, i.config
-  --                  FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
-  --                  WHERE c.id IN ?selClients AND NOT c.data#deleted|]
-  --   let clientInfo = Map.fromList $ do
-  --         (cid, report, config) <- rs
-  --         return (cid, First (ClientInfo cid <$> report <*> config))
-  --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
   parameters <- maybeViewHandler _bakeViewSelector_parameters $
     fmap _parameters_protoInfo <$> selectSingle (Parameters_chainField ==. _nodeDataSource_chain nds)
 
@@ -165,8 +151,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
-
-  summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
 
   let errorsVS = _bakeViewSelector_errors vs
   errors <- itraverse getErrorLogs errorsVS
@@ -337,8 +321,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   return BakeView
     { _bakeView_config = config
-    , _bakeView_clients = mempty -- clients
-    , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
@@ -347,9 +329,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
-    -- , _bakeView_summaryGraph = summaryGraph
-    , _bakeView_summary = summaryView
-    -- , _bakeView_graphs = mempty
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead

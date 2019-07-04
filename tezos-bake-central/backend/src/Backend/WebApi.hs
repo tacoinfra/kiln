@@ -40,8 +40,8 @@ snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds
 
-v1PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
+v2PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
+v2PublicApi dataSrc = route $ fmap (first ("api/v2/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
   , ( chainTXT <> "/account", writeJSON $ const snapAccount )
   , ( chainTXT <> "/ancestors", writeJSON $ const snapAncestors )
@@ -194,8 +194,8 @@ snapRights f = withCacheIO (Left "nocache") $ \_proto -> do
   let
     -- To do this without liftIO we would have to add MonadBaseNoPureAborts instance for MonadSnap
     runNodeQueryIx x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
-  (fmap join) $ for mBranch $ \(branch, blockLevel) -> do
-    (res :: Either CacheError a) <- runNodeQueryIx $ nodeQueryIx $ f branch blockLevel
+  fmap join $ for mBranch $ \(branch, blockLevel) -> do
+    res :: Either CacheError a <- runNodeQueryIx $ nodeQueryIx $ f branch blockLevel
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
