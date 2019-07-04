@@ -43,7 +43,7 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
@@ -303,6 +303,28 @@ backendImpl cfg serve = do
               { _bakerData_alias = alias
               }
             }
+
+    runLoggingEnv logger $ runDb (Identity db) $ do
+      let publicNode = PublicNode_Obsidian
+          enabled = True
+      cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
+        project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
+      now <- getTime
+      case cid' of
+        Nothing ->
+          let
+            pnc = PublicNodeConfig
+              { _publicNodeConfig_source = publicNode
+              , _publicNodeConfig_enabled = enabled
+              , _publicNodeConfig_updated = now
+              }
+          in void $ insert' pnc
+        Just cid -> void $ do
+          updateId cid
+            [ PublicNodeConfig_sourceField =. publicNode
+            , PublicNodeConfig_enabledField =. enabled
+            , PublicNodeConfig_updatedField =. now
+            ]
 
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
