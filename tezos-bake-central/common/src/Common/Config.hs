@@ -65,6 +65,9 @@ networkGitLabProjectIdDefault = "3836952"
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 
+enableOsPublicNode :: FilePath
+enableOsPublicNode = "enable-obsidian-node"
+
 parseBool :: Text -> Bool
 parseBool txt
   | v `elem` trues = True
