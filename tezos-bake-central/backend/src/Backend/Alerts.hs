@@ -355,31 +355,41 @@ reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => (Double, NominalDiffTime) -> ChainId -> Id Baker -> VotingPeriodKind -> Bool -> m ()
-reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid votingPeriodKind previouslyVoted = do
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogVotingReminder) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log
+  => (Double, NominalDiffTime) -> ChainId -> Id Baker -> RawLevel -> VotingPeriodKind -> Bool -> m ()
+reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid votingPeriod votingPeriodKind previouslyVoted = do
+  existingLog :: Maybe (Id ErrorLog, Bool) <- listToMaybe <$> [queryQ|
+    SELECT el.id, el.stopped IS NULL
       FROM "ErrorLog" el
       JOIN "ErrorLogVotingReminder" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
-       AND el.stopped IS NULL
        AND t."chainId" = ?chainId
        AND t."baker#publicKeyHash" = ?bid
        AND t."periodKind" = ?votingPeriodKind
        AND t."previouslyVoted" = ?previouslyVoted
+       AND t."votingPeriod" = ?votingPeriod
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogVotingReminder_logField
+    Just (_, False) -> pure () -- We already issued this alert but it was manually resolved so don't issue it again.
+    Just (logId, True) -> updateErrorLogBy logId ErrorLogVotingReminder_logField
       [ ErrorLogVotingReminder_previouslyVotedField =. previouslyVoted
       , ErrorLogVotingReminder_periodEllapsedFractionField =. periodEllapsedFraction
       , ErrorLogVotingReminder_periodEndsInField =. periodEndsIn
       ]
     Nothing -> do
       (logId, log) <- insertErrorLog $ \logId ->
-        ErrorLogVotingReminder logId chainId bid votingPeriodKind previouslyVoted periodEllapsedFraction periodEndsIn
+        ErrorLogVotingReminder
+          { _errorLogVotingReminder_log = logId
+          , _errorLogVotingReminder_chainId = chainId
+          , _errorLogVotingReminder_baker = bid
+          , _errorLogVotingReminder_periodKind = votingPeriodKind
+          , _errorLogVotingReminder_votingPeriod = votingPeriod
+          , _errorLogVotingReminder_previouslyVoted = previouslyVoted
+          , _errorLogVotingReminder_periodEllapsedFraction = periodEllapsedFraction
+          , _errorLogVotingReminder_periodEndsIn = periodEndsIn
+          }
 
       let desc = bakerVotingReminderDescriptions (periodEllapsedFraction, periodEndsIn) log
       queueAlert (Just logId) $ Alert Unresolved

@@ -526,7 +526,8 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
   -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
   -- (the last block of the period), but /votes/current_period_kind for that block will return
   -- the *next* period kind.
-  let currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+  let votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+      currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
       isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
       -- The period of the *current* block, not the next one
       currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
@@ -569,7 +570,6 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         let blk = latestHead ^. hash
         proposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
         let inProposals = In $ S.toList proposals
-            votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
 
         pps <- [queryQ|
           UPDATE "BakerProposal" SET included = ?blk
@@ -617,7 +617,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           clearAllErrors = clearPastVotingPeriodErrors chainId bid Nothing Nothing
           reportError previouslyVoted = do
             clearPastVotingPeriodErrors chainId bid (Just currentPeriodKind) (Just previouslyVoted)
-            reportVotingReminderError progress chainId bid currentPeriodKind previouslyVoted
+            reportVotingReminderError progress chainId bid votingPeriod currentPeriodKind previouslyVoted
 
         case votingState of
           BakerVotingState_Proposal pvs -> case pvs of

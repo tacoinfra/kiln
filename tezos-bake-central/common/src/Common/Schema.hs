@@ -822,6 +822,7 @@ data ErrorLogVotingReminder = ErrorLogVotingReminder
   , _errorLogVotingReminder_chainId :: !ChainId
   , _errorLogVotingReminder_baker :: !(Id Baker)
   , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
+  , _errorLogVotingReminder_votingPeriod :: !RawLevel
   , _errorLogVotingReminder_previouslyVoted :: !Bool
   , _errorLogVotingReminder_periodEllapsedFraction :: !Double
   , _errorLogVotingReminder_periodEndsIn :: !NominalDiffTime
