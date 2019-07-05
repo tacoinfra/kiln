@@ -23,7 +23,7 @@ import Data.Map (Map())
 import qualified Data.Map as Map
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Text as T
-import Data.Time (NominalDiffTime, addUTCTime)
+import Data.Time (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
@@ -355,8 +355,23 @@ reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => (Double, NominalDiffTime) -> ChainId -> Id Baker -> RawLevel -> VotingPeriodKind -> Bool -> m ()
-reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid votingPeriod votingPeriodKind previouslyVoted = do
+  => ChainId
+  -> Id Baker
+  -> RawLevel
+  -> VotingPeriodKind
+  -> Bool
+  -> Int
+  -> UTCTime
+  -> m ()
+reportVotingReminderError
+  chainId
+  bid
+  votingPeriod
+  votingPeriodKind
+  previouslyVoted
+  rangeMax
+  periodEndsAt
+  = do
   existingLog :: Maybe (Id ErrorLog, Bool) <- listToMaybe <$> [queryQ|
     SELECT el.id, el.stopped IS NULL
       FROM "ErrorLog" el
@@ -368,6 +383,7 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
        AND t."periodKind" = ?votingPeriodKind
        AND t."previouslyVoted" = ?previouslyVoted
        AND t."votingPeriod" = ?votingPeriod
+       AND t."rangeMax" = ?rangeMax
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -375,8 +391,7 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
     Just (_, False) -> pure () -- We already issued this alert but it was manually resolved so don't issue it again.
     Just (logId, True) -> updateErrorLogBy logId ErrorLogVotingReminder_logField
       [ ErrorLogVotingReminder_previouslyVotedField =. previouslyVoted
-      , ErrorLogVotingReminder_periodEllapsedFractionField =. periodEllapsedFraction
-      , ErrorLogVotingReminder_periodEndsInField =. periodEndsIn
+      , ErrorLogVotingReminder_periodEndsAtField =. periodEndsAt
       ]
     Nothing -> do
       (logId, log) <- insertErrorLog $ \logId ->
@@ -387,11 +402,11 @@ reportVotingReminderError (periodEllapsedFraction, periodEndsIn) chainId bid vot
           , _errorLogVotingReminder_periodKind = votingPeriodKind
           , _errorLogVotingReminder_votingPeriod = votingPeriod
           , _errorLogVotingReminder_previouslyVoted = previouslyVoted
-          , _errorLogVotingReminder_periodEllapsedFraction = periodEllapsedFraction
-          , _errorLogVotingReminder_periodEndsIn = periodEndsIn
+          , _errorLogVotingReminder_rangeMax = rangeMax
+          , _errorLogVotingReminder_periodEndsAt = periodEndsAt
           }
-
-      let desc = bakerVotingReminderDescriptions (periodEllapsedFraction, periodEndsIn) log
+      now <- getTime
+      let desc = bakerVotingReminderDescriptions log (periodEndsAt `diffUTCTime` now)
       queueAlert (Just logId) $ Alert Unresolved
         (_bakerErrorDescriptions_title desc)
         ""
@@ -400,8 +415,8 @@ clearPastVotingPeriodErrors
   :: ( Monad m, MonadIO m
      , PersistBackend m, PostgresLargeObject m
      )
-  => ChainId -> Id Baker -> Maybe VotingPeriodKind -> Maybe Bool -> m ()
-clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
+  => ChainId -> Id Baker -> Int -> m ()
+clearPastVotingPeriodErrors chainId bid rangeMax = do
   lids :: [Id ErrorLogVotingReminder] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogVotingReminder" t
@@ -409,8 +424,7 @@ clearPastVotingPeriodErrors chainId bid periodKind previouslyVoted = do
       AND el.stopped IS NULL
       AND t."chainId" = ?chainId
       AND t."baker#publicKeyHash" = ?bid
-      AND (?periodKind IS NULL OR t."periodKind" <> ?periodKind)
-      AND (?previouslyVoted IS NULL OR t."previouslyVoted" <> ?previouslyVoted)
+      AND t."rangeMax" <> ?rangeMax
     RETURNING t.log |]
   for_ lids notifyDefault
 

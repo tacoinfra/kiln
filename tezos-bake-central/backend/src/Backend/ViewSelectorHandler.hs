@@ -685,8 +685,8 @@ getProposals = do
     SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
     FROM "PeriodProposal" pp
     LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
-    JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
-    WHERE NOT b."data#deleted"
+    LEFT JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
+    WHERE COALESCE(NOT b."data#deleted", TRUE)
   |]
   pure $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (pid, (PeriodProposal
     { _periodProposal_hash = phash

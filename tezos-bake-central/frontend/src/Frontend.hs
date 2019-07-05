@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -782,14 +781,15 @@ liveErrorsWidget = void $ do
           BakerLogTag_InsufficientFunds -> renderBakerError
             (bakerInsufficientFundsDescriptions log)
             pkh
-          BakerLogTag_VotingReminder -> withAmendmentPeriodProgress $ \fraction remaining -> do
-            let dsc = flip bakerVotingReminderDescriptions log <$> liftA2 (,) fraction remaining
-            bakersDyn <- watchBakerAddresses
-            divClass "header" $ do
-              dynText $ _bakerErrorDescriptions_title <$> dsc
-              text "."
-            divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
-            el "div" $ dynText $ _bakerErrorDescriptions_notification <$> dsc
+          BakerLogTag_VotingReminder ->
+            withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
+              let dsc = bakerVotingReminderDescriptions log <$> remaining
+              bakersDyn <- watchBakerAddresses
+              divClass "header" $ do
+                dynText $ _bakerErrorDescriptions_title <$> dsc
+                text "."
+              divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+              el "div" $ dynText $ _bakerErrorDescriptions_notification <$> dsc
           where
             pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
@@ -1663,20 +1663,20 @@ bakersTab =
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor bakerAlerts $ fmap $ \case
-                  Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
+                errorMessages = ffor bakerAlerts $ mapMaybe $ \case
+                  Left (_ :: CollectiveNodesFailure) -> Just $ text "Cannot gather baker data."
                   Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
-                    BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
+                    BakerLogTag_BakerMissed -> Just $ text $ "Missed " <> aRight <> "."
                       where
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
-                    BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
-                    BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
-                    BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
-                    BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
-                    BakerLogTag_VotingReminder -> blank
-                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> el "span" $ do
+                    BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
+                    BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
+                    BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
+                    BakerLogTag_InsufficientFunds -> Just $ renderBakerError $ bakerInsufficientFundsDescriptions log
+                    BakerLogTag_VotingReminder -> Nothing
+                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> Just $ el "span" $ do
                     elClass "span" "ui label circular" $ text $ tshow (length ls)
                     text nbsp
                     text $ "Missed " <> aRight <> "."
@@ -1741,8 +1741,9 @@ bakersTab =
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh
           BakerLogTag_InsufficientFunds -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions log) pkh
-          BakerLogTag_VotingReminder -> withAmendmentPeriodProgress $ \fraction remaining ->
-            renderBakerError ev (flip bakerVotingReminderDescriptions log <$> liftA2 (,) fraction remaining) pkh
+          BakerLogTag_VotingReminder ->
+            withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
+              renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
 
       BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
         tz <- asks (^. timeZone)
@@ -2022,18 +2023,21 @@ semuiTab label k currentTab enabled =
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
 withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
-                     => (Dynamic t Double -> Dynamic t Time.NominalDiffTime -> m ()) -> m ()
-withAmendmentPeriodProgress w = do
+                     => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
+withAmendmentPeriodProgress expectedVotingPeriod w = do
   currentTime <- asks (^. timer)
   mProtoInfo <- maybeDyn =<< watchProtoInfo
   amendments <- watchAmendment
   mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-  dyn_ $ ffor (liftA2 (,) <$> mProtoInfo <*> mAmendment) $ \case
+  dyn_ $ ffor ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \case
     Nothing -> divClass "loading" blank
     Just (protoInfo, amendment) -> do
+      (period, votingPeriod) <- fmap splitDynPure $
+        holdUniqDyn $ (_amendment_period &&& _amendment_votingPeriod) <$> amendment
       let
-        p = _amendment_period <$> amendment
-        getTime getter = fmap fst $ getter <$> p <*> amendment <*> amendments <*> protoInfo
-        startTime = getTime getStartTimeForPeriod
-        endTime = getTime getEndTimeForPeriod
-      uncurry w $ splitDynPure $ liftA3 calculatePeriodProgress currentTime startTime endTime
+        thisPeriodEndTime = fmap fst $ getEndTimeForPeriod <$> period <*> amendment <*> amendments <*> protoInfo
+        periodEndsIn =
+          fmap (expectedVotingPeriod ==) votingPeriod >>= \case
+            True -> liftA2 Time.diffUTCTime thisPeriodEndTime currentTime
+            False -> pure 0 -- The latest period is not the same as the expected one, so we assume it's over.
+      w periodEndsIn

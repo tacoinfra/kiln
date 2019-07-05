@@ -68,7 +68,7 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
 import Backend.ViewSelectorHandler (getProposals)
-import Common.App (getStartTimeForPeriod, getEndTimeForPeriod, calculatePeriodProgress)
+import Common.App (getEndTimeForPeriod)
 import Common.Schema
 import ExtraPrelude
 
@@ -515,50 +515,50 @@ amendmentProcessWorker
   -> Pool Postgresql
   -> IO (IO ())
 amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  $(logDebugSH) ("amendmentProcessWorker: Started"::Text,())
+  (history, protoInfo) <- liftIO $ atomically $ liftA2 (,) (readTVar $ _nodeDataSource_history nds) (waitForParams nds)
   latestBlock <- throwing $ getBlock (latestHead ^. hash)
-  blocksPerVotingPeriod <- liftIO $ maybe (error "amendmentProcessWorker: no ProtoInfo") _protoInfo_blocksPerVotingPeriod <$>
-    readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
-  history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
-  let chainId = _nodeDataSource_chain nds
-      minLevel = _cachedHistory_minLevel history
-  -- The RPCs under /votes/ return the information for the *next block*, not the current block.
-  -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
-  -- (the last block of the period), but /votes/current_period_kind for that block will return
-  -- the *next* period kind.
-  let votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
-      currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
-      isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
-      -- The period of the *current* block, not the next one
-      currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
-        $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+  let
+    blocksPerVotingPeriod = protoInfo ^. protoInfo_blocksPerVotingPeriod
+    chainId = _nodeDataSource_chain nds
+    minLevel = _cachedHistory_minLevel history
 
-      singleVotePeriod pkh periodKindOffset mkVotingState = do
-        let blk = latestHead ^.hash
-        mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
-        -- The voting period of the last proposal period
-        let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+    -- The RPCs under /votes/ return the information for the *next block*, not the current block.
+    -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
+    -- (the last block of the period), but /votes/current_period_kind for that block will return
+    -- the *next* period kind.
+    votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
+    currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
+    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
+    -- The period of the *current* block, not the next one
+    currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
+      $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
 
-        runDb (Identity db) $ case mBallot of
-          Nothing -> do
-            deleteAll' @BakerVote Proxy
-            notify NotifyTag_BakerVote Nothing
-          Just ballot -> do
-            pps <- [queryQ|
-              UPDATE "BakerVote" SET included = ?blk
-              FROM "PeriodProposal" pp
-              WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
-              RETURNING proposal, attempted
-            |]
-            for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
-              { _bakerVote_pkh = pkh
-              , _bakerVote_proposal = proposal
-              , _bakerVote_ballot = ballot
-              , _bakerVote_included = Just blk
-              , _bakerVote_attempted = attempted
-              }
+    singleVotePeriod pkh periodKindOffset mkVotingState = do
+      let blk = latestHead ^.hash
+      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+      -- The voting period of the last proposal period
+      let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
 
-        pure $ mkVotingState $ isJust mBallot
+      runDb (Identity db) $ case mBallot of
+        Nothing -> do
+          deleteAll' @BakerVote Proxy
+          notify NotifyTag_BakerVote Nothing
+        Just ballot -> do
+          pps <- [queryQ|
+            UPDATE "BakerVote" SET included = ?blk
+            FROM "PeriodProposal" pp
+            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
+            RETURNING proposal, attempted
+          |]
+          for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+            { _bakerVote_pkh = pkh
+            , _bakerVote_proposal = proposal
+            , _bakerVote_ballot = ballot
+            , _bakerVote_included = Just blk
+            , _bakerVote_attempted = attempted
+            }
+
+      pure $ mkVotingState $ isJust mBallot
 
   -- Update baker votes
   mPkh <- runDb (Identity db) $ join <$> project1
@@ -586,7 +586,9 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           if currentVotingPosition * 2 < blocksPerVotingPeriod
           then pure ProposalVotingState_SilentRange
           else fmap NE.nonEmpty getProposals >>= \case
-            Nothing -> pure ProposalVotingState_CaughtUp
+            Nothing -> do
+              $(logErrorSH) ("------------------------- NO PROPOSALS" :: Text)
+              pure ProposalVotingState_CaughtUp
             Just ps
               | length (NE.filter (isJust . snd . snd) ps) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
@@ -602,23 +604,26 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
       VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
 
     runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
-      now <- getTime
-      protoInfo <- liftIO $ atomically $ waitForParams nds
+
       as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
       let as' = Map.fromList $ flip fmap as $ _amendment_period &&& id
       for_ (maximumByMay (comparing _amendment_period) as') $ \a -> do
         let
-          startTime = fst $ getStartTimeForPeriod currentPeriodKind a as' protoInfo
           endTime = fst $ getEndTimeForPeriod currentPeriodKind a as' protoInfo
-          progress = calculatePeriodProgress now startTime endTime
 
-          bid = Id pkh
+          -- Calculate which range we're in.
+          rangeMax = case round $ (fromIntegral currentVotingPosition :: Double) / fromIntegral blocksPerVotingPeriod * 100 of
+            x | x < (50 :: Int) -> 50 -- 0 to 50
+              | x < 90 -> 90 -- 50 to 90
+              | otherwise -> 100 -- 90 to 100
+
           singleVotePhase = bool (reportError False) clearAllErrors
-          clearAllErrors = clearPastVotingPeriodErrors chainId bid Nothing Nothing
+          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
           reportError previouslyVoted = do
-            clearPastVotingPeriodErrors chainId bid (Just currentPeriodKind) (Just previouslyVoted)
-            reportVotingReminderError progress chainId bid votingPeriod currentPeriodKind previouslyVoted
+            clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+            reportVotingReminderError chainId (Id pkh) votingPeriod currentPeriodKind previouslyVoted rangeMax endTime
 
+        $(logErrorSH) $ "------------------------- " <> tshow votingState
         case votingState of
           BakerVotingState_Proposal pvs -> case pvs of
             ProposalVotingState_SilentRange -> clearAllErrors

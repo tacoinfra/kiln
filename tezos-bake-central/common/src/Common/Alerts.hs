@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 
@@ -158,8 +157,8 @@ data ErrorLogWidgets m = ErrorLogWidgets
   , _errorLogWidgets_banner :: m ()
   }
 
-bakerVotingReminderDescriptions :: (Double, Time.NominalDiffTime) -> ErrorLogVotingReminder -> BakerErrorDescriptions
-bakerVotingReminderDescriptions (periodFractionEllapsed, periodEndsIn) elog = BakerErrorDescriptions
+bakerVotingReminderDescriptions :: ErrorLogVotingReminder -> Time.NominalDiffTime -> BakerErrorDescriptions
+bakerVotingReminderDescriptions elog periodEndsIn = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = title
   , _bakerErrorDescriptions_tile = "Should vote"
   , _bakerErrorDescriptions_notification = description
@@ -171,15 +170,18 @@ bakerVotingReminderDescriptions (periodFractionEllapsed, periodEndsIn) elog = Ba
   where
     previouslyVoted = _errorLogVotingReminder_previouslyVoted elog
     periodKind = _errorLogVotingReminder_periodKind elog
+    rangeMax = _errorLogVotingReminder_rangeMax elog
 
-    timeLeft = case nominalDiffTimeToSeconds periodEndsIn `divMod` (60 * 60) of
-      (0, m) -> tshow (max 0 m) <> " minutes"
-      (h, _) -> tshow (max 0 h) <> " hours"
+    timeLeft
+      | periodEndsIn <= 0 = Nothing
+      | otherwise = Just $ case nominalDiffTimeToSeconds periodEndsIn `divMod` (60 * 60) of
+        (0, m) -> tshow (max 0 m `div` 60) <> " minutes"
+        (h, _) -> tshow (max 0 h) <> " hours"
 
-    singleVotePeriod periodName =
-      if | periodFractionEllapsed >= 0.9 -> periodName <> " Period ends in " <> timeLeft
-         | periodFractionEllapsed >= 0.5 -> "You have not yet voted in this " <> periodName <> " Period"
-         | otherwise                     -> periodName <> " Period has begun"
+    singleVotePeriod periodName
+      | rangeMax > 90 = periodName <> " Period " <> maybe " is over" (" ends in " <>) timeLeft
+      | rangeMax > 50 = "You have not yet voted in this " <> periodName <> " Period"
+      | otherwise = periodName <> " Period has begun"
 
     title = case periodKind of
       VotingPeriodKind_Proposal -> state
@@ -191,7 +193,10 @@ bakerVotingReminderDescriptions (periodFractionEllapsed, periodEndsIn) elog = Ba
       VotingPeriodKind_PromotionVote -> singleVotePeriod "Promotion"
 
     description = case periodKind of
-      VotingPeriodKind_Proposal -> timeLeft <> " remain before voting closes."
+      VotingPeriodKind_Proposal -> maybe
+        "The Proposal Period is over."
+        (<> " remain before voting closes.")
+        timeLeft
       _ -> "Remember to vote!"
 
 

@@ -824,8 +824,8 @@ data ErrorLogVotingReminder = ErrorLogVotingReminder
   , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
   , _errorLogVotingReminder_votingPeriod :: !RawLevel
   , _errorLogVotingReminder_previouslyVoted :: !Bool
-  , _errorLogVotingReminder_periodEllapsedFraction :: !Double
-  , _errorLogVotingReminder_periodEndsIn :: !NominalDiffTime
+  , _errorLogVotingReminder_rangeMax :: !Int
+  , _errorLogVotingReminder_periodEndsAt :: !UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogVotingReminder where
   type IdData ErrorLogVotingReminder = Id ErrorLog
@@ -1074,8 +1074,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   ] ++ map makePrisms
   [ ''UpgradeCheckError
   ])
-
-return []
 
 fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
