@@ -36,7 +36,7 @@ import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.Config (FrontendConfig)
+import Common.Config (FrontendConfig(..))
 import Common.Schema hiding (Event)
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
@@ -201,7 +201,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
-  dUsingOsPublicNode <- watchUsingOsPublicNode
+  dUsingOsPublicNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys

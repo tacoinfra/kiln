@@ -81,7 +81,7 @@ import Common.Alerts (standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
@@ -461,7 +461,7 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
-  mUsingOsPubNode <- watchUsingOsPublicNode
+  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
@@ -1222,7 +1222,7 @@ publicNodeOptions = do
       PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
-  mUsingOsPubNode <- watchUsingOsPublicNode
+  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
     (element', ()) <- SemUi.ui' "div"
@@ -1421,7 +1421,7 @@ nodesTab =
             isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
-          mUsingOsPubNode <- watchUsingOsPublicNode
+          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
