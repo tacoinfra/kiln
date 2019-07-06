@@ -315,10 +315,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           )
     pure rangeView
 
-  usingOsPublicNode <- maybeViewHandler _bakeViewSelector_usingOsPublicNode $ Just <$> do
-    let pn = _nodeDataSource_osPublicNode nds
-    pure $ pn /= Nothing
-
   return BakeView
     { _bakeView_config = config
     , _bakeView_parameters = parameters
@@ -348,7 +344,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_votePrompting = votePrompting
     , _bakeView_rightNotificationSettings = rightNotificationSettings
     , _bakeView_bakerRegistered = mempty
-    , _bakeView_usingOsPublicNode = usingOsPublicNode
     }
 
 getErrorLogs
