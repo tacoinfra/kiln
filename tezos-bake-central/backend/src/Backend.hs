@@ -66,7 +66,7 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (blankNodeDataSource, _nodeDataSource_ioQueue)
+import Backend.CachedNodeRPC (blankNodeDataSource, NodeDataSource(..))
 import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..))
 import Backend.Http (runHttpT)
@@ -356,6 +356,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
+          , Config._frontendConfig_usingOsPublicNode = (_nodeDataSource_osPublicNode dataSrc) /= Nothing
           }
 
       -- migrate old kiln storage

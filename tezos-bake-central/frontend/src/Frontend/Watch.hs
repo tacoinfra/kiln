@@ -36,7 +36,7 @@ import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.Config (FrontendConfig)
+import Common.Config (FrontendConfig(..))
 import Common.Schema hiding (Event)
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
@@ -201,6 +201,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
+  dUsingOsPublicNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys
@@ -208,20 +209,22 @@ watchCollectiveNodesStatus alertWindow = do
                      . nodeSummaryStateIfInternal)
         <$> dNodes
   ebn <- watchErrorsByNode alertWindow
-  holdUniqDyn $ ffor2 dmNids ebn $ \case
-    Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
-    Just nids -> \nodeErrors -> case
-        -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
-        -- the greatest element rather than least element.
-        getMin $ fold1 $ ffor nids $ \nid ->
-          Min $
-          fmap Down $
-          -- if there are errors, we went "ill" when the first one started
-          minimumMay $ (_errorLog_started . fst)
-            <$> maybe [] toList (MMap.lookup nid nodeErrors)
-      of
-        Nothing -> Right ()
-        Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
+  holdUniqDyn $ ffor3 dUsingOsPublicNode dmNids ebn $ \case
+    Just True -> const $ const $ Right ()
+    _ -> \case
+      Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
+      Just nids -> \nodeErrors -> case
+          -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
+          -- the greatest element rather than least element.
+          getMin $ fold1 $ ffor nids $ \nid ->
+            Min $
+            fmap Down $
+            -- if there are errors, we went "ill" when the first one started
+            minimumMay $ (_errorLog_started . fst)
+              <$> maybe [] toList (MMap.lookup nid nodeErrors)
+        of
+          Nothing -> Right ()
+          Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =

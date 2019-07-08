@@ -56,6 +56,7 @@ import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..), Id(..))
+import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -80,7 +81,7 @@ import Common.Alerts (standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion)
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute(..))
@@ -460,14 +461,20 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
+  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
+
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
         (fmap . fmap) (not . null) bakersMaybe
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
+      onlyOsPubNode = ffor2 publicNodesMaybe mUsingOsPubNode $ liftA2 $ \pNodes usingOs -> usingOs &&
+        (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
+          && maybe False (_publicNodeConfig_enabled . snd)
+            (headMay (filter ((== PublicNode_Obsidian) . fst) $ MMap.assocs pNodes))
   haveBakersHaveNodesMaybe <- holdUniqDyn $
-    (liftA2 . liftA2) (,) haveBakersMaybe haveNodesMaybe
+    (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   whenJust mchain $ \chain -> do
@@ -486,8 +493,9 @@ nodesTabOrWelcome = do
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just (False,False) -> divClass "app-content app-welcome" welcomeScreen
-    Just (haveBakers, haveNodes) -> divClass "app-content" $ do
+    Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
+    Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
+      when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
 
@@ -507,18 +515,25 @@ networkUpdateAlert elua = do
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
 
-welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => m ()
-welcomeScreen = do
-  SemUi.header
-    (def
-      & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
-      )
-    $ do
-        text $ "Welcome to " <> appName <> "."
-  divClass "welcome-description" $ do
-    el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
-    el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-    el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
+welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
+welcomeScreen hasOsPubNode = mdo
+  closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
+  pure ()
+  where
+    banner = divClass "app-content app-welcome" $ divClass "dashboard-section dashboard-section-global-alerts" $ SemUi.segment def $ do
+      (closeEl, _) <- elAttr' "div" ("class"=:"modal-close") $ elClass "i" "icon-x fitted icon" blank
+      SemUi.header
+        (def
+          & SemUi.headerConfig_size SemUi.|?~ SemUi.H1
+          )
+        $ do
+            text $ "Welcome to " <> appName <> "."
+      divClass "welcome-description" $ do
+        el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
+        el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+          <> (if hasOsPubNode then " The Obsidian public node has been added to provide a baseline source of network data." else "")
+        el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
+      pure $ domEvent Click closeEl
 
 radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
 radioLabels k0 ks = divClass "ui buttons" $ mdo
@@ -1180,6 +1195,12 @@ addNodeModal close = do
        pure close
 
 
+osPublicNodeRemoveMessage :: DomBuilder t m => m ()
+osPublicNodeRemoveMessage = do
+  text "This Node can only be turned off via "
+  let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#bakers-publickeyhashes"
+  elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
+
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
   let
@@ -1194,11 +1215,14 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> "Public Node Caching Service provided by Obsidian Systems"
-      PublicNode_Blockscale -> "Load-balanced collection of nodes provided by the Tezos Foundation"
-      PublicNode_TzScan -> "API provided by tzscan.io, the block explorer by OCamlPro"
+      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
+        Just True -> osPublicNodeRemoveMessage
+        _ -> pure ()
+      PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
+      PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
+  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
     (element', ()) <- SemUi.ui' "div"
@@ -1208,9 +1232,11 @@ publicNodeOptions = do
         dynText $ bool "Add Node" "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
-        divClass "description" $ text $ describePublicNode pn
+        divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
+    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
+          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
+          $ tag (current mUsingOsPubNode) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1395,6 +1421,7 @@ nodesTab =
             isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
+          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1407,7 +1434,9 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
+                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
+                  then osPublicNodeRemoveMessage
+                  else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile
               title
