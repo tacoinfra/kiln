@@ -86,12 +86,6 @@ tezosBinaryPaths =
 internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
 internalNodeWorker appConfig logger db namedChainOrPaths = do
-  let useArchiveMode = True
-  archiveArgs <- liftIO $ getVersion appConfig <&> \case
-    Nothing -> []
-    Just ver -> if hasHistoryModes ver && useArchiveMode
-                then ["--history-mode", "archive"]
-                else []
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -130,7 +124,6 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
         "--rpc-addr", "127.0.0.1:" <> nodeRpcPort,
         "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
-      ++ archiveArgs
       ++ nodeExtraArgs
 
   processWorker
@@ -139,7 +132,8 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #db db
     ! #config appConfig
     ! #logNamespace "kiln-node"
-    ! #mkProcess (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
+    ! #mkProcess (\(dataDir, extraArgs) nodeConfigPath ->
+                    proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -164,7 +158,7 @@ initNode
   -> "db" :! Pool Postgresql
   -> "updateState" :! (ProcessState -> IO ())
   -> "configFile" :! FilePath
-  -> IO FilePath
+  -> IO (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `combine` "identity.json"
@@ -175,12 +169,22 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
 
   upgrade `catch` (\(_ :: ExitCode) -> showConfig)
 
+  let useArchiveMode = True
   haveIdentityFile <- liftIO $ doesFileExist identityFile
-  when (not haveIdentityFile) $ do
-    lift $ updateState ProcessState_GeneratingIdentity
-    runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
-
-  return dataDir
+  enableHistoryMode <- if haveIdentityFile
+    then pure False -- Dont specify history mode if the node is already initialized
+    else do
+      -- Generate Identity
+      lift $ updateState ProcessState_GeneratingIdentity
+      runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+      -- Now we should have version.json also
+      liftIO (getVersion appConfig) >>= \case
+        Nothing -> False <$ logErrorNS "kiln-node" "version.json not found!"
+        Just ver -> pure $ hasHistoryModes ver && useArchiveMode
+  let extraArgs = if enableHistoryMode
+        then ["--history-mode", "archive"]
+        else []
+  return (dataDir, extraArgs)
   where
     runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
     runCommandWithLogging cmd args = do
