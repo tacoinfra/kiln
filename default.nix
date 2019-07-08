@@ -20,7 +20,7 @@ let
     tezos-baking-platform = import (hackGet ./dep/tezos-baking-platform) {};
   };
 
-  nodeConfigOptions = {
+  networkConfigOptions = {
     zeronet = {
       network = "zeronet";
       p2pPort = 29732;
@@ -28,21 +28,41 @@ let
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
       histMode = "archive";
+      kilns = [
+        {
+          app = obApp distroMethods.source;
+          apiVersion = 1;
+          apiPort = 8001;
+        }
+      ];
     };
     alphanet = {
       network = "alphanet";
       p2pPort = 19732;
       rpcPort = 18732;
       tzKit = tezos.alphanet.kit;
-      monitorPort = 8001;
+      histMode = "archive";
+      kilns = [
+        {
+          app = obApp distroMethods.source;
+          apiVersion = 1;
+          apiPort = 8001;
+        }
+      ];
     };
     mainnet = {
       network = "mainnet";
       p2pPort = 9732;
       rpcPort = 8732;
       tzKit = tezos.mainnet.kit;
-      monitorPort = 8000;
       histMode = "archive";
+      kilns = [
+        {
+          app = obApp distroMethods.source;
+          apiVersion = 1;
+          apiPort = 8000;
+        }
+      ];
     };
   };
 
@@ -82,23 +102,45 @@ let
       };
   };
 
+  aggregatePgInitModule = {pkgs, config, lib, ...}: with lib; {
+    options = {
+      services.pgAggregatedInitScript = {
+        script = mkOption {
+          type = types.lines;
+          default = "";
+          description = ''
+            Initial SQL script to run after setting up Postgres.
+          '';
+        };
+      };
+    };
+
+    config = {
+      services.postgresql.initialScript =
+        if config.services.pgAggregatedInitScript.script == ""
+          then null
+          else pkgs.writeText "init-pg.sql" config.services.pgAggregatedInitScript.script;
+    };
+  };
+
   mkMonitorModule =
     { enableHttps
     , routeHost
     , network
-    , monitorName ? "${network}-monitor"
+    , kiln ? { app = null; apiVersion = null; apiPort = null; }
+    , monitorName ? "kiln-${network}-v${toString kiln.apiVersion}"
     , dbname ? monitorName
     , user ? monitorName
     , rpcPort
-    , monitorPort
     , version
     , ...}@args: {config, ...}: {
       imports = [
+        aggregatePgInitModule
         (obelisk.serverModules.mkObeliskApp (args // {
-          exe = (obApp distroMethods.source).linuxExeConfigurable version;
+          exe = kiln.app.linuxExeConfigurable version;
           name = monitorName;
           user = user;
-          internalPort = monitorPort;
+          internalPort = kiln.apiPort;
           baseUrl = null;
           backendArgs = pkgs.lib.concatStringsSep " " [
             "--network='${network}'"
@@ -109,7 +151,7 @@ let
             "--email-from='${monitorName}@obsidian.systems'"
             "--network-gitlab-project-id='${pkgs.lib.fileContents ./tezos-bake-central/config/network-gitlab-project-id}'"
             "--"
-            "--port=${toString monitorPort}"
+            "--port=${toString kiln.apiPort}"
           ];
         }))
       ];
@@ -124,8 +166,8 @@ let
       services.nginx = {
         virtualHosts.${routeHost} = {
           locations = {
-            "/api" = {
-              proxyPass = "http://127.0.0.1:${toString monitorPort}/api";
+            "/api/v${toString kiln.apiVersion}" = {
+              proxyPass = "http://127.0.0.1:${toString kiln.apiPort}/api/v${toString kiln.apiVersion}";
             };
           };
         };
@@ -139,6 +181,11 @@ let
           local  "${dbname}"  "${user}" peer
         '';
       };
+
+      services.pgAggregatedInitScript.script = ''
+        CREATE USER "${user}";
+        CREATE DATABASE "${dbname}" OWNER "${user}";
+      '';
     }
   ;
 
@@ -402,25 +449,23 @@ in (obApp distroMethods.source) // {
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
         if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
         "mainnet";
-      nodeConfig = nodeConfigOptions.${network};
+      networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
+      kilnModules = map
+        (kiln: mkMonitorModule (args // networkConfig // { inherit kiln version; }))
+        networkConfig.kilns;
+
     in nixos {
       system = "x86_64-linux";
       configuration = {
         imports = [
           (obelisk.serverModules.mkBaseEc2 args)
-          (mkTezosNodeServiceModule nodeConfig)
-          (mkMonitorModule (args // nodeConfig // { inherit version; }))
+          (mkTezosNodeServiceModule networkConfig)
           (syslog-ngModule {
             opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
           })
           usersModule
-        ];
-
-        services.postgresql.initialScript = pkgs.writeText "init-pg.sql" ''
-          CREATE USER "${network}-monitor";
-          CREATE DATABASE "${network}-monitor" OWNER "${network}-monitor";
-        '';
+        ] ++ kilnModules;
       };
     };
   kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
