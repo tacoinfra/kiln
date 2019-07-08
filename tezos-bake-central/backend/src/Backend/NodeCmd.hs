@@ -169,7 +169,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
 
   upgrade `catch` (\(_ :: ExitCode) -> showConfig)
 
-  let useArchiveMode = True
+  let useArchiveMode = False
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   enableHistoryMode <- if haveIdentityFile
     then pure False -- Dont specify history mode if the node is already initialized
