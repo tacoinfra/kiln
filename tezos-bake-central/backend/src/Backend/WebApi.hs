@@ -26,11 +26,13 @@ import qualified Snap.Core as Snap
 
 import Tezos.Base58Check (fromBase58, toBase58)
 import Tezos.Block (VeryBlockLike (..))
+import Tezos.Operation (Ballot)
+import Tezos.PublicKey
 import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (BlockBaker, CacheDelegateInfo, CacheError)
+import Common.Schema (CacheDelegateInfo(..), CacheError)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
@@ -38,21 +40,28 @@ snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds
 
-v1PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v1PublicApi dataSrc = route $ fmap (first ("api/v1/" <>))
+v2PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
+v2PublicApi dataSrc = route $ fmap (first ("api/v2/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
-  , ( chainTXT <> "/params",    writeJSON $ pure . pure)
+  , ( chainTXT <> "/account", writeJSON $ const snapAccount )
+  , ( chainTXT <> "/ancestors", writeJSON $ const snapAncestors )
+  , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
+  , ( chainTXT <> "/ballot", writeJSON $ const snapBallot )
+  , ( chainTXT <> "/ballots", writeJSON $ const snapBallots )
+  , ( chainTXT <> "/block",     writeJSON $ const snapVeryBlockLike )
+  , ( chainTXT <> "/block-full", writeJSON $ const snapBlock )
+  , ( chainTXT <> "/block-header", writeJSON $ const snapBlockHeader )
+  , ( chainTXT <> "/current-proposal", writeJSON $ const snapCurrentProposal )
+  , ( chainTXT <> "/current-quorum", writeJSON $ const snapCurrentQuorum )
+  , ( chainTXT <> "/delegate-info", writeJSON $ const snapDelegateInfo )
+  , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
   , ( chainTXT <> "/head",      writeJSON $ const snapHead )
   , ( chainTXT <> "/lca",       writeJSON $ const snapBranchPoint )
-  , ( chainTXT <> "/ancestors", writeJSON $ const snapAncestors )
-  , ( chainTXT <> "/ballot", writeJSON $ const snapBallots )
-  , ( chainTXT <> "/proposal", writeJSON $ const snapProposals )
-  , ( chainTXT <> "/block",     writeJSON $ const snapVeryBlockLike )
-  , ( chainTXT <> "/block", writeJSON $ const snapBlock )
-  , ( chainTXT <> "/baking-rights",    writeJSON $ const snapBakingRights )
-  , ( chainTXT <> "/endorsing-rights", writeJSON $ const snapEndorsingRights )
-  , ( chainTXT <> "/block-baker", writeJSON $ const snapBlockBaker )
-  , ( chainTXT <> "/delegate-info", writeJSON $ const snapDelegateInfo )
+  , ( chainTXT <> "/listings", writeJSON $ const snapListings )
+  , ( chainTXT <> "/params",    writeJSON $ pure . pure)
+  , ( chainTXT <> "/proposals", writeJSON $ const snapProposals )
+  , ( chainTXT <> "/proposal-vote", writeJSON $ const snapProposalVote )
+  , ( chainTXT <> "/public-key", writeJSON $ const snapPublicKey )
   ]
   where
     chain = _nodeDataSource_chain dataSrc
@@ -124,6 +133,16 @@ snapBallots = do
 
     asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Ballots block
 
+snapBallot :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Maybe Ballot))
+snapBallot = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "block"
+    pkhBS <- requiredQueryParam "pkh"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+    pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Ballot block pkh
+
 snapProposals :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq ProposalVotes))
 snapProposals = do
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
@@ -139,6 +158,14 @@ snapBlock = do
     block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
 
     asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Block block
+
+snapBlockHeader :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockHeader)
+snapBlockHeader = do
+  withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+    blockBS <- requiredQueryParam "hash"
+    block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockHeader block
 
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
 snapBakingRights = snapRights NodeQueryIx_BakingRights
@@ -173,17 +200,49 @@ snapRights f = withCacheIO (Left "nocache") $ \_proto -> do
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
 
-snapBlockBaker :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockBaker)
-snapBlockBaker = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
-  branchBS <- requiredQueryParam "branch"
-  levelBS <- requiredQueryParam "level"
+snapAccount :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Account)
+snapAccount = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  blockBS <- requiredQueryParam "block"
+  pkhBS <- requiredQueryParam "pkh"
 
-  branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-  blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+  pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
 
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockBaker branch blockLevel
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Account block (Implicit pkh)
 
-snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text CacheDelegateInfo)
+snapProposalVote :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Set ProtocolHash))
+snapProposalVote = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  blockBS <- requiredQueryParam "block"
+  pkhBS <- requiredQueryParam "pkh"
+
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+  pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
+
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_ProposalVote block pkh
+
+snapListings :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq VoterDelegate))
+snapListings = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  blockBS <- requiredQueryParam "block"
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Listings block
+
+snapCurrentProposal :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Maybe ProtocolHash))
+snapCurrentProposal = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  blockBS <- requiredQueryParam "block"
+
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_CurrentProposal block
+
+snapCurrentQuorum :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Int)
+snapCurrentQuorum = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  blockBS <- requiredQueryParam "block"
+  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
+
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_CurrentQuorum block
+
+snapDelegateInfo :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text DelegateInfo)
 snapDelegateInfo = do
   nds <- asks (^. nodeDataSource)
   withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
@@ -194,7 +253,24 @@ snapDelegateInfo = do
     delegate <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash delegateBS
     blockLevel <- maybe (throwError "block unknown") (return . view level) =<< liftIO (atomically $ lookupBlock nds branch)
 
-    asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
+    cd <- asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_DelegateInfo branch blockLevel delegate
+    pure $ DelegateInfo
+      { _delegateInfo_balance = _cacheDelegateInfo_balance cd
+      , _delegateInfo_frozenBalance = _cacheDelegateInfo_frozenBalance cd
+      , _delegateInfo_frozenBalanceByCycle = _cacheDelegateInfo_frozenBalanceByCycle cd
+      , _delegateInfo_stakingBalance = _cacheDelegateInfo_stakingBalance cd
+      , _delegateInfo_delegatedContracts = mempty
+      , _delegateInfo_delegatedBalance = _cacheDelegateInfo_delegatedBalance cd
+      , _delegateInfo_deactivated = _cacheDelegateInfo_deactivated cd
+      , _delegateInfo_gracePeriod = _cacheDelegateInfo_gracePeriod cd
+      }
+
+snapPublicKey :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text PublicKey)
+snapPublicKey = withCacheIO (Left "nocache") $ \_proto -> runExceptT $ do
+  pkhBS <- requiredQueryParam "pkh"
+  pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
+
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_PublicKey (Implicit pkh)
 
 withCacheIO
   :: forall a r m. (MonadIO m, MonadReader r m, HasNodeDataSource r)

@@ -43,7 +43,7 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
@@ -79,7 +79,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.WebApi (v1PublicApi)
+import Backend.WebApi (v2PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
@@ -302,6 +302,28 @@ backendImpl cfg serve = do
               }
             }
 
+    runLoggingEnv logger $ runDb (Identity db) $ do
+      let publicNode = PublicNode_Obsidian
+          enabled = True
+      cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
+        project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
+      now <- getTime
+      case cid' of
+        Nothing ->
+          let
+            pnc = PublicNodeConfig
+              { _publicNodeConfig_source = publicNode
+              , _publicNodeConfig_enabled = enabled
+              , _publicNodeConfig_updated = now
+              }
+          in void $ insert' pnc
+        Just cid -> void $ do
+          updateId cid
+            [ PublicNodeConfig_sourceField =. publicNode
+            , PublicNodeConfig_enabledField =. enabled
+            , PublicNodeConfig_updatedField =. now
+            ]
+
     params <- runLoggingEnv logger $ runDb (Identity db) $
       listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
     let
@@ -309,7 +331,7 @@ backendImpl cfg serve = do
       minLevel = case maybeNamedChain of
         Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
         _ -> 2
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel (NonEmpty.head <$> obsidianApi)
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -384,7 +406,7 @@ backendImpl cfg serve = do
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_PublicCacheApi :=> _
-          | serveNodeCache -> v1PublicApi dataSrc
+          | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
 
 backend :: Backend BackendRoute AppRoute
