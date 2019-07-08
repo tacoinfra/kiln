@@ -362,7 +362,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingOsPublicNode = (_nodeDataSource_osPublicNode dataSrc) /= Nothing
+          , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
           }
 
       -- migrate old kiln storage

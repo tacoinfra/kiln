@@ -270,7 +270,7 @@ instance MonadNodeQuery NodeQueryQueued where
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
   nodeRPCOrBust protoInfo qBranch q = do
     dsrc <- askNodeDataSource
-    mNodesToTry <- NodeQueryQueued $ atomicallyWith $ (validNodes q >>= \case
+    mNodesToTry <- NodeQueryQueued $ atomicallyWith (validNodes q >>= \case
       Left e -> pure $ Left e
       Right nodes -> Right . maybeToList <$> pickNode qBranch nodes)
     result <- case mNodesToTry of
