@@ -65,8 +65,8 @@ textPeriod = \case
   VotingPeriodKind_Testing -> "Testing"
   VotingPeriodKind_PromotionVote -> "Promotion"
 
-periodHasVote :: VotingPeriodKind -> Bool
-periodHasVote = \case
+isVotingPeriod :: VotingPeriodKind -> Bool
+isVotingPeriod = \case
   VotingPeriodKind_Proposal -> True
   VotingPeriodKind_TestingVote -> True
   VotingPeriodKind_Testing -> False
@@ -96,7 +96,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
         (e, _) <- elDynAttr' "div" itemConf $ do
           divClass "title" $ do
             text $ textPeriod p <> " Period"
-            when (periodHasVote p) $ elClass "i" "blue icon-vote-badge icon" blank
+            when (isVotingPeriod p) $ elClass "i" "blue icon-vote-badge icon" blank
           divClass "date" $ do
             tz <- asks (^. timeZone)
             let startTime = getStartTimeForPeriod p <$> amendment <*> amendments <*> protoInfo

@@ -389,7 +389,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
               text "/"
               display $ unCycle . cyclesPerPeriod <$> protoInfo
-              dyn_ $ ffor (periodHasVote <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+              dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
       dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
         SemUi.icon "icon-disconnected"
@@ -1774,7 +1774,8 @@ bakersTab =
           dmBakerVote <- watchBakerVote
           dproposals <- watchProposals
           let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
-              bakerOutOfVotes n = (divClass "detail" $ text msg, True <$ guard (n >= maxProposalUpvotes))
+              bakerHasVoted n = (divClass "detail" $ text msg, True <$ guard (n >= maxProposalUpvotes))
+
                 where msg = T.intercalate " "
                         [ "You have upvoted"
                         , tshow n
@@ -1787,7 +1788,7 @@ bakersTab =
             Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
                 n | n == 0 -> bakerNotVoted
-                  | otherwise -> bakerOutOfVotes n
+                  | otherwise -> bakerHasVoted n
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ case mBakerVote of
                 Nothing -> bakerNotVoted
