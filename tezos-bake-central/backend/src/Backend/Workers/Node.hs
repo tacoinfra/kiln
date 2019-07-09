@@ -532,6 +532,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     -- The period of the *current* block, not the next one
     currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
       $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+    periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
@@ -583,7 +584,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, Just True))
 
         fmap BakerVotingState_Proposal $
-          if currentVotingPosition * 2 < blocksPerVotingPeriod
+          if periodFraction < 0.5
           then pure ProposalVotingState_SilentRange
           else fmap NE.nonEmpty getProposals >>= \case
             Nothing -> do
@@ -612,9 +613,9 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           endTime = fst $ getEndTimeForPeriod currentPeriodKind a as' protoInfo
 
           -- Calculate which range we're in.
-          rangeMax = case round $ (fromIntegral currentVotingPosition :: Double) / fromIntegral blocksPerVotingPeriod * 100 of
-            x | x < (50 :: Int) -> 50 -- 0 to 50
-              | x < 90 -> 90 -- 50 to 90
+          rangeMax = case periodFraction of
+            x | x < 0.5 -> 50 -- 0 to 50
+              | x < 0.9 -> 90 -- 50 to 90
               | otherwise -> 100 -- 90 to 100
 
           singleVotePhase = bool (reportError False) clearAllErrors
