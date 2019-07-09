@@ -8,6 +8,13 @@ let
 
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
+  kilnApiV1 = import (pkgs.fetchFromGitHub {
+    owner = "obsidian.systems";
+    repo = "tezos-bake-monitor";
+    rev = "788d9b53f166f7801addb36c778bfc36bc833c15"; # 0.5.3
+    sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
+  }) { system = "x86_64-linux"; };
+
   networkConfigOptions = {
     zeronet = {
       network = "zeronet";
@@ -18,9 +25,14 @@ let
       histMode = "archive";
       kilns = [
         {
-          inherit app;
+          app = kilnApiV1;
           apiVersion = 1;
           apiPort = 8001;
+        }
+        {
+          inherit app;
+          apiVersion = 2;
+          apiPort = 8000;
         }
       ];
     };
@@ -32,9 +44,14 @@ let
       histMode = "archive";
       kilns = [
         {
-          inherit app;
+          app = kilnApiV1;
           apiVersion = 1;
           apiPort = 8001;
+        }
+        {
+          inherit app;
+          apiVersion = 2;
+          apiPort = 8000;
         }
       ];
     };
@@ -46,8 +63,13 @@ let
       histMode = "archive";
       kilns = [
         {
-          inherit app;
+          app = kilnApiV1;
           apiVersion = 1;
+          apiPort = 8001;
+        }
+        {
+          inherit app;
+          apiVersion = 2;
           apiPort = 8000;
         }
       ];
@@ -90,27 +112,6 @@ let
       };
   };
 
-  aggregatePgInitModule = {pkgs, config, lib, ...}: with lib; {
-    options = {
-      services.pgAggregatedInitScript = {
-        script = mkOption {
-          type = types.lines;
-          default = "";
-          description = ''
-            Initial SQL script to run after setting up Postgres.
-          '';
-        };
-      };
-    };
-
-    config = {
-      services.postgresql.initialScript =
-        if config.services.pgAggregatedInitScript.script == ""
-          then null
-          else pkgs.writeText "init-pg.sql" config.services.pgAggregatedInitScript.script;
-    };
-  };
-
   mkMonitorModule =
     { enableHttps
     , routeHost
@@ -123,7 +124,7 @@ let
     , version
     , ...}@args: {config, ...}: {
       imports = [
-        aggregatePgInitModule
+        ./pg-init-module.nix
         (obelisk.serverModules.mkObeliskApp (args // {
           exe = kiln.app.linuxExeConfigurable version;
           name = monitorName;
@@ -170,7 +171,7 @@ let
         '';
       };
 
-      services.pgAggregatedInitScript.script = ''
+      services.pgAggregatedInitScript = ''
         CREATE USER "${user}";
         CREATE DATABASE "${dbname}" OWNER "${user}";
       '';
