@@ -191,9 +191,9 @@ data PublicNodeContext = PublicNodeContext
   }
 
 concat <$> traverse makeLenses
- [ 'NodeRPCContext
- , 'PublicNodeContext
- ]
+  [ 'NodeRPCContext
+  , 'PublicNodeContext
+  ]
 
 -- maybe we should really use a `ProxiedNode` wrapper so we don't unwittingly
 -- use public caches as regular nodes?  For now, we do so wittingly...
@@ -302,8 +302,8 @@ getBlock ::
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> (,) blockHash <$> rBlockHeader chainId blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> (,) blockHash <$> rBlockHeader chainId blockHash
+  Nothing                    -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
