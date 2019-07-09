@@ -878,6 +878,7 @@ bakersList ::
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
+  , HasJSContext (Performable (ModalM m))
   , HasModal t m
   )
   => m ()
@@ -896,6 +897,7 @@ bakersList = do
 addBakerModal :: forall t m r.
   ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
   , MonadReader r m, HasTimer t r
+  , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
 addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
@@ -948,9 +950,8 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
     launchNode = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln needs to launch a Tezos node which must be fully synced with the blockchain before baking."
       divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
-      launch <- uiButton "primary" "Launch Node"
-      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
-      pure ((["launch-node"], close'), never)
+      start <- uiButton "primary" "Start Node"
+      pure ((["launch-node"], never), startNodeWorkflow launchNode <$ start)
 
     disclaimer next = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
@@ -1161,7 +1162,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
         startNodeEv <- addInternal
         e <- addExternal
         addPublic
-        pure ((pure "add-node", e), startNode <$ startNodeEv)
+        pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
 
       where
         section header explanation = do
@@ -1213,46 +1214,52 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
            pure close
 
-    startNode = Workflow $ do
-      backEv <- backButton
-      divClass "ui header" $ text "Start a Kiln Node"
-      elClass "h5" "ui header" $ text "Initialize Chain Data From:"
-      rec
-        useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
-        (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
-          divClass "" $ text "Snapshot (Recommended)"
-          divClass "explanation" $ do
-            el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-            el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-            fi <- fileInput def
-            pure $ (headMay <$> value fi)
-        (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
-          divClass "" $ text "Peer to Peer Download"
-          divClass "explanation" $ do
-            el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
-      rec
-        contEv <- widgetHold (button "Continue") (formUploadEv $> (text "Uploading..." >> pure never))
-        let
-          ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) (switch (current contEv))
-          next = ffor ev $ \(b, s) -> if b
-            then Left s
-            else Right ()
-          launch = filterRight next
-          uploadSnapshotEv = fmapMaybe id $ filterLeft next
-        formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
-          liftIO $ putStrLn "starting file upload"
-          fileToFormValue f
-        let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
-            formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
-        respEv <- postForms uploadUri formUploadEv
+startNodeWorkflow ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadJSM m
+  , MonadJSM (Performable m)
+  , HasJSContext (Performable m)
+  )
+  => Workflow t m ([Text], Event t ()) -> Workflow t m ([Text], Event t ())
+startNodeWorkflow backWF = Workflow $ do
+  backEv <- backButton
+  divClass "ui header" $ text "Start a Kiln Node"
+  elClass "h5" "ui header" $ text "Initialize Chain Data From:"
+  rec
+    useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
+    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
+      divClass "" $ text "Snapshot (Recommended)"
+      divClass "explanation" $ do
+        el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+        el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
+        fi <- fileInput def
+        pure $ (headMay <$> value fi)
+    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
+      divClass "" $ text "Peer to Peer Download"
+      divClass "explanation" $ do
+        el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+  rec
+    contEv <- widgetHold (button "Continue") (formUploadEv $> (text "Uploading..." >> pure never))
+    let
+      ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) (switch (current contEv))
+      next = ffor ev $ \(b, s) -> if b
+        then Left s
+        else Right ()
+      launch = filterRight next
+      uploadSnapshotEv = fmapMaybe id $ filterLeft next
+    formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
+      liftIO $ putStrLn "starting file upload"
+      fileToFormValue f
+    let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
+        formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
+    respEv <- postForms uploadUri formUploadEv
 
-      launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
-      launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
+  launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
+  launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
 
-      pure ((pure "add-node", never), leftmost
-           [ splash <$ backEv
-           , splash <$ (leftmost [launchedEv, launchedEv2])
-           ])
+  pure ((pure "add-node", leftmost [launchedEv, launchedEv2]), leftmost
+       [ backWF <$ backEv
+       ])
 
 verifySnapshotModal ::
   ( MonadReader r m
