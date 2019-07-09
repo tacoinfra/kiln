@@ -33,6 +33,9 @@ let
           inherit app;
           apiVersion = 2;
           apiPort = 8000;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
         }
       ];
     };
@@ -52,6 +55,9 @@ let
           inherit app;
           apiVersion = 2;
           apiPort = 8000;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
         }
       ];
     };
@@ -71,6 +77,9 @@ let
           inherit app;
           apiVersion = 2;
           apiPort = 8000;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
         }
       ];
     };
@@ -131,7 +140,7 @@ let
           user = user;
           internalPort = kiln.apiPort;
           baseUrl = null;
-          backendArgs = pkgs.lib.concatStringsSep " " [
+          backendArgs = pkgs.lib.concatStringsSep " " ([
             "--network='${network}'"
             "--serve-node-cache=yes"
             "--pg-connection='dbname=${dbname}'"
@@ -139,9 +148,10 @@ let
             "--nodes='http://127.0.0.1:${toString rpcPort}'"
             "--email-from='${monitorName}@obsidian.systems'"
             "--network-gitlab-project-id='${pkgs.lib.fileContents ../tezos-bake-central/config/network-gitlab-project-id}'"
+          ] ++ (kiln.extraArgs or []) ++ [
             "--"
             "--port=${toString kiln.apiPort}"
-          ];
+          ]);
         }))
       ];
 
