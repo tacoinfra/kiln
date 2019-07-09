@@ -47,7 +47,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError, RpcQuery, rChain, rConnections,
+import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
@@ -292,7 +292,9 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
             newSavePoint <- liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
               Left e ->
-                Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
+                case e of
+                  RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
+                  _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
               Right checkpoint ->
                 pure $ Just $ _checkpoint_savePoint checkpoint
 
@@ -457,21 +459,6 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
                  latestUncle <- (,) uncleHash <$> nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
-
-updateLatestHead :: (BlockLike blk, MonadIO m) => NodeDataSource -> blk -> m ()
-updateLatestHead nds blk = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  latestBlock' <- liftIO $ atomically $ do
-    let latestHeadTVar = _nodeDataSource_latestHead nds
-    latestHead <- readTVar latestHeadTVar
-    if Just (blk ^. fitness) > latestHead ^? _Just . fitness
-      then do
-        writeTVar latestHeadTVar $ Just $ mkVeryBlockLike blk
-        pure $ Just $ mkVeryBlockLike blk
-      else
-        pure Nothing
-
-  for_ latestBlock' $ \latestBlock ->
-    $(logInfo) $ "Saw more recent head: " <> tshow (unRawLevel $ latestBlock ^. level)
 
 safePred :: (Eq a, Enum a, Bounded a) => a -> a
 safePred a = if a /= minBound then pred a else minBound
@@ -641,7 +628,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
             for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
               notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
         VotingPeriodKind_Testing -> do
-          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash) (predBlk ^. level)
+          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
             let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
                   Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
@@ -670,7 +657,7 @@ amendmentProcessWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> 
     handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do
       mpv <- runMaybe $ do
-        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash) (blk ^. level)
+        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash)
         ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
         quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
         totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings (blk ^. hash))
@@ -705,7 +692,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
       tp <- if vp == VotingPeriodKind_PromotionVote
-        then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash) (latestHead ^. level)
+        then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash)
         else return Nothing
       return (blk ^. block_metadata . blockMetadata_protocol, tp)
 

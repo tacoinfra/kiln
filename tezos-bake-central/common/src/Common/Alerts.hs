@@ -136,7 +136,6 @@ isUserResolvable = \case
     NodeLogTag_BadNodeHead -> False
     NodeLogTag_NodeInvalidPeerCount -> True
   LogTag_Baker blt -> case blt of
-    BakerLogTag_MultipleBakersForSameBaker -> True
     BakerLogTag_BakerMissed -> True
     BakerLogTag_BakerDeactivated -> False
     BakerLogTag_BakerDeactivationRisk -> False

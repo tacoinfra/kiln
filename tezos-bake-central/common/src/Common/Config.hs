@@ -65,6 +65,9 @@ networkGitLabProjectIdDefault = "3836952"
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 
+enableOsPublicNode :: FilePath
+enableOsPublicNode = "enable-obsidian-node"
+
 parseBool :: Text -> Bool
 parseBool txt
   | v `elem` trues = True
@@ -184,6 +187,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_chainId :: !ChainId
   , _frontendConfig_upgradeBranch :: !(Maybe Text)
   , _frontendConfig_appVersion :: !Version
+  , _frontendConfig_usingOsPublicNode :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 class HasFrontendConfig r where

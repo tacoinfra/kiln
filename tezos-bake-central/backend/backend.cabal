@@ -108,7 +108,6 @@ library
     Paths_backend
     Backend.Alerts
     Backend.Alerts.Common
-    Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
@@ -132,7 +131,6 @@ library
     Backend.Workers.Baker
     Backend.Workers.Block
     Backend.Workers.Cache
-    Backend.Workers.Client
     Backend.Workers.Node
     Backend.Workers.Process
     Backend.Workers.TezosClient
