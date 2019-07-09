@@ -387,7 +387,7 @@ backendImpl cfg serve = do
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
-        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc db
+        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc db chain
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v1PublicApi dataSrc
           | otherwise -> return ()

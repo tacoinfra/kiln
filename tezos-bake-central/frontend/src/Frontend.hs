@@ -201,6 +201,7 @@ appMain
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
     , MonadJSM (Performable (ModalM m))
+    , MonadJSM (ModalM (Performable m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , HasJSContext (Performable m)
@@ -238,7 +239,6 @@ appMain = do
       $ do
         e <- appHeader
         appContentArea
-        uploadSnapshotForm
         pure e
     pure ()
 
@@ -249,6 +249,7 @@ appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
+     , MonadJSM (ModalM (Performable m))
      , MonadJSM (Performable (ModalM m))
      , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
@@ -303,6 +304,7 @@ appGutter
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
+     , MonadJSM (ModalM (Performable m))
      , MonadJSM (Performable (ModalM m))
      , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
@@ -1162,7 +1164,7 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
       Just internalState -> case internalState of
         ProcessState_Stopped -> MonitoredStatus_Stopped
         ProcessState_Initializing -> MonitoredStatus_Unknown
-        ProcessState_GeneratingIdentity -> MonitoredStatus_Unknown
+        ProcessState_Node _ -> MonitoredStatus_Unknown
         ProcessState_Starting -> MonitoredStatus_Unknown
         ProcessState_Running -> MonitoredStatus_Healthy
         ProcessState_Failed -> MonitoredStatus_Unhealthy
@@ -1175,6 +1177,8 @@ nodesList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
+  , MonadJSM (ModalM m)
+  , MonadJSM (ModalM (Performable m))
   )
   => m ()
 nodesList = do
@@ -1189,7 +1193,13 @@ nodesList = do
       )
   sidebarList "Node" nodes addNodeModal
 
-addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Dynamic t [Text], Event t ())
+addNodeModal ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadJSM m
+  , MonadJSM (Performable m)
+  , HasJSContext (Performable m)
+  )
+  => Event t () -> m (Dynamic t [Text], Event t ())
 addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-node":) <$> c, close <> switch (current e))
 
   where
@@ -1262,50 +1272,64 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
           divClass "explanation" $ do
             el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
             el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-            button "Select Snapshot File"
-            pure $ pure Nothing
+            fi <- fileInput def
+            pure $ (headMay <$> value fi)
         (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
           divClass "" $ text "Peer to Peer Download"
           divClass "explanation" $ do
             el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
-      ev <- tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) <$> button "Continue"
-      let next = ffor ev $ \(b, s) -> if b
+      rec
+        contEv <- widgetHold (button "Continue") (formUploadEv $> (text "Uploading..." >> pure never))
+        let
+          ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) (switch (current contEv))
+          next = ffor ev $ \(b, s) -> if b
             then Left s
             else Right ()
           launch = filterRight next
-          verifySnapshotEv = fmapMaybe id $ filterLeft next
-      launchedEv <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
-      pure ((pure "add-node", never), leftmost
-           [ verifySnapshot <$> verifySnapshotEv
-           , splash <$ backEv
-           , splash <$ launchedEv
-           ])
+          uploadSnapshotEv = fmapMaybe id $ filterLeft next
+        formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
+          liftIO $ putStrLn "starting file upload"
+          fileToFormValue f
+        let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
+            formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
+        respEv <- postForms uploadUri formUploadEv
 
-    verifySnapshot smd = Workflow $ do
-      backEv <- backButton
-      divClass "ui header" $ text "Verify Snapshot"
-      divClass "" $ do
-        divClass "" $ text "Verifying the Block Hash"
-        divClass "" $ do
-          el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
-          el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
-
-      divClass "" $ do
-        divClass "" $ text "Snapshot's Highest Block Hash:"
-        divClass "" $ text "<>"
-      divClass "" $ do
-        divClass "" $ text "Highest Block Level:"
-        divClass "" $ text "2313"
-      divClass "" $ do
-        divClass "" $ text "Date Baked:"
-        divClass "" $ text "233"
-      launch <- button "Start Node"
-      launchedEv <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+      launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
+      launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
 
       pure ((pure "add-node", never), leftmost
-           [ startNode <$ backEv
-           , splash <$ launchedEv
+           [ splash <$ backEv
+           , splash <$ (leftmost [launchedEv, launchedEv2])
            ])
+
+verifySnapshotModal ::
+  ( MonadReader r m
+  , HasTimer t r
+  , HasTimeZone r
+  , MonadRhyoliteFrontendWidget Bake t m
+  )
+  => SnapshotMeta -> Event t () -> m (Event t ())
+verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ text "Verify Snapshot"
+  divClass "" $ do
+    divClass "" $ text "Verifying the Block Hash"
+    divClass "" $ do
+      el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
+      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
+
+  let na = "<not-available>"
+  divClass "" $ do
+    divClass "" $ text "Snapshot's Highest Block Hash:"
+    divClass "" $ text $ maybe na toBase58Text (smd ^. snapshotMeta_headBlock)
+  divClass "" $ do
+    divClass "" $ text "Highest Block Level:"
+    divClass "" $ text $ maybe na (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
+  divClass "" $ do
+    divClass "" $ text "Date Baked:"
+    divClass "" $ maybe (text na) (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+  start <- divClass "buttons" $ uiButton "primary" "Start Node"
+  response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+  pure (pure ["confirmation"], leftmost [() <$ response, close])
 
 publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
 publicNodeOptions = do
@@ -1370,7 +1394,9 @@ tileMenuEntryModal txt modal = do
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r m
+    , MonadReader r (ModalM m)
+    , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1440,87 +1466,119 @@ nodesTab =
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
             state <- holdUniqDyn $ _processData_state <$> nodeData
+
+            bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
+              <$> watchInternalBaker
             let
-                internalNodeMenu :: m ()
-                internalNodeMenu = do
-                  let
-                    preface = "This node is run by Kiln. "
-                    notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
-                    bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
-                      <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
-                    body = bool notBakingBody bakingBody
-                    epilogue = "All data for this node will be deleted from Kiln."
-                    stopModal running = warningModal "Stop Node?"
-                      [preface, body running "Stopping"]
-                      "Stop Node"
+              preface = "This node is run by Kiln. "
+              notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
+              bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
+                <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
+              body = bool notBakingBody bakingBody
+              
+              startStopNodeMenu :: m ()
+              startStopNodeMenu = do
+                let
+                  stopModal running = warningModal "Stop Node?"
+                    [preface, body running "Stopping"]
+                    "Stop Node"
 
-                  runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
-                    <$> watchInternalBaker
-                  dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
-                    (True, bRunning) ->
-                      tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
-                    _ -> do
-                      start <- tileMenuEntry "Start Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+                runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
+                dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
+                  (True, bRunning) ->
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                  _ -> do
+                    start <- tileMenuEntry "Start Node"
+                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
-                  let
-                    removeInternalNodeModal running = warningModal "Remove Node?"
-                      [preface, body running "Removing", epilogue]
-                      "Stop and Remove Node"
-                  dyn_ $ ffor bakerRunning $ \running ->
-                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
-                      (PublicRequest_RemoveNode (Right ()) <$)
+              verifyAndStartMenu sm = do
+                tileMenuEntryModal "Verify and start node" $ (verifySnapshotModal sm)
 
-                title :: m ()
-                title = text "Kiln Node"
+              removeNodeMenu = do
+                let
+                  epilogue = "All data for this node will be deleted from Kiln."
+                  removeInternalNodeModal running = warningModal "Remove Node?"
+                    [preface, body running "Removing", epilogue]
+                    "Stop and Remove Node"
+                dyn_ $ ffor bakerRunning $ \running ->
+                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                    (PublicRequest_RemoveNode (Right ()) <$)
 
-                subtitle :: m ()
-                subtitle =
-                  divClass "internal-subtitle" $ do
-                    kilnLogo
-                    divClass "ui sub header" $ dynText $ ffor state $ \case
-                      ProcessState_Stopped -> "Stopped"
-                      ProcessState_Initializing -> "Initializing"
-                      ProcessState_GeneratingIdentity -> "Initializing"
-                      ProcessState_Starting -> "Starting"
-                      ProcessState_Running -> "Running"
-                      ProcessState_Failed -> "Failed"
+              title :: m ()
+              title = text "Kiln Node"
 
-                workingTile :: m ()
-                workingTile = do
-                  nodeDetails <- watchNodeDetails nodeId
-                  standardNodeTile @(ProcessData, Maybe NodeDetailsData)
-                    title
-                    subtitle
-                    internalNodeMenu
-                    ((=<<) getNodeHeadBlock . snd)
-                    (Just errors)
-                    (Just $ ffor2 ebn nodeData $ \es nd -> and
-                      [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
-                      , _processData_state nd == ProcessState_Running
-                      ])
-                    (Just $ _processData_state . fst)
-                    (Just $ (=<<) _nodeDetailsData_peerCount . snd)
-                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
-                    ((,) <$> nodeData <*> nodeDetails)
+              subtitle :: m ()
+              subtitle =
+                divClass "internal-subtitle" $ do
+                  kilnLogo
+                  divClass "ui sub header" $ dynText $ ffor state $ \case
+                    ProcessState_Stopped -> "Stopped"
+                    ProcessState_Initializing -> "Initializing"
+                    ProcessState_Node s -> case s of
+                      NodeProcessState_ImportingSnapshot -> "Importing snapshot"
+                      NodeProcessState_ImportComplete -> "Import complete"
+                      NodeProcessState_ImportFailed -> "Import failed"
+                      NodeProcessState_ImportTimeout -> "Import timedout"
+                      NodeProcessState_GeneratingIdentity -> "Initializing"
+                    ProcessState_Starting -> "Starting"
+                    ProcessState_Running -> "Running"
+                    ProcessState_Failed -> "Failed"
 
-                generatingTile :: m ()
-                generatingTile = nodeTileWithSections $
-                  [ tileHeader title subtitle internalNodeMenu badge Nothing
-                  , divClass "internal-node-tile-body" $ do
-                      divClass "generating-icons" $ do
-                        icon "icon-id-badge big"
-                        divClass "ui active tiny inline loader blue small" blank
-                      divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
-                      divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                  ]
-                  where
-                    badge :: m ()
-                    badge = tileBadgeImpliedByErrors (Just errors) (Just state)
+              workingTile :: m ()
+              workingTile = do
+                nodeDetails <- watchNodeDetails nodeId
+                standardNodeTile @(ProcessData, Maybe NodeDetailsData)
+                  title
+                  subtitle
+                  (startStopNodeMenu *> removeNodeMenu)
+                  ((=<<) getNodeHeadBlock . snd)
+                  (Just errors)
+                  (Just $ ffor2 ebn nodeData $ \es nd -> and
+                    [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
+                    , _processData_state nd == ProcessState_Running
+                    ])
+                  (Just $ _processData_state . fst)
+                  (Just $ (=<<) _nodeDetailsData_peerCount . snd)
+                  (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
+                  ((,) <$> nodeData <*> nodeDetails)
 
-            isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
-            dyn_ $ bool workingTile generatingTile <$> isInitializing
+              nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
+              nodeStartTile nodeState mSm = nodeTileWithSections $
+                [ tileHeader title subtitle tileMenu badge Nothing
+                , divClass "internal-node-tile-body" $ do
+                    -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
+                    divClass "generating-icons" $ do
+                      icon "icon-id-badge big"
+                      -- divClass "ui active tiny inline loader blue small" blank
+                    divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> "Importing snapshot"
+                      NodeProcessState_ImportComplete -> "Import complete!"
+                      NodeProcessState_ImportFailed -> "Import failed"
+                      NodeProcessState_ImportTimeout -> "Import failed"
+                      NodeProcessState_GeneratingIdentity -> "Generating identity"
+                    divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> "This may take from 10 min to several hours."
+                      NodeProcessState_ImportComplete -> "Please review the block head hash and start the node from the '...' menu."
+                      NodeProcessState_ImportFailed -> "Please confirm whether the snapshot is correct. Check logs for more details."
+                      NodeProcessState_ImportTimeout -> "Timeout"
+                      NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
+                ]
+                where
+                  tileMenu = case nodeState of
+                    NodeProcessState_ImportingSnapshot -> Nothing -- no way to cancel this
+                    NodeProcessState_ImportComplete -> Just $ do
+                      mapM_ verifyAndStartMenu mSm
+                      removeNodeMenu
+                    NodeProcessState_ImportFailed -> Just removeNodeMenu
+                    NodeProcessState_ImportTimeout -> Just removeNodeMenu
+                    NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
+                  badge :: m ()
+                  badge = tileBadgeImpliedByErrors (Just errors) (Just state)
+            isInitializing <- holdUniqDyn $ (== (ProcessState_Node NodeProcessState_GeneratingIdentity)) <$> state
+            dMSm <- watchSnapshotMeta
+            dyn_ $ ffor2 state dMSm $ \case
+              (ProcessState_Node s) -> nodeStartTile s
+              _ -> const workingTile
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
@@ -1551,12 +1609,12 @@ nodesTab =
     tileHeader
       :: m () -- ^ Title
       -> m () -- ^ Subtitle
-      -> m () -- ^ Tile menu contents
+      -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> m ()
     tileHeader title subtitle menuContents badge errors' = do
-      tileMenu menuContents
+      mapM tileMenu menuContents
       divClass "title" $ do
         badge
         title
@@ -1641,7 +1699,7 @@ nodesTab =
     standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
-        [ tileHeader title subtitle menuContents badge errors'
+        [ tileHeader title subtitle (Just menuContents) badge errors'
         , tileBlockStats getBlock node
         ]
         <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
@@ -2105,32 +2163,8 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
-
-uploadSnapshotForm
-  :: ( DomBuilder t m
-     , TriggerEvent t m
-     , MonadIO (Performable m)
-     , PerformEvent t m
-     , PostBuild t m
-     , MonadHold t m
-     , MonadFix m
-     , DomBuilderSpace m ~ GhcjsDomSpace
-     , MonadJSM m
-     , MonadJSM (Performable m)
-     , HasJSContext (Performable m)
-     )
-  => m ()
-uploadSnapshotForm = do
-  fi <- fileInput def
-  uploadEv <- attachWith (\v _ -> headMay v) (current $ value fi) <$> button "Upload"
-  formEv <- performEvent $ ffor (fmapMaybe id uploadEv) $ \f -> do
-    liftIO $ putStrLn "starting file upload"
-    fileToFormValue f
-  let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
-      formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
-  respEv <- postForms uploadUri formUploadEv
-  pure ()
-
+-- UI element with left pointing arrow
+backButton :: DomBuilder t m => m (Event t ())
 backButton = do
   (e, _) <- el' "span" $ do
     -- elAttr "img" (("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") <> ("style" =: "transform: scale(-0.5) translate (-1em, -1em);")) blank

@@ -106,7 +106,8 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
     inDb = runLoggingEnv logger . runDb (Identity db)
-    updateState = updateProcessState pid
+    updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
+    updateState = updateProcessState pid makeNotify
     state_ = ProcessData_stateField
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
@@ -200,8 +201,18 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
                 inDb $ updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
-updateProcessState :: (MonadLogger m, PersistBackend m, MonadIO m) => Id ProcessData -> ProcessState -> m ()
-updateProcessState pid state = do
+updateProcessState
+  :: ( MonadLogger m
+     , PersistBackend m
+     , MonadIO m
+     )
+  => Id ProcessData
+  -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  -> ProcessState -> m ()
+updateProcessState pid makeNotify state = do
+  let
+    state_ = ProcessData_stateField
+    updated_ = ProcessData_updatedField
   $(logDebugSH) ("putState:" :: Text, pid, state)
   get (fromId pid) >>= \case
     Nothing -> return ()

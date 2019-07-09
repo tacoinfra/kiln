@@ -167,7 +167,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
 
   haveIdentityFile <- liftIO $ doesFileExist identityFile
   when (not haveIdentityFile) $ do
-    lift $ updateState ProcessState_GeneratingIdentity
+    lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
   return dataDir

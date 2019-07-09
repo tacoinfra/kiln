@@ -5,18 +5,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE TupleSections #-}
 
 -- {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Snapshot where
 
-import Control.Concurrent.STM (atomically, readTVarIO)
-import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, logWarn, runStderrLoggingT)
-import qualified Data.Aeson as Aeson
+import qualified Data.LCA.Online.Polymorphic as LCA
+import Control.Concurrent
+import Control.Concurrent.Async
+import Control.Concurrent.STM
+import Control.Exception
+import Control.Monad.Logger
+import Data.ByteString.Base58
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
+import Data.Map (Map)
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import Data.String (fromString)
@@ -25,122 +31,201 @@ import qualified Data.Text.Encoding as T
 import Data.Time
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
-import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.Logging (runLoggingEnv)
+import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1, MonadBaseNoPureAborts)
+import Rhyolite.Backend.Logging
 import Snap.Core (MonadSnap, route)
 import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
 import System.Directory
+import System.Exit (ExitCode(..))
+import qualified System.Process as Process
+import Unsafe.Coerce
 
-import Tezos.Base58Check (fromBase58, toBase58)
+import Tezos.Base58Check
+-- (fromBase58, toBase58)
 import Tezos.Block (VeryBlockLike (..))
+import Tezos.History
 import Tezos.Operation (Ballot)
 import Tezos.PublicKey
+import Tezos.ShortByteString (ShortByteString, fromShort, toShort)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
+import Backend.Common
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..))
+import Backend.NodeCmd
 import Backend.STM (atomicallyWith)
-import Common.Schema (SnapshotMeta(..))
+import Backend.Schema
+import Backend.Workers.Process
+import Common.Schema
 import ExtraPrelude
 
-handleSnapshotUpload :: AppConfig -> NodeDataSource -> Pool Postgresql -> Snap.Snap ()
-handleSnapshotUpload appConfig nds db = do
+handleSnapshotUpload
+  :: AppConfig
+  -> NodeDataSource
+  -> Pool Postgresql
+  -> Either NamedChain a
+  -> Snap.Snap ()
+handleSnapshotUpload appConfig nds db chain = do
   let
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
+    inDb = runDb (Identity db)
+    logger = _nodeDataSource_logger nds
     uploadPolicy = defaultUploadPolicy
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
-    uploadLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
+    storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000)
+    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
     uploadHandler p = \case
       Left e -> putStrLn $ show e
-      Right fp -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+      Right fp -> runLoggingEnv logger $ do
         $(logWarn) "Upload successful."
+        -- TODO : check if import is already in progress / complete
+        hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
         now <- liftIO $ getCurrentTime
-        let fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
-            randomStr = show now
-            filePath = randomStr <> fileName
-            storePath = uploadLocation <> filePath
-        smId <- runDb (Identity db) $ do
-          insert $ SnapshotMeta (T.pack fileName) (T.pack filePath) now Nothing Nothing Nothing Nothing
+        let
+          fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
+          storePath = storeLocation <> fileName
+          sm = SnapshotMeta (T.pack fileName) (T.pack storePath) now Nothing Nothing Nothing Nothing Nothing
+        smId <- inDb $ insert sm
         liftIO $ renameFile fp storePath
-        -- mHeadInfo <- getHeadInfo storePath
-        -- update db
-        -- notify
+        liftIO $ forkIO $ race_ (importSnapshotData appConfig logger db chain sm smId)
+          $ runLoggingEnv logger $ do
+            -- Wait for 10 hr, then give up
+            threadDelay' (60*60*10)
+            inDb $ do
+              nodePPid <- project1 ( NodeInternal_idField
+                                 , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+              for nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                (ProcessState_Node NodeProcessState_ImportTimeout)
+            $(logError) "Could not import snapshot: Timeout"
+            liftIO $ removeFile storePath
+        pure ()
 
-  liftIO $ createDirectoryIfMissing True uploadTmpLocation
-  liftIO $ createDirectoryIfMissing True uploadLocation
+  -- We might have snapshot from a killed kiln process, so cleanup
+  cleanupDir uploadTmpLocation
+  cleanupDir storeLocation
+  -- liftIO $ uploadHandler undefined $ Right (uploadTmpLocation <> "/main.snapshot")
   void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
 
--- import by using invalid hash
--- get correct hash from stderr?
-importMetaInfo :: SnapshotMeta -> FilePath -> IO (Either SnapshotError SnapshotMeta)
-importMetaInfo sm parentDir = withTempDirectory parentDir $ \tmpDir -> do
-  let dummyBlockHash = "BLKSXJhUn8L51dWR8L5MPNhTXgeF3MGLPyroBb9oHBtcFUAFze"
-  $(logWarn) $ "importing snapshot meta info: "
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
-  (nodePaths chain) (["snapshot", "import", fileName, "--data-dir", tmpDir, "--block", dummyBlockHash) ""
+cleanupDir :: (MonadIO m) => FilePath -> m ()
+cleanupDir dir = liftIO $ do
+  removeDirectoryRecursive dir `catch` (\(e :: IOException) -> pure ())
+  createDirectoryIfMissing True dir
 
-  case exitCode of
-    ExitSuccess -> pure $ T.strip $ T.pack stdout
-    ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
-
-      let strippedLines = fmap T.strip $ T.lines $ T.pack stderr
-          warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
-          errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
-          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines $ T.pack stdout -- yes, fatal errors go to stdout
-      case handleError warnings (fatal ++ errors) of
-        Right t -> pure t
-        Left e -> do
-          $(logWarn) $ T.pack $ show e
-          throwError e
-
-    getActualHeadHash = \case
-      _importingData : _retrievingData: _context: _store: _computingPreds: _cleaningDir: _error : errMsg : actualBlk : dummyBlkHash: 
-        | T.isPrefixOf "The block contained in the file is" errMsg
-        | T.isPrefixOf (toBase58Text dummyBlk) dummyBlkHash
-        , Just blkHash <- headMay $ T.words actualBlk
-        -> Just blkHash
-      _ -> Nothing
-
--- Jul  3 03:50:26 - shell.snapshots: Importing data from snapshot file ../alphanet-snapshot-02072019.full
--- Jul  3 03:50:26 - shell.snapshots: Retrieving and validating data. This can take a while, please bear with us
--- Context: 333K elements, 26MiB read
--- Store: 484K elements, 654MiB read
--- Computing predecessors table 484K elements
--- Jul  3 03:52:36 - node.main: Cleaning directory ./dir because of failure
--- tezos-node: Error:
---               The block contained in the file is
---             BLmyk5EDbe5DMXzmFhoBKt6DQSLi9AxStGPuPx2KV14cexstcGD instead of
---             BLKSXJhUn8L51dWR8L5MPNhTXgeF3MGLPyroBb9oHBtcFUAFzeK.
-
-
--- make sure the current dir is empty/clean dir
--- change processstate
--- import data to the dir and start node, 
-importSnapshotData appConfig logger db sm = do
+importSnapshotData
+  :: AppConfig
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> Either NamedChain a
+  -> SnapshotMeta
+  -> Key SnapshotMeta BackendSpecific
+  -> IO ()
+importSnapshotData appConfig logger db chain sm smId = runLoggingEnv logger $ do
   let
-    nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
+    nodePath = either nodePaths (const $ nodePaths NamedChain_Mainnet) chain
     dataDir = nodeDataDir appConfig
-  liftIO $ removeDirectoryRecursive dataDir
-  liftIO $ createDirectoryIfMissing True dataDir
-  nodePPid <- project1 (NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+    storePath = T.unpack $ _snapshotMeta_storePath sm
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
+    inDb = runDb (Identity db)
+  $(logWarn) $ "importSnapshotData : clean old dir "
+  cleanupDir dataDir
+  nodePPid <- inDb $ project1 ( NodeInternal_idField
+                       , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
   let
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
-    inDb = runLoggingEnv logger . runDb (Identity db)
-  inDb $ updateProcessState nodePPid ProcessState_Initializing
-  
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
-    nodePath (["snapshot", "import", fileName, "--data-dir", dataDir, "--block", headBlock) ""
+    updateState s = for nodePPid $ \(nid, pid) -> inDb $ updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
 
+  $(logWarn) $ "importSnapshotData : update state "
+  updateState NodeProcessState_ImportingSnapshot
+  $(logWarn) $ "importSnapshotData: starting import "
+  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
+    nodePath (["snapshot", "import", storePath, "--data-dir", dataDir]) ""
+
+  liftIO $ removeFile storePath
   case exitCode of
     ExitSuccess -> do
-          updateNode = do
-            (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
-              let pid = _deletableRow_data nodeData
-              update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
-              processData <- getId $ _deletableRow_data nodeData
-              notify NotifyTag_NodeInternal (nid, processData)
+      $(logWarn) $ "importSnapshotData success: " <> T.pack stdout <> "stderr: \n" <> T.pack stderr
+      updateState NodeProcessState_ImportComplete
+      let blkHashPrefix = case lines stderr of
+            (_1:_2:_3: settingCurrentHead:_5:_6:_)
+              | blkH <- reverse $ take 12 $ reverse settingCurrentHead
+              , length blkH == 12
+              -> Just $ T.pack blkH
+            _ -> Nothing
+      $(logWarn) $ ("got: " <> fromMaybe "nothing" blkHashPrefix)
+      -- TODO fetch the block hash/blk
+      let blkHash = "BLwdosvPeceU1fCvnqDhS2cVthSvCbTZ3SY6NnVLdjn7CKMQbUw"
+      inDb $ for nodePPid $ \(nid,_) -> updateNodeDetails (Left blkHash) nid
+      pure ()
 
     ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
+      $(logWarn) $ "importSnapshotData failed: " <> T.pack stderr
+      updateState NodeProcessState_ImportFailed
+      pure ()
+
+updateNodeDetails :: Either BlockHash VeryBlockLike -> Id Node -> DbPersist Postgresql (LoggingT IO) ()
+updateNodeDetails blk nodeId = do
+  let p = (NodeDetails_dataField ~>)
+  now <- getTime
+  case blk of
+    Left hash ->
+      project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
+        [] -> insert $ NodeDetails
+          { _nodeDetails_id = nodeId
+          , _nodeDetails_data = mkNodeDetails
+            { _nodeDetailsData_headBlockHash = Just hash
+            , _nodeDetailsData_updated = Just now
+            }
+          }
+        (_:_) -> update
+          [ p NodeDetailsData_headBlockHashSelector =. Just hash
+          , p NodeDetailsData_updatedSelector =. Just now
+          ]
+          (NodeDetails_idField `in_` [nodeId])
+    Right headBlockInfo -> do
+      project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
+        [] -> insert $ NodeDetails
+          { _nodeDetails_id = nodeId
+          , _nodeDetails_data = mkNodeDetails
+            { _nodeDetailsData_headLevel = Just (headBlockInfo ^. level)
+            , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. hash)
+            , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. timestamp)
+            , _nodeDetailsData_fitness = Just (headBlockInfo ^. fitness)
+            , _nodeDetailsData_updated = Just now
+            , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. predecessor)
+            }
+          }
+        (_:_) -> update
+          [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. level)
+          , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. hash)
+          , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. timestamp)
+          , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. fitness)
+          , p NodeDetailsData_updatedSelector =. Just now
+          , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. predecessor)
+          ]
+          (NodeDetails_idField `in_` [nodeId])
+  newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
+  traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
+
+-- stderr:
+-- Jul  6 19:39:08 - shell.snapshots: Importing data from snapshot file ./.kiln/snapshots/main.snapshot
+-- Jul  6 19:39:08 - shell.snapshots: You may consider using the --block <block_hash> argument to verify that the block imported is the one you expect
+-- Jul  6 19:39:08 - shell.snapshots: Retrieving and validating data. This can take a while, please bear with us
+-- Jul  6 19:45:44 - shell.snapshots: Setting current head to block BLWxHkBhZfaj
+-- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
+-- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
+
+-- completeBlockHash :: Text -> CachedHistory' -> _
+-- completeBlockHash prefix' history =
+--   (prefix, fmap (\p -> (getKey <$> Map.lookupGE p blks, getKey <$> Map.lookupLE p blks)) prefix)
+--   where
+--   getKey (k, v) = (k, preview (_Just . _1) $ LCA.uncons v)
+--   allBlocksEver = _cachedHistory_blocks history
+--   -- blks = Map.fromList $ map (\(k, v) -> (unHashedValue k, v)) $ Map.assocs allBlocksEver
+--   blks :: Map ShortByteString (LCA.Path BlockHash ())
+--   blks = unsafeCoerce allBlocksEver
+--   -- (lower, exactMatch, higher) = Map.splitLookup x blks
+--   -- prefix = toShort <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 prefix')
+--   prefix = Just $ toShort $ BS.take 15 $ fromShort $ unHashedValue $ ("BKp7GMr4YV3sUq4rApbX2GZya8fNcVMceEqYqMqpXpSNvzcRjwA" :: BlockHash)
+--   -- prefix = toShort <$> (Just $ T.encodeUtf8 prefix')
+--   -- prefix = toShort <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 "BKp7GMr4Y")
