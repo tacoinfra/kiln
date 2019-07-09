@@ -747,6 +747,7 @@ instance HasId ErrorLogBakerNoHeartbeat where
 data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
   , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivated_chainId :: !ChainId
   , _errorLogBakerDeactivated_preservedCycles :: !Cycle
   , _errorLogBakerDeactivated_fitness :: !Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
@@ -756,6 +757,7 @@ instance HasId ErrorLogBakerDeactivated where
 data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
   { _errorLogBakerDeactivationRisk_log :: !(Id ErrorLog)
   , _errorLogBakerDeactivationRisk_publicKeyHash :: !PublicKeyHash
+  , _errorLogBakerDeactivationRisk_chainId :: !ChainId
   , _errorLogBakerDeactivationRisk_gracePeriod :: !Cycle
   , _errorLogBakerDeactivationRisk_latestCycle :: !Cycle
   , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
@@ -768,6 +770,7 @@ data ErrorLogBakerAccused = ErrorLogBakerAccused
   { _errorLogBakerAccused_log :: !(Id ErrorLog)
   , _errorLogBakerAccused_op :: !(Id Accusation)
   , _errorLogBakerAccused_baker :: !(Id Baker)
+  , _errorLogBakerAccused_chainId :: !ChainId
   , _errorLogBakerAccused_cycle :: !Cycle
   , _errorLogBakerAccused_level :: !RawLevel
   , _errorLogBakerAccused_accusedCycle :: !Cycle
@@ -798,6 +801,7 @@ instance HasId ErrorLogBadNodeHead where
 data ErrorLogBakerMissed = ErrorLogBakerMissed
   { _errorLogBakerMissed_log :: !(Id ErrorLog)
   , _errorLogBakerMissed_baker :: !(Id Baker)
+  , _errorLogBakerMissed_chainId :: !ChainId
   , _errorLogBakerMissed_right :: !RightKind
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
@@ -808,6 +812,7 @@ instance HasId ErrorLogBakerMissed where
 data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
   { _errorLogInsufficientFunds_log :: !(Id ErrorLog)
   , _errorLogInsufficientFunds_baker :: !(Id Baker)
+  , _errorLogInsufficientFunds_chainId :: !ChainId
   , _errorLogInsufficientFunds_detected :: !UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInsufficientFunds where

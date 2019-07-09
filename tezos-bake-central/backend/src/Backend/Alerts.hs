@@ -77,15 +77,16 @@ reportBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> ProtoInfo -> Fitness -> m ()
-reportBakerDeactivated pkh protoInfo newFit = do
+  => PublicKeyHash -> ChainId -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivated pkh chainId protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log, t.fitness
+    SELECT el.id, t.log, t."chainId", t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
        AND NOT b."data#deleted"
        AND el.stopped IS NULL
+       AND t."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -96,15 +97,15 @@ reportBakerDeactivated pkh protoInfo newFit = do
       baker' <- getBaker pkh
       for_ baker' $ \baker -> do
         (logId, log) <- insertErrorLog $ \logId ->
-          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) (_protoInfo_preservedCycles protoInfo) newFit
+          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) chainId (_protoInfo_preservedCycles protoInfo) newFit
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
 
 clearBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> Fitness -> m ()
-clearBakerDeactivated pkh newFit = do
+  => PublicKeyHash -> ChainId -> Fitness -> m ()
+clearBakerDeactivated pkh chainId newFit = do
   now <- getTime
   lids :: [Id ErrorLogBakerDeactivated] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
@@ -112,6 +113,7 @@ clearBakerDeactivated pkh newFit = do
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
+      AND t."chainId" = ?chainId
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
   for_ lids notifyDefault
@@ -125,15 +127,16 @@ reportBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
-reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
+  => PublicKeyHash -> ChainId -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivationRisk pkh chainId gracePeriod latestCycle protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log, t.fitness
+    SELECT el.id, t.log, t."chainId", t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
+       AND t."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -143,16 +146,22 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
     Nothing -> do
       baker' <- getBaker pkh
       for_ baker' $ \baker -> do
-        (logId, log) <- insertErrorLog $ \logId ->
-          ErrorLogBakerDeactivationRisk logId (_baker_publicKeyHash baker) gracePeriod latestCycle (_protoInfo_preservedCycles protoInfo) newFit
+        (logId, log) <- insertErrorLog $ \logId -> ErrorLogBakerDeactivationRisk
+          logId
+          (_baker_publicKeyHash baker)
+          chainId
+          gracePeriod
+          latestCycle
+          (_protoInfo_preservedCycles protoInfo)
+          newFit
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivationRiskDescriptions log
 
 clearBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> Fitness -> m ()
-clearBakerDeactivationRisk pkh newFit = do
+  => PublicKeyHash -> ChainId -> Fitness -> m ()
+clearBakerDeactivationRisk pkh chainId newFit = do
   now <- getTime
   lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
@@ -160,6 +169,7 @@ clearBakerDeactivationRisk pkh newFit = do
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
+      AND t."chainId" = ?chainId
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
   for_ lids notifyDefault
@@ -173,16 +183,17 @@ reportInsufficientFunds
   :: ( Monad m, MonadIO m
      , PersistBackend m, PostgresLargeObject m
      )
-  => Baker -> m ()
-reportInsufficientFunds baker = do
+  => Baker -> ChainId -> m ()
+reportInsufficientFunds baker chainId = do
   let pkh = _baker_publicKeyHash baker
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log
+    SELECT el.id, t.log, t."chainId"
       FROM "ErrorLog" el
       JOIN "ErrorLogInsufficientFunds" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
+       AND t."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -192,14 +203,14 @@ reportInsufficientFunds baker = do
       [ ErrorLogInsufficientFunds_detectedField =. now ]
     Nothing -> do
       void $ insertErrorLog $ \logId ->
-        ErrorLogInsufficientFunds logId (Id pkh) now
+        ErrorLogInsufficientFunds logId (Id pkh) chainId now
 
 clearInsufficientFunds
   :: ( Monad m, MonadIO m
      , PersistBackend m, PostgresLargeObject m
      )
-  => Baker -> m ()
-clearInsufficientFunds baker = do
+  => Baker -> ChainId -> m ()
+clearInsufficientFunds baker chainId = do
   let pkh = _baker_publicKeyHash baker
   now <- getTime
   lids :: [Id ErrorLogInsufficientFunds] <- stripOnly <$> [queryQ|
@@ -208,6 +219,7 @@ clearInsufficientFunds baker = do
       WHERE t.log = el.id
       AND t."baker#publicKeyHash" = ?pkh
       AND el.stopped IS NULL
+      AND t."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
 
@@ -420,13 +432,20 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
       queueAlert Nothing $ Alert Resolved "Resolved: Node is in sync" $
         "Resolved: " <> nodeName <> " is now in sync."
 
-missedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => RightKind -> PublicKeyHash -> RawLevel -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
-missedBakeLog right pkh lvl =
+missedBakeLog
+  :: forall m. (PersistBackend m, PostgresRaw m)
+  => RightKind
+  -> PublicKeyHash
+  -> ChainId
+  -> RawLevel
+  -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
+missedBakeLog right pkh chainId lvl =
   ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm.log, elbm.fitness
+    SELECT b."publicKeyHash", el.id, elbm."chainId", elbm.log, elbm.fitness
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+      AND elbm."chainId" = ?chainId
       AND elbm.right = ?right
       AND elbm.level = ?lvl
     LEFT OUTER JOIN "ErrorLog" el
@@ -445,12 +464,13 @@ reportMissedBake
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  => Fitness -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> m ()
+reportMissedBake f right pkh chainId lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh chainId lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
       { _errorLogBakerMissed_log = eid
       , _errorLogBakerMissed_baker = bid
+      , _errorLogBakerMissed_chainId = chainId
       , _errorLogBakerMissed_right = right
       , _errorLogBakerMissed_level = lvl
       , _errorLogBakerMissed_fitness = f
@@ -460,10 +480,11 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       Just rnl -> do
         let mins = _rightNotificationLimit_withinMinutes rnl
         elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
-          SELECT el.id, elbm.level
+          SELECT el.id, elbm."chainId", elbm.level
           FROM "Baker" b
           JOIN "ErrorLogBakerMissed" elbm
             ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+            AND elbm."chainId" = ?chainId
             AND elbm.right = ?right
           JOIN "ErrorLog" el
             ON el.id = elbm.log
@@ -486,15 +507,22 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog 
       RightKind_Endorsing -> "endorsement"
 
 -- we care only to inform the baker of each accusation against them, and no other provenance matters.
-accusedBakeLog :: forall m. (PersistBackend m, PostgresRaw m) => PublicKeyHash -> OperationHash -> BlockHash -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerAccused)])
-accusedBakeLog pkh opHash blkHash =
+accusedBakeLog
+  :: forall m. (PersistBackend m, PostgresRaw m)
+  => PublicKeyHash
+  -> ChainId
+  -> OperationHash
+  -> BlockHash
+  -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerAccused)])
+accusedBakeLog pkh chainId opHash blkHash =
   ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm.log
+    SELECT b."publicKeyHash", el.id, elbm."chainId", elbm.log
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerAccused" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm."op#hash" = ?opHash
       AND elbm."op#blockHash" = ?blkHash
+      AND elbm."chainId" = ?chainId
     LEFT OUTER JOIN "ErrorLog" el
       ON el.id = elbm.log
     WHERE NOT b."data#deleted"
@@ -506,13 +534,14 @@ reportAccusation
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
-reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation opHash blkHash right pkh chainId lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
       { _errorLogBakerAccused_log = eid
       , _errorLogBakerAccused_op = Id (opHash, blkHash)
       , _errorLogBakerAccused_baker = bid
+      , _errorLogBakerAccused_chainId = chainId
       , _errorLogBakerAccused_right = right
       , _errorLogBakerAccused_level = lvl
       , _errorLogBakerAccused_cycle = cycle
@@ -530,8 +559,10 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
       RightKind_Baking -> "baked"
       RightKind_Endorsing -> "endorsed"
 
-clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-clearMissedBake f right pkh lvl = do
+clearMissedBake
+  :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m)
+  => Fitness -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> m ()
+clearMissedBake f right pkh chainId lvl = do
   now <- getTime
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
       UPDATE "ErrorLog" el SET stopped = ?now
@@ -541,6 +572,7 @@ clearMissedBake f right pkh lvl = do
       WHERE elbm.log = el.id
         AND NOT b."data#deleted"
         AND el.stopped IS NULL
+        AND elbm."chainId" = ?chainId
         AND elbm.fitness < ?f :: VARCHAR[] -- because groundhog
         AND elbm.right = ?right
         AND b."publicKeyHash" = ?pkh

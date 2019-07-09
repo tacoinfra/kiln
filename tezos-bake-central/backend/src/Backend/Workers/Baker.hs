@@ -247,6 +247,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
   let
     db = _nodeDataSource_pool nds
+    chainId = _nodeDataSource_chain nds
 
   res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
     (bakerInt, currentState :: [(Baker, Maybe BakerDetails)]) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
@@ -260,7 +261,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- (Right <$> getWantedAction protoInfo headBlock baker details isInternal)
+      res <- (Right <$> getWantedAction protoInfo headBlock baker chainId details isInternal)
         `catchError` (pure . Left)
       case res of
         Right commit -> do
@@ -291,8 +292,8 @@ getWantedAction
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
-getWantedAction protoInfo headBlock baker details isInternal = do
+  => ProtoInfo -> blk -> Baker -> ChainId -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
+getWantedAction protoInfo headBlock baker chainId details isInternal = do
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
@@ -326,10 +327,11 @@ getWantedAction protoInfo headBlock baker details isInternal = do
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
+              chainId
               lvl
       return $ pure action
 
-    -- endorsements *on* this block are *of* the previos block
+    -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
@@ -338,6 +340,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                    (headBlock ^. fitness)
                    RightKind_Endorsing
                    (baker ^. baker_publicKeyHash)
+                   chainId
                    (lvl - 1)
       return $ pure action
 
@@ -388,20 +391,18 @@ getWantedAction protoInfo headBlock baker details isInternal = do
         deactivationAlerts =
           if _cacheDelegateInfo_deactivated di
             then do
-              clearBakerDeactivationRisk delegatePkh headFitness
-              reportBakerDeactivated delegatePkh protoInfo headFitness
+              clearBakerDeactivationRisk delegatePkh chainId headFitness
+              reportBakerDeactivated delegatePkh chainId protoInfo headFitness
             else do
-              clearBakerDeactivated delegatePkh headFitness
+              clearBakerDeactivated delegatePkh chainId headFitness
               if 1 >= gracePeriod - headCycle
-                then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
-                else clearBakerDeactivationRisk delegatePkh headFitness
+                then reportBakerDeactivationRisk delegatePkh chainId gracePeriod headCycle protoInfo headFitness
+                else clearBakerDeactivationRisk delegatePkh chainId headFitness
 
         isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
 
         insufficientFundAlerts :: mCommit ()
-        insufficientFundAlerts = if isInsufficientFunds
-          then reportInsufficientFunds baker
-          else clearInsufficientFunds baker
+        insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker chainId
 
         updateBakerDataInternal :: mCommit ()
         updateBakerDataInternal = update
