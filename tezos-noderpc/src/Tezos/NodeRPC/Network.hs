@@ -181,7 +181,7 @@ rpcBoilerplate method_ body req = req
   , Http.requestBody = if method_ == Http.methodGet then "" else Http.RequestBodyLBS $ Aeson.encodingToLazyByteString body
   , Http.requestHeaders =
     [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
-    ++ [ (Http.hUserAgent, "tezos-bake-monitor-lib/" <> T.encodeUtf8 (T.pack $ showVersion version))
+    ++ [ (Http.hUserAgent, "tezos-noderpc/" <> T.encodeUtf8 (T.pack $ showVersion version))
        , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
        ]
   }
