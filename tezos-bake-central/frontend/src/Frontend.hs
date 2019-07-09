@@ -199,10 +199,10 @@ appMain
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
     , MonadJSM (Performable (ModalM m))
-    , MonadJSM (ModalM (Performable m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
     , HasJSContext (Performable m)
+    , HasJSContext (Performable (ModalM m))
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
@@ -247,8 +247,8 @@ appSidebar
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
-     , MonadJSM (ModalM (Performable m))
      , MonadJSM (Performable (ModalM m))
+     , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
@@ -302,8 +302,8 @@ appGutter
   :: ( MonadRhyoliteFrontendWidget Bake t m
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
-     , MonadJSM (ModalM (Performable m))
      , MonadJSM (Performable (ModalM m))
+     , HasJSContext (Performable (ModalM m))
      , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
   => m ()
@@ -1129,7 +1129,8 @@ nodesList ::
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
   , MonadJSM (ModalM m)
-  , MonadJSM (ModalM (Performable m))
+  , MonadJSM (Performable (ModalM m))
+  , HasJSContext (Performable (ModalM m))
   )
   => m ()
 nodesList = do
