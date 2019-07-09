@@ -34,7 +34,7 @@ in {
     kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
     : "''${size:=3}"
     : "''${speed:=10}"
-    : "''${block_per_voting_preiod:=40}"
+    : "''${block_per_voting_period:=40}"
 
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
@@ -65,7 +65,7 @@ in {
       --clean-kiln-config \
       --time "$speed,$speed" \
       --size "$size" \
-      --blocks-per-vot "$block_per_voting_preiod" \
+      --blocks-per-vot "$block_per_voting_period" \
       --pause-on-error true \
       --root-path "$root_path" \
       --waiting-attempts 2000 \
