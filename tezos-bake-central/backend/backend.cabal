@@ -17,6 +17,7 @@ library
     , backend-db
     , base
     , base16-bytestring
+    , base58-bytestring
     , bytestring
     -- , Chart
     -- , Chart-diagrams
