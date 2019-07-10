@@ -92,7 +92,11 @@ handleSnapshotUpload appConfig nds db chain = do
           fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
           storePath = storeLocation <> fileName
           sm = SnapshotMeta (T.pack fileName) (T.pack storePath) now Nothing Nothing Nothing Nothing Nothing
-        smId <- inDb $ insert sm
+        smId <- inDb $ do
+          deleteAll sm
+          k <- insert sm
+          notify NotifyTag_SnapshotMeta sm
+          pure k
         liftIO $ renameFile fp storePath
         liftIO $ forkIO $ race_ (importSnapshotData appConfig nds logger db chain sm smId)
           $ runLoggingEnv logger $ do
