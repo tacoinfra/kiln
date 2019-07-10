@@ -278,4 +278,4 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
     blks = unsafeCoerce $ _cachedHistory_blocks history
     prefix :: Maybe ShortByteString
     prefix = toShort . BS.drop 2 <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
-    appendedPrefix = prefix' <> (T.replicate (51 - (T.length prefix')) "2")
+    appendedPrefix = prefix' <> (T.replicate (51 - (T.length prefix')) "1")
