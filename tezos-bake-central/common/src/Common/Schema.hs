@@ -906,10 +906,11 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_uploadTime :: !UTCTime
   , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
   , _snapshotMeta_headBlock :: !(Maybe BlockHash)
+  , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
   , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
   , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
-  , _snapshotMeta_chain :: !(Maybe ChainId)
   } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId SnapshotMeta
 
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
