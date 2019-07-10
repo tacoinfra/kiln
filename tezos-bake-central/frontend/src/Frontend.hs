@@ -1533,9 +1533,13 @@ nodesTab =
                 [ tileHeader title subtitle tileMenu badge Nothing
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
-                    divClass "generating-icons" $ do
-                      icon "icon-id-badge big"
-                      -- divClass "ui active tiny inline loader blue small" blank
+                    case nodeState of
+                      NodeProcessState_ImportingSnapshot -> divClass "generating-icons" $ do
+                        elAttr "img" ("src" =: static @"images/install.svg" <> "class" =: "install-icon") blank
+                        divClass "ui active tiny inline loader blue small" blank
+                      NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
+                        icon "icon-id-badge big"
+                        divClass "ui active tiny inline loader blue small" blank
                     divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Importing snapshot"
                       NodeProcessState_ImportComplete -> "Import complete!"
@@ -1605,7 +1609,9 @@ nodesTab =
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> m ()
     tileHeader title subtitle menuContents badge errors' = do
-      mapM tileMenu menuContents
+      case menuContents of
+        Nothing -> divClass "tile-header-spacing" blank
+        Just c -> tileMenu c
       divClass "title" $ do
         badge
         title

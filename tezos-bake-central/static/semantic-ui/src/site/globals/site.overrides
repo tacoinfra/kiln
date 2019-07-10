@@ -1190,6 +1190,13 @@ img.credits-obsidian {
       margin-top: @15px;
       margin-bottom: @19px;
       .icon-id-badge { color: #d8dce6; }
+      .install-icon {
+        margin-right: @15px;
+        width: @28px;
+      }
+    }
+    .tile-header-spacing {
+      margin-bottom: @24px;
     }
     .content > .title {
       overflow: hidden;
