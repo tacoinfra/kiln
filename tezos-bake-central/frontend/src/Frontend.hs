@@ -1767,32 +1767,52 @@ bakersTab =
       let connected = isRight <$> dCollectiveNodesStatus
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
 
-        -- Calculate what we should show in the voting icon. Maybe Bool
-        -- indicates if the vote has taken place, and if so, if it has been included
-        voteState :: Dynamic t (Maybe (Dynamic t (m (), Maybe Bool))) <- do
+        tooltipAndBadge :: Dynamic t (Maybe (Dynamic t (m (), Text))) <- do
           damendment <- watchAmendment
           dmBakerVote <- watchBakerVote
           dproposals <- watchProposals
-          let bakerNotVoted = (divClass "detail" $ text "This baker has not voted in the current period.", Nothing)
-              bakerHasVoted n = (divClass "detail" $ text msg, True <$ guard (n >= maxProposalUpvotes))
+          let voteBadge = "large blue icon-vote-badge icon"
+              dotsBadge = "large grey icon-dots-badge icon"
+              checkBadge = "large grey icon-check-badge icon"
 
-                where msg = T.intercalate " "
-                        [ "You have upvoted"
-                        , tshow n
-                        , "proposals of"
-                        , tshow maxProposalUpvotes
-                        , "allowed."
-                        ]
+              accessVoting = divClass "detail" $ do
+                text "Access Voting from the extras menu "
+                icon "icon-ellipsis grey"
+                text "on this baker tile."
+
+              hasUpvoted n =
+                let outOfUpvotes = n >= maxProposalUpvotes
+                in (, bool voteBadge checkBadge outOfUpvotes) $ do
+                  divClass "detail" $ text $ T.intercalate " "
+                    [ "You have upvoted"
+                    , tshow n
+                    , "proposals of"
+                    , tshow maxProposalUpvotes
+                    , "allowed."
+                    ]
+                  unless outOfUpvotes
+                    accessVoting
+
+              notVoted = (, voteBadge) $ do
+                divClass "detail" $ text "This baker has not voted in the current period."
+                accessVoting
+
+              hasVoted bv =
+                let included = isJust $ _bakerVote_included bv
+                in (, bool dotsBadge checkBadge included) $ do
+                  divClass "detail" $ text $
+                    "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal."
+                  unless included $
+                    divClass "detail" $ text "Waiting for your vote to be included in the block chain."
+
           maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
             Nothing -> Nothing
             Just (k, _) -> case k of
               VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
-                n | n == 0 -> bakerNotVoted
-                  | otherwise -> bakerHasVoted n
+                n | n == 0 -> notVoted
+                  | otherwise -> hasUpvoted n
               VotingPeriodKind_Testing -> Nothing
-              _ -> Just $ case mBakerVote of
-                Nothing -> bakerNotVoted
-                Just bv -> (divClass "detail" $ text $ "You voted '" <> textBallot (_bakerVote_ballot bv) <> "' on the current proposal.", Just $ isJust $ _bakerVote_included bv)
+              _ -> Just $ maybe notVoted hasVoted mBakerVote
 
         tileMenu $ do
           let
@@ -1846,22 +1866,10 @@ bakersTab =
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
           dyn_ $ ffor isInternal $ \i -> when i $ do
             divClass "baker-vote-popup" $ do
-              let accessVoting = divClass "detail" $ do
-                    text "Access Voting from the extras menu "
-                    icon "icon-ellipsis grey"
-                    text "on this baker tile."
-              whenJustDyn voteState $ \dc -> do
-                let tt = dyn_ $ ffor dc $ \(m, included) -> m >> case included of
-                      Nothing -> accessVoting
-                      Just True -> pure ()
-                      Just False -> divClass "detail" $ text "Waiting for your vote to be included in the block chain."
-                tooltipped TooltipPos_TopLeft tt $ do
-                  let attrs = ffor dc $ \(_, included) -> "class" =: case included of
-                        Nothing -> "large blue icon-vote-badge icon"
-                        Just False -> "large grey icon-dots-badge icon"
-                        Just True -> "large grey icon-check-badge icon"
-                  elDynAttr "i" attrs blank
-
+              whenJustDyn tooltipAndBadge $ \tb -> do
+                let (t,b) = splitDynPure tb
+                tooltipped TooltipPos_TopLeft (dyn_ t) $
+                  elDynAttr "i" (("class" =:) <$> b) blank
             divClass "internal-subtitle" $ do
               kilnLogo
               divClass "ui sub header" $ dynText $ ffor bakerStatusDyn $ \case
