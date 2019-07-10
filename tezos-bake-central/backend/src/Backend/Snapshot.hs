@@ -68,14 +68,18 @@ handleSnapshotUpload
   -> Either NamedChain a
   -> Snap.Snap ()
 handleSnapshotUpload appConfig nds db chain = do
-  let
+  -- We might have snapshot from a killed kiln process, so cleanup
+  cleanupDir uploadTmpLocation
+  cleanupDir storeLocation
+  void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+  where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
     logger = _nodeDataSource_logger nds
     uploadPolicy = defaultUploadPolicy
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
-    partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000)
+    partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
     uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
     uploadHandler p = \case
       Left e -> putStrLn $ show e
@@ -102,12 +106,6 @@ handleSnapshotUpload appConfig nds db chain = do
             $(logError) "Could not import snapshot: Timeout"
             liftIO $ removeFile storePath
         pure ()
-
-  -- We might have snapshot from a killed kiln process, so cleanup
-  cleanupDir uploadTmpLocation
-  cleanupDir storeLocation
-  -- liftIO $ uploadHandler undefined $ Right (uploadTmpLocation <> "/main.snapshot")
-  void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
 
 cleanupDir :: (MonadIO m) => FilePath -> m ()
 cleanupDir dir = liftIO $ do
@@ -154,7 +152,7 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   liftIO $ removeFile storePath
   case exitCode of
     ExitSuccess -> void $ do
-      $(logWarn) $ "importSnapshotData success: " <> T.pack stdout <> "stderr: \n" <> T.pack stderr
+      $(logWarn) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
       let mBlkHashPrefix = case lines stderr of
             (_1:_2:_3: settingCurrentHead:_5:_6:_)
               | blkH <- reverse $ take 12 $ reverse settingCurrentHead
@@ -177,7 +175,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
           mBlk <- for blkHash $ \hash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
             header <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader hash
             pure $ mkVeryBlockLike $ (hash, header)
-          let blkDetails = maybe (maybe (Left blkHashPrefix) (Right . Left) blkHash) (Right . Right)
+          let
+            blkDetails :: Either Text (Either BlockHash VeryBlockLike)
+            blkDetails = maybe (maybe (Left blkHashPrefix) (Right . Left) blkHash) (Right . Right)
                   (join $ either (const Nothing) Just <$> mBlk)
           inDb $ do
             updateSnapshotMeta blkDetails smId
@@ -259,7 +259,6 @@ updateNodeDetails blkDetails nodeId = do
           (NodeDetails_idField `in_` [nodeId])
   newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
   traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
-
 
 -- Simple test
 -- for_ (Map.keys $ _cachedHistory_blocks hist) $ \blk ->
