@@ -1814,8 +1814,8 @@ bakersTab =
                 if null proposals
                 then noProposals
                 else case Map.size $ Map.filter (isJust . snd) proposals of
-                  n | n == 0 -> notVoted
-                    | otherwise -> hasUpvoted n
+                  0 -> notVoted
+                  n -> hasUpvoted n
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ maybe notVoted hasVoted mBakerVote
 
