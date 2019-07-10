@@ -1780,6 +1780,8 @@ bakersTab =
                 icon "icon-ellipsis grey"
                 text "on this baker tile."
 
+              noProposals = (, dotsBadge) $ divClass "detail" $ text "Waiting for proposals to be submitted"
+
               hasUpvoted n =
                 let outOfUpvotes = n >= maxProposalUpvotes
                 in (, bool voteBadge checkBadge outOfUpvotes) $ do
@@ -1808,9 +1810,12 @@ bakersTab =
           maybeDyn $ ffor3 damendment dmBakerVote dproposals $ \am mBakerVote proposals -> case Map.lookupMax am of
             Nothing -> Nothing
             Just (k, _) -> case k of
-              VotingPeriodKind_Proposal -> Just $ case Map.size $ Map.filter (isJust . snd) proposals of
-                n | n == 0 -> notVoted
-                  | otherwise -> hasUpvoted n
+              VotingPeriodKind_Proposal -> Just $
+                if null proposals
+                then noProposals
+                else case Map.size $ Map.filter (isJust . snd) proposals of
+                  n | n == 0 -> notVoted
+                    | otherwise -> hasUpvoted n
               VotingPeriodKind_Testing -> Nothing
               _ -> Just $ maybe notVoted hasVoted mBakerVote
 
