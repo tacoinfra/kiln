@@ -1275,10 +1275,12 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
       el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
       el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
 
-  let na = "<not-available>"
+  let na = ""
   divClass "" $ do
     divClass "" $ text "Snapshot's Highest Block Hash:"
-    divClass "" $ text $ maybe na toBase58Text (smd ^. snapshotMeta_headBlock)
+    case smd ^. snapshotMeta_headBlock of
+      Just blk -> divClass "" $ text $ toBase58Text blk
+      Nothing -> divClass "" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
   divClass "" $ do
     divClass "" $ text "Highest Block Level:"
     divClass "" $ text $ maybe na (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
