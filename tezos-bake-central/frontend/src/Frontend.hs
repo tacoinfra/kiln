@@ -1299,7 +1299,7 @@ showImportLogModal ::
   => Text -> Event t () -> m (Event t ())
 showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   divClass "ui header" $ text "Snapshot import log"
-  divClass "" $ el "pre" $ text errorLog
+  divClass "log-message" $ el "pre" $ text errorLog
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
