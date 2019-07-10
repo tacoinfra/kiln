@@ -910,6 +910,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es = nodeNotReady
               | ProcessControl_Stop == _processData_control pd = nodeNotReady
+              | ProcessState_GeneratingIdentity == _processData_state pd = nodeNotReady
               | otherwise = Workflow $ do
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
