@@ -43,7 +43,7 @@ import Data.Time (UTCTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
-import GHCJS.DOM.Types (MonadJSM, File)
+import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
@@ -201,7 +201,6 @@ appMain
     , MonadJSM (Performable (ModalM m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
-    , HasJSContext (Performable m)
     , HasJSContext (Performable (ModalM m))
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
@@ -1238,21 +1237,21 @@ startNodeWorkflow backWF = Workflow $ do
       divClass "" $ text "Peer to Peer Download"
       divClass "explanation" $ do
         el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
-  rec
-    contEv <- widgetHold (button "Continue") (formUploadEv $> (text "Uploading..." >> pure never))
-    let
-      ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) (switch (current contEv))
-      next = ffor ev $ \(b, s) -> if b
-        then Left s
-        else Right ()
-      launch = filterRight next
-      uploadSnapshotEv = fmapMaybe id $ filterLeft next
-    formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
-      liftIO $ putStrLn "starting file upload"
-      fileToFormValue f
-    let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
-        formUploadEv = (: []) . Map.singleton "sfile" <$> formEv
-    respEv <- postForms uploadUri formUploadEv
+
+  contEv <- uiButton "" "Continue"
+  let
+    ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) contEv
+    next = ffor ev $ \(b, s) -> if b
+      then Left s
+      else Right ()
+    launch = filterRight next
+    uploadSnapshotEv = fmapMaybe id $ filterLeft next
+  formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
+    liftIO $ putStrLn "starting file upload"
+    fileToFormValue f
+  let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
+      formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
+  _ <- postForms uploadUri formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
@@ -1292,8 +1291,6 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
 
 showImportLogModal ::
   ( MonadReader r m
-  , HasTimer t r
-  , HasTimeZone r
   , MonadRhyoliteFrontendWidget Bake t m
   )
   => Text -> Event t () -> m (Event t ())
@@ -1458,7 +1455,7 @@ nodesTab =
               bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
                 <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
               body = bool notBakingBody bakingBody
-              
+
               startStopNodeMenu :: m ()
               startStopNodeMenu = do
                 let
@@ -1530,7 +1527,7 @@ nodesTab =
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSm = nodeTileWithSections $
-                [ tileHeader title subtitle tileMenu badge Nothing
+                [ tileHeader title subtitle menu badge Nothing
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
                     case nodeState of
@@ -1540,6 +1537,7 @@ nodesTab =
                       NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
+                      _ -> blank
                     divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Importing snapshot"
                       NodeProcessState_ImportComplete -> "Import complete!"
@@ -1557,7 +1555,7 @@ nodesTab =
                       tellModal $ ev $> verifySnapshotModal sm
                 ]
                 where
-                  tileMenu = case nodeState of
+                  menu = case nodeState of
                     NodeProcessState_ImportingSnapshot -> Nothing -- no way to cancel this
                     NodeProcessState_ImportComplete -> Just $ do
                       mapM_ verifyAndStartMenu mSm
@@ -1569,7 +1567,6 @@ nodesTab =
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
-            isInitializing <- holdUniqDyn $ (== (ProcessState_Node NodeProcessState_GeneratingIdentity)) <$> state
             dMSm <- watchSnapshotMeta
             dyn_ $ ffor2 state dMSm $ \case
               (ProcessState_Node s) -> nodeStartTile s
