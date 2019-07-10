@@ -1727,6 +1727,22 @@ h4.dashboard-section-title {
   }
 }
 
+.modal-box.start-node {
+  > .back-button {
+    margin-bottom: @20px;
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+  }
+}
+
 .modal-box.confirmation {
   .ui.header {
     font-size: @24px;

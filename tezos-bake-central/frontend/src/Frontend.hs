@@ -1153,7 +1153,7 @@ addNodeModal ::
   , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-node":) <$> c, close <> switch (current e))
+addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
 
   where
     splash = Workflow $ do
@@ -1257,7 +1257,7 @@ startNodeWorkflow backWF = Workflow $ do
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
 
-  pure ((pure "add-node", leftmost [launchedEv, launchedEv2]), leftmost
+  pure ((pure "start-node", leftmost [launchedEv, launchedEv2]), leftmost
        [ backWF <$ backEv
        ])
 
@@ -2154,7 +2154,9 @@ semuiTab label k currentTab enabled =
 -- UI element with left pointing arrow
 backButton :: DomBuilder t m => m (Event t ())
 backButton = do
-  (e, _) <- el' "span" $ do
+  -- (e, _) <- el' "span" $ do
     -- elAttr "img" (("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") <> ("style" =: "transform: scale(-0.5) translate (-1em, -1em);")) blank
-    el "span" $ text "back"
-  pure $ domEvent Click e
+  --   el "span" $ text "back"
+  -- pure $ domEvent Click e
+  -- This doesnt match design, but will fix UI later
+  uiButton "back-button" "Back"
