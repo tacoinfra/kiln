@@ -1290,6 +1290,19 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
 
+showImportLogModal ::
+  ( MonadReader r m
+  , HasTimer t r
+  , HasTimeZone r
+  , MonadRhyoliteFrontendWidget Bake t m
+  )
+  => Text -> Event t () -> m (Event t ())
+showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ text "Snapshot import log"
+  divClass "" $ el "pre" $ text errorLog
+  close1 <- uiButton "primary" "Close"
+  pure (pure ["show-error-log"], leftmost [close1, close])
+
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
@@ -1464,6 +1477,9 @@ nodesTab =
               verifyAndStartMenu sm = do
                 tileMenuEntryModal "Verify and start node" $ (verifySnapshotModal sm)
 
+              showLogMenu errorLog = do
+                tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
+
               removeNodeMenu = do
                 let
                   epilogue = "All data for this node will be deleted from Kiln."
@@ -1539,7 +1555,9 @@ nodesTab =
                     NodeProcessState_ImportComplete -> Just $ do
                       mapM_ verifyAndStartMenu mSm
                       removeNodeMenu
-                    NodeProcessState_ImportFailed -> Just removeNodeMenu
+                    NodeProcessState_ImportFailed -> Just $ do
+                      mapM_ showLogMenu (_snapshotMeta_importError =<< mSm)
+                      removeNodeMenu
                     NodeProcessState_ImportTimeout -> Just removeNodeMenu
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
                   badge :: m ()
