@@ -1552,6 +1552,9 @@ nodesTab =
                       NodeProcessState_ImportFailed -> "Please confirm whether the snapshot is correct. Check logs for more details."
                       NodeProcessState_ImportTimeout -> "Timeout"
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
+                    for_ mSm $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                      ev <- uiButton "" "Start Verification"
+                      tellModal $ ev $> verifySnapshotModal sm
                 ]
                 where
                   tileMenu = case nodeState of
