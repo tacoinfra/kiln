@@ -135,10 +135,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   nodePPid <- inDb $ project1 ( NodeInternal_idField
                        , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
   let
-    updateState s = for nodePPid $ \(nid, pid) -> inDb $ updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
+    updateState s = for nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
 
-  $(logWarn) $ "importSnapshotData : update state "
-  updateState NodeProcessState_ImportingSnapshot
+  inDb $ updateState NodeProcessState_ImportingSnapshot
   $(logWarn) $ "importSnapshotData: starting import "
   (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
     nodePath (["snapshot", "import", storePath, "--data-dir", dataDir]) ""
@@ -154,9 +153,8 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
 
   liftIO $ removeFile storePath
   case exitCode of
-    ExitSuccess -> do
+    ExitSuccess -> void $ do
       $(logWarn) $ "importSnapshotData success: " <> T.pack stdout <> "stderr: \n" <> T.pack stderr
-      updateState NodeProcessState_ImportComplete
       let mBlkHashPrefix = case lines stderr of
             (_1:_2:_3: settingCurrentHead:_5:_6:_)
               | blkH <- reverse $ take 12 $ reverse settingCurrentHead
@@ -165,12 +163,13 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
             _ -> Nothing
       $(logWarn) $ ("importSnapshotData: Parsed hash: " <> fromMaybe "nothing" mBlkHashPrefix)
       case mBlkHashPrefix of
-        Nothing -> do
+        Nothing -> void $ do
           $(logWarn) $ "importSnapshotData failed: could not parse blk hash" <> T.pack stderr
-          inDb $ update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
-          updateState NodeProcessState_ImportFailed
-          pure ()
-        Just blkHashPrefix -> do
+          inDb $ do
+            update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+            traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+            updateState NodeProcessState_ImportFailed
+        Just blkHashPrefix -> void $ do
           hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
           let
             blkHash = completeBlockHash blkHashPrefix hist
@@ -183,13 +182,14 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
           inDb $ do
             updateSnapshotMeta blkDetails smId
             for nodePPid $ \(nid,_) -> updateNodeDetails blkDetails nid
-          pure ()
+            updateState NodeProcessState_ImportComplete
 
-    ExitFailure _ -> do
+    ExitFailure _ -> void $ do
       $(logWarn) $ "importSnapshotData failed: " <> T.pack stderr
-      inDb $ update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
-      updateState NodeProcessState_ImportFailed
-      pure ()
+      inDb $ do
+        update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+        traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+        updateState NodeProcessState_ImportFailed
 
 updateSnapshotMeta
   :: (Either Text (Either BlockHash VeryBlockLike))
@@ -210,8 +210,7 @@ updateSnapshotMeta blkDetails smId = do
       , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
       ]
       (AutoKeyField ==. smId)
-  -- newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-  -- traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
+  traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
 updateNodeDetails
   :: (Either Text (Either BlockHash VeryBlockLike))
