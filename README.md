@@ -40,8 +40,8 @@ Click the link in the left column to learn more about that Kiln distribution.
 | [Build from Source](docs/distros/build-from-source.md) | Yes                  | Linux                           | Yes               |
 | [Docker](docs/distros/docker.md)                       | **No**               | Linux / Mac                     | Yes               |
 | [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Debian / Ubuntu                 | Yes               |
-| [VM Package](docs/distros/virtualmachine.md) (.ova)    | Yes                  | Any                             | Yes               |
-| Mac Distribution                                       | Yes                  | Mac                             | Est. June 2019    |
+| [VM Package](docs/distros/virtualmachine.md) (.ova)    | Yes                  | Any (except nixOS)              | Est. July 2019    |
+| Mac Distribution                                       | Yes                  | Mac                             | Est. August 2019  |
 
 # Using Kiln to Bake
 
