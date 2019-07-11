@@ -1281,27 +1281,34 @@ verifySnapshotModal ::
   ( MonadReader r m
   , HasTimer t r
   , HasTimeZone r
+  , MonadJSM (Performable m)
   , MonadRhyoliteFrontendWidget Bake t m
   )
   => SnapshotMeta -> Event t () -> m (Event t ())
 verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   divClass "ui header" $ text "Verify Snapshot"
-  divClass "" $ do
-    divClass "" $ text "Verifying the Block Hash"
-    divClass "" $ do
+  divClass "verify-top-message" $ do
+    icon "large orange icon-warning"
+    divClass "header" $ text "Verifying the Block Hash"
+    divClass "explanation" $ do
       el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
-      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
+      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date corresponds to the date the snapshot was taken."
+      el "p" $ text "If you are in doubt that the snapshot is valid, close this window, remove the node and restart using a snapshot you trust."
 
-  divClass "" $ do
-    divClass "" $ text "Snapshot's Highest Block Hash:"
-    case smd ^. snapshotMeta_headBlock of
-      Just blk -> divClass "" $ text $ toBase58Text blk
-      Nothing -> divClass "" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
-  divClass "" $ do
-    divClass "" $ text "Highest Block Level:"
+  divClass "field" $ do
+    divClass "detail" $ text "Snapshot's Highest Block Hash:"
+    let
+      hashText = case smd ^. snapshotMeta_headBlock of
+        Just blk -> toBase58Text blk
+        Nothing -> fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
+    divClass "proposal-hash" $ do
+      copyButton $ pure hashText
+      text hashText
+  divClass "field" $ do
+    divClass "detail" $ text "Highest Block Level:"
     divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
-  divClass "" $ do
-    divClass "" $ text "Date Baked:"
+  divClass "field" $ do
+    divClass "detail" $ text "Date Baked:"
     divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
@@ -1394,6 +1401,7 @@ nodesTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m
     , MonadReader r (ModalM m)
+    , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
@@ -1558,18 +1566,20 @@ nodesTab =
                       _ -> blank
                     divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Importing snapshot"
-                      NodeProcessState_ImportComplete -> "Import complete!"
-                      NodeProcessState_ImportFailed -> "Import failed"
-                      NodeProcessState_ImportTimeout -> "Import failed"
+                      NodeProcessState_ImportComplete -> "Verify snapshot"
+                      NodeProcessState_ImportFailed -> "Snapshot import failed"
+                      NodeProcessState_ImportTimeout -> "Snapshot import failed"
                       NodeProcessState_GeneratingIdentity -> "Generating identity"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
-                      NodeProcessState_ImportingSnapshot -> "This may take from 10 min to several hours."
-                      NodeProcessState_ImportComplete -> "Please review the block head hash and start the node from the '...' menu."
-                      NodeProcessState_ImportFailed -> "Please confirm whether the snapshot is correct. Check logs for more details."
-                      NodeProcessState_ImportTimeout -> "Timeout"
+                      NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
+                      NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
+                      NodeProcessState_ImportFailed -> ""
+                      NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
                     when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
-                      ev <- uiButton "" "Start Verification"
+                      ev <- divClass "buttons" $ uiButtonM "" $ do
+                        icon "icon-angle-right"
+                        text "Start Verification"
                       tellModal $ ev $> verifySnapshotModal sm
                 ]
                 where
