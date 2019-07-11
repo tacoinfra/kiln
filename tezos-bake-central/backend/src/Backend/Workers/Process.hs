@@ -223,9 +223,9 @@ updateProcessState pid makeNotify state = do
           (AutoKeyField ==. fromId pid)
         for_ makeNotify $ \f -> do
           uncurry notify $ f $ Just $ p
-                { _processData_state = state
-                , _processData_updated = Just now
-                }
+            { _processData_state = state
+            , _processData_updated = Just now
+            }
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
 withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

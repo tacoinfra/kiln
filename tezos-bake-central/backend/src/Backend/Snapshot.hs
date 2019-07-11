@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DataKinds #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -155,7 +156,7 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
     ExitSuccess -> void $ do
       $(logDebug) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
       let mBlkHashPrefix = case lines stderr of
-            (_1:_2:_3: settingCurrentHead:_5:_6:_)
+            (_:_:_: settingCurrentHead:_:_:_)
               | blkH <- reverse $ take 12 $ reverse settingCurrentHead
               , length blkH == 12
               -> Just $ T.pack blkH
@@ -248,7 +249,7 @@ updateNodeDetails blkDetails nodeId = do
             , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. predecessor)
             }
           }
-        (_:_) -> update
+        _ -> update
           [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. level)
           , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. hash)
           , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. timestamp)
@@ -277,5 +278,7 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
     blks :: Map ShortByteString a
     blks = unsafeCoerce $ _cachedHistory_blocks history
     mPrefix :: Maybe ShortByteString
-    mPrefix = toShort . BS.drop 2 <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
-    appendedPrefix = prefix' <> (T.replicate (51 - (T.length prefix')) "1")
+    mPrefix = toShort . BS.drop prefixDropLen <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
+    prefixDropLen = BS.length $ Tezos.Base58Check.prefix (Proxy @'HashType_BlockHash)
+    blkHashLength = 51 :: Int
+    appendedPrefix = prefix' <> (T.replicate (blkHashLength - (T.length prefix')) "1")

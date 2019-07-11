@@ -1285,7 +1285,6 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
       el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
       el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
 
-  let na = ""
   divClass "" $ do
     divClass "" $ text "Snapshot's Highest Block Hash:"
     case smd ^. snapshotMeta_headBlock of
@@ -1293,10 +1292,10 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
       Nothing -> divClass "" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
   divClass "" $ do
     divClass "" $ text "Highest Block Level:"
-    divClass "" $ text $ maybe na (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
+    divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
   divClass "" $ do
     divClass "" $ text "Date Baked:"
-    divClass "" $ maybe (text na) (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+    divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
@@ -1538,7 +1537,7 @@ nodesTab =
                   ((,) <$> nodeData <*> nodeDetails)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
-              nodeStartTile nodeState mSm = nodeTileWithSections $
+              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections $
                 [ tileHeader title subtitle menu badge Nothing
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
@@ -1562,7 +1561,7 @@ nodesTab =
                       NodeProcessState_ImportFailed -> "Please confirm whether the snapshot is correct. Check logs for more details."
                       NodeProcessState_ImportTimeout -> "Timeout"
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSm $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
                       ev <- uiButton "" "Start Verification"
                       tellModal $ ev $> verifySnapshotModal sm
                 ]
@@ -1570,17 +1569,17 @@ nodesTab =
                   menu = case nodeState of
                     NodeProcessState_ImportingSnapshot -> Nothing -- no way to cancel this
                     NodeProcessState_ImportComplete -> Just $ do
-                      mapM_ verifyAndStartMenu mSm
+                      mapM_ verifyAndStartMenu mSnapshotMeta
                       removeNodeMenu
                     NodeProcessState_ImportFailed -> Just $ do
-                      mapM_ showLogMenu (_snapshotMeta_importError =<< mSm)
+                      mapM_ showLogMenu (_snapshotMeta_importError =<< mSnapshotMeta)
                       removeNodeMenu
                     NodeProcessState_ImportTimeout -> Just removeNodeMenu
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
-            dMSm <- watchSnapshotMeta
-            dyn_ $ ffor2 state dMSm $ \case
+            dSnapshotMeta <- watchSnapshotMeta
+            dyn_ $ ffor2 state dSnapshotMeta $ \case
               (ProcessState_Node s) -> nodeStartTile s
               _ -> const workingTile
 

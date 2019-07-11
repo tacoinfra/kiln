@@ -107,9 +107,9 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      PublicRequest_AddInternalNode mNps -> inDb $ do
-        let ps = maybe ProcessState_Stopped ProcessState_Node mNps
-            pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNps
+      PublicRequest_AddInternalNode mNodeProcessState -> inDb $ do
+        let ps = maybe ProcessState_Stopped ProcessState_Node mNodeProcessState
+            pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
         getInternalNode >>= \case
           Nothing -> do
             let processData = ProcessData
