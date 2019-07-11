@@ -587,9 +587,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           if periodFraction < 0.5
           then pure ProposalVotingState_SilentRange
           else fmap NE.nonEmpty getProposals >>= \case
-            Nothing -> do
-              $(logErrorSH) ("------------------------- NO PROPOSALS" :: Text)
-              pure ProposalVotingState_CaughtUp
+            Nothing -> pure ProposalVotingState_CaughtUp
             Just ps
               | length (NE.filter (isJust . snd . snd) ps) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
@@ -624,7 +622,6 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
             clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
             reportVotingReminderError chainId (Id pkh) votingPeriod currentPeriodKind previouslyVoted rangeMax endTime
 
-        $(logErrorSH) $ "------------------------- " <> tshow votingState
         case votingState of
           BakerVotingState_Proposal pvs -> case pvs of
             ProposalVotingState_SilentRange -> clearAllErrors

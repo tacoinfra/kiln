@@ -629,31 +629,6 @@ htmlErrorDescription = \case
   ErrorDescription_Emphasis t -> el "strong" $ text t
   ErrorDescription_Concat t t' -> ((*>) `on` htmlErrorDescription) t t'
 
--- mkVotingReminderWidgets
---   :: (DomBuilder t m, PostBuild t m)
---   => Dynamic t Double -> Dynamic t Time.NominalDiffTime -> Bool -> ErrorLogVotingReminder -> ErrorLogWidgets m
--- mkVotingReminderWidgets periodFractionEllapsed periodEndsIn resolved elog = ErrorLogWidgets
---   { _errorLogWidgets_tile = blank
---   , _errorLogWidgets_notification = dynText $ _errorLogMessage_content <$> msg
---   , _errorLogWidgets_banner = do
---       el "div" $ icon "vote icon"
---       el "div" $ dynText $ _errorLogMessage_subject <$> msg
---       el "div" $ do
---         text "Click the"
---         divClass "ellipsis" blank
---         text "button on your Kiln Baker tile to vote, or click “Vote Now”."
---       el "div" $ do
---         el "div" $ do
---           icon "icon-envelope"
---           text "Vote Now"
---         el "div" $ do
---           icon "icon-check"
---           text "Resolve"
---   }
---   where
---     msg = mkMsg resolved elog <$> periodFractionEllapsed <*> periodEndsIn
---     mkMsg res l frac ms = mkVotingReminderMessage (frac, ms) res l
-
 makeLenses ''FrontendContext
 
 instance HasFrontendConfig (FrontendContext t) where
