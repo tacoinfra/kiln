@@ -299,6 +299,11 @@ data ProcessState
    | ProcessState_Failed
   deriving (Eq, Ord, Show, Read, Generic, Typeable)
 
+isProcessStateNode :: ProcessState -> Bool
+isProcessStateNode = \case
+  ProcessState_Node _ -> True
+  _ -> False
+
 data ProcessControl
   = ProcessControl_Run
   | ProcessControl_Stop
