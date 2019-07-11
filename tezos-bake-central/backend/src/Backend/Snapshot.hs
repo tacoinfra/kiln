@@ -12,7 +12,6 @@
 
 module Backend.Snapshot where
 
-import qualified Data.LCA.Online.Polymorphic as LCA
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
@@ -272,9 +271,10 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
       then Just blk
       else Nothing
     mHashes :: Maybe (Maybe BlockHash, Maybe BlockHash)
-    mHashes = (\p -> (getHash =<< Map.lookupLE p blks, getHash =<< Map.lookupGE p blks)) <$> mPrefix
-    getHash = preview (_Just . _1) . LCA.uncons . snd
-    blks :: Map ShortByteString (LCA.Path BlockHash ())
+    mHashes = (\p -> (getHash <$> Map.lookupLE p blks, getHash <$> Map.lookupGE p blks)) <$> mPrefix
+    getHash :: (ShortByteString, a) -> BlockHash
+    getHash = unsafeCoerce . fst
+    blks :: Map ShortByteString a
     blks = unsafeCoerce $ _cachedHistory_blocks history
     mPrefix :: Maybe ShortByteString
     mPrefix = toShort . BS.drop 2 <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
