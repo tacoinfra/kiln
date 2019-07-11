@@ -1822,7 +1822,29 @@ h4.dashboard-section-title {
 }
 
 .internal-node-tile-body {
-  .button {
+  .ui.row {
+    margin-top: @10px;
+    margin-bottom: @10px;
+
+    .ui.error.message {
+      margin-top: @10px;
+      font-weight: bold;
+      font-size: @13px;
+      color: black;
+      line-height: 1;
+
+      padding-top: @12px;
+      padding-bottom: @11px;  // Because it doesn't look right without this.
+      padding-left: @12px;
+      padding-right: @12px;
+
+      border-radius: @3px;
+      border: solid @1px #ff0000;
+      box-shadow: none;
+      background-color: #fff5f5;
+    }
+  }
+  .ui.button {
     margin-top: @20px;
     margin-bottom: @20px;
     .icon { transform: translate(-2px, 2px); }

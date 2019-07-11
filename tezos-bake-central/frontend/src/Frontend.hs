@@ -1564,12 +1564,15 @@ nodesTab =
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
                       _ -> blank
-                    divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
-                      NodeProcessState_ImportingSnapshot -> "Importing snapshot"
-                      NodeProcessState_ImportComplete -> "Verify snapshot"
-                      NodeProcessState_ImportFailed -> "Snapshot import failed"
-                      NodeProcessState_ImportTimeout -> "Snapshot import failed"
-                      NodeProcessState_GeneratingIdentity -> "Generating identity"
+                    let
+                      subHeader t = divClass "ui sub header" $ text t
+                      errorMessage t = divClass "ui error message" $ text t
+                    divClass "ui row" $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> subHeader "Importing snapshot"
+                      NodeProcessState_ImportComplete -> subHeader "Verify snapshot"
+                      NodeProcessState_ImportFailed -> errorMessage "Snapshot import failed"
+                      NodeProcessState_ImportTimeout -> errorMessage "Snapshot import failed"
+                      NodeProcessState_GeneratingIdentity -> subHeader "Generating identity"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
                       NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
