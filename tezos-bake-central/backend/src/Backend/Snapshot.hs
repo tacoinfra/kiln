@@ -31,6 +31,7 @@ import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
 import Rhyolite.Backend.Logging
+import Safe
 import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
 import System.Directory
@@ -155,13 +156,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   case exitCode of
     ExitSuccess -> void $ do
       $(logDebug) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
-      let mBlkHashPrefix = case lines stderr of
-            (_:_:_: settingCurrentHead:_:_:_)
-              | blkH <- reverse $ take 12 $ reverse settingCurrentHead
-              , length blkH == 12
-              -> Just $ T.pack blkH
-            _ -> Nothing
-      $(logDebug) $ ("importSnapshotData: Parsed blkHash: " <> fromMaybe "nothing" mBlkHashPrefix)
+      let
+        prefixStr = "Setting current head to block "
+        mBlkHashPrefix = headMay =<< T.words <$> (T.stripPrefix prefixStr $ snd $ T.breakOn prefixStr $ T.pack stderr)
       case mBlkHashPrefix of
         Nothing -> void $ do
           $(logError) $ "importSnapshotData failed: could not parse blk blkHash" <> T.pack stderr
