@@ -59,8 +59,8 @@ handleSnapshotUpload
   -> Either NamedChain a
   -> MVar ()
   -> Snap.Snap ()
-handleSnapshotUpload appConfig nds db chain threadMVar = do
-  (liftIO $ tryPutMVar threadMVar ()) >>= \case
+handleSnapshotUpload appConfig nds db chain lockMVar = do
+  (liftIO $ tryPutMVar lockMVar ()) >>= \case
     False -> runLoggingEnv logger $ do
       $(logWarn) "Upload already in progress, ignoring this request."
     True -> do
@@ -76,7 +76,7 @@ handleSnapshotUpload appConfig nds db chain threadMVar = do
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
-    withLockRelease m = liftIO $ finally m (tryTakeMVar threadMVar)
+    withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
     uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
     uploadHandler p = \case
       Left e -> runLoggingEnv logger $
