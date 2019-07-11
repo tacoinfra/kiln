@@ -119,30 +119,23 @@ frontendBody
     )
   => m ()
 frontendBody = void $ do
-  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
-    Nothing ->
-      Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
-
+  mHostInfo <- getHostInfo
   let
-    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
-    host = Uri.unRText . Uri.authHost <$> routeAuthority
     renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    routeAuthority = Uri.uriAuthority route ^? _Right
-    wsPort = (Uri.authPort =<< routeAuthority)
-      <|> ffor routeScheme (\case
-        "http" -> 80
-        "https" -> 443
-        _ -> 80)
     listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
 
-    wsUrl = ffor2 routeScheme host $ \s h -> mconcat
-      [ T.replace "http" "ws" s
-      , "://", h
-      , ":", tshow (fromMaybe 80 wsPort)
-      , "/", renderPathPieces [listenPath]
-      ]
+    wsUrl = ffor mHostInfo $ \(s, h, mp) ->
+      let
+        wsPort = mp <|> (Just (case s of
+            "http" -> 80
+            "https" -> 443
+            _ -> 80))
+      in mconcat
+        [ T.replace "http" "ws" s
+        , "://", h
+        , ":", tshow (fromMaybe 80 wsPort)
+        , "/", renderPathPieces [listenPath]
+        ]
   rec
     (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
       withFrontendContext $
@@ -150,6 +143,20 @@ frontendBody = void $ do
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
             appMain
   pure ()
+
+-- (Scheme, Host, Port)
+getHostInfo :: (MonadJSM m) => m (Maybe (Text, Text, Maybe Word))
+getHostInfo = do
+  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
+  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
+    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
+    Nothing ->
+      Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
+  let
+    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
+    host = Uri.unRText . Uri.authHost <$> routeAuthority
+    routeAuthority = Uri.uriAuthority route ^? _Right
+  pure $ (,,) <$> routeScheme <*> host <*> (Uri.authPort <$> routeAuthority)
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
@@ -1249,9 +1256,12 @@ startNodeWorkflow backWF = Workflow $ do
   formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
-  let uploadUri = "http://127.0.0.1:8000/snapshot-upload"
+
+  mHostInfo <- getHostInfo
+  let uploadUri = ffor mHostInfo $ \(s, h, mp) ->
+        s <> "://" <> h <> (maybe "" (\p -> ":" <> tshow p) mp) <> "/snapshot-upload"
       formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  _ <- postForms uploadUri formUploadEv
+  _ <- for uploadUri $ \uri -> postForms uri formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
