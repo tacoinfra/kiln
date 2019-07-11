@@ -901,12 +901,12 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       divClass "ui grid stackable divided" $ do
         start <- startBaking
         close' <- connectBaker
-        ebn :: Behavior t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
-          <- fmap current . watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
-        node <- current <$> watchInternalNode
+        ebn :: Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
+          <- watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+        node <- watchInternalNode
         let nodeNotReady = handleClientErrorWorkflow splash ClientError_NodeNotReady
-            f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
-            f (Just (nid, pd), es) ()
+            f Nothing _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f (Just (nid, pd)) es
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es = nodeNotReady
               | ProcessControl_Stop == _processData_control pd = nodeNotReady
@@ -915,7 +915,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
                 pure ((["ledger-setup-steps"], close <> done), handleClientErrorWorkflow splash <$> err)
-            afterDisclaimer = attachWith f (liftA2 (,) node ebn)
+            afterDisclaimer = tag $ current (liftA2 f node ebn)
         pure (([], close'), disclaimer afterDisclaimer <$ start)
 
     startBaking = divClass "start-baking column" $ do
