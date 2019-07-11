@@ -74,8 +74,8 @@ handleSnapshotUpload appConfig nds db chain threadMVar = do
       $(logWarn) "Upload already in progress, ignoring this request."
     True -> do
       -- We might have snapshot from a killed kiln process, so cleanup
-      cleanupDir uploadTmpLocation
-      cleanupDir storeLocation
+      cleanupDir logger uploadTmpLocation
+      cleanupDir logger storeLocation
       void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
@@ -88,9 +88,10 @@ handleSnapshotUpload appConfig nds db chain threadMVar = do
     withLockRelease m = liftIO $ finally m (tryTakeMVar threadMVar)
     uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
     uploadHandler p = \case
-      Left e -> putStrLn $ show e
+      Left e -> runLoggingEnv logger $
+        $(logError) ("Could not upload file: " <> tshow e)
       Right fp -> runLoggingEnv logger $ do
-        $(logWarn) "Upload successful."
+        $(logDebug) "Upload successful."
         hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
         now <- liftIO $ getCurrentTime
         let
@@ -116,9 +117,10 @@ handleSnapshotUpload appConfig nds db chain threadMVar = do
             liftIO $ removeFile storePath
         pure ()
 
-cleanupDir :: (MonadIO m) => FilePath -> m ()
-cleanupDir dir = liftIO $ do
-  removeDirectoryRecursive dir `catch` (\(e :: IOException) -> pure ())
+cleanupDir :: (MonadIO m) => LoggingEnv -> FilePath -> m ()
+cleanupDir logger dir = liftIO $ do
+  removeDirectoryRecursive dir
+    `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Remove dir failed: " <> tshow dir <> "\nError: " <> tshow e))
   createDirectoryIfMissing True dir
 
 importSnapshotData
@@ -137,15 +139,15 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
     storePath = T.unpack $ _snapshotMeta_storePath sm
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
-  $(logWarn) $ "importSnapshotData : clean old dir "
-  cleanupDir dataDir
+  $(logDebug) $ "importSnapshotData : cleaning old data dir"
+  cleanupDir logger dataDir
   nodePPid <- inDb $ project1 ( NodeInternal_idField
                        , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
   let
     updateState s = for nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
 
   inDb $ updateState NodeProcessState_ImportingSnapshot
-  $(logWarn) $ "importSnapshotData: starting import "
+  $(logDebug) $ "importSnapshotData: starting import"
   (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
     nodePath (["snapshot", "import", storePath, "--data-dir", dataDir]) ""
 
@@ -161,17 +163,17 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   liftIO $ removeFile storePath
   case exitCode of
     ExitSuccess -> void $ do
-      $(logWarn) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
+      $(logDebug) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
       let mBlkHashPrefix = case lines stderr of
             (_1:_2:_3: settingCurrentHead:_5:_6:_)
               | blkH <- reverse $ take 12 $ reverse settingCurrentHead
               , length blkH == 12
               -> Just $ T.pack blkH
             _ -> Nothing
-      $(logWarn) $ ("importSnapshotData: Parsed hash: " <> fromMaybe "nothing" mBlkHashPrefix)
+      $(logDebug) $ ("importSnapshotData: Parsed hash: " <> fromMaybe "nothing" mBlkHashPrefix)
       case mBlkHashPrefix of
         Nothing -> void $ do
-          $(logWarn) $ "importSnapshotData failed: could not parse blk hash" <> T.pack stderr
+          $(logError) $ "importSnapshotData failed: could not parse blk hash" <> T.pack stderr
           inDb $ do
             update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
             traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
@@ -194,7 +196,7 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
             updateState NodeProcessState_ImportComplete
 
     ExitFailure _ -> void $ do
-      $(logWarn) $ "importSnapshotData failed: " <> T.pack stderr
+      $(logError) $ "importSnapshotData failed: " <> T.pack stderr
       inDb $ do
         update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
         traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
