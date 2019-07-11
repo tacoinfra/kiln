@@ -1189,8 +1189,8 @@ img.credits-obsidian {
     .generating-icons {
       margin-top: @15px;
       margin-bottom: @19px;
-      .icon-id-badge { color: #d8dce6; }
-      .install-icon {
+      .icon {
+        color: #d8dce6;
         margin-right: @15px;
         width: @28px;
       }
@@ -1737,7 +1737,12 @@ h4.dashboard-section-title {
 .modal-box.start-node {
   width: unit(560 / @emSize, rem);
   .back-button {
-    margin-bottom: @20px;
+    ._link-like();
+    margin-bottom: @15px;
+    color: @blue;
+    .icon {
+      transform: translate(0px, 2px);
+    }
   }
 
   .ui.button.primary {

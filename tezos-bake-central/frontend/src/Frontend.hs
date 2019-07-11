@@ -43,7 +43,8 @@ import Data.Time (UTCTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
-import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM.File as File
+import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
@@ -1238,14 +1239,20 @@ startNodeWorkflow backWF = Workflow $ do
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-        fi <- fileInput def
-        pure $ (headMay <$> value fi)
+      divClass "" $ do
+        rec
+          let fileName = headMay <$> value fi
+          dyn_ $ ffor fileName $ mapM $ \file -> do
+            name <- liftJSM $ File.getName file
+            divClass "file-name" $ text name
+          fi <- fileInput def
+        pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
       divClass "explanation" $ do
         el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
-  contEv <- uiButton "" "Continue"
+  contEv <- uiButton "primary" "Add Node"
   let
     ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) contEv
     next = ffor ev $ \(b, s) -> if b
@@ -1543,7 +1550,7 @@ nodesTab =
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
                     case nodeState of
                       NodeProcessState_ImportingSnapshot -> divClass "generating-icons" $ do
-                        elAttr "img" ("src" =: static @"images/install.svg" <> "class" =: "install-icon") blank
+                        icon "icon-install big"
                         divClass "ui active tiny inline loader blue small" blank
                       NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
                         icon "icon-id-badge big"
@@ -2168,12 +2175,3 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
--- UI element with left pointing arrow
-backButton :: DomBuilder t m => m (Event t ())
-backButton = do
-  -- (e, _) <- el' "span" $ do
-    -- elAttr "img" (("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") <> ("style" =: "transform: scale(-0.5) translate (-1em, -1em);")) blank
-  --   el "span" $ text "back"
-  -- pure $ domEvent Click e
-  -- This doesnt match design, but will fix UI later
-  uiButton "back-button" "Back"
