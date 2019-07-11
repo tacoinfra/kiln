@@ -82,6 +82,7 @@ module ExtraPrelude
   , (>>>)
   , ($>)
 
+  , safeSucc
   , tshow
   , when'
   , whenJust
@@ -119,6 +120,9 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
 import qualified Data.Text as T
+
+safeSucc :: (Eq a, Enum a, Bounded a) => a -> Maybe a
+safeSucc a = if a /= maxBound then Just (succ a) else Nothing
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show

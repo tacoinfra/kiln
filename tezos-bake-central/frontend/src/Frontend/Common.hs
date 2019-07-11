@@ -53,7 +53,10 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest)
-import Common.Alerts (ErrorDescription(..), standardTimeFormat)
+import Common.Alerts (
+    ErrorDescription(..),
+    standardTimeFormat,
+  )
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
