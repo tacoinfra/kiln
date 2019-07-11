@@ -414,7 +414,7 @@ migrateProcessDataTable2 ta = do
     Just _
       -> do
           void [traceExecuteQ|
-              UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped';
+              UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity'';
             |]
           getTableAnalysis
     _ -> pure ta

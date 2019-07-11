@@ -181,7 +181,7 @@ rpcBoilerplate method_ body req = req
   , Http.requestBody = if method_ == Http.methodGet then "" else Http.RequestBodyLBS $ Aeson.encodingToLazyByteString body
   , Http.requestHeaders =
     [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
-    ++ [ (Http.hUserAgent, "tezos-bake-monitor-lib/" <> T.encodeUtf8 (T.pack $ showVersion version))
+    ++ [ (Http.hUserAgent, "tezos-noderpc/" <> T.encodeUtf8 (T.pack $ showVersion version))
        , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
        ]
   }
@@ -191,9 +191,9 @@ data PublicNodeContext = PublicNodeContext
   }
 
 concat <$> traverse makeLenses
- [ 'NodeRPCContext
- , 'PublicNodeContext
- ]
+  [ 'NodeRPCContext
+  , 'PublicNodeContext
+  ]
 
 -- maybe we should really use a `ProxiedNode` wrapper so we don't unwittingly
 -- use public caches as regular nodes?  For now, we do so wittingly...
@@ -302,8 +302,8 @@ getBlock ::
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> (,) blockHash <$> rBlockHeader chainId blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> (,) blockHash <$> rBlockHeader chainId blockHash
+  Nothing                    -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
