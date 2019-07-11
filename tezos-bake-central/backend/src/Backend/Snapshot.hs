@@ -66,12 +66,17 @@ handleSnapshotUpload
   -> NodeDataSource
   -> Pool Postgresql
   -> Either NamedChain a
+  -> MVar ()
   -> Snap.Snap ()
-handleSnapshotUpload appConfig nds db chain = do
-  -- We might have snapshot from a killed kiln process, so cleanup
-  cleanupDir uploadTmpLocation
-  cleanupDir storeLocation
-  void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+handleSnapshotUpload appConfig nds db chain threadMVar = do
+  (liftIO $ tryPutMVar threadMVar ()) >>= \case
+    False -> runLoggingEnv logger $ do
+      $(logWarn) "Upload already in progress, ignoring this request."
+    True -> do
+      -- We might have snapshot from a killed kiln process, so cleanup
+      cleanupDir uploadTmpLocation
+      cleanupDir storeLocation
+      void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
@@ -80,12 +85,12 @@ handleSnapshotUpload appConfig nds db chain = do
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
+    withLockRelease m = liftIO $ finally m (tryTakeMVar threadMVar)
     uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
     uploadHandler p = \case
       Left e -> putStrLn $ show e
       Right fp -> runLoggingEnv logger $ do
         $(logWarn) "Upload successful."
-        -- TODO : check if import is already in progress / complete
         hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
         now <- liftIO $ getCurrentTime
         let
@@ -98,7 +103,7 @@ handleSnapshotUpload appConfig nds db chain = do
           notify NotifyTag_SnapshotMeta sm
           pure k
         liftIO $ renameFile fp storePath
-        liftIO $ forkIO $ race_ (importSnapshotData appConfig nds logger db chain sm smId)
+        liftIO $ forkIO $ withLockRelease $ race_ (importSnapshotData appConfig nds logger db chain sm smId)
           $ runLoggingEnv logger $ do
             -- Wait for 10 hr, then give up
             threadDelay' (60*60*10)
