@@ -396,7 +396,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig db
-      addFinalizer =<< amendmentProcessWorker dataSrc db
+      addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 
