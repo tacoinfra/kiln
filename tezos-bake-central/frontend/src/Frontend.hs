@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -66,18 +65,21 @@ import Tezos.Types
 
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
-import Common.Alerts (AlertsFilter(..))
-import Common.Alerts (BakerErrorDescriptions(..))
-import Common.Alerts (badNodeHeadMessage)
-import Common.Alerts (bakerAccusedDescriptions)
-import Common.Alerts (bakerDeactivatedDescriptions)
-import Common.Alerts (bakerDeactivationRiskDescriptions)
-import Common.Alerts (bakerGroupedMissedDescriptions)
-import Common.Alerts (bakerInsufficientFundsDescriptions)
-import Common.Alerts (bakerMissedDescriptions)
-import Common.Alerts (isUserResolvable)
-import Common.Alerts (networkUpdateDescription)
-import Common.Alerts (standardTimeFormat)
+import Common.Alerts (
+    AlertsFilter(..),
+    BakerErrorDescriptions(..),
+    badNodeHeadMessage,
+    bakerAccusedDescriptions,
+    bakerDeactivatedDescriptions,
+    bakerDeactivationRiskDescriptions,
+    bakerGroupedMissedDescriptions,
+    bakerInsufficientFundsDescriptions,
+    bakerMissedDescriptions,
+    bakerVotingReminderDescriptions,
+    isUserResolvable,
+    networkUpdateDescription,
+    standardTimeFormat,
+  )
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -506,9 +508,9 @@ networkUpdateAlert elua = do
   renderResolvableSplashAlert
     (pure (LogTag_NetworkUpdate :=> pure elua))
     (icon "icon-alert-badge big blue")
-    header
+    (text header)
     Nothing
-    (do el "p" $ text $ bodyFirstPara
+    (do el "p" $ text bodyFirstPara
         el "p" $ do
           text "Get the new software here "
           elClass "i" "ui icon small icon-arrow-right" blank
@@ -576,6 +578,7 @@ instance HasAlertMetaData ErrorLogView' where
       BakerLogTag_BakerDeactivationRisk -> def
       BakerLogTag_BakerAccused -> def { _alertMetaData_isEventBased = True }
       BakerLogTag_InsufficientFunds -> def
+      BakerLogTag_VotingReminder -> def { _alertMetaData_isEventBased = True }
     LogTag_BakerNoHeartbeat -> def
     LogTag_NetworkUpdate -> def { _alertMetaData_isEventBased = True }
 
@@ -624,7 +627,7 @@ liveErrorsWidget = void $ do
         Left (CollectiveNodesFailure_AllNodesDownSince t) -> Just t
         Right () -> Nothing
         -- TODO think about alert for the no configured nodes case
-        Left (CollectiveNodesFailure_NoNodes)             -> Nothing
+        Left CollectiveNodesFailure_NoNodes               -> Nothing
   dTimer <- asks $ view timer
   -- TODO: PERF: only watch when we need to for `SyntheticError_allNodesDown`
   dBakers <- watchBakerAddresses
@@ -691,9 +694,10 @@ liveErrorsWidget = void $ do
     ) $
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
-      elDynAttr "div" (ffor logDyn $ \log -> "class" =: ("app-notification ui message " <> if isJust $ _errorLog_stopped log then "success" else "error")) $ do
+      let resolvedDyn = isJust . _errorLog_stopped <$> logDyn
+      elDynAttr "div" (ffor resolvedDyn $ \resolved -> "class" =: ("app-notification ui message " <> if resolved then "success" else "error")) $ do
         wDyn <- holdUniqDyn widgetDyn
-        dyn_ . fmap (either logEntry synthEntry) $ wDyn
+        dyn_ $ ffor wDyn $ either logEntry synthEntry
         let isEv = _alertMetaData_isEventBased . getAlertMetaData <$> wDyn
         el "div" $ do
           el "label" $ dynText $ ffor isEv $ bool "First Detected" "Detected"
@@ -742,7 +746,7 @@ liveErrorsWidget = void $ do
             NodeLogTag_NodeWrongChain -> do
               let ErrorLogNodeWrongChain _ _ expectedChainId actualChainId = log
                   (primary, _) = nodeSummaryIdentification n
-              header $ "Node on wrong network: " <> primary <> "."
+              header $ "Wrong network: " <> primary <> "."
               nodeLabel n
               el "div" $
                 text $ "The node is running on network " <> toBase58Text actualChainId <> " but is expected to be on " <> toBase58Text expectedChainId <> "."
@@ -756,44 +760,53 @@ liveErrorsWidget = void $ do
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header $ "Node has too few peers."
+              header "Too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
         LogTag_Baker blt -> case blt of
-            BakerLogTag_BakerDeactivated -> renderBakerError
-              (bakerDeactivatedDescriptions log)
-              pkh
-            BakerLogTag_BakerDeactivationRisk -> renderBakerError
-              (bakerDeactivationRiskDescriptions log)
-              pkh
-            BakerLogTag_BakerAccused -> renderBakerError
-              (bakerAccusedDescriptions log)
-              pkh
-            BakerLogTag_BakerMissed -> renderBakerError
-              (bakerMissedDescriptions log)
-              pkh
-            BakerLogTag_InsufficientFunds -> renderBakerError
-              (bakerInsufficientFundsDescriptions log)
-              pkh
-            where
-              pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
+          BakerLogTag_BakerDeactivated -> renderBakerError
+            (bakerDeactivatedDescriptions log)
+            pkh
+          BakerLogTag_BakerDeactivationRisk -> renderBakerError
+            (bakerDeactivationRiskDescriptions log)
+            pkh
+          BakerLogTag_BakerAccused -> renderBakerError
+            (bakerAccusedDescriptions log)
+            pkh
+          BakerLogTag_BakerMissed -> renderBakerError
+            (bakerMissedDescriptions log)
+            pkh
+          BakerLogTag_InsufficientFunds -> renderBakerError
+            (bakerInsufficientFundsDescriptions log)
+            pkh
+          BakerLogTag_VotingReminder ->
+            withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
+              let dsc = bakerVotingReminderDescriptions log <$> remaining
+              bakersDyn <- watchBakerAddresses
+              divClass "header" $ do
+                dynText $ _bakerErrorDescriptions_title <$> dsc
+                text "."
+              divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
+              el "div" $ dynText $ _bakerErrorDescriptions_notification <$> dsc
+          where
+            pkh = bakerIdForBakerErrorLogView (blt :=> Identity log)
 
         LogTag_BakerNoHeartbeat -> do
-            let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
-            header "Baker lagging behind." -- TODO Show client address
-            el "div" $ do
-              text "Last block level seen: "
-              blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
+          let ErrorLogBakerNoHeartbeat _ lastLevel lastBlockHash _ = log
+          header "Baker lagging behind." -- TODO Show client address
+          el "div" $ do
+            text "Last block level seen: "
+            blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
         LogTag_NetworkUpdate -> do
-            let
-              ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
-              chainText = "'" <> showNamedChain namedChain <> "'"
-            header $ T.unwords ["New", chainText, "version."]
-            el "div" $ do
-              text $ "There is a new version of the " <> chainText <> " software available on GitLab."
+          let
+            ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
+            chainText = "'" <> showNamedChain namedChain <> "'"
+          header $ T.unwords ["New", chainText, "version."]
+          el "div" $ do
+            text $ "There is a new version of the " <> chainText <> " software available on GitLab."
 
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
@@ -1653,19 +1666,20 @@ bakersTab =
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor bakerAlerts $ fmap $ \case
-                  Left (_ :: CollectiveNodesFailure) -> text "Cannot gather baker data."
+                errorMessages = ffor bakerAlerts $ mapMaybe $ \case
+                  Left (_ :: CollectiveNodesFailure) -> Just $ text "Cannot gather baker data."
                   Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
-                    BakerLogTag_BakerMissed -> text $ "Missed " <> aRight <> "."
+                    BakerLogTag_BakerMissed -> Just $ text $ "Missed " <> aRight <> "."
                       where
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
-                    BakerLogTag_BakerDeactivated -> renderBakerError $ bakerDeactivatedDescriptions log
-                    BakerLogTag_BakerDeactivationRisk -> renderBakerError $ bakerDeactivationRiskDescriptions log
-                    BakerLogTag_BakerAccused -> renderBakerError $ bakerAccusedDescriptions log
-                    BakerLogTag_InsufficientFunds -> renderBakerError $ bakerInsufficientFundsDescriptions log
-                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> el "span" $ do
+                    BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
+                    BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
+                    BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
+                    BakerLogTag_InsufficientFunds -> Just $ renderBakerError $ bakerInsufficientFundsDescriptions log
+                    BakerLogTag_VotingReminder -> Nothing
+                  Right (BakerAlert_GroupedAlert _ _ ls@(log:|_)) -> Just $ el "span" $ do
                     elClass "span" "ui label circular" $ text $ tshow (length ls)
                     text nbsp
                     text $ "Missed " <> aRight <> "."
@@ -1725,36 +1739,40 @@ bakersTab =
           pkh = bakerIdForBakerErrorLogView errorView
           ev = (LogTag_Baker bTag :=> Identity log) :| []
         in case bTag of
-          BakerLogTag_BakerMissed -> renderBakerError ev (bakerMissedDescriptions log) pkh
-          BakerLogTag_BakerDeactivated -> renderBakerError ev (bakerDeactivatedDescriptions log) pkh
-          BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (bakerDeactivationRiskDescriptions log) pkh
-          BakerLogTag_BakerAccused -> renderBakerError ev (bakerAccusedDescriptions log) pkh
-          BakerLogTag_InsufficientFunds -> renderBakerError ev (bakerInsufficientFundsDescriptions log) pkh
+          BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
+          BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
+          BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
+          BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh
+          BakerLogTag_InsufficientFunds -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions log) pkh
+          BakerLogTag_VotingReminder ->
+            withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
+              renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
 
       BakerAlert_GroupedAlert first' latest' ls@(log:|_) -> do
         tz <- asks (^. timeZone)
         let
           pkh = unId $ _errorLogBakerMissed_baker log
           ev = (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Identity l) <$> ls
-        renderBakerError ev (bakerGroupedMissedDescriptions tz (length ls) first' latest' log) pkh
+        renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length ls) first' latest' log) pkh
 
       where
-        renderBakerError :: NonEmpty ErrorLogView -> BakerErrorDescriptions -> PublicKeyHash -> m ()
+        renderBakerError :: NonEmpty ErrorLogView -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
-          let warning = _bakerErrorDescriptions_warning dsc
+          let warning = _bakerErrorDescriptions_warning <$> dsc
           renderResolvableSplashAlert ev
-            (icon $ "icon-warning big " <> bool "red" "orange" (isJust warning))
-            (_bakerErrorDescriptions_title dsc <> ".")
+            (iconDyn $ ffor warning $ \w -> "icon-warning big " <> bool "red" "orange" (isJust w))
+            (dynText (_bakerErrorDescriptions_title <$> dsc) *> text ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
-                for_ (_bakerErrorDescriptions_problem dsc)
-                  (\par ->
-                      htmlErrorDescription par *> el "br" blank)
-                for_ warning $ el "p" . text
-                elClass "p" "fix" $ do
-                  el "strong" $ text "Fix:"
-                  text " "
-                  text $ _bakerErrorDescriptions_fix dsc)
+              dyn_ $ ffor (_bakerErrorDescriptions_problem <$> dsc) $ \problems ->
+                for_ problems $ \par ->
+                  htmlErrorDescription par *> el "br" blank
+              dyn_ $ ffor warning $ \w -> for_ w $ el "p" . text
+              elClass "p" "fix" $ do
+                el "strong" $ text "Fix:"
+                text " "
+                dynText $ _bakerErrorDescriptions_fix <$> dsc
+            )
 
     tile
       :: m () -- ^ Title
@@ -1949,12 +1967,12 @@ bakersTab =
 renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   => NonEmpty ErrorLogView
   -> m () -- ^ Alert icon
-  -> Text -- ^ Title
+  -> m () -- ^ Title
   -> Maybe (m ()) -- ^ Entity
   -> m () -- ^ Description body
   -> m ()
 renderResolvableSplashAlert es@((etag :=> _) :| _) splashIcon title entity desc = do
-  renderSplashAlert splashIcon (text title) entity $ do
+  renderSplashAlert splashIcon title entity $ do
     desc
     when (isUserResolvable etag) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
@@ -2020,3 +2038,23 @@ semuiTab label k currentTab enabled =
   fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
+
+withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
+                     => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
+withAmendmentPeriodProgress expectedVotingPeriod w = do
+  currentTime <- asks (^. timer)
+  mProtoInfo <- maybeDyn =<< watchProtoInfo
+  amendments <- watchAmendment
+  mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+  dyn_ $ ffor ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \case
+    Nothing -> divClass "loading" blank
+    Just (protoInfo, amendment) -> do
+      (period, votingPeriod) <- fmap splitDynPure $
+        holdUniqDyn $ (_amendment_period &&& _amendment_votingPeriod) <$> amendment
+      let
+        thisPeriodEndTime = fmap fst $ getEndTimeForPeriod <$> period <*> amendment <*> amendments <*> protoInfo
+        periodEndsIn =
+          fmap (expectedVotingPeriod ==) votingPeriod >>= \case
+            True -> liftA2 Time.diffUTCTime thisPeriodEndTime currentTime
+            False -> pure 0 -- The latest period is not the same as the expected one, so we assume it's over.
+      w periodEndsIn
