@@ -62,7 +62,6 @@ accusationWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger 
                           blockHash
                           (bool RightKind_Endorsing RightKind_Baking isBake)
                           baker
-                          chainId
                           occurredLevel
                           (levelToCycle params occurredLevel)
                           level

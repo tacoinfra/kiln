@@ -39,7 +39,7 @@ import qualified Text.URI as Uri
 import Tezos.Types
 
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
-import Backend.Config (HasAppConfig)
+import Backend.Config (AppConfig(..), HasAppConfig, askAppConfig)
 import Backend.Schema
 import Common.Alerts (BakerErrorDescriptions(..), plaintextErrorDescription)
 import Common.Alerts (badNodeHeadMessage , bakerDeactivatedDescriptions, bakerDeactivationRiskDescriptions)
@@ -77,8 +77,9 @@ reportBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> ChainId -> ProtoInfo -> Fitness -> m ()
-reportBakerDeactivated pkh chainId protoInfo newFit = do
+  => PublicKeyHash -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivated pkh protoInfo newFit = do
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated, Fitness) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
@@ -104,9 +105,10 @@ clearBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> ChainId -> Fitness -> m ()
-clearBakerDeactivated pkh chainId newFit = do
+  => PublicKeyHash -> Fitness -> m ()
+clearBakerDeactivated pkh newFit = do
   now <- getTime
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerDeactivated] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
       FROM "ErrorLogBakerDeactivated" t
@@ -127,8 +129,9 @@ reportBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> ChainId -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
-reportBakerDeactivationRisk pkh chainId gracePeriod latestCycle protoInfo newFit = do
+  => PublicKeyHash -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
+reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk, Fitness) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
@@ -160,9 +163,10 @@ clearBakerDeactivationRisk
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => PublicKeyHash -> ChainId -> Fitness -> m ()
-clearBakerDeactivationRisk pkh chainId newFit = do
+  => PublicKeyHash -> Fitness -> m ()
+clearBakerDeactivationRisk pkh newFit = do
   now <- getTime
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerDeactivationRisk] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
       FROM "ErrorLogBakerDeactivationRisk" t
@@ -180,12 +184,13 @@ clearBakerDeactivationRisk pkh chainId newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
 reportInsufficientFunds
-  :: ( Monad m, MonadIO m
-     , PersistBackend m, PostgresLargeObject m
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Baker -> ChainId -> m ()
-reportInsufficientFunds baker chainId = do
+  => Baker -> m ()
+reportInsufficientFunds baker = do
   let pkh = _baker_publicKeyHash baker
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -206,13 +211,14 @@ reportInsufficientFunds baker chainId = do
         ErrorLogInsufficientFunds logId (Id pkh) chainId now
 
 clearInsufficientFunds
-  :: ( Monad m, MonadIO m
-     , PersistBackend m, PostgresLargeObject m
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Baker -> ChainId -> m ()
-clearInsufficientFunds baker chainId = do
+  => Baker -> m ()
+clearInsufficientFunds baker = do
   let pkh = _baker_publicKeyHash baker
   now <- getTime
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogInsufficientFunds] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = ?now
       FROM "ErrorLogInsufficientFunds" t
@@ -433,13 +439,13 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
         "Resolved: " <> nodeName <> " is now in sync."
 
 missedBakeLog
-  :: forall m. (PersistBackend m, PostgresRaw m)
+  :: forall m a. (PersistBackend m, PostgresRaw m, MonadReader a m, HasAppConfig a)
   => RightKind
   -> PublicKeyHash
-  -> ChainId
   -> RawLevel
   -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
-missedBakeLog right pkh chainId lvl =
+missedBakeLog right pkh lvl = do
+  chainId <- _appConfig_chainId <$> askAppConfig
   ([queryQ|
     SELECT b."publicKeyHash", el.id, elbm.log, elbm.fitness
     FROM "Baker" b
@@ -464,9 +470,10 @@ reportMissedBake
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => Fitness -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> m ()
-reportMissedBake f right pkh chainId lvl = when' (bakerNotDeleted pkh) $ do
-  (missedBakeLog right pkh chainId lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
         { _errorLogBakerMissed_log = eid
@@ -535,8 +542,9 @@ reportAccusation
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
-reportAccusation opHash blkHash right pkh chainId lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
+  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
@@ -563,9 +571,10 @@ reportAccusation opHash blkHash right pkh chainId lvl cycle aLvl aCycle = when' 
 
 clearMissedBake
   :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m)
-  => Fitness -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> m ()
-clearMissedBake f right pkh chainId lvl = do
+  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake f right pkh lvl = do
   now <- getTime
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
       UPDATE "ErrorLog" el SET stopped = ?now
         FROM "ErrorLogBakerMissed" elbm
