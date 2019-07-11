@@ -80,7 +80,7 @@ reportBakerDeactivated
   => PublicKeyHash -> ChainId -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivated pkh chainId protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivated, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log, t."chainId", t.fitness
+    SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivated" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
@@ -130,7 +130,7 @@ reportBakerDeactivationRisk
   => PublicKeyHash -> ChainId -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivationRisk pkh chainId gracePeriod latestCycle protoInfo newFit = do
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerDeactivationRisk, Fitness) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log, t."chainId", t.fitness
+    SELECT el.id, t.log, t.fitness
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerDeactivationRisk" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
@@ -187,7 +187,7 @@ reportInsufficientFunds
 reportInsufficientFunds baker chainId = do
   let pkh = _baker_publicKeyHash baker
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log, t."chainId"
+    SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogInsufficientFunds" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
@@ -441,7 +441,7 @@ missedBakeLog
   -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
 missedBakeLog right pkh chainId lvl =
   ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm."chainId", elbm.log, elbm.fitness
+    SELECT b."publicKeyHash", el.id, elbm.log, elbm.fitness
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
@@ -480,7 +480,7 @@ reportMissedBake f right pkh chainId lvl = when' (bakerNotDeleted pkh) $ (missed
       Just rnl -> do
         let mins = _rightNotificationLimit_withinMinutes rnl
         elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
-          SELECT el.id, elbm."chainId", elbm.level
+          SELECT el.id, elbm.level
           FROM "Baker" b
           JOIN "ErrorLogBakerMissed" elbm
             ON b."publicKeyHash" = elbm."baker#publicKeyHash"
@@ -516,7 +516,7 @@ accusedBakeLog
   -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerAccused)])
 accusedBakeLog pkh chainId opHash blkHash =
   ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm."chainId", elbm.log
+    SELECT b."publicKeyHash", el.id, elbm.log
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerAccused" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
