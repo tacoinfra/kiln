@@ -465,46 +465,47 @@ reportMissedBake
      , SqlDb (PhantomDb m)
      , MonadLogger m)
   => Fitness -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> m ()
-reportMissedBake f right pkh chainId lvl = when' (bakerNotDeleted pkh) $ (missedBakeLog right pkh chainId lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
-  Nothing -> do
-    (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
-      { _errorLogBakerMissed_log = eid
-      , _errorLogBakerMissed_baker = bid
-      , _errorLogBakerMissed_chainId = chainId
-      , _errorLogBakerMissed_right = right
-      , _errorLogBakerMissed_level = lvl
-      , _errorLogBakerMissed_fitness = f
-      }
-    project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
-      Nothing -> queueAlert (Just eid) $ alert lvl
-      Just rnl -> do
-        let mins = _rightNotificationLimit_withinMinutes rnl
-        elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
-          SELECT el.id, elbm.level
-          FROM "Baker" b
-          JOIN "ErrorLogBakerMissed" elbm
-            ON b."publicKeyHash" = elbm."baker#publicKeyHash"
-            AND elbm."chainId" = ?chainId
-            AND elbm.right = ?right
-          JOIN "ErrorLog" el
-            ON el.id = elbm.log
-            AND el.stopped IS NULL
-          WHERE NOT b."data#deleted"
-            AND b."publicKeyHash" = ?pkh
-            AND el.started > now() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
-            AND el."noticeSentAt" IS NULL
-        |]
-        when (length elIds >= _rightNotificationLimit_amount rnl) $ for_ elIds $ \(eid', lvl') -> queueAlert (Just eid') $ alert lvl'
-  Just xs -> for_ xs $ \(eid, _elbmid, f') -> when (f' <= f) $ do
-    updateErrorLogBy eid ErrorLogBakerMissed_logField [ ErrorLogBakerMissed_fitnessField =. f ]
-    queueAlert (Just eid) $ alert lvl
-  where
-    alert lvl' = Alert Unresolved
-      ("Missed " <> rightTxt <> " opportunity")
-      ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl'))
-    rightTxt = case right of
-      RightKind_Baking -> "bake"
-      RightKind_Endorsing -> "endorsement"
+reportMissedBake f right pkh chainId lvl = when' (bakerNotDeleted pkh) $ do
+  (missedBakeLog right pkh chainId lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+    Nothing -> do
+      (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
+        { _errorLogBakerMissed_log = eid
+        , _errorLogBakerMissed_baker = bid
+        , _errorLogBakerMissed_chainId = chainId
+        , _errorLogBakerMissed_right = right
+        , _errorLogBakerMissed_level = lvl
+        , _errorLogBakerMissed_fitness = f
+        }
+      project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
+        Nothing -> queueAlert (Just eid) $ alert lvl
+        Just rnl -> do
+          let mins = _rightNotificationLimit_withinMinutes rnl
+          elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
+            SELECT el.id, elbm.level
+            FROM "Baker" b
+            JOIN "ErrorLogBakerMissed" elbm
+              ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+              AND elbm."chainId" = ?chainId
+              AND elbm.right = ?right
+            JOIN "ErrorLog" el
+              ON el.id = elbm.log
+              AND el.stopped IS NULL
+            WHERE NOT b."data#deleted"
+              AND b."publicKeyHash" = ?pkh
+              AND el.started > now() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
+              AND el."noticeSentAt" IS NULL
+          |]
+          when (length elIds >= _rightNotificationLimit_amount rnl) $ for_ elIds $ \(eid', lvl') -> queueAlert (Just eid') $ alert lvl'
+    Just xs -> for_ xs $ \(eid, _elbmid, f') -> when (f' <= f) $ do
+      updateErrorLogBy eid ErrorLogBakerMissed_logField [ ErrorLogBakerMissed_fitnessField =. f ]
+      queueAlert (Just eid) $ alert lvl
+    where
+      alert lvl' = Alert Unresolved
+        ("Missed " <> rightTxt <> " opportunity")
+        ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl'))
+      rightTxt = case right of
+        RightKind_Baking -> "bake"
+        RightKind_Endorsing -> "endorsement"
 
 -- we care only to inform the baker of each accusation against them, and no other provenance matters.
 accusedBakeLog
@@ -535,29 +536,30 @@ reportAccusation
      , SqlDb (PhantomDb m)
      , MonadLogger m)
   => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> ChainId -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
-reportAccusation opHash blkHash right pkh chainId lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
-  Nothing -> do
-    (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
-      { _errorLogBakerAccused_log = eid
-      , _errorLogBakerAccused_op = Id (opHash, blkHash)
-      , _errorLogBakerAccused_baker = bid
-      , _errorLogBakerAccused_chainId = chainId
-      , _errorLogBakerAccused_right = right
-      , _errorLogBakerAccused_level = lvl
-      , _errorLogBakerAccused_cycle = cycle
-      , _errorLogBakerAccused_accusedLevel = aLvl
-      , _errorLogBakerAccused_accusedCycle = aCycle
-      }
-    queueAlert (Just eid) alert
-  Just xs -> for_ xs $ \(_eid, _elbmid) ->
-    pure ()
-  where
-    alert = Alert Unresolved
-      ("Double " <> rightTxt)
-      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
-    rightTxt = case right of
-      RightKind_Baking -> "baked"
-      RightKind_Endorsing -> "endorsed"
+reportAccusation opHash blkHash right pkh chainId lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
+  (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+    Nothing -> do
+      (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
+        { _errorLogBakerAccused_log = eid
+        , _errorLogBakerAccused_op = Id (opHash, blkHash)
+        , _errorLogBakerAccused_baker = bid
+        , _errorLogBakerAccused_chainId = chainId
+        , _errorLogBakerAccused_right = right
+        , _errorLogBakerAccused_level = lvl
+        , _errorLogBakerAccused_cycle = cycle
+        , _errorLogBakerAccused_accusedLevel = aLvl
+        , _errorLogBakerAccused_accusedCycle = aCycle
+        }
+      queueAlert (Just eid) alert
+    Just xs -> for_ xs $ \(_eid, _elbmid) ->
+      pure ()
+    where
+      alert = Alert Unresolved
+        ("Double " <> rightTxt)
+        ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
+      rightTxt = case right of
+        RightKind_Baking -> "baked"
+        RightKind_Endorsing -> "endorsed"
 
 clearMissedBake
   :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m)
