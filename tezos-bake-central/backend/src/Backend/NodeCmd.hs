@@ -194,9 +194,9 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
         err = T.pack err'
       if exitCode == ExitSuccess
         then do
-          (logInfoNS "INITNODE") ("Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out)
+          logInfoNS "kiln-node" $ "Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
         else do
-          (logErrorNS "INITNODE") $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
+          logErrorNS "kiln-node" $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
           liftIO $ throwIO exitCode
 
 

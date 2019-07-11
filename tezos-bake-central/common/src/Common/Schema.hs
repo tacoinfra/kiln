@@ -512,17 +512,21 @@ data PeriodPromotionVote = PeriodPromotionVote
   , _periodPromotionVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Proposal period
 data BakerProposal = BakerProposal
   { _bakerProposal_pkh :: !PublicKeyHash
   , _bakerProposal_proposal :: !(Id PeriodProposal)
   , _bakerProposal_included :: !(Maybe BlockHash)
+  , _bakerProposal_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Exploration/promotion period
 data BakerVote = BakerVote
   { _bakerVote_pkh :: !PublicKeyHash
   , _bakerVote_proposal :: !(Id PeriodProposal)
   , _bakerVote_ballot :: !Ballot
   , _bakerVote_included :: !(Maybe BlockHash)
+  , _bakerVote_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
@@ -805,7 +809,7 @@ instance HasId ErrorLogBadNodeHead where
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
 -- new uncle occurs in which the baker /did/ exercise their rights, or the user
--- manually acknowledges the error.  If the network is branch hopping; its
+-- manually acknowledges the error.  If the network is branch hopping; it's
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
 data ErrorLogBakerMissed = ErrorLogBakerMissed
@@ -825,6 +829,19 @@ data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInsufficientFunds where
   type IdData ErrorLogInsufficientFunds = Id ErrorLog
+
+data ErrorLogVotingReminder = ErrorLogVotingReminder
+  { _errorLogVotingReminder_log :: !(Id ErrorLog)
+  , _errorLogVotingReminder_chainId :: !ChainId
+  , _errorLogVotingReminder_baker :: !(Id Baker)
+  , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
+  , _errorLogVotingReminder_votingPeriod :: !RawLevel
+  , _errorLogVotingReminder_previouslyVoted :: !Bool
+  , _errorLogVotingReminder_rangeMax :: !Int
+  , _errorLogVotingReminder_periodEndsAt :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogVotingReminder where
+  type IdData ErrorLogVotingReminder = Id ErrorLog
 
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
@@ -952,6 +969,7 @@ data BakerLogTag a where
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
+  BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -991,6 +1009,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   , ''Event
   , ''MailServerConfig
   , ''Node
@@ -1055,6 +1074,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
+  , 'ErrorLogVotingReminder
   , 'Event
   , 'MailServerConfig
   , 'Node
@@ -1084,8 +1104,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   ] ++ map makePrisms
   [ ''UpgradeCheckError
   ])
-
-return []
 
 fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
@@ -1162,4 +1180,5 @@ errorLogNames =
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   ]

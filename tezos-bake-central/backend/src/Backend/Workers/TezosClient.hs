@@ -193,15 +193,17 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
               |]
           inDb selectProposal >>= \case
             [(pkh :: PublicKeyHash, ledgerIdentifier, signingCurve, derivationPath, shouldDoVoteBallot, proposalId :: Id PeriodProposal, proposalHash)] -> do
-              let sk = SecretKey ledgerIdentifier signingCurve derivationPath
+              dsh <- liftIO $ atomically $ dataSourceHead nds
+              let attempted = view hash <$> dsh
+                  sk = SecretKey ledgerIdentifier signingCurve derivationPath
               inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
               vs <- case shouldDoVoteBallot of
                 Nothing -> do
                   vs <- submitProposals appConfig chain [proposalHash]
                   when (vs == VoteStep_Done) $ inDb $ do
                     _ <- [executeQ|
-                      INSERT INTO "BakerProposal" (pkh, proposal, included)
-                      VALUES (?pkh, ?proposalId, null)
+                      INSERT INTO "BakerProposal" (pkh, proposal, included, attempted)
+                      VALUES (?pkh, ?proposalId, null, ?attempted)
                       ON CONFLICT DO NOTHING
                     |]
                     mpp <- selectSingle (AutoKeyField ==. fromId proposalId)
@@ -215,6 +217,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                           , _bakerVote_proposal = proposalId
                           , _bakerVote_ballot = ballot
                           , _bakerVote_included = Nothing
+                          , _bakerVote_attempted = attempted
                           }
                     insert_ bv
                     notify NotifyTag_BakerVote $ Just bv

@@ -36,7 +36,7 @@ module Backend.Schema
   ) where
 
 import Control.Lens (Field1, Field2)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, NominalDiffTime)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -53,7 +53,7 @@ import Data.Dependent.Sum (ShowTag)
 import Data.Dependent.Sum (compareTagged)
 import Data.Dependent.Sum (eqTagged)
 import Data.Dependent.Sum (showTaggedPrec)
-import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
@@ -209,6 +209,7 @@ instance HasDefaultNotify (Id ErrorLogBakerMissed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
+instance HasDefaultNotify (Id ErrorLogVotingReminder)
 
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
@@ -229,6 +230,8 @@ instance HasNotification NotifyTag ErrorLogBakerMissed where
   notification _ = mkBakerNotify BakerLogTag_BakerMissed
 instance HasNotification NotifyTag ErrorLogInsufficientFunds where
   notification _ = mkBakerNotify BakerLogTag_InsufficientFunds
+instance HasNotification NotifyTag ErrorLogVotingReminder where
+  notification _ = mkBakerNotify BakerLogTag_VotingReminder
 
 instance HasNotification NotifyTag ErrorLogNetworkUpdate where
   notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
@@ -337,6 +340,9 @@ instance FromField Word64 where
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
+instance FromField (Fixed a) where
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
+
 instance HasResolution a => PrimitivePersistField (Fixed a) where
   toPrimitivePersistValue p (MkFixed x) = toPrimitivePersistValue p (fromInteger x :: Int64)
   fromPrimitivePersistValue p x = MkFixed (toInteger (fromPrimitivePersistValue p x :: Int64))
@@ -350,6 +356,19 @@ instance HasResolution a => PersistField (Fixed a) where
 instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
+
+instance FromField NominalDiffTime where
+  fromField f b = toEnum <$> fromField f b
+
+instance PrimitivePersistField NominalDiffTime where
+  toPrimitivePersistValue p x = toPrimitivePersistValue p $ fromEnum x
+  fromPrimitivePersistValue p v = toEnum $ fromPrimitivePersistValue p v
+
+instance PersistField NominalDiffTime where
+  persistName _ = "NominalDiffTime"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = dbType p (fromEnum x)
 
 instance PersistField NamedChainOrChainId where
   persistName _ = "NamedChainOrChainId"
@@ -400,6 +419,12 @@ instance FromField ProcessControl where
 instance ToField ProcessControl where
   toField v = toField (show v)
 
+instance FromField VotingPeriodKind where
+  fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
+
+instance ToField VotingPeriodKind where
+  toField v = toField (show v)
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
@@ -415,9 +440,6 @@ instance PersistField PeriodSequence where
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
-
-instance FromField Micro where
-  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
@@ -1022,7 +1044,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerMissedId
             type: primary
             fields: [_errorLogBakerMissed_log]
-
+  - entity: ErrorLogVotingReminder
+    autoKey: null
+    keys:
+      - name: ErrorLogVotingReminderId
+        default: true
+    constructors:
+      - name: ErrorLogVotingReminder
+        uniques:
+          - name: ErrorLogVotingReminderId
+            type: primary
+            fields: [_errorLogVotingReminder_log]
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -1152,6 +1184,9 @@ instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
 instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
+instance DefaultKeyId ErrorLogVotingReminder where
+  toIdData _ (ErrorLogVotingReminderIdKey eid) = eid
+  fromIdData _ = ErrorLogVotingReminderIdKey
 
 fmap concat $ traverse (\n ->
   let u = mkName (nameBase n <> "Id") in
@@ -1203,6 +1238,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
   BakerLogTag_InsufficientFunds -> id
+  BakerLogTag_VotingReminder -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
 logAssume = \case
@@ -1270,6 +1306,7 @@ bakerLogDep = \case
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
+  BakerLogTag_VotingReminder -> depBakerAlert' ErrorLogVotingReminder_bakerField
   where
     depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
@@ -1298,6 +1335,7 @@ instance ArgDict NotifyTag where
     , c (Id ErrorLogBakerDeactivationRisk)
     , c (Id ErrorLogBakerAccused)
     , c (Id ErrorLogInsufficientFunds)
+    , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
     , c (Id Node, Maybe NodeExternalData)
@@ -1342,6 +1380,7 @@ instance ArgDict NotifyTag where
         BakerLogTag_BakerDeactivationRisk -> Dict
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
+        BakerLogTag_VotingReminder -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict
     NotifyTag_NodeExternal -> Dict

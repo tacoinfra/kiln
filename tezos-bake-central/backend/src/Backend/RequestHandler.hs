@@ -310,6 +310,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
                 BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
+                BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
 
             ids <- fmap concat $ for universe onTag
             now <- getTime

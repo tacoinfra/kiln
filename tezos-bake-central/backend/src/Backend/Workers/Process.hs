@@ -127,7 +127,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
       $(logDebugSH) ("Obtaining lock for process:" :: Text, pid, ", LockId:" :: Text, lockId)
       let
         state = ProcessState_Stopped
-        {-# INLINE claim #-}
+
         claim = do
           now <- liftIO getCurrentTime
           let nowMinus5min = addUTCTime (-60 * 5) now

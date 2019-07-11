@@ -18,9 +18,10 @@ import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..))
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
+import Common (nominalDiffTimeToSeconds)
 import Common.Schema
 import ExtraPrelude
 
@@ -141,15 +142,70 @@ isUserResolvable = \case
     BakerLogTag_BakerDeactivationRisk -> False
     BakerLogTag_BakerAccused -> True
     BakerLogTag_InsufficientFunds -> False
+    BakerLogTag_VotingReminder -> True
   LogTag_BakerNoHeartbeat -> True
   LogTag_NetworkUpdate -> True
+
+data ErrorLogMessage = ErrorLogMessage
+  { _errorLogMessage_resolved :: Bool
+  , _errorLogMessage_subject :: Text
+  , _errorLogMessage_content :: Text
+  }
+data ErrorLogWidgets m = ErrorLogWidgets
+  { _errorLogWidgets_tile :: m ()
+  , _errorLogWidgets_notification :: m ()
+  , _errorLogWidgets_banner :: m ()
+  }
+
+bakerVotingReminderDescriptions :: ErrorLogVotingReminder -> Time.NominalDiffTime -> BakerErrorDescriptions
+bakerVotingReminderDescriptions elog periodEndsIn = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = title
+  , _bakerErrorDescriptions_tile = "Should vote"
+  , _bakerErrorDescriptions_notification = description
+  , _bakerErrorDescriptions_problem = []
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Open the menu on your Kiln baker tile and click “Vote” to vote."
+  , _bakerErrorDescriptions_resolved = const ("Voted", "Voted")
+  }
+  where
+    previouslyVoted = _errorLogVotingReminder_previouslyVoted elog
+    periodKind = _errorLogVotingReminder_periodKind elog
+    rangeMax = _errorLogVotingReminder_rangeMax elog
+
+    timeLeft
+      | periodEndsIn <= 0 = Nothing
+      | otherwise = Just $ case nominalDiffTimeToSeconds periodEndsIn `divMod` (60 * 60) of
+        (0, m) -> tshow (max 0 m `div` 60) <> " minutes"
+        (h, _) -> tshow (max 0 h) <> " hours"
+
+    singleVotePeriod periodName
+      | rangeMax > 90 = periodName <> " Period " <> maybe " is over" (" ends in " <>) timeLeft
+      | rangeMax > 50 = "You have not yet voted in this " <> periodName <> " Period"
+      | otherwise = periodName <> " Period has begun"
+
+    title = case periodKind of
+      VotingPeriodKind_Proposal -> state
+        where state = if previouslyVoted
+                      then "Proposals have been submitted since you last voted"
+                      else "Proposals are available for voting"
+      VotingPeriodKind_TestingVote -> singleVotePeriod "Exploration"
+      VotingPeriodKind_Testing -> "" -- impossible
+      VotingPeriodKind_PromotionVote -> singleVotePeriod "Promotion"
+
+    description = case periodKind of
+      VotingPeriodKind_Proposal -> maybe
+        "The Proposal Period is over."
+        (<> " remain before voting closes.")
+        timeLeft
+      _ -> "Remember to vote!"
+
 
 bakerDeactivationRiskDescriptions :: ErrorLogBakerDeactivationRisk -> BakerErrorDescriptions
 bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive"
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
-  , _bakerErrorDescriptions_problem = ("In the past " <> errorEmphasis (tshow $ preserved - 1) <> " cycles this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur.") : []
+  , _bakerErrorDescriptions_problem = ["In the past " <> numCycles (preserved - 1) <> " this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."]
   , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
   , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
   , _bakerErrorDescriptions_resolved = \b ->
@@ -159,6 +215,9 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
          )
   }
   where
+    numCycles 1 = "cycle"
+    numCycles n = errorEmphasis (tshow n) <> " cycles"
+
     preserved = unCycle $ _errorLogBakerDeactivationRisk_preservedCycles elog
 
 bakerDeactivatedDescriptions :: ErrorLogBakerDeactivated -> BakerErrorDescriptions
@@ -202,14 +261,14 @@ bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (Raw
 bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
-  , _bakerErrorDescriptions_notification = "This baker failed "
+  , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
   , _bakerErrorDescriptions_problem =
-      [ "This baker has missed " <> errorEmphasis ((tshow count) <> " " <> opportunity) <> "."
+      [ "This baker has missed " <> errorEmphasis (tshow count <> " " <> opportunity) <> "."
       , "The first " <> theRight <> " missed was for "
-        <> errorEmphasis ("block level " <> (tshow $ unRawLevel fb))
+        <> errorEmphasis ("block level " <> tshow (unRawLevel fb))
         <> " on " <> errorEmphasis (localTime ft) <> "."
       , "The latest " <> theRight <> " missed was for "
-        <> errorEmphasis ("block level " <> (tshow $ unRawLevel lb))
+        <> errorEmphasis ("block level " <> tshow (unRawLevel lb))
         <> " on " <> errorEmphasis (localTime lt) <> "."
       ]
   , _bakerErrorDescriptions_warning = Nothing
@@ -223,7 +282,7 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescr
       RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 
 bakerInsufficientFundsDescriptions :: ErrorLogInsufficientFunds -> BakerErrorDescriptions
-bakerInsufficientFundsDescriptions _{-elog-} = BakerErrorDescriptions
+bakerInsufficientFundsDescriptions _ = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
   , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
   , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
@@ -277,7 +336,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       <> " " <> errorEmphasis ("block level " <> lvl)
       <> " in " <> errorEmphasis ("cycle " <> cycle) <> ". The accusation was baked at "
       <> errorEmphasis ("block level " <> accusedLevel) <> ".\n\n"
-    turnOffShort = 
+    turnOffShort =
       "\n\nThis baker should be turned off for the remainder of the cycle to "
       <> "avoid losing deposits and rewards for upcoming rights."
     cycle = tshow $ unCycle $ _errorLogBakerAccused_cycle elog
@@ -290,7 +349,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       RightKind_Baking -> "bake"
       RightKind_Endorsing -> "endorsement"
     upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
-    accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle $ elog
+    accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle elog
 
 -- Skip the final sentence as there is no easy way to abstract over doing or not
 -- doing the link.

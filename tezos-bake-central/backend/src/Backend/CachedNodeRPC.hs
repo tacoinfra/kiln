@@ -642,7 +642,7 @@ initParams nds theseNodes = runLoggingEnv (_nodeDataSource_logger nds) $ do
           notify NotifyTag_Parameters . (, entry) =<< insert' entry
 
 
--- | extrats the fittest known branch from cache
+-- | extracts the fittest known branch from cache
 dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe VeryBlockLike)
@@ -653,7 +653,7 @@ dataSourceHead nds = withCache nds Nothing $ \_ -> do
   pure $ maximumByMay (compare `on` view fitness) $ toList branches
 
 {-
--- | extrats the fittest known node from cache
+-- | extracts the fittest known node from cache
 dataSourceNode
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe NodeRPCContext)

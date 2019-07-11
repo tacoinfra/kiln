@@ -187,34 +187,23 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let periodProposalsVS = _bakeViewSelector_proposals vs
   periodProposals <- whenM (not $ null periodProposalsVS) $ do
-    results :: [(Id PeriodProposal, ProtocolHash, ChainId, RawLevel, Int, Bool, Bool)] <- [queryQ|
-      SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
-      FROM "PeriodProposal" pp
-      LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
-      JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
-      WHERE NOT b."data#deleted"
-    |]
-    pure $ toRangeView periodProposalsVS $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (Bounded pid, First $ Just (PeriodProposal
-      { _periodProposal_hash = phash
-      , _periodProposal_chainId = chain
-      , _periodProposal_votingPeriod = vp
-      , _periodProposal_votes = votes
-      }, if voted then Just included else Nothing))
+    toRangeView periodProposalsVS . fmap (bimap Bounded (First . Just)) <$> getProposals
 
   bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
     let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
-      SELECT v.pkh, v.proposal, v.ballot, v.included
+      SELECT v.pkh, v.proposal, v.ballot, v.included, v.attempted
       FROM "BakerVote" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included) -> BakerVote
+    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included, attempted) -> BakerVote
       { _bakerVote_pkh = pkh
       , _bakerVote_proposal = proposal
       , _bakerVote_ballot = ballot
       , _bakerVote_included = included
+      , _bakerVote_attempted = attempted
       }
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
@@ -692,3 +681,19 @@ getNodeAddresses nid = do
     intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData ProcessData)
     intExt = fmap Left ext `Map.union` fmap Right int
   return $ Map.toList $ fmap (First . Just) $ liftF2 NodeSummary intExt counts
+
+getProposals :: (Monad m, PostgresRaw m) => m [(Id PeriodProposal, (PeriodProposal, Maybe Bool))]
+getProposals = do
+  results <- [queryQ|
+    SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
+    FROM "PeriodProposal" pp
+    LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
+    LEFT JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
+    WHERE COALESCE(NOT b."data#deleted", TRUE)
+  |]
+  pure $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (pid, (PeriodProposal
+    { _periodProposal_hash = phash
+    , _periodProposal_chainId = chain
+    , _periodProposal_votingPeriod = vp
+    , _periodProposal_votes = votes
+    }, if voted then Just included else Nothing))
