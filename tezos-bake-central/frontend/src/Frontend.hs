@@ -1452,10 +1452,8 @@ nodesTab =
 
       kilnNodeStateD <- holdUniqDyn kilnNodeState
       -- Node alerts
-      dyn_ $ ffor kilnNodeStateD $ traverse_ $ SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
-        ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
-        ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
-        ProcessState_Node NodeProcessState_ImportComplete -> do
+      let
+        verifySnapshotAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
           dSm <- watchSnapshotMeta
           tz <- asks (^. timeZone)
           let
@@ -1473,7 +1471,8 @@ nodesTab =
                 text "Start Verification"
               dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
           renderSplashAlert i title Nothing (desc *> btn)
-        ProcessState_Node _ -> do
+
+        snapshotImportFailedAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
           let
             i = icon "icon-warning big red"
             title = text "Snapshot import failed."
@@ -1481,7 +1480,18 @@ nodesTab =
               el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
               el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
           renderSplashAlert i title Nothing desc
-        _ -> pure ()
+
+      dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
+        ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
+        ProcessState_Node NodeProcessState_ImportFailed -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportTimeout -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
+        ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
+        ProcessState_Initializing -> pure ()
+        ProcessState_Failed -> pure ()
+        ProcessState_Starting -> pure ()
+        ProcessState_Stopped -> pure ()
+        ProcessState_Running -> pure ()
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
