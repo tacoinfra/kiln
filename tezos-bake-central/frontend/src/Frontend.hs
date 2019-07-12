@@ -1442,10 +1442,48 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
+        partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+        (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+        kilnNodeState = ((fmap _processData_state) . headMay . Map.elems) <$> internal
+
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
 
+      kilnNodeStateD <- holdUniqDyn kilnNodeState
+      -- Node alerts
+      dyn_ $ ffor kilnNodeStateD $ traverse_ $ SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
+        ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
+        ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
+        ProcessState_Node NodeProcessState_ImportComplete -> do
+          dSm <- watchSnapshotMeta
+          tz <- asks (^. timeZone)
+          let
+            i = icon "icon-check big blue"
+            title = text "Snapshot import complete, verify to start node."
+            timeFormat = "%-l:%M%P"
+            time t = T.pack $ Time.formatTime Time.defaultTimeLocale timeFormat $ Time.utcToZonedTime tz t
+
+            desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported"
+              <> maybe " " (\t -> " at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
+              <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
+            btn = do
+              ev <- divClass "buttons" $ uiButtonM "" $ do
+                icon "icon-angle-right"
+                text "Start Verification"
+              dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
+          renderSplashAlert i title Nothing (desc *> btn)
+        ProcessState_Node _ -> do
+          let
+            i = icon "icon-warning big red"
+            title = text "Snapshot import failed."
+            desc = do
+              el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
+              el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
+          renderSplashAlert i title Nothing desc
+        _ -> pure ()
+
+      -- Node tiles
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
@@ -1460,9 +1498,6 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
-
-          let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
-              (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
