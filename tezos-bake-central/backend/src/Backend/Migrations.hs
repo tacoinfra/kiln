@@ -19,6 +19,7 @@ import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (.
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
+import Tezos.Types (ChainId)
 
 import ExtraPrelude
 
@@ -27,8 +28,8 @@ type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger
 convQN :: QualifiedIdentifier -> QualifiedName
 convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
-migrateKiln :: Migrate m => m ()
-migrateKiln = (getTableAnalysis >>= preMigrate >>= autoMigrate) *> extraIndexes
+migrateKiln :: Migrate m => ChainId -> m ()
+migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> extraIndexes
 
 autoMigrate :: Migrate m => TableAnalysis m -> m ()
 autoMigrate tableAnalysis = runMigration $ do
@@ -36,8 +37,8 @@ autoMigrate tableAnalysis = runMigration $ do
   migrateQueuedEmail tableAnalysis
   migrateSchema tableAnalysis
 
-preMigrate :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
-preMigrate =
+preMigrate :: Migrate m => ChainId -> TableAnalysis m -> m (TableAnalysis m)
+preMigrate chainId =
       migrateParameters
   >=> migratePublicNodeHead
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
@@ -72,6 +73,7 @@ preMigrate =
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
+  >=> migrateChainIdToErrorLog chainId
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -387,7 +389,6 @@ migrateBakerDaemonInternalTable ta = do
             |]
           getTableAnalysis
     _ -> pure ta
-
 migrateProcessDataTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateProcessDataTable ta = do
   let table = (Nothing, "ProcessData")
@@ -401,6 +402,31 @@ migrateProcessDataTable ta = do
               UPDATE "ProcessData" SET "control" = 'ProcessControl_Run' WHERE "running" = TRUE;
               ALTER TABLE "ProcessData" DROP COLUMN "running";
               ALTER TABLE "ProcessData" ALTER COLUMN "control" SET NOT NULL;
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateChainIdToErrorLog :: Migrate m => ChainId -> TableAnalysis m -> m (TableAnalysis m)
+migrateChainIdToErrorLog currentChainId ta = do
+  let table = (Nothing, "ErrorLogVotingReminder")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "chainId") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLog" ADD COLUMN "chainId" BYTEA NULL;
+
+              UPDATE "ErrorLog"
+              SET "chainId" = vr."chainId"
+              FROM "ErrorLogVotingReminder" vr
+              WHERE id = vr.log;
+
+              UPDATE "ErrorLog"
+              SET "chainId" = ?currentChainId
+              WHERE "chainId" IS NULL;
+
+              ALTER TABLE "ErrorLog" ALTER COLUMN "chainId" SET NOT NULL;
+              ALTER TABLE "ErrorLogVotingReminder" DROP COLUMN "chainId";
             |]
           getTableAnalysis
     _ -> pure ta

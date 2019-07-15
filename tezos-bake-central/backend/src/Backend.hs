@@ -239,7 +239,7 @@ backendImpl cfg serve = do
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
 
     runDb (Identity db) $ do
-      migrateKiln
+      migrateKiln chainId
 
       -- Set nodes overrides based on configuration
       let
