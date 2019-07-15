@@ -33,7 +33,7 @@ import Rhyolite.Backend.Schema
 
 import Backend.Alerts
 import Backend.Alerts.Common
-import Backend.Config (AppConfig)
+import Backend.Config (AppConfig(..))
 import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
@@ -84,6 +84,7 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
               , _errorLog_stopped = if isNothing mLastCommit then Just now else Nothing
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Just now
+              , _errorLog_chainId = _appConfig_chainId appConfig
               }
         eid <- toId <$> insert errorLog
         _ <- insert ErrorLogNetworkUpdate

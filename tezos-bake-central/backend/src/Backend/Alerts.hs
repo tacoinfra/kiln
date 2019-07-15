@@ -99,7 +99,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
        AND NOT b."data#deleted"
        AND el.stopped IS NULL
-       AND t."chainId" = ?chainId
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -110,7 +110,7 @@ reportBakerDeactivated pkh protoInfo newFit = do
       baker' <- getBaker pkh
       for_ baker' $ \baker -> do
         (logId, log) <- insertErrorLog $ \logId ->
-          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) chainId (_protoInfo_preservedCycles protoInfo) newFit
+          ErrorLogBakerDeactivated logId (_baker_publicKeyHash baker) (_protoInfo_preservedCycles protoInfo) newFit
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
 
 clearBakerDeactivated
@@ -126,7 +126,7 @@ clearBakerDeactivated pkh newFit = do
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
-      AND t."chainId" = ?chainId
+      AND el."chainId" = ?chainId
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
   for_ lids notifyDefault
@@ -150,7 +150,8 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
       JOIN "Baker" b ON b."publicKeyHash" = t."publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
-       AND t."chainId" = ?chainId
+       AND el."chainId" = ?chainId
+
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -163,7 +164,6 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
         (logId, log) <- insertErrorLog $ \logId -> ErrorLogBakerDeactivationRisk
           logId
           (_baker_publicKeyHash baker)
-          chainId
           gracePeriod
           latestCycle
           (_protoInfo_preservedCycles protoInfo)
@@ -183,7 +183,7 @@ clearBakerDeactivationRisk pkh newFit = do
     WHERE t.log = el.id
       AND t."publicKeyHash" = ?pkh
       AND el.stopped IS NULL
-      AND t."chainId" = ?chainId
+      AND el."chainId" = ?chainId
       AND t.fitness < ?newFit :: VARCHAR[]
     RETURNING t.log |]
   for_ lids notifyDefault
@@ -208,7 +208,7 @@ reportInsufficientFunds baker = do
       JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
        AND el.stopped IS NULL
-       AND t."chainId" = ?chainId
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -218,7 +218,7 @@ reportInsufficientFunds baker = do
       [ ErrorLogInsufficientFunds_detectedField =. now ]
     Nothing -> do
       void $ insertErrorLog $ \logId ->
-        ErrorLogInsufficientFunds logId (Id pkh) chainId now
+        ErrorLogInsufficientFunds logId (Id pkh) now
 
 clearInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m
@@ -234,7 +234,7 @@ clearInsufficientFunds baker = do
       WHERE t.log = el.id
       AND t."baker#publicKeyHash" = ?pkh
       AND el.stopped IS NULL
-      AND t."chainId" = ?chainId
+      AND el."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
 
@@ -244,6 +244,7 @@ reportInaccessibleNodeError
      , MonadLogger m)
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInaccessibleNode) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -252,6 +253,7 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
      WHERE t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -270,10 +272,14 @@ clearInaccessibleNodeError
      , MonadReader a m, HasAppConfig a)
   => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogInaccessibleNode] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogInaccessibleNode" t
-    WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
+     WHERE t.log = el.id
+       AND t.node = ?nodeId
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
@@ -288,6 +294,7 @@ reportNodeWrongChainError
      , MonadLogger m)
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeWrongChain) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -298,6 +305,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
        AND t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -314,12 +322,14 @@ clearNodeWrongChainError
      , SqlDb (PhantomDb m)
      , MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogNodeWrongChain] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeWrongChain" t
     WHERE t.log = el.id
       AND t.node = ?nodeId
       AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
@@ -332,6 +342,7 @@ reportNodeInvalidPeerCountError
       MonadLogger m, SqlDb (PhantomDb m))
   => Id Node -> Int -> Word64 -> m ()
 reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -340,6 +351,7 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
      WHERE t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -356,12 +368,14 @@ clearNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
       MonadReader a m, HasAppConfig a, SqlDb (PhantomDb m)) => Id Node -> m ()
 clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogNodeInvalidPeerCount] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeInvalidPeerCount" t
     WHERE t.log = el.id
       AND t.node = ?nodeId
       AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
@@ -396,7 +410,7 @@ reportVotingReminderError
       JOIN "ErrorLogVotingReminder" t ON t.log = el.id
       JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
      WHERE NOT b."data#deleted"
-       AND t."chainId" = ?chainId
+       AND el."chainId" = ?chainId
        AND t."baker#publicKeyHash" = ?bid
        AND t."periodKind" = ?votingPeriodKind
        AND t."previouslyVoted" = ?previouslyVoted
@@ -415,7 +429,6 @@ reportVotingReminderError
       (logId, log) <- insertErrorLog $ \logId ->
         ErrorLogVotingReminder
           { _errorLogVotingReminder_log = logId
-          , _errorLogVotingReminder_chainId = chainId
           , _errorLogVotingReminder_baker = bid
           , _errorLogVotingReminder_periodKind = votingPeriodKind
           , _errorLogVotingReminder_votingPeriod = votingPeriod
@@ -440,7 +453,7 @@ clearPastVotingPeriodErrors chainId bid rangeMax = do
       FROM "ErrorLogVotingReminder" t
     WHERE t.log = el.id
       AND el.stopped IS NULL
-      AND t."chainId" = ?chainId
+      AND el."chainId" = ?chainId
       AND t."baker#publicKeyHash" = ?bid
       AND t."rangeMax" <> ?rangeMax
     RETURNING t.log |]
@@ -464,6 +477,7 @@ reportBadNodeHeadError
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
       existingLog nodeTable = listToMaybe <$> [queryQ|
     SELECT el.id, t.log
@@ -473,6 +487,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
      WHERE t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
@@ -505,11 +520,15 @@ clearBadNodeHeadError
      , MonadIO m, MonadReader a m, HasAppConfig a)
   => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBadNodeHead] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogBadNodeHead" t
-    WHERE t.log = el.id AND t.node = ?nodeId AND el.stopped IS NULL
-    RETURNING t.log |]
+     WHERE t.log = el.id
+       AND t.node = ?nodeId
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+ RETURNING t.log |]
   for_ lids notifyDefault
   specErrs <- catMaybes <$> for lids getIdBy
   errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
@@ -532,12 +551,12 @@ missedBakeLog right pkh lvl = do
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
-      AND elbm."chainId" = ?chainId
       AND elbm.right = ?right
       AND elbm.level = ?lvl
     LEFT OUTER JOIN "ErrorLog" el
       ON el.id = elbm.log
       AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
     WHERE NOT b."data#deleted"
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
@@ -559,7 +578,6 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
         { _errorLogBakerMissed_log = eid
         , _errorLogBakerMissed_baker = bid
-        , _errorLogBakerMissed_chainId = chainId
         , _errorLogBakerMissed_right = right
         , _errorLogBakerMissed_level = lvl
         , _errorLogBakerMissed_fitness = f
@@ -577,6 +595,7 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ do
             JOIN "ErrorLog" el
               ON el.id = elbm.log
               AND el.stopped IS NULL
+              AND el.chainId = ?chainId
             WHERE NOT b."data#deleted"
               AND b."publicKeyHash" = ?pkh
               AND el.started > NOW() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
@@ -610,9 +629,9 @@ accusedBakeLog pkh chainId opHash blkHash =
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm."op#hash" = ?opHash
       AND elbm."op#blockHash" = ?blkHash
-      AND elbm."chainId" = ?chainId
-    LEFT OUTER JOIN "ErrorLog" el
-      ON el.id = elbm.log
+      AND el."chainId" = ?chainId
+     LEFT OUTER JOIN "ErrorLog" el
+       ON el.id = elbm.log
     WHERE NOT b."data#deleted"
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerAccused))]) <&> Map.fromList . fmap (\(bid, elid, elbmid) -> (bid, toList $ (,) <$> elid <*> elbmid))
@@ -631,7 +650,6 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
         { _errorLogBakerAccused_log = eid
         , _errorLogBakerAccused_op = Id (opHash, blkHash)
         , _errorLogBakerAccused_baker = bid
-        , _errorLogBakerAccused_chainId = chainId
         , _errorLogBakerAccused_right = right
         , _errorLogBakerAccused_level = lvl
         , _errorLogBakerAccused_cycle = cycle
@@ -662,7 +680,7 @@ clearMissedBake f right pkh lvl = do
       WHERE elbm.log = el.id
         AND NOT b."data#deleted"
         AND el.stopped IS NULL
-        AND elbm."chainId" = ?chainId
+        AND el."chainId" = ?chainId
         AND elbm.fitness < ?f :: VARCHAR[] -- because groundhog
         AND elbm.right = ?right
         AND b."publicKeyHash" = ?pkh
@@ -695,14 +713,19 @@ nodeNotDeleted nodeId = fmap (all not)
   $ project (NodeExternal_dataField ~> DeletableRow_deletedSelector)
   $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
 
-insertErrorLog :: forall a m. (IdData a ~ Id ErrorLog, PersistEntity a, HasDefaultNotify (Id a), PersistBackend m) => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
+insertErrorLog
+  :: forall a r m
+  . (IdData a ~ Id ErrorLog, PersistEntity a, HasDefaultNotify (Id a), PersistBackend m, MonadReader r m, HasAppConfig r)
+  => (Id ErrorLog -> a) -> m (Id ErrorLog, a)
 insertErrorLog mkErrorLog = do
   now <- getTime
+  chainId <- _appConfig_chainId <$> askAppConfig
   logId <- insert' ErrorLog
     { _errorLog_started = now
     , _errorLog_stopped = Nothing
     , _errorLog_lastSeen = now
     , _errorLog_noticeSentAt = Nothing
+    , _errorLog_chainId = chainId
     }
   let errLog = mkErrorLog logId
   insert_ errLog
