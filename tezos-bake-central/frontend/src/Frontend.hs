@@ -1236,9 +1236,9 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
-        Just True -> osPublicNodeRemoveMessage True
-        _ -> osPublicNodeRemoveMessage False
+      PublicNode_Obsidian -> \v -> do
+        text "Public Node Caching Service provided by Obsidian Systems."
+        osPublicNodeRemoveMessage $ fromMaybe False v
       PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
       PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
@@ -1260,7 +1260,7 @@ publicNodeOptions = do
 
     let toggled = if pn == PublicNode_Obsidian
           then never
-          else tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
+          else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
