@@ -1462,8 +1462,8 @@ nodesTab =
             timeFormat = "%-l:%M%P"
             time t = T.pack $ Time.formatTime Time.defaultTimeLocale timeFormat $ Time.utcToZonedTime tz t
 
-            desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported"
-              <> maybe " " (\t -> " at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
+            desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported "
+              <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
               <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
             btn = do
               ev <- divClass "buttons" $ uiButtonM "" $ do
