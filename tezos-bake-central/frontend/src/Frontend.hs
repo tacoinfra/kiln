@@ -1216,9 +1216,9 @@ addNodeModal close = do
        pure close
 
 
-osPublicNodeRemoveMessage :: DomBuilder t m => m ()
-osPublicNodeRemoveMessage = do
-  text "This Node can only be turned off via "
+osPublicNodeRemoveMessage :: DomBuilder t m => Bool -> m ()
+osPublicNodeRemoveMessage isOn = do
+  text $ "This Node can only be turned " <> (if isOn then "off" else "on") <> " via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1237,8 +1237,8 @@ publicNodeOptions = do
 
     describePublicNode = \case
       PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
-        Just True -> osPublicNodeRemoveMessage
-        _ -> pure ()
+        Just True -> osPublicNodeRemoveMessage True
+        _ -> osPublicNodeRemoveMessage False
       PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
       PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
@@ -1246,18 +1246,21 @@ publicNodeOptions = do
   mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+        activeClass = if pn == PublicNode_Obsidian
+          then constDyn "active"
+          else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Obsidian then "disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
         divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
-          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
-          $ tag (current mUsingOsPubNode) (domEvent Click element')
+    let toggled = if pn == PublicNode_Obsidian
+          then never
+          else tag (current $ not . isPublicNodeEnabled pn <$> pncDyn) (domEvent Click element')
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1442,7 +1445,6 @@ nodesTab =
             isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
             dyn_ $ bool workingTile generatingTile <$> isInitializing
 
-          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1455,8 +1457,8 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
-                  then osPublicNodeRemoveMessage
+                dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
+                  then osPublicNodeRemoveMessage True
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile
