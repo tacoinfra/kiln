@@ -640,22 +640,21 @@ body {
     border-bottom-width: @2px;
     background-color: #FEFEFE;
 
-    .column {
-      .ui.circular.label.link {
-        cursor: pointer;
-        height: @40px;
-        font-size: 16px;
-        margin-top: 2px;
-        &.basic {
-          border-color: transparent;
-        }
-        i.icon-bell {
-          margin-right: 0;
-        }
+
+    .ui.circular.label.link {
+      cursor: pointer;
+      height: @40px;
+      font-size: 16px;
+      margin-top: 2px;
+      &.basic {
+        border-color: transparent;
+      }
+      i.icon-bell {
+        margin-right: 0;
       }
     }
 
-    .topbar.column {
+    .topbar {
       display: flex;
       align-items: center;
 
