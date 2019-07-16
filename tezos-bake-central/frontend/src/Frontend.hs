@@ -356,50 +356,50 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
         Right () -> False
-  do
-    divClass "topbar" $ do
-      divClass "ui horizontal list" $ do
-        latestHead <- watchLatestHead
-        let infoItem faded title body = divClass "item" $
-              elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
-                divClass "header" $ text title
-                body
 
-        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+  divClass "topbar" $ do
+    divClass "ui horizontal list" $ do
+      latestHead <- watchLatestHead
+      let infoItem faded title body = divClass "item" $
+            elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
+              divClass "header" $ text title
+              body
 
-        protoInfo' <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-          text $ tshow $ unCycle c
+      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
-          text $ tshow (unRawLevel $ b ^. level)
-          elClass "span" "metadescription" $ text " Baked "
-          localHumanizedTimestampBasic $ pure $ b ^. timestamp
+      protoInfo' <- watchProtoInfo
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
+        text $ tshow $ unCycle c
 
-        amendments <- watchAmendment
-        mProtoInfo <- maybeDyn protoInfo'
-        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
-          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
-          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
-            kind <- holdUniqDyn $ _amendment_period <$> amendment
-            divClass "header" $ text "Amendment Period"
-            divClass "amendment-period" $ do
-              dynText $ textPeriod <$> kind
-              text " "
-              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
-              text "/"
-              display $ unCycle . cyclesPerPeriod <$> protoInfo
-              dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+      whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
+        text $ tshow (unRawLevel $ b ^. level)
+        elClass "span" "metadescription" $ text " Baked "
+        localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-        SemUi.icon "icon-disconnected"
-        (def
-          & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-          & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-          )
-    headerBell
+      amendments <- watchAmendment
+      mProtoInfo <- maybeDyn protoInfo'
+      mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+        let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+        tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+          kind <- holdUniqDyn $ _amendment_period <$> amendment
+          divClass "header" $ text "Amendment Period"
+          divClass "amendment-period" $ do
+            dynText $ textPeriod <$> kind
+            text " "
+            display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+            text "/"
+            display $ unCycle . cyclesPerPeriod <$> protoInfo
+            dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+
+    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+      SemUi.icon "icon-disconnected"
+      (def
+        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+        )
+  headerBell
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
