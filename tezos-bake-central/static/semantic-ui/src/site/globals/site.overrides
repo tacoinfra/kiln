@@ -630,8 +630,12 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
+    display: flex;
+    justify-content: space-between;
+
     padding-top: @6px;
     padding-bottom: @6px;
+    padding-left: @30px;
     padding-right: @20px;
     border-bottom-width: @2px;
     background-color: #FEFEFE;
@@ -652,20 +656,21 @@ body {
     }
 
     .topbar.column {
-      padding-left: @30px;
       display: flex;
       align-items: center;
 
-      > .ui.horizontal.list .item .content {
+      > .ui.horizontal.list > .item {
         font-weight: bold;
         font-size: @13px;
-        padding-left: @30px;
-        margin-right: @40px;
+        &:not(:first-child) {
+          margin-left: @40px;
+        }
 
         .metadescription {
           font-weight: normal;
         }
-        > .header {
+
+        .content .header {
           font-size: @12px;
           font-weight: normal;
           color: rgba(0, 0, 0, .6);

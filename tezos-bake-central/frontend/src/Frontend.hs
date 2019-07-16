@@ -356,8 +356,8 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
         Right () -> False
-  divClass "ui stackable grid" $ do
-    divClass "twelve wide column topbar" $ do
+  do
+    divClass "topbar column" $ do
       divClass "ui horizontal list" $ do
         latestHead <- watchLatestHead
         let infoItem faded title body = divClass "item" $
@@ -399,9 +399,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
           & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
           )
-
-    divClass "four wide column right aligned" $ do
-      headerBell
+    divClass "column" headerBell
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
