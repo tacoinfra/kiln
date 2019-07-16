@@ -366,8 +366,10 @@ runClientCommand
   :: (MonadLogger m, MonadIO m, Show e)
   => AppConfig -> Either NamedChain BinaryPaths -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
 runClientCommand appConfig chain args handleError = do
-  $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
+  let
+    procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
+  $(logInfoSH) ("runClientCommand: " :: Text,  procSpec)
+  (exitCode, stdout, stderr) <- liftIO $ Process.readCreateProcessWithExitCode procSpec ""
   case exitCode of
     ExitSuccess -> pure $ T.strip $ T.pack stdout
     ExitFailure _ -> do
@@ -430,6 +432,7 @@ registerKeyAsDelegate logger db nds sk pkh appConfig chain fee
             { Process.std_err = Process.UseHandle writePipe
             , Process.std_out = Process.UseHandle writePipe
             }
+      $(logInfoSH) $ ("registerKeyAsDelegate: process: " :: Text, p)
       result <- liftIO $ Process.withCreateProcess p $ \_ _ _ ph -> runLoggingEnv logger $ do
         let notifyStep rs = runDb (Identity db) $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First rs })
             go mrs' = liftIO (hIsEOF readPipe) >>= \case
