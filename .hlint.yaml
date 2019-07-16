@@ -88,5 +88,4 @@
 - ignore: {name: "Use elem"}
 - ignore: {name: "Use sortOn"}
 - ignore: {name: "Use >>"}
-- ignore: {name: "Redundant pure"}
 - ignore: {name: "Functor law"}
