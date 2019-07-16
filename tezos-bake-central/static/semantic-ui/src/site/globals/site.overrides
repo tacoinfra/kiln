@@ -659,6 +659,7 @@ body {
       align-items: center;
 
       > .ui.horizontal.list > .item {
+        color: black;
         font-weight: bold;
         font-size: @13px;
         &:not(:first-child) {
