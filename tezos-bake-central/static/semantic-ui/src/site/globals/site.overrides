@@ -119,12 +119,6 @@ h6.ui.header {
   opacity: 0.50;
 }
 
-.amendment-period > .icon {
-  margin-left: @8px;
-  font-size: @20px;
-  vertical-align: middle;
-}
-
 .vote-modal {
   min-width: 700px;
   .detail {
@@ -659,9 +653,6 @@ body {
       align-items: center;
 
       > .ui.horizontal.list > .item {
-        color: black;
-        font-weight: bold;
-        font-size: @13px;
         &:not(:first-child) {
           margin-left: @40px;
         }
@@ -670,13 +661,27 @@ body {
           font-weight: normal;
         }
 
-        .content .header {
-          font-size: @12px;
-          font-weight: normal;
-          color: rgba(0, 0, 0, .6);
-          padding-bottom: @4px;
+        .content {
+          .header {
+            font-size: @12px;
+            font-weight: normal;
+            color: rgba(0, 0, 0, .6);
+            padding-bottom: @4px;
+          }
+          .description {
+            display: flex;
+            align-items: center;
+            color: black;
+            font-weight: bold;
+            font-size: @13px;
+            .icon {
+              margin-left: @8px;
+              font-size: @20px;
+            }
+          }
         }
       }
+
 
       .disconnected-tooltip {
         width: 260px;

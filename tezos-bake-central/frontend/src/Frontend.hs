@@ -363,7 +363,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       let infoItem faded title body = divClass "item" $
             elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
               divClass "header" $ text title
-              body
+              divClass "description" body
 
       infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
@@ -384,8 +384,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
         tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
           kind <- holdUniqDyn $ _amendment_period <$> amendment
-          divClass "header" $ text "Amendment Period"
-          divClass "amendment-period" $ do
+          infoItem (pure False) "Amendment Period" $ do
             dynText $ textPeriod <$> kind
             text " "
             display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
