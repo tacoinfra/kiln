@@ -368,7 +368,7 @@ runClientCommand
 runClientCommand appConfig chain args handleError = do
   let
     procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
-  $(logInfoSH) ("runClientCommand: " :: Text,  procSpec)
+  $(logInfoSH) ("runClientCommand: " :: Text, procSpec)
   (exitCode, stdout, stderr) <- liftIO $ Process.readCreateProcessWithExitCode procSpec ""
   case exitCode of
     ExitSuccess -> pure $ T.strip $ T.pack stdout
