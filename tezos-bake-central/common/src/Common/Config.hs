@@ -89,7 +89,7 @@ conjList comma conj = go
 
 parseBakerAddr :: Text -> Either Text PublicKeyHash
 parseBakerAddr v = do
-  when (not $ T.take 3 v `elem` okPrefixes) $ do
+  unless (T.take 3 v `elem` okPrefixes) $ do
     Left $ (if T.take 3 v == "KT1" then "\"KT1\" addresses cannot bake. Address" else "Baker address") <> " must begin with " <> conjList ", " " or " (NE.map tshow okPrefixes) <> "."
   for_ (T.find (isNothing . flip T.find "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" . (==)) v) $ \ch ->
     Left $ "The character " <> tshow ch <> " is not allowed in a baker address."

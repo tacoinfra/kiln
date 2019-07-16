@@ -20,8 +20,8 @@
 module Frontend.Amendment where
 
 import Control.Monad.Fix (MonadFix)
-import Data.List (sortBy)
-import Data.Ord (Down (..), comparing)
+import Data.List (sortOn)
+import Data.Ord (Down (..))
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
@@ -152,7 +152,7 @@ periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m))
   => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
 periodProposals proposals' = do
-  let proposals = sortBy (comparing $ Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
+  let proposals = sortOn (Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
   el "table" $ do
     el "thead" $ do
       el "tr" $ do

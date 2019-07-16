@@ -64,7 +64,6 @@
 # Warnings currently triggered by your code
 - ignore: {name: "Use fewer imports"}
 - ignore: {name: "Reduce duplication"}
-- ignore: {name: "Use unless"}
 - ignore: {name: "Redundant bracket"}
 - ignore: {name: "Move brackets to avoid $"}
 - ignore: {name: "Avoid lambda"}
@@ -83,8 +82,5 @@
 - ignore: {name: "Use fromMaybe"}
 - ignore: {name: "Use maybe"}
 - ignore: {name: "Use &&"}
-- ignore: {name: "Use concatMap"}
-- ignore: {name: "Use elem"}
-- ignore: {name: "Use sortOn"}
 - ignore: {name: "Use >>"}
 - ignore: {name: "Functor law"}

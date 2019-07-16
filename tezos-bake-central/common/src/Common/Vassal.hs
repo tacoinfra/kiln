@@ -91,7 +91,7 @@ import Common.WrappedShow1
 
 -- | this is the parametric replacement for *crop*.
 chop :: (Semigroup a, ViewSelector t) => (a -> b -> Maybe c) -> t a -> View t b -> View t c
-chop f vs = iMapMaybe $ \i b -> maybe Nothing (flip f b) $ lookup i vs
+chop f vs = iMapMaybe $ \i b -> flip f b =<< lookup i vs
 
 cropView :: (Semigroup a, ViewSelector t) => t a -> View t b -> View t a
 cropView vs = iMapMaybe $ \i _ -> lookup i vs
