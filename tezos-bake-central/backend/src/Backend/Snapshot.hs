@@ -14,7 +14,6 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
-import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad.Except (runExceptT)
@@ -22,7 +21,6 @@ import Control.Monad.Logger
 import Data.ByteString.Base58
 import qualified Data.ByteString as BS
 import qualified Data.Map as Map
-import Data.Map (Map)
 import Data.Pool (Pool)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -37,12 +35,11 @@ import Snap.Util.FileUploads
 import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
-import Unsafe.Coerce
 
 import Tezos.Base58Check
 import Tezos.Block (VeryBlockLike (..))
 import Tezos.History
-import Tezos.ShortByteString (ShortByteString, toShort)
+import Tezos.ShortByteString (toShort)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -69,7 +66,8 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
       -- We might have snapshot from a killed kiln process, so cleanup
       cleanupDir logger uploadTmpLocation
       cleanupDir logger storeLocation
-      void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+      forked <- or <$> handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+      liftIO $ unless forked $ void $ tryTakeMVar lockMVar
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
@@ -79,41 +77,51 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
-    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
-    uploadHandler p = \case
-      Left e -> runLoggingEnv logger $
-        $(logError) ("Could not upload file: " <> tshow e)
-      Right fp -> runLoggingEnv logger $ do
+    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO Bool
+    uploadHandler p = runLoggingEnv logger . \case
+      Left e -> $(logError) ("Could not upload file: " <> tshow e) >> pure False
+      Right fp -> do
         $(logDebug) "Upload successful."
         now <- liftIO $ getCurrentTime
         let
           fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
           storePath = storeLocation <> fileName
-          sm = SnapshotMeta (T.pack fileName) (T.pack storePath) now Nothing Nothing Nothing Nothing Nothing
+          sm = SnapshotMeta
+            { _snapshotMeta_filename = T.pack fileName
+            , _snapshotMeta_storePath = T.pack storePath
+            , _snapshotMeta_uploadTime = now
+            , _snapshotMeta_importError = Nothing
+            , _snapshotMeta_headBlock = Nothing
+            , _snapshotMeta_headBlockPrefix = Nothing
+            , _snapshotMeta_headBlockLevel = Nothing
+            , _snapshotMeta_headBlockBakeTime = Nothing
+            }
         smId <- inDb $ do
           deleteAll sm
           k <- insert sm
           notify NotifyTag_SnapshotMeta sm
           pure k
         liftIO $ renameFile fp storePath
-        _ <- liftIO $ forkIO $ withLockRelease $ race_ (importSnapshotData appConfig nds logger db chain sm smId)
-          $ runLoggingEnv logger $ do
-            -- Wait for 10 hr, then give up
-            threadDelay' (60*60*10)
-            inDb $ do
-              nodePPid <- project1 ( NodeInternal_idField
-                                 , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-                (ProcessState_Node NodeProcessState_ImportTimeout)
-            $(logError) "Could not import snapshot: Timeout"
-            liftIO $ removeFile storePath
-        pure ()
+        _ <- liftIO $ forkIO $ withLockRelease $ do
+          mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
+          case mVal of
+            Just _ -> pure ()
+            Nothing -> runLoggingEnv logger $ do
+              $(logError) "Could not import snapshot: Timeout"
+              inDb $ do
+                nodePPid <- project1 ( NodeInternal_idField
+                                   , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+                for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                  (ProcessState_Node NodeProcessState_ImportTimeout)
+              liftIO $ removeFile storePath
+        pure True
 
 cleanupDir :: (MonadIO m) => LoggingEnv -> FilePath -> m ()
 cleanupDir logger dir = liftIO $ do
   removeDirectoryRecursive dir
     `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Remove dir failed: " <> tshow dir <> "\nError: " <> tshow e))
   createDirectoryIfMissing True dir
+    `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Make dir failed: " <> tshow dir <> "\nError: " <> tshow e))
 
 importSnapshotData
   :: AppConfig
@@ -139,9 +147,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
     updateState s = for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
 
   inDb $ updateState NodeProcessState_ImportingSnapshot
+  let procSpec = Process.proc nodePath (["snapshot", "import", storePath, "--data-dir", dataDir])
   $(logDebug) $ "importSnapshotData: starting import"
-  (exitCode, _stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
-    nodePath (["snapshot", "import", storePath, "--data-dir", dataDir]) ""
+  (exitCode, _stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
 
 -- Example output on success
 -- stderr:
@@ -155,15 +163,15 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   liftIO $ removeFile storePath
   case exitCode of
     ExitSuccess -> void $ do
-      $(logDebug) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
+      $(logDebug) $ "importSnapshotData success: stderr: \n" <> stderr
       let
         prefixStr = "Setting current head to block "
-        mBlkHashPrefix = headMay =<< T.words <$> (T.stripPrefix prefixStr $ snd $ T.breakOn prefixStr $ T.pack stderr)
+        mBlkHashPrefix = headMay =<< T.words <$> (T.stripPrefix prefixStr $ snd $ T.breakOn prefixStr stderr)
       case mBlkHashPrefix of
         Nothing -> void $ do
-          $(logError) $ "importSnapshotData failed: could not parse blk blkHash" <> T.pack stderr
+          $(logError) $ "importSnapshotData failed: could not parse blk blkHash" <> stderr
           inDb $ do
-            update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+            update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
             traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
             updateState NodeProcessState_ImportFailed
         Just blkHashPrefix -> void $ do
@@ -184,9 +192,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
             updateState NodeProcessState_ImportComplete
 
     ExitFailure _ -> void $ do
-      $(logError) $ "importSnapshotData failed: " <> T.pack stderr
+      $(logError) $ "importSnapshotData failed: " <> stderr
       inDb $ do
-        update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+        update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
         traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
         updateState NodeProcessState_ImportFailed
 
@@ -269,13 +277,10 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
       then Just blk
       else Nothing
     mHashes :: Maybe (Maybe BlockHash, Maybe BlockHash)
-    mHashes = (\p -> (getHash <$> Map.lookupLE p blks, getHash <$> Map.lookupGE p blks)) <$> mPrefix
-    getHash :: (ShortByteString, a) -> BlockHash
-    getHash = unsafeCoerce . fst
-    blks :: Map ShortByteString a
-    blks = unsafeCoerce $ _cachedHistory_blocks history
-    mPrefix :: Maybe ShortByteString
-    mPrefix = toShort . BS.drop prefixDropLen <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
+    mHashes = (\p -> (fst <$> Map.lookupLE p blks, fst <$> Map.lookupGE p blks)) <$> mPrefix
+    blks = _cachedHistory_blocks history
+    mPrefix :: Maybe BlockHash
+    mPrefix = HashedValue . toShort . BS.drop prefixDropLen <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
     prefixDropLen = BS.length $ Tezos.Base58Check.prefix (Proxy @'HashType_BlockHash)
     blkHashLength = 51 :: Int
     appendedPrefix = prefix' <> (T.replicate (blkHashLength - (T.length prefix')) "1")

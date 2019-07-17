@@ -29,6 +29,7 @@ import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
+import Data.Functor.Sum
 import Data.List (intersperse, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -87,7 +88,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute(..))
+import Common.Route
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Amendment
@@ -122,44 +123,38 @@ frontendBody
     )
   => m ()
 frontendBody = void $ do
-  mHostInfo <- getHostInfo
-  let
-    renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
-
-    wsUrl = ffor mHostInfo $ \(s, h, mp) ->
-      let
-        wsPort = mp <|> (Just (case s of
-            "http" -> 80
-            "https" -> 443
-            _ -> 80))
-      in mconcat
-        [ T.replace "http" "ws" s
-        , "://", h
-        , ":", tshow (fromMaybe 80 wsPort)
-        , "/", renderPathPieces [listenPath]
-        ]
+  mWsUri <- getBackendPath (InL BackendRoute_Listen :/ ()) True
   rec
-    (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    (socketState, _) <- runRhyoliteWidget (maybe (error "Invalid WS URL") Uri.render mWsUri) $ do
       withFrontendContext $
         withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
             appMain
   pure ()
 
--- (Scheme, Host, Port)
-getHostInfo :: (MonadJSM m) => m (Maybe (Text, Text, Maybe Word))
-getHostInfo = do
+getBackendPath :: (MonadJSM m) => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
+getBackendPath backendRoute isWebsocket = do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
     Nothing ->
       Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
   let
-    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
-    host = Uri.unRText . Uri.authHost <$> routeAuthority
-    routeAuthority = Uri.uriAuthority route ^? _Right
-  pure $ (,,) <$> routeScheme <*> host <*> (Uri.authPort <$> routeAuthority)
+    url = do
+      encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
+      let path = fst $ encode encoder $ backendRoute
+      pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
+      scheme <- if isWebsocket
+        then case Uri.uriScheme route of
+          rtextScheme | rtextScheme == Uri.mkScheme "https" -> Uri.mkScheme "wss"
+          rtextScheme | rtextScheme == Uri.mkScheme "http" -> Uri.mkScheme "ws"
+          _ -> Nothing
+        else Uri.uriScheme route
+      return $ route
+        { Uri.uriPath = Just (False, pathPiece)
+        , Uri.uriScheme = Just scheme
+        }
+  pure url
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
@@ -367,52 +362,49 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
         Right () -> False
-  divClass "ui stackable grid" $ do
-    divClass "twelve wide column topbar" $ do
-      divClass "ui horizontal list" $ do
-        latestHead <- watchLatestHead
-        let infoItem faded title body = divClass "item" $
-              elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
-                divClass "header" $ text title
-                body
 
-        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+  divClass "topbar" $ do
+    divClass "ui horizontal list" $ do
+      latestHead <- watchLatestHead
+      let infoItem faded title body = divClass "item" $
+            elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
+              divClass "header" $ text title
+              divClass "description" body
 
-        protoInfo' <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-          text $ tshow $ unCycle c
+      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
-          text $ tshow (unRawLevel $ b ^. level)
-          elClass "span" "metadescription" $ text " Baked "
-          localHumanizedTimestampBasic $ pure $ b ^. timestamp
+      protoInfo' <- watchProtoInfo
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
+        text $ tshow $ unCycle c
 
-        amendments <- watchAmendment
-        mProtoInfo <- maybeDyn protoInfo'
-        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
-          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
-          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
-            kind <- holdUniqDyn $ _amendment_period <$> amendment
-            divClass "header" $ text "Amendment Period"
-            divClass "amendment-period" $ do
-              dynText $ textPeriod <$> kind
-              text " "
-              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
-              text "/"
-              display $ unCycle . cyclesPerPeriod <$> protoInfo
-              dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+      whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
+        text $ tshow (unRawLevel $ b ^. level)
+        elClass "span" "metadescription" $ text " Baked "
+        localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-        SemUi.icon "icon-disconnected"
-        (def
-          & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-          & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-          )
+      amendments <- watchAmendment
+      mProtoInfo <- maybeDyn protoInfo'
+      mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+        let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+        tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+          kind <- holdUniqDyn $ _amendment_period <$> amendment
+          infoItem (pure False) "Amendment Period" $ do
+            dynText $ textPeriod <$> kind
+            text " "
+            display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+            text "/"
+            display $ unCycle . cyclesPerPeriod <$> protoInfo
+            dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
-    divClass "four wide column right aligned" $ do
-      headerBell
+    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+      SemUi.icon "icon-disconnected"
+      (def
+        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+        )
+  headerBell
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
@@ -877,7 +869,7 @@ sidebarList name nodes' modal = do
 
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
-    openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name)
+    openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses modal
 
 bakerStatus :: Either CollectiveNodesFailure BakerSummary -> MonitoredStatus
@@ -1255,8 +1247,8 @@ startNodeWorkflow backWF = Workflow $ do
   elClass "h5" "ui header" $ text "Initialize Chain Data From:"
   rec
     useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
-    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
-      divClass "" $ text "Snapshot (Recommended)"
+    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ el "div" $ do
+      el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
@@ -1285,11 +1277,10 @@ startNodeWorkflow backWF = Workflow $ do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
 
-  mHostInfo <- getHostInfo
-  let uploadUri = ffor mHostInfo $ \(s, h, mp) ->
-        s <> "://" <> h <> (maybe "" (\p -> ":" <> tshow p) mp) <> "/snapshot-upload"
-      formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  _ <- for uploadUri $ \uri -> postForms uri formUploadEv
+  mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
+  let
+    formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
+  _ <- for mUri $ \uri -> postForms (Uri.render uri) formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
@@ -1346,9 +1337,9 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
-osPublicNodeRemoveMessage :: DomBuilder t m => m ()
-osPublicNodeRemoveMessage = do
-  text "This Node can only be turned off via "
+osPublicNodeRemoveMessage :: DomBuilder t m => Bool -> m ()
+osPublicNodeRemoveMessage isOn = do
+  text $ "This Node can only be turned " <> (if isOn then "off" else "on") <> " via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1366,9 +1357,9 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
-        Just True -> osPublicNodeRemoveMessage
-        _ -> pure ()
+      PublicNode_Obsidian -> \v -> do
+        text "Public Node Caching Service provided by Obsidian Systems."
+        osPublicNodeRemoveMessage $ fromMaybe False v
       PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
       PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
@@ -1376,18 +1367,21 @@ publicNodeOptions = do
   mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+        activeClass = if pn == PublicNode_Obsidian
+          then constDyn "active"
+          else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Obsidian then "disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
         divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
-          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
-          $ tag (current mUsingOsPubNode) (domEvent Click element')
+    let toggled = if pn == PublicNode_Obsidian
+          then never
+          else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1669,7 +1663,6 @@ nodesTab =
               (ProcessState_Node s) -> nodeStartTile s
               _ -> const workingTile
 
-          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1682,8 +1675,8 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
-                  then osPublicNodeRemoveMessage
+                dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
+                  then osPublicNodeRemoveMessage True
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile

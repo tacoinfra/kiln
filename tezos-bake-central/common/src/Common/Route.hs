@@ -40,7 +40,7 @@ data BackendRoute :: * -> * where
   BackendRoute_Listen :: BackendRoute ()
   BackendRoute_Missing :: BackendRoute () -- Used to handle unparseable routes.
   BackendRoute_PublicCacheApi :: BackendRoute PageName
-  BackendRoute_SnapshotUpload :: BackendRoute PageName
+  BackendRoute_SnapshotUpload :: BackendRoute ()
 
 backendRouteEncoder
   :: Encoder (Either Text) Identity (R (Sum BackendRoute (ObeliskRoute AppRoute))) PageName
@@ -49,7 +49,7 @@ backendRouteEncoder = handleEncoder (const (InR (ObeliskRoute_App AppRoute_Index
     InL backendRoute -> case backendRoute of
       BackendRoute_Listen -> PathSegment "listen" $ unitEncoder mempty
       BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
-      BackendRoute_SnapshotUpload -> PathSegment "snapshot-upload" id
+      BackendRoute_SnapshotUpload -> PathSegment "snapshot-upload" $ unitEncoder mempty
       BackendRoute_PublicCacheApi -> PathSegment "api" id
     InR obeliskRoute -> obeliskRouteSegment obeliskRoute appRouteSegment
 
