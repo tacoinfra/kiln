@@ -54,4 +54,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
       tezos-noderpc = dontHaddock super.tezos-noderpc;
     });
-  })
+  }) // {
+    dev.extraGhciArgs = ["-fobject-code"];
+  }
