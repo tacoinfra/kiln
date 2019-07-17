@@ -366,52 +366,49 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
         Right () -> False
-  divClass "ui stackable grid" $ do
-    divClass "twelve wide column topbar" $ do
-      divClass "ui horizontal list" $ do
-        latestHead <- watchLatestHead
-        let infoItem faded title body = divClass "item" $
-              elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
-                divClass "header" $ text title
-                body
 
-        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+  divClass "topbar" $ do
+    divClass "ui horizontal list" $ do
+      latestHead <- watchLatestHead
+      let infoItem faded title body = divClass "item" $
+            elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
+              divClass "header" $ text title
+              divClass "description" body
 
-        protoInfo' <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-          text $ tshow $ unCycle c
+      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
-          text $ tshow (unRawLevel $ b ^. level)
-          elClass "span" "metadescription" $ text " Baked "
-          localHumanizedTimestampBasic $ pure $ b ^. timestamp
+      protoInfo' <- watchProtoInfo
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
+        text $ tshow $ unCycle c
 
-        amendments <- watchAmendment
-        mProtoInfo <- maybeDyn protoInfo'
-        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
-          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
-          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
-            kind <- holdUniqDyn $ _amendment_period <$> amendment
-            divClass "header" $ text "Amendment Period"
-            divClass "amendment-period" $ do
-              dynText $ textPeriod <$> kind
-              text " "
-              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
-              text "/"
-              display $ unCycle . cyclesPerPeriod <$> protoInfo
-              dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+      whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
+        text $ tshow (unRawLevel $ b ^. level)
+        elClass "span" "metadescription" $ text " Baked "
+        localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-        SemUi.icon "icon-disconnected"
-        (def
-          & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-          & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-          )
+      amendments <- watchAmendment
+      mProtoInfo <- maybeDyn protoInfo'
+      mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+        let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+        tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+          kind <- holdUniqDyn $ _amendment_period <$> amendment
+          infoItem (pure False) "Amendment Period" $ do
+            dynText $ textPeriod <$> kind
+            text " "
+            display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+            text "/"
+            display $ unCycle . cyclesPerPeriod <$> protoInfo
+            dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
-    divClass "four wide column right aligned" $ do
-      headerBell
+    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+      SemUi.icon "icon-disconnected"
+      (def
+        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+        )
+  headerBell
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
@@ -1332,9 +1329,9 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
-osPublicNodeRemoveMessage :: DomBuilder t m => m ()
-osPublicNodeRemoveMessage = do
-  text "This Node can only be turned off via "
+osPublicNodeRemoveMessage :: DomBuilder t m => Bool -> m ()
+osPublicNodeRemoveMessage isOn = do
+  text $ "This Node can only be turned " <> (if isOn then "off" else "on") <> " via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1352,9 +1349,9 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
-        Just True -> osPublicNodeRemoveMessage
-        _ -> pure ()
+      PublicNode_Obsidian -> \v -> do
+        text "Public Node Caching Service provided by Obsidian Systems."
+        osPublicNodeRemoveMessage $ fromMaybe False v
       PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
       PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
 
@@ -1362,18 +1359,21 @@ publicNodeOptions = do
   mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+        activeClass = if pn == PublicNode_Obsidian
+          then constDyn "active"
+          else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Obsidian then "disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
         divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
-          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
-          $ tag (current mUsingOsPubNode) (domEvent Click element')
+    let toggled = if pn == PublicNode_Obsidian
+          then never
+          else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1604,7 +1604,6 @@ nodesTab =
               (ProcessState_Node s) -> nodeStartTile s
               _ -> const workingTile
 
-          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1617,8 +1616,8 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
-                  then osPublicNodeRemoveMessage
+                dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
+                  then osPublicNodeRemoveMessage True
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile

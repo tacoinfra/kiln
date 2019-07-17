@@ -97,10 +97,12 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
           updateState ProcessState_Failed
         throwIO (e :: ExitCode)
       inDb $ updateState ProcessState_Starting
-      let procSpec = (mkProcess v configFile)
-            { Proc.std_out = Proc.CreatePipe
-            , Proc.std_err = Proc.CreatePipe
-            }
+      let
+        procSpec = (mkProcess v configFile)
+          { Proc.std_out = Proc.CreatePipe
+          , Proc.std_err = Proc.CreatePipe
+          }
+      runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
       withCreateProcess procSpec procMonitor
     threadDelay' 10
   where

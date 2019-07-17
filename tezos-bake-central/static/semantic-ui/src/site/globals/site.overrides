@@ -119,12 +119,6 @@ h6.ui.header {
   opacity: 0.50;
 }
 
-.amendment-period > .icon {
-  margin-left: @8px;
-  font-size: @20px;
-  vertical-align: middle;
-}
-
 .vote-modal {
   min-width: 700px;
   .detail {
@@ -630,48 +624,64 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
+    display: flex;
+    justify-content: space-between;
+
     padding-top: @6px;
     padding-bottom: @6px;
+    padding-left: @30px;
     padding-right: @20px;
     border-bottom-width: @2px;
     background-color: #FEFEFE;
 
-    .column {
-      .ui.circular.label.link {
-        cursor: pointer;
-        height: @40px;
-        font-size: 16px;
-        margin-top: 2px;
-        &.basic {
-          border-color: transparent;
-        }
-        i.icon-bell {
-          margin-right: 0;
-        }
+
+    .ui.circular.label.link {
+      cursor: pointer;
+      height: @40px;
+      font-size: 16px;
+      margin-top: 2px;
+      &.basic {
+        border-color: transparent;
+      }
+      i.icon-bell {
+        margin-right: 0;
       }
     }
 
-    .topbar.column {
-      padding-left: @30px;
+    .topbar {
       display: flex;
       align-items: center;
 
-      > .ui.horizontal.list .item .content {
-        font-weight: bold;
-        font-size: @13px;
-        padding-left: @30px;
-        margin-right: @40px;
+      > .ui.horizontal.list > .item {
+        &:not(:first-child) {
+          margin-left: @40px;
+        }
 
         .metadescription {
           font-weight: normal;
         }
-        > .header {
-          font-size: @12px;
-          font-weight: normal;
-          color: rgba(0, 0, 0, .6);
-          padding-bottom: @4px;
+
+        .content {
+          .header {
+            font-size: @12px;
+            font-weight: normal;
+            color: rgba(0, 0, 0, .6);
+            padding-bottom: @4px;
+          }
+          .description {
+            display: flex;
+            align-items: center;
+            color: black;
+            font-weight: bold;
+            font-size: @13px;
+            .icon {
+              margin-left: @8px;
+              font-size: @20px;
+            }
+          }
         }
       }
+
 
       .disconnected-tooltip {
         width: 260px;
