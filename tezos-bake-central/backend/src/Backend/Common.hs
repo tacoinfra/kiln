@@ -6,7 +6,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, logInfoSH)
+import Control.Monad.Logger (MonadLogger, logDebug)
 import Data.Functor (void)
 import qualified Data.Text as T
 import Data.Text (Text)
@@ -17,6 +17,7 @@ import qualified System.Process as Process
 import System.Timeout (timeout)
 
 import Common (nominalDiffTimeToMicroseconds)
+import ExtraPrelude
 
 workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ()) -> m (IO ())
 workerWithDelay getDelay f = worker' $ do
@@ -43,6 +44,6 @@ readCreateProcessWithExitCodeWithLogging
   :: (MonadIO m, MonadLogger m)
   => Process.CreateProcess -> Text -> m (ExitCode, Text, Text)
 readCreateProcessWithExitCodeWithLogging cp stdin = do
-  $(logInfoSH) ("readProcessWithExitCode : " :: Text, cp, stdin)
+  $(logDebug) $ "readProcessWithExitCode: " <> tshow cp <> " with STDIN: " <> stdin
   (ec, stdOut, stdErr) <- liftIO $ Process.readCreateProcessWithExitCode cp $ T.unpack stdin
   pure (ec, T.pack stdOut, T.pack stdErr)
