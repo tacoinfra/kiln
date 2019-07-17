@@ -411,12 +411,11 @@ backendImpl cfg serve = do
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
         addFinalizer =<< tezosClientWorker 1.3 logger dataSrc appConfig db v
 
-      (lockMVar :: MVar ()) <- liftIO newEmptyMVar
-
+      snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
-        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc db chain lockMVar
+        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
