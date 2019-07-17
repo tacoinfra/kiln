@@ -41,6 +41,7 @@ import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time (UTCTime)
 import Data.Word (Word64)
+import Data.Version
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
 import qualified GHCJS.DOM.File as File
@@ -481,20 +482,7 @@ nodesTabOrWelcome = do
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
-  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
-  whenJust mchain $ \chain -> do
-    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
-    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
-    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
-        guard $ _errorLogNetworkUpdate_namedChain ua == chain
-        return ua
-      _ -> Nothing
-    dyn_ $ ffor mUpgradeLog $ \case
-      Just elua -> divClass "dashboard-section dashboard-section-global-alerts" $ do
-        SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $
-          networkUpdateAlert elua
-      Nothing -> return ()
+  globalAlerts
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
@@ -503,6 +491,40 @@ nodesTabOrWelcome = do
       when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
+
+globalAlerts
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => m ()
+globalAlerts = do
+  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
+  mNetworkAlert <- for mchain $ \chain -> do
+    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
+        guard $ _errorLogNetworkUpdate_namedChain ua == chain
+        return ua
+      _ -> Nothing
+    pure $ fmap networkUpdateAlert <$> mUpgradeLog
+
+  currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+  upstreamVersion <- watchUpstreamVersion
+  let
+    mUpdateAlert :: Dynamic t (Maybe (m ()))
+    mUpdateAlert = ffor upstreamVersion $ \case
+      Just uv
+        | Just v <- _upstreamVersion_version uv
+        , v > currentVersion
+        , not (_upstreamVersion_dismissed uv) -> Just $ kilnUpdateAlert v
+      _ -> Nothing
+
+    allAlerts :: Dynamic t [m ()]
+    allAlerts = catMaybes <$> sequence [ (fmap join . sequence) mNetworkAlert, mUpdateAlert ]
+  dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
+    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ m
 
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
@@ -519,6 +541,26 @@ networkUpdateAlert elua = do
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+
+kilnUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => Version -> m ()
+kilnUpdateAlert v = do
+  let
+    header = "Kiln " <> T.pack (showVersion v) <> " is available!"
+    body = el "div" $ do
+      el "p" $ do
+        text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
+        let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
+        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+      el "p" $ do
+        resolve <- divClass "buttons" $ uiButtonM "primary" $ do
+          icon "icon-check"
+          text "Dismiss"
+        void $ requestingIdentity $ public PublicRequest_DismissUpgradeAlert <$ resolve
+  renderSplashAlert
+    (icon "icon-update-circle big blue")
+    (text header)
+    Nothing
+    body
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
 welcomeScreen hasOsPubNode = mdo

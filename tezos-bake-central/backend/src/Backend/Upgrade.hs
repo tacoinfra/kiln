@@ -138,6 +138,7 @@ setUpstreamVersion v = do
           { _upstreamVersion_error = preview _Left v
           , _upstreamVersion_version = preview _Right v
           , _upstreamVersion_updated = now
+          , _upstreamVersion_dismissed = False
           }
       notify NotifyTag_UpstreamVersion . (, new) =<< insert' new
     Just existingId -> do
@@ -145,6 +146,7 @@ setUpstreamVersion v = do
         [ UpstreamVersion_errorField =. preview _Left v
         , UpstreamVersion_versionField =. preview _Right v
         , UpstreamVersion_updatedField =. now
+        , UpstreamVersion_dismissedField =. False
         ]
       getId existingId >>= traverse_ (notify NotifyTag_UpstreamVersion . (existingId,))
 

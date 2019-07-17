@@ -70,6 +70,8 @@ instance HasRequest Bake where
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
       :: PublicRequest Bake ()
+    PublicRequest_DismissUpgradeAlert
+      :: PublicRequest Bake ()
     PublicRequest_SetPublicNodeConfig
       :: PublicNode
       -> Bool

@@ -876,6 +876,7 @@ data UpstreamVersion = UpstreamVersion
   { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
   , _upstreamVersion_version :: !(Maybe Version)
   , _upstreamVersion_updated :: !UTCTime
+  , _upstreamVersion_dismissed :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
