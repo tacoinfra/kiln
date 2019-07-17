@@ -1246,15 +1246,15 @@ startNodeWorkflow backWF = Workflow $ do
   elClass "h5" "ui header" $ text "Initialize Chain Data From:"
   rec
     useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
-    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ divClass "" $ do
-      divClass "" $ text "Snapshot (Recommended)"
+    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ el "div" $ do
+      el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
         fi <- fileInput def
         pure $ (headMay <$> value fi)
-    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
-      divClass "" $ text "Peer to Peer Download"
+    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ el "div" $ do
+      el "div" $ text "Peer to Peer Download"
       divClass "explanation" $ do
         el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
@@ -1291,23 +1291,23 @@ verifySnapshotModal ::
   => SnapshotMeta -> Event t () -> m (Event t ())
 verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   divClass "ui header" $ text "Verify Snapshot"
-  divClass "" $ do
-    divClass "" $ text "Verifying the Block Hash"
-    divClass "" $ do
+  el "div" $ do
+    el "div" $ text "Verifying the Block Hash"
+    el "div" $ do
       el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
       el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
 
-  divClass "" $ do
-    divClass "" $ text "Snapshot's Highest Block Hash:"
+  el "div" $ do
+    el "div" $ text "Snapshot's Highest Block Hash:"
     case smd ^. snapshotMeta_headBlock of
-      Just blk -> divClass "" $ text $ toBase58Text blk
-      Nothing -> divClass "" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
-  divClass "" $ do
-    divClass "" $ text "Highest Block Level:"
-    divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
-  divClass "" $ do
-    divClass "" $ text "Date Baked:"
-    divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+      Just blk -> el "div" $ text $ toBase58Text blk
+      Nothing -> el "div" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
+  el "div" $ do
+    el "div" $ text "Highest Block Level:"
+    el "div" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
+  el "div" $ do
+    el "div" $ text "Date Baked:"
+    el "div" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
