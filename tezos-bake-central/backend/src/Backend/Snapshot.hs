@@ -58,16 +58,8 @@ handleSnapshotUpload
   -> Either NamedChain a
   -> MVar ()
   -> Snap.Snap ()
-handleSnapshotUpload appConfig nds db chain lockMVar = do
-  (liftIO $ tryPutMVar lockMVar ()) >>= \case
-    False -> runLoggingEnv logger $ do
-      $(logWarn) "Upload already in progress, ignoring this request."
-    True -> do
-      -- We might have snapshot from a killed kiln process, so cleanup
-      cleanupDir logger uploadTmpLocation
-      cleanupDir logger storeLocation
-      forked <- or <$> handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
-      liftIO $ unless forked $ void $ tryTakeMVar lockMVar
+handleSnapshotUpload appConfig nds db chain lockMVar =
+  void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
@@ -77,44 +69,55 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
-    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO Bool
-    uploadHandler p = runLoggingEnv logger . \case
-      Left e -> $(logError) ("Could not upload file: " <> tshow e) >> pure False
-      Right fp -> do
-        $(logDebug) "Upload successful."
-        now <- liftIO $ getCurrentTime
-        let
-          fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
-          storePath = storeLocation <> fileName
-          sm = SnapshotMeta
-            { _snapshotMeta_filename = T.pack fileName
-            , _snapshotMeta_storePath = T.pack storePath
-            , _snapshotMeta_uploadTime = now
-            , _snapshotMeta_importError = Nothing
-            , _snapshotMeta_headBlock = Nothing
-            , _snapshotMeta_headBlockPrefix = Nothing
-            , _snapshotMeta_headBlockLevel = Nothing
-            , _snapshotMeta_headBlockBakeTime = Nothing
-            }
-        smId <- inDb $ do
-          deleteAll sm
-          k <- insert sm
-          notify NotifyTag_SnapshotMeta sm
-          pure k
-        liftIO $ renameFile fp storePath
-        _ <- liftIO $ forkIO $ withLockRelease $ do
-          mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
-          case mVal of
-            Just _ -> pure ()
-            Nothing -> runLoggingEnv logger $ do
-              $(logError) "Could not import snapshot: Timeout"
-              inDb $ do
-                nodePPid <- project1 ( NodeInternal_idField
-                                   , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-                for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-                  (ProcessState_Node NodeProcessState_ImportTimeout)
-              liftIO $ removeFile storePath
-        pure True
+
+    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
+    uploadHandler p v = uploadHandlerImpl p v `onException` tryTakeMVar lockMVar
+
+    uploadHandlerImpl :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
+    uploadHandlerImpl p v = tryPutMVar lockMVar () >>= runLoggingEnv logger . \case
+      False -> do
+        $(logWarn) "Upload already in progress, ignoring this request."
+      True -> case v of
+        Left e -> do
+          $(logError) ("Could not upload file: " <> tshow e)
+          void $ liftIO $ tryTakeMVar lockMVar
+        Right fp -> do
+          $(logDebug) "Upload successful."
+          now <- liftIO $ getCurrentTime
+          cleanupDir logger uploadTmpLocation
+          cleanupDir logger storeLocation
+          let
+            fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
+            storePath = storeLocation <> fileName
+            sm = SnapshotMeta
+              { _snapshotMeta_filename = T.pack fileName
+              , _snapshotMeta_storePath = T.pack storePath
+              , _snapshotMeta_uploadTime = now
+              , _snapshotMeta_importError = Nothing
+              , _snapshotMeta_headBlock = Nothing
+              , _snapshotMeta_headBlockPrefix = Nothing
+              , _snapshotMeta_headBlockLevel = Nothing
+              , _snapshotMeta_headBlockBakeTime = Nothing
+              }
+          smId <- inDb $ do
+            deleteAll sm
+            k <- insert sm
+            notify NotifyTag_SnapshotMeta sm
+            pure k
+          liftIO $ renameFile fp storePath
+          _ <- liftIO $ forkIO $ withLockRelease $ do
+            mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
+            case mVal of
+              Just _ -> pure ()
+              Nothing -> runLoggingEnv logger $ do
+                $(logError) "Could not import snapshot: Timeout"
+                inDb $ do
+                  nodePPid <- project1 ( NodeInternal_idField
+                                     , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+                  for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                    (ProcessState_Node NodeProcessState_ImportTimeout)
+                liftIO $ removeFile storePath
+          pure ()
 
 cleanupDir :: (MonadIO m) => LoggingEnv -> FilePath -> m ()
 cleanupDir logger dir = liftIO $ do
