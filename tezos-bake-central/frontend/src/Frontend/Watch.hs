@@ -268,6 +268,12 @@ watchAlertCount =
     { _bakeViewSelector_alertCount = viewJust 1
     }
 
+watchSnapshotMeta :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe SnapshotMeta))
+watchSnapshotMeta =
+  (fmap . fmap) (getMaybeView . _bakeView_snapshotMeta) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_snapshotMeta = viewJust 1
+    }
+
 watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))
 watchConnectedLedger = do
   -- this is in lieu of a nicer libusb solution to avoid constantly polling the device

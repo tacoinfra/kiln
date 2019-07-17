@@ -107,12 +107,14 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      PublicRequest_AddInternalNode -> inDb $ do
+      PublicRequest_AddInternalNode mNodeProcessState -> inDb $ do
+        let ps = maybe ProcessState_Stopped ProcessState_Node mNodeProcessState
+            pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
         getInternalNode >>= \case
           Nothing -> do
             let processData = ProcessData
-                  { _processData_control = ProcessControl_Stop
-                  , _processData_state = ProcessState_Stopped
+                  { _processData_control = pc
+                  , _processData_state = ps
                   , _processData_updated = Nothing
                   , _processData_backend = Nothing
                   }
@@ -138,7 +140,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 ]
                 (NodeInternal_idField ==. nid)
-              update [ProcessData_controlField =. ProcessControl_Run]
+              update [ProcessData_controlField =. pc, ProcessData_stateField =. ps]
                 (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
               notify NotifyTag_NodeInternal (nid, Just processData)
 

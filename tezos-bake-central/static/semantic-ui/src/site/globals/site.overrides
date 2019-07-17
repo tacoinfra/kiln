@@ -1200,6 +1200,13 @@ img.credits-obsidian {
       margin-top: @15px;
       margin-bottom: @19px;
       .icon-id-badge { color: #d8dce6; }
+      .install-icon {
+        margin-right: @15px;
+        width: @28px;
+      }
+    }
+    .tile-header-spacing {
+      margin-bottom: @24px;
     }
     .content > .title {
       overflow: hidden;
@@ -1734,6 +1741,41 @@ h4.dashboard-section-title {
   .ui.button.primary {
     display: inline-block;
     width: 100%;
+  }
+}
+
+.modal-box.start-node {
+  width: unit(560 / @emSize, rem);
+  .back-button {
+    margin-bottom: @20px;
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+  }
+}
+
+.modal-box.show-error-log {
+  width: unit(560 / @emSize, rem);
+
+  .log-message {
+    overflow: auto;
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
   }
 }
 

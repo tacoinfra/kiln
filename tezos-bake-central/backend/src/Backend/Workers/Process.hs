@@ -108,6 +108,8 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
     inDb = runLoggingEnv logger . runDb (Identity db)
+    updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
+    updateState = updateProcessState pid makeNotify
     state_ = ProcessData_stateField
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
@@ -201,21 +203,31 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
                 inDb $ updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
-    updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
-    updateState state = do
-      $(logDebugSH) ("putState:" :: Text, pid, state)
-      get (fromId pid) >>= \case
-        Nothing -> return ()
-        Just p ->
-          when (_processData_state p /= state) $ do
-            now <- liftIO getCurrentTime
-            update [state_ =. state, updated_ =. Just now]
-              (AutoKeyField ==. fromId pid)
-            for_ makeNotify $ \f -> do
-              uncurry notify $ f $ Just $ p
-                    { _processData_state = state
-                    , _processData_updated = Just now
-                    }
+updateProcessState
+  :: ( MonadLogger m
+     , PersistBackend m
+     , MonadIO m
+     )
+  => Id ProcessData
+  -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  -> ProcessState -> m ()
+updateProcessState pid makeNotify state = do
+  let
+    state_ = ProcessData_stateField
+    updated_ = ProcessData_updatedField
+  $(logDebugSH) ("putState:" :: Text, pid, state)
+  get (fromId pid) >>= \case
+    Nothing -> return ()
+    Just p ->
+      when (_processData_state p /= state) $ do
+        now <- liftIO getCurrentTime
+        update [state_ =. state, updated_ =. Just now]
+          (AutoKeyField ==. fromId pid)
+        for_ makeNotify $ \f -> do
+          uncurry notify $ f $ Just $ p
+            { _processData_state = state
+            , _processData_updated = Just now
+            }
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
 withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

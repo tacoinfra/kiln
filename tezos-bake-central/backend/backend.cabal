@@ -17,6 +17,7 @@ library
     , backend-db
     , base
     , base16-bytestring
+    , base58-bytestring
     , bytestring
     -- , Chart
     -- , Chart-diagrams
@@ -119,6 +120,7 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Snapshot
     Backend.STM
     Backend.Supervisor
     Backend.Telegram

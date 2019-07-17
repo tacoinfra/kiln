@@ -175,7 +175,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
     then pure False -- Dont specify history mode if the node is already initialized
     else do
       -- Generate Identity
-      lift $ updateState ProcessState_GeneratingIdentity
+      lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
       runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
       -- Now we should have version.json also
       liftIO (getVersion appConfig) >>= \case

@@ -282,14 +282,27 @@ data NodeInternal = NodeInternal
 instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
 
+data NodeProcessState
+  = NodeProcessState_ImportingSnapshot
+  | NodeProcessState_ImportComplete
+  | NodeProcessState_ImportFailed
+  | NodeProcessState_ImportTimeout
+  | NodeProcessState_GeneratingIdentity
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data ProcessState
    = ProcessState_Stopped
    | ProcessState_Initializing
-   | ProcessState_GeneratingIdentity -- only applicable to Node
+   | ProcessState_Node NodeProcessState -- only applicable to Node
    | ProcessState_Starting
    | ProcessState_Running
    | ProcessState_Failed
-  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+  deriving (Eq, Ord, Show, Read, Generic, Typeable)
+
+isProcessStateNode :: ProcessState -> Bool
+isProcessStateNode = \case
+  ProcessState_Node _ -> True
+  _ -> False
 
 data ProcessControl
   = ProcessControl_Run
@@ -907,6 +920,20 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+type SnapshotImportError = Text
+
+data SnapshotMeta = SnapshotMeta
+  { _snapshotMeta_filename :: !Text -- user supplied
+  , _snapshotMeta_storePath :: !Text -- where stored
+  , _snapshotMeta_uploadTime :: !UTCTime
+  , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
+  , _snapshotMeta_headBlock :: !(Maybe BlockHash)
+  , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
+  , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
+  , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId SnapshotMeta
+
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where
@@ -991,6 +1018,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
+  , ''NodeProcessState
   , ''Parameters
   , ''PeriodTestingVote
   , ''PeriodPromotionVote
@@ -1007,6 +1035,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''RightNotificationLimit
   , ''RightNotificationSettings
   , ''SeenEvent
+  , ''SnapshotMeta
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -1067,6 +1096,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'RightNotificationLimit
   , 'RightNotificationSettings
   , 'SeenEvent
+  , 'SnapshotMeta
   , 'TelegramConfig
   , 'TelegramMessageQueue
   , 'TelegramRecipient

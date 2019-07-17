@@ -51,7 +51,7 @@ import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
 import Backend.CachedNodeRPC
-import Backend.Common (workerWithDelay)
+import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
@@ -368,16 +368,15 @@ runClientCommand
 runClientCommand appConfig chain args handleError = do
   let
     procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
-  $(logInfoSH) ("runClientCommand: " :: Text, procSpec)
-  (exitCode, stdout, stderr) <- liftIO $ Process.readCreateProcessWithExitCode procSpec ""
+  (exitCode, stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
   case exitCode of
-    ExitSuccess -> pure $ T.strip $ T.pack stdout
+    ExitSuccess -> pure $ T.strip stdout
     ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
-      let strippedLines = fmap T.strip $ T.lines $ T.pack stderr
+      $(logWarn) $ "runClientCommand failed: " <> stderr
+      let strippedLines = fmap T.strip $ T.lines stderr
           warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
           errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
-          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines $ T.pack stdout -- yes, fatal errors go to stdout
+          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
       case handleError warnings (fatal ++ errors) of
         Right t -> pure t
         Left e -> do

@@ -68,6 +68,7 @@ preMigrate =
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
+  >=> migrateProcessDataTable2
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTesting") (ColumnExists "votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
@@ -403,4 +404,16 @@ migrateProcessDataTable ta = do
               ALTER TABLE "ProcessData" ALTER COLUMN "control" SET NOT NULL;
             |]
           getTableAnalysis
+    _ -> pure ta
+
+-- Fix for enhancement to ProcessState
+migrateProcessDataTable2 :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataTable2 ta = do
+  let table = (Nothing, "ProcessData")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+      void [traceExecuteQ|
+          UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
+        |]
+      getTableAnalysis
     _ -> pure ta

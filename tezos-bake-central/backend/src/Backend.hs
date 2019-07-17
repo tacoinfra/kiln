@@ -14,6 +14,7 @@
 
 module Backend where
 
+import Control.Concurrent
 import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
@@ -74,6 +75,7 @@ import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
+import Backend.Snapshot
 import Backend.Supervisor (withTermination)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
@@ -409,9 +411,11 @@ backendImpl cfg serve = do
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
         addFinalizer =<< tezosClientWorker 1.3 logger dataSrc appConfig db v
 
+      snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
+        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
