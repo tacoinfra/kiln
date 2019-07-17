@@ -1323,9 +1323,9 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
-osPublicNodeRemoveMessage :: DomBuilder t m => Bool -> m ()
-osPublicNodeRemoveMessage isOn = do
-  text $ "This Node can only be turned " <> (if isOn then "off" else "on") <> " via "
+osPublicNodeRemoveMessage :: DomBuilder t m => m ()
+osPublicNodeRemoveMessage = do
+  text $ "This Node can only be turned off via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1343,14 +1343,11 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> \v -> do
-        text "Public Node Caching Service provided by Obsidian Systems."
-        osPublicNodeRemoveMessage $ fromMaybe False v
-      PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
-      PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
+      PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems." *> osPublicNodeRemoveMessage
+      PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
+      PublicNode_TzScan -> text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
-  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
         activeClass = if pn == PublicNode_Obsidian
@@ -1360,10 +1357,10 @@ publicNodeOptions = do
         (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool (if pn == PublicNode_Obsidian then "disabled" else "Add Node") "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
-        divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
+        divClass "description" $ describePublicNode pn
 
     let toggled = if pn == PublicNode_Obsidian
           then never
@@ -1611,7 +1608,7 @@ nodesTab =
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
                 dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
-                  then osPublicNodeRemoveMessage True
+                  then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             standardNodeTile
