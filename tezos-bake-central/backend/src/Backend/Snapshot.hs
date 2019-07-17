@@ -1,13 +1,13 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
