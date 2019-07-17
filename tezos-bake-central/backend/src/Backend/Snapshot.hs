@@ -22,7 +22,6 @@ import Control.Monad.Logger
 import Data.ByteString.Base58
 import qualified Data.ByteString as BS
 import qualified Data.Map as Map
-import Data.Map (Map)
 import Data.Pool (Pool)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -37,12 +36,11 @@ import Snap.Util.FileUploads
 import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
-import Unsafe.Coerce
 
 import Tezos.Base58Check
 import Tezos.Block (VeryBlockLike (..))
 import Tezos.History
-import Tezos.ShortByteString (ShortByteString, toShort)
+import Tezos.ShortByteString (toShort)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -269,13 +267,10 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
       then Just blk
       else Nothing
     mHashes :: Maybe (Maybe BlockHash, Maybe BlockHash)
-    mHashes = (\p -> (getHash <$> Map.lookupLE p blks, getHash <$> Map.lookupGE p blks)) <$> mPrefix
-    getHash :: (ShortByteString, a) -> BlockHash
-    getHash = unsafeCoerce . fst
-    blks :: Map ShortByteString a
-    blks = unsafeCoerce $ _cachedHistory_blocks history
-    mPrefix :: Maybe ShortByteString
-    mPrefix = toShort . BS.drop prefixDropLen <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
+    mHashes = (\p -> (fst <$> Map.lookupLE p blks, fst <$> Map.lookupGE p blks)) <$> mPrefix
+    blks = _cachedHistory_blocks history
+    mPrefix :: Maybe BlockHash
+    mPrefix = HashedValue . toShort . BS.drop prefixDropLen <$> (decodeBase58 bitcoinAlphabet $ T.encodeUtf8 appendedPrefix)
     prefixDropLen = BS.length $ Tezos.Base58Check.prefix (Proxy @'HashType_BlockHash)
     blkHashLength = 51 :: Int
     appendedPrefix = prefix' <> (T.replicate (blkHashLength - (T.length prefix')) "1")
