@@ -29,6 +29,7 @@ import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
+import Data.Functor.Sum
 import Data.List (intersperse, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -86,7 +87,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute(..))
+import Common.Route
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Amendment
@@ -121,44 +122,38 @@ frontendBody
     )
   => m ()
 frontendBody = void $ do
-  mHostInfo <- getHostInfo
-  let
-    renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
-
-    wsUrl = ffor mHostInfo $ \(s, h, mp) ->
-      let
-        wsPort = mp <|> (Just (case s of
-            "http" -> 80
-            "https" -> 443
-            _ -> 80))
-      in mconcat
-        [ T.replace "http" "ws" s
-        , "://", h
-        , ":", tshow (fromMaybe 80 wsPort)
-        , "/", renderPathPieces [listenPath]
-        ]
+  mWsUri <- getBackendPath (InL BackendRoute_Listen :/ ()) True
   rec
-    (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    (socketState, _) <- runRhyoliteWidget (maybe (error "Invalid WS URL") Uri.render mWsUri) $ do
       withFrontendContext $
         withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
             appMain
   pure ()
 
--- (Scheme, Host, Port)
-getHostInfo :: (MonadJSM m) => m (Maybe (Text, Text, Maybe Word))
-getHostInfo = do
+getBackendPath :: (MonadJSM m) => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
+getBackendPath backendRoute isWebsocket = do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
     Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
     Nothing ->
       Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
   let
-    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
-    host = Uri.unRText . Uri.authHost <$> routeAuthority
-    routeAuthority = Uri.uriAuthority route ^? _Right
-  pure $ (,,) <$> routeScheme <*> host <*> (Uri.authPort <$> routeAuthority)
+    url = do
+      encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
+      let path = fst $ encode encoder $ backendRoute
+      pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
+      scheme <- if isWebsocket
+        then case Uri.uriScheme route of
+          rtextScheme | rtextScheme == Uri.mkScheme "https" -> Uri.mkScheme "wss"
+          rtextScheme | rtextScheme == Uri.mkScheme "http" -> Uri.mkScheme "ws"
+          _ -> Nothing
+        else Uri.uriScheme route
+      return $ route
+        { Uri.uriPath = Just (False, pathPiece)
+        , Uri.uriScheme = Just scheme
+        }
+  pure url
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
@@ -1275,11 +1270,10 @@ startNodeWorkflow backWF = Workflow $ do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
 
-  mHostInfo <- getHostInfo
-  let uploadUri = ffor mHostInfo $ \(s, h, mp) ->
-        s <> "://" <> h <> (maybe "" (\p -> ":" <> tshow p) mp) <> "/snapshot-upload"
-      formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  _ <- for uploadUri $ \uri -> postForms uri formUploadEv
+  mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
+  let
+    formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
+  _ <- for mUri $ \uri -> postForms (Uri.render uri) formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
