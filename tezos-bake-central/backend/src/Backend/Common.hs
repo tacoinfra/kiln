@@ -1,15 +1,23 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Backend.Common where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, cancel)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (MonadLogger, logDebug)
 import Data.Functor (void)
+import qualified Data.Text as T
+import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime)
 import Rhyolite.Concurrent (supervise)
+import System.Exit (ExitCode)
+import qualified System.Process as Process
 import System.Timeout (timeout)
 
 import Common (nominalDiffTimeToMicroseconds)
+import ExtraPrelude
 
 workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ()) -> m (IO ())
 workerWithDelay getDelay f = worker' $ do
@@ -31,3 +39,11 @@ threadDelay' delay = liftIO $ threadDelay (fromIntegral $ nominalDiffTimeToMicro
 
 timeout' :: MonadIO m => NominalDiffTime -> IO a -> m (Maybe a)
 timeout' timeLimit f = liftIO $ timeout (fromIntegral $ nominalDiffTimeToMicroseconds timeLimit) f
+
+readCreateProcessWithExitCodeWithLogging
+  :: (MonadIO m, MonadLogger m)
+  => Process.CreateProcess -> Text -> m (ExitCode, Text, Text)
+readCreateProcessWithExitCodeWithLogging cp stdin = do
+  $(logDebug) $ "readProcessWithExitCode: " <> tshow cp <> " with STDIN: " <> stdin
+  (ec, stdOut, stdErr) <- liftIO $ Process.readCreateProcessWithExitCode cp $ T.unpack stdin
+  pure (ec, T.pack stdOut, T.pack stdErr)

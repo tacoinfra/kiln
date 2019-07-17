@@ -412,12 +412,11 @@ migrateProcessDataTable2 :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m
 migrateProcessDataTable2 ta = do
   let table = (Nothing, "ProcessData")
   analyzeTable ta table >>= \case
-    Just _
-      -> do
-          void [traceExecuteQ|
-              UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
-            |]
-          getTableAnalysis
+    Just _ -> do
+      void [traceExecuteQ|
+          UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
+        |]
+      getTableAnalysis
     _ -> pure ta
 
 migrateUpstreamVersionTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
