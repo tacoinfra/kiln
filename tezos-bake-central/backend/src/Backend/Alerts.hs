@@ -629,9 +629,9 @@ accusedBakeLog pkh chainId opHash blkHash =
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm."op#hash" = ?opHash
       AND elbm."op#blockHash" = ?blkHash
-      AND el."chainId" = ?chainId
      LEFT OUTER JOIN "ErrorLog" el
        ON el.id = elbm.log
+      AND el."chainId" = ?chainId
     WHERE NOT b."data#deleted"
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerAccused))]) <&> Map.fromList . fmap (\(bid, elid, elbmid) -> (bid, toList $ (,) <$> elid <*> elbmid))
