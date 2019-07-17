@@ -145,9 +145,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
     updateState s = for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd)))) (ProcessState_Node s)
 
   inDb $ updateState NodeProcessState_ImportingSnapshot
+  let procSpec = Process.proc nodePath (["snapshot", "import", storePath, "--data-dir", dataDir])
   $(logDebug) $ "importSnapshotData: starting import"
-  (exitCode, _stdout, stderr) <- liftIO $ Process.readProcessWithExitCode
-    nodePath (["snapshot", "import", storePath, "--data-dir", dataDir]) ""
+  (exitCode, _stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
 
 -- Example output on success
 -- stderr:
@@ -161,15 +161,15 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
   liftIO $ removeFile storePath
   case exitCode of
     ExitSuccess -> void $ do
-      $(logDebug) $ "importSnapshotData success: stderr: \n" <> T.pack stderr
+      $(logDebug) $ "importSnapshotData success: stderr: \n" <> stderr
       let
         prefixStr = "Setting current head to block "
-        mBlkHashPrefix = headMay =<< T.words <$> (T.stripPrefix prefixStr $ snd $ T.breakOn prefixStr $ T.pack stderr)
+        mBlkHashPrefix = headMay =<< T.words <$> (T.stripPrefix prefixStr $ snd $ T.breakOn prefixStr stderr)
       case mBlkHashPrefix of
         Nothing -> void $ do
-          $(logError) $ "importSnapshotData failed: could not parse blk blkHash" <> T.pack stderr
+          $(logError) $ "importSnapshotData failed: could not parse blk blkHash" <> stderr
           inDb $ do
-            update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+            update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
             traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
             updateState NodeProcessState_ImportFailed
         Just blkHashPrefix -> void $ do
@@ -190,9 +190,9 @@ importSnapshotData appConfig nds logger db chain sm smId = runLoggingEnv logger 
             updateState NodeProcessState_ImportComplete
 
     ExitFailure _ -> void $ do
-      $(logError) $ "importSnapshotData failed: " <> T.pack stderr
+      $(logError) $ "importSnapshotData failed: " <> stderr
       inDb $ do
-        update [ SnapshotMeta_importErrorField =. Just (T.pack stderr) ] (AutoKeyField ==. smId)
+        update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
         traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
         updateState NodeProcessState_ImportFailed
 
