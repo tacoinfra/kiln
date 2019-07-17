@@ -1199,8 +1199,8 @@ img.credits-obsidian {
     .generating-icons {
       margin-top: @15px;
       margin-bottom: @19px;
-      .icon-id-badge { color: #d8dce6; }
-      .install-icon {
+      .icon {
+        color: #d8dce6;
         margin-right: @15px;
         width: @28px;
       }
@@ -1747,7 +1747,12 @@ h4.dashboard-section-title {
 .modal-box.start-node {
   width: unit(560 / @emSize, rem);
   .back-button {
-    margin-bottom: @20px;
+    ._link-like();
+    margin-bottom: @15px;
+    color: @blue;
+    .icon {
+      transform: translate(0px, 2px);
+    }
   }
 
   .ui.button.primary {
@@ -1780,6 +1785,7 @@ h4.dashboard-section-title {
 }
 
 .modal-box.confirmation {
+  width: unit(658 / @emSize, rem);
   .ui.header {
     font-size: @24px;
     line-height: @36px;
@@ -1788,6 +1794,70 @@ h4.dashboard-section-title {
       font-size: @28px;
       margin-right: @25px;
     }
+  }
+  .verify-top-message {
+    &.centered {
+      text-align: center;
+      padding: @20px;
+      .icon { margin-right: @20px; }
+      .header:only-child {
+        margin-bottom: 0;
+      }
+    }
+    margin: @20px 0 @25px;
+    text-align: left;
+    border: @1px solid @lightGrey;
+    border-radius: @3px;
+    padding: @18px @20px @8px unit(61 / @emSize, rem);
+    position: relative;
+    .header {
+      font-size: @16px;
+      font-weight: bold;
+      margin-bottom: @9px;
+    }
+    a { word-break: break-word; }
+    .icon-warning {
+      position: absolute;
+      top: @20px;
+      left: @20px;
+    }
+  }
+  .field {
+    margin: @10px;
+    .detail {
+      font-size: @12px;
+      color: #6a6a6a;
+    }
+  }
+}
+
+.internal-node-tile-body {
+  .ui.row {
+    margin-top: @10px;
+    margin-bottom: @10px;
+
+    .ui.error.message {
+      margin-top: @10px;
+      font-weight: bold;
+      font-size: @13px;
+      color: black;
+      line-height: 1;
+
+      padding-top: @12px;
+      padding-bottom: @11px;  // Because it doesn't look right without this.
+      padding-left: @12px;
+      padding-right: @12px;
+
+      border-radius: @3px;
+      border: solid @1px #ff0000;
+      box-shadow: none;
+      background-color: #fff5f5;
+    }
+  }
+  .ui.button {
+    margin-top: @20px;
+    margin-bottom: @20px;
+    .icon { transform: translate(-2px, 2px); }
   }
 }
 

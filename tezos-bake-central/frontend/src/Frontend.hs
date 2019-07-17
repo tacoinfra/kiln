@@ -43,7 +43,8 @@ import Data.Time (UTCTime)
 import Data.Word (Word64)
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
-import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM.File as File
+import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
@@ -1251,14 +1252,20 @@ startNodeWorkflow backWF = Workflow $ do
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-        fi <- fileInput def
-        pure $ (headMay <$> value fi)
-    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ el "div" $ do
-      el "div" $ text "Peer to Peer Download"
+      divClass "" $ do
+        rec
+          let fileName = headMay <$> value fi
+          dyn_ $ ffor fileName $ mapM $ \file -> do
+            name <- liftJSM $ File.getName file
+            divClass "file-name" $ text name
+          fi <- fileInput def
+        pure fileName
+    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
+      divClass "" $ text "Peer to Peer Download"
       divClass "explanation" $ do
         el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
-  contEv <- uiButton "" "Continue"
+  contEv <- uiButton "primary" "Add Node"
   let
     ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) contEv
     next = ffor ev $ \(b, s) -> if b
@@ -1286,28 +1293,35 @@ verifySnapshotModal ::
   ( MonadReader r m
   , HasTimer t r
   , HasTimeZone r
+  , MonadJSM (Performable m)
   , MonadRhyoliteFrontendWidget Bake t m
   )
   => SnapshotMeta -> Event t () -> m (Event t ())
 verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   divClass "ui header" $ text "Verify Snapshot"
-  el "div" $ do
-    el "div" $ text "Verifying the Block Hash"
-    el "div" $ do
+  divClass "verify-top-message" $ do
+    icon "large orange icon-warning"
+    divClass "header" $ text "Verifying the Block Hash"
+    divClass "explanation" $ do
       el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
-      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date coresponds to the date the snapshot was taken."
+      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date corresponds to the date the snapshot was taken."
+      el "p" $ text "If you are in doubt that the snapshot is valid, close this window, remove the node and restart using a snapshot you trust."
 
-  el "div" $ do
-    el "div" $ text "Snapshot's Highest Block Hash:"
-    case smd ^. snapshotMeta_headBlock of
-      Just blk -> el "div" $ text $ toBase58Text blk
-      Nothing -> el "div" $ text $ fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
-  el "div" $ do
-    el "div" $ text "Highest Block Level:"
-    el "div" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
-  el "div" $ do
-    el "div" $ text "Date Baked:"
-    el "div" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+  divClass "field" $ do
+    divClass "detail" $ text "Snapshot's Highest Block Hash:"
+    let
+      hashText = case smd ^. snapshotMeta_headBlock of
+        Just blk -> toBase58Text blk
+        Nothing -> fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
+    divClass "proposal-hash" $ do
+      copyButton $ pure hashText
+      text hashText
+  divClass "field" $ do
+    divClass "detail" $ text "Highest Block Level:"
+    divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
+  divClass "field" $ do
+    divClass "detail" $ text "Date Baked:"
+    divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
@@ -1399,6 +1413,7 @@ nodesTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m
     , MonadReader r (ModalM m)
+    , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
@@ -1418,10 +1433,58 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
+        partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+        (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+        kilnNodeState = ((fmap _processData_state) . headMay . Map.elems) <$> internal
+
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
 
+      kilnNodeStateD <- holdUniqDyn kilnNodeState
+      -- Node alerts
+      let
+        verifySnapshotAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          dSm <- watchSnapshotMeta
+          tz <- asks (^. timeZone)
+          let
+            i = icon "icon-check big blue"
+            title = text "Snapshot import complete, verify to start node."
+            timeFormat = "%-l:%M%P"
+            time t = T.pack $ Time.formatTime Time.defaultTimeLocale timeFormat $ Time.utcToZonedTime tz t
+
+            desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported "
+              <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
+              <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
+            btn = do
+              ev <- divClass "buttons" $ uiButtonM "" $ do
+                icon "icon-angle-right"
+                text "Start Verification"
+              dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
+          renderSplashAlert i title Nothing (desc *> btn)
+
+        snapshotImportFailedAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          let
+            i = icon "icon-warning big red"
+            title = text "Snapshot import failed."
+            desc = do
+              el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
+              el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
+          renderSplashAlert i title Nothing desc
+
+      dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
+        ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
+        ProcessState_Node NodeProcessState_ImportFailed -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportTimeout -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
+        ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
+        ProcessState_Initializing -> pure ()
+        ProcessState_Failed -> pure ()
+        ProcessState_Starting -> pure ()
+        ProcessState_Stopped -> pure ()
+        ProcessState_Running -> pure ()
+
+      -- Node tiles
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
@@ -1436,9 +1499,6 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
-
-          let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
-              (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
@@ -1555,26 +1615,31 @@ nodesTab =
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
                     case nodeState of
                       NodeProcessState_ImportingSnapshot -> divClass "generating-icons" $ do
-                        elAttr "img" ("src" =: static @"images/install.svg" <> "class" =: "install-icon") blank
+                        icon "icon-install big"
                         divClass "ui active tiny inline loader blue small" blank
                       NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
                       _ -> blank
-                    divClass "ui row" $ divClass "ui sub header" $ text $ case nodeState of
-                      NodeProcessState_ImportingSnapshot -> "Importing snapshot"
-                      NodeProcessState_ImportComplete -> "Import complete!"
-                      NodeProcessState_ImportFailed -> "Import failed"
-                      NodeProcessState_ImportTimeout -> "Import failed"
-                      NodeProcessState_GeneratingIdentity -> "Generating identity"
+                    let
+                      subHeader t = divClass "ui sub header" $ text t
+                      errorMessage t = divClass "ui error message" $ text t
+                    divClass "ui row" $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> subHeader "Importing snapshot"
+                      NodeProcessState_ImportComplete -> subHeader "Verify snapshot"
+                      NodeProcessState_ImportFailed -> errorMessage "Snapshot import failed"
+                      NodeProcessState_ImportTimeout -> errorMessage "Snapshot import failed"
+                      NodeProcessState_GeneratingIdentity -> subHeader "Generating identity"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
-                      NodeProcessState_ImportingSnapshot -> "This may take from 10 min to several hours."
-                      NodeProcessState_ImportComplete -> "Please review the block head hash and start the node from the '...' menu."
-                      NodeProcessState_ImportFailed -> "Please confirm whether the snapshot is correct. Check logs for more details."
-                      NodeProcessState_ImportTimeout -> "Timeout"
+                      NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
+                      NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
+                      NodeProcessState_ImportFailed -> ""
+                      NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
                     when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
-                      ev <- uiButton "" "Start Verification"
+                      ev <- divClass "buttons" $ uiButtonM "" $ do
+                        icon "icon-angle-right"
+                        text "Start Verification"
                       tellModal $ ev $> verifySnapshotModal sm
                 ]
                 where
@@ -2197,16 +2262,6 @@ semuiTab label k currentTab enabled =
   fmap ((k <$) . gate (isEnabled <$> current enabled) . domEvent Click . fst) $
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
-
--- UI element with left pointing arrow
-backButton :: DomBuilder t m => m (Event t ())
-backButton = do
-  -- (e, _) <- el' "span" $ do
-    -- elAttr "img" (("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") <> ("style" =: "transform: scale(-0.5) translate (-1em, -1em);")) blank
-  --   el "span" $ text "back"
-  -- pure $ domEvent Click e
-  -- This doesnt match design, but will fix UI later
-  uiButton "back-button" "Back"
 
 withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
