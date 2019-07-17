@@ -66,7 +66,8 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
       -- We might have snapshot from a killed kiln process, so cleanup
       cleanupDir logger uploadTmpLocation
       cleanupDir logger storeLocation
-      void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+      forked <- or <$> handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+      liftIO $ unless forked $ void $ tryTakeMVar lockMVar
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity db)
@@ -76,9 +77,9 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
-    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
+    uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO Bool
     uploadHandler p = runLoggingEnv logger . \case
-      Left e -> $(logError) ("Could not upload file: " <> tshow e)
+      Left e -> $(logError) ("Could not upload file: " <> tshow e) >> pure False
       Right fp -> do
         $(logDebug) "Upload successful."
         now <- liftIO $ getCurrentTime
@@ -100,8 +101,8 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
           k <- insert sm
           notify NotifyTag_SnapshotMeta sm
           pure k
-        liftIO $ renameFile fp storePath
         _ <- liftIO $ forkIO $ withLockRelease $ do
+          liftIO $ renameFile fp storePath
           mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
           case mVal of
             Just _ -> pure ()
@@ -113,13 +114,14 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
                 for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
                   (ProcessState_Node NodeProcessState_ImportTimeout)
               liftIO $ removeFile storePath
-        pure ()
+        pure True
 
 cleanupDir :: (MonadIO m) => LoggingEnv -> FilePath -> m ()
 cleanupDir logger dir = liftIO $ do
   removeDirectoryRecursive dir
     `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Remove dir failed: " <> tshow dir <> "\nError: " <> tshow e))
   createDirectoryIfMissing True dir
+    `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Make dir failed: " <> tshow dir <> "\nError: " <> tshow e))
 
 importSnapshotData
   :: AppConfig
