@@ -565,7 +565,7 @@ kilnUpdateAlert v = do
           text "Dismiss"
         void $ requestingIdentity $ public PublicRequest_DismissUpgradeAlert <$ resolve
   renderSplashAlert
-    (icon "icon-alert-badge big blue")
+    (icon "icon-update-circle big blue")
     (text header)
     Nothing
     body
