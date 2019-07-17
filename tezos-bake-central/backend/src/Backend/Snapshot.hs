@@ -78,10 +78,9 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
     partUploadPolicy _ = allowWithMaximumSize (10*1000*1000*1000) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
     uploadHandler :: PartInfo -> Either PolicyViolationException FilePath -> IO ()
-    uploadHandler p = \case
-      Left e -> runLoggingEnv logger $
-        $(logError) ("Could not upload file: " <> tshow e)
-      Right fp -> runLoggingEnv logger $ do
+    uploadHandler p = runLoggingEnv logger . \case
+      Left e -> $(logError) ("Could not upload file: " <> tshow e)
+      Right fp -> do
         $(logDebug) "Upload successful."
         now <- liftIO $ getCurrentTime
         let
