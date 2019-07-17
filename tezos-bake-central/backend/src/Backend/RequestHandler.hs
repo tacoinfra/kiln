@@ -359,6 +359,12 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
           void $ updateUpstreamVersion upgradeBranch (_nodeDataSource_httpMgr nds) inDb
 
+      PublicRequest_DismissUpgradeAlert -> inDb $ do
+        update [ UpstreamVersion_dismissedField =. True ] CondEmpty
+        mId <- project1 AutoKeyField (UpstreamVersion_dismissedField ==. UpstreamVersion_dismissedField)
+        for_ mId $ \i -> do
+          get i >>= traverse_ (notify NotifyTag_UpstreamVersion . (toId i,))
+
       PublicRequest_SetPublicNodeConfig publicNode enabled -> do
         inDb $ do
           cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>

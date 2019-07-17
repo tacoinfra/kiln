@@ -554,15 +554,21 @@ kilnUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => Version -> m ()
 kilnUpdateAlert v = do
   let
     header = "Kiln " <> T.pack (showVersion v) <> " is available!"
-    body = do
-      text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
-      let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
-      elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+    body = el "div" $ do
+      el "p" $ do
+        text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
+        let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
+        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+      el "p" $ do
+        resolve <- divClass "buttons" $ uiButtonM "primary" $ do
+          icon "icon-check"
+          text "Dismiss"
+        void $ requestingIdentity $ public PublicRequest_DismissUpgradeAlert <$ resolve
   renderSplashAlert
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
-    (do el "p" $ body)
+    body
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
 welcomeScreen hasOsPubNode = mdo
