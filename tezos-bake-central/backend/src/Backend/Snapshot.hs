@@ -14,7 +14,6 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
-import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad.Except (runExceptT)
@@ -93,17 +92,18 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
           notify NotifyTag_SnapshotMeta sm
           pure k
         liftIO $ renameFile fp storePath
-        _ <- liftIO $ forkIO $ withLockRelease $ race_ (importSnapshotData appConfig nds logger db chain sm smId)
-          $ runLoggingEnv logger $ do
-            -- Wait for 10 hr, then give up
-            threadDelay' (60*60*10)
-            inDb $ do
-              nodePPid <- project1 ( NodeInternal_idField
-                                 , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-                (ProcessState_Node NodeProcessState_ImportTimeout)
-            $(logError) "Could not import snapshot: Timeout"
-            liftIO $ removeFile storePath
+        _ <- liftIO $ forkIO $ withLockRelease $ do
+          mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
+          case mVal of
+            Just _ -> pure ()
+            Nothing -> runLoggingEnv logger $ do
+              $(logError) "Could not import snapshot: Timeout"
+              inDb $ do
+                nodePPid <- project1 ( NodeInternal_idField
+                                   , NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+                for_ nodePPid $ \(nid, pid) -> updateProcessState pid (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                  (ProcessState_Node NodeProcessState_ImportTimeout)
+              liftIO $ removeFile storePath
         pure ()
 
 cleanupDir :: (MonadIO m) => LoggingEnv -> FilePath -> m ()
