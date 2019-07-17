@@ -523,7 +523,10 @@ globalAlerts = do
   let
     mUpdateAlert :: Dynamic t (Maybe (m ()))
     mUpdateAlert = ffor upstreamVersion $ \case
-      Just uv | Just v <- _upstreamVersion_version uv , v > currentVersion -> Just $ kilnUpdateAlert v
+      Just uv
+        | Just v <- _upstreamVersion_version uv
+        , v > currentVersion
+        , not (_upstreamVersion_dismissed uv) -> Just $ kilnUpdateAlert v
       _ -> Nothing
 
     allAlerts :: Dynamic t [m ()]

@@ -69,6 +69,7 @@ preMigrate =
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
   >=> migrateProcessDataTable2
+  >=> migrateUpstreamVersionTable
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTesting") (ColumnExists "votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
@@ -415,6 +416,21 @@ migrateProcessDataTable2 ta = do
       -> do
           void [traceExecuteQ|
               UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateUpstreamVersionTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateUpstreamVersionTable ta = do
+  let table = (Nothing, "UpstreamVersion")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | all ((/= "dismissed") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "UpstreamVersion" ADD COLUMN "dismissed" BOOLEAN NULL;
+              UPDATE "UpstreamVersion" SET "dismissed" = FALSE;
+              ALTER TABLE "UpstreamVersion" ALTER COLUMN "dismissed" SET NOT NULL;
             |]
           getTableAnalysis
     _ -> pure ta
