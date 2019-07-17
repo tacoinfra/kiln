@@ -101,8 +101,8 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
           k <- insert sm
           notify NotifyTag_SnapshotMeta sm
           pure k
+        liftIO $ renameFile fp storePath
         _ <- liftIO $ forkIO $ withLockRelease $ do
-          liftIO $ renameFile fp storePath
           mVal <- timeout' (60*60*10) (importSnapshotData appConfig nds logger db chain sm smId)
           case mVal of
             Just _ -> pure ()
