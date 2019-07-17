@@ -85,7 +85,16 @@ handleSnapshotUpload appConfig nds db chain lockMVar = do
         let
           fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
           storePath = storeLocation <> fileName
-          sm = SnapshotMeta (T.pack fileName) (T.pack storePath) now Nothing Nothing Nothing Nothing Nothing
+          sm = SnapshotMeta
+            { _snapshotMeta_filename = T.pack fileName
+            , _snapshotMeta_storePath = T.pack storePath
+            , _snapshotMeta_uploadTime = now
+            , _snapshotMeta_importError = Nothing
+            , _snapshotMeta_headBlock = Nothing
+            , _snapshotMeta_headBlockPrefix = Nothing
+            , _snapshotMeta_headBlockLevel = Nothing
+            , _snapshotMeta_headBlockBakeTime = Nothing
+            }
         smId <- inDb $ do
           deleteAll sm
           k <- insert sm
