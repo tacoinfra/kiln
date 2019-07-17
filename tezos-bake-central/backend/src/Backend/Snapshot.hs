@@ -58,7 +58,9 @@ handleSnapshotUpload
   -> Either NamedChain a
   -> MVar ()
   -> Snap.Snap ()
-handleSnapshotUpload appConfig nds db chain lockMVar =
+handleSnapshotUpload appConfig nds db chain lockMVar = do
+  liftIO $ createDirectoryIfMissing True uploadTmpLocation
+    `catch` (\(e :: IOException) -> runLoggingEnv logger $ ($logWarn) ("Make dir failed: " <> tshow uploadTmpLocation <> "\nError: " <> tshow e))
   void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
@@ -84,7 +86,6 @@ handleSnapshotUpload appConfig nds db chain lockMVar =
         Right fp -> do
           $(logDebug) "Upload successful."
           now <- liftIO $ getCurrentTime
-          cleanupDir logger uploadTmpLocation
           cleanupDir logger storeLocation
           let
             fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
