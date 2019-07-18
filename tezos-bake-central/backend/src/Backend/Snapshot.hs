@@ -8,6 +8,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UnboxedSums #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -201,9 +202,12 @@ importSnapshotData appConfig nds chain sm smId = do
             header <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
             pure $ mkVeryBlockLike (blkHash, header)
           let
-            blkDetails :: Either Text (Either BlockHash VeryBlockLike)
-            blkDetails = maybe (maybe (Left blkHashPrefix) (Right . Left) mBlkHash) (Right . Right)
-              (either (const Nothing) Just =<< mBlk)
+            blkDetails :: (# Text | BlockHash | VeryBlockLike #)
+            blkDetails = case either (const Nothing) Just =<< mBlk of
+              Just blk -> (# | | blk #)
+              Nothing -> case mBlkHash of
+                Just blkHash -> (# | blkHash | #)
+                Nothing -> (# blkHashPrefix | | #)
           inDb $ do
             updateSnapshotMeta blkDetails smId
             for_ nodePPid $ \(nid,_) -> updateNodeDetails blkDetails nid
@@ -213,18 +217,18 @@ importSnapshotData appConfig nds chain sm smId = do
 
 updateSnapshotMeta
   :: (PersistBackend m)
-  => Either Text (Either BlockHash VeryBlockLike)
+  => (# Text | BlockHash | VeryBlockLike #)
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 updateSnapshotMeta blkDetails smId = do
   case blkDetails of
-    Left hashPrefix -> update
+    (# hashPrefix | | #) -> update
       [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix ]
       (AutoKeyField ==. smId)
-    Right (Left blkHash) -> update
+    (# | blkHash | #) -> update
       [ SnapshotMeta_headBlockField =. Just blkHash ]
       (AutoKeyField ==. smId)
-    Right (Right blk) -> update
+    (# | | blk #) -> update
       [ SnapshotMeta_headBlockField =. (Just $ blk ^. hash)
       , SnapshotMeta_headBlockLevelField =. (Just $ blk ^. level)
       , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
@@ -234,15 +238,15 @@ updateSnapshotMeta blkDetails smId = do
 
 updateNodeDetails
   :: (PersistBackend m)
-  => Either Text (Either BlockHash VeryBlockLike)
+  => (# Text | BlockHash | VeryBlockLike #)
   -> Id Node
   -> m ()
 updateNodeDetails blkDetails nodeId = do
   let p = (NodeDetails_dataField ~>)
   now <- getTime
   case blkDetails of
-    Left _hashPrefix -> pure ()
-    Right (Left blkHash) ->
+    (# _hashPrefix | | #) -> pure ()
+    (# | blkHash | #) ->
       project NodeDetails_idField (NodeDetails_idField ==. nodeId) >>= \case
         [] -> insert $ NodeDetails
           { _nodeDetails_id = nodeId
@@ -256,7 +260,7 @@ updateNodeDetails blkDetails nodeId = do
           , p NodeDetailsData_updatedSelector =. Just now
           ]
           (NodeDetails_idField ==. nodeId)
-    Right (Right headBlockInfo) -> do
+    (# | | headBlockInfo #) -> do
       project NodeDetails_idField (NodeDetails_idField ==. nodeId) >>= \case
         [] -> insert $ NodeDetails
           { _nodeDetails_id = nodeId

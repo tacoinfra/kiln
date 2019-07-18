@@ -30,8 +30,17 @@ import Prelude hiding (cycle)
 
 import Control.Applicative (ZipList (..))
 import Control.Arrow (left)
-import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
-                               retry, writeTQueue, writeTVar)
+import Control.Concurrent.STM (
+    STM,
+    TQueue,
+    TVar,
+    atomically,
+    readTVar,
+    readTVarIO,
+    retry,
+    writeTQueue,
+    writeTVar,
+  )
 import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
@@ -101,7 +110,7 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History
+import Tezos.History (CachedHistory (..))
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
@@ -534,43 +543,6 @@ lookupBlock nds x = do
   history <- readTVar' $ _nodeDataSource_history dsrc
   let xPath = Map.lookup x $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
-
-blankNodeDataSource
-  :: Pool Postgresql
-  -> ChainId
-  -> Maybe ProtoInfo
-  -> Http.Manager
-  -> LoggingEnv
-  -> RawLevel
-  -> Maybe URI
-  -> URI
-  -> IO NodeDataSource
-blankNodeDataSource db chain protoInfo' mgr logger minLevel osPublicNode kilnNodeUri = do
-  hist <- newTVarIO $ emptyCache minLevel
-  cache <- newTVarIO mempty
-  protoInfoVar <- newTVarIO protoInfo'
-  latestHead <- newTVarIO Nothing
-  ioQueue <- newTQueueIO
-
-  return NodeDataSource
-    { _nodeDataSource_history = hist
-    , _nodeDataSource_cache = cache
-    , _nodeDataSource_chain = chain
-    , _nodeDataSource_parameters = protoInfoVar
-    , _nodeDataSource_httpMgr = mgr
-    , _nodeDataSource_pool = db
-    , _nodeDataSource_latestHead = latestHead
-    , _nodeDataSource_logger = logger
-    , _nodeDataSource_ioQueue = ioQueue
-    , _nodeDataSource_osPublicNode = osPublicNode
-    , _nodeDataSource_kilnNodeUri = kilnNodeUri
-    }
-{-
-
-withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
-withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
-
--}
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()

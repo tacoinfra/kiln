@@ -143,7 +143,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ] <> (maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp))
+        ] <> maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp)
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
@@ -594,7 +594,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
                   proposalsWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote lastAttempt pkh
-                  let unseenProposals = proposalsWhenLastVoting S.\\ proposals
+                  let unseenProposals = proposals S.\\ proposalsWhenLastVoting
                   pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
@@ -616,9 +616,9 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
               | otherwise -> 100 -- 90 to 100
 
           singleVotePhase = bool (reportError False) clearAllErrors
-          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) Nothing rangeMax
           reportError previouslyVoted = do
-            clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+            clearPastVotingPeriodErrors chainId (Id pkh) (Just previouslyVoted) rangeMax
             reportVotingReminderError chainId (Id pkh) votingPeriod currentPeriodKind previouslyVoted rangeMax endTime
 
         case votingState of
