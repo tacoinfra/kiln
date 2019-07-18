@@ -594,7 +594,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
                   proposalsWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote lastAttempt pkh
-                  let unseenProposals = proposalsWhenLastVoting S.\\ proposals
+                  let unseenProposals = proposals S.\\ proposalsWhenLastVoting
                   pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
@@ -616,9 +616,9 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
               | otherwise -> 100 -- 90 to 100
 
           singleVotePhase = bool (reportError False) clearAllErrors
-          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) Nothing rangeMax
           reportError previouslyVoted = do
-            clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+            clearPastVotingPeriodErrors chainId (Id pkh) (Just previouslyVoted) rangeMax
             reportVotingReminderError chainId (Id pkh) votingPeriod currentPeriodKind previouslyVoted rangeMax endTime
 
         case votingState of

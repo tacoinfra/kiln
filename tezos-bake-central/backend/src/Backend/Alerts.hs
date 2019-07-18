@@ -415,8 +415,8 @@ clearPastVotingPeriodErrors
   :: ( Monad m, MonadIO m
      , PersistBackend m, PostgresLargeObject m
      )
-  => ChainId -> Id Baker -> Int -> m ()
-clearPastVotingPeriodErrors chainId bid rangeMax = do
+  => ChainId -> Id Baker -> Maybe Bool -> Int -> m ()
+clearPastVotingPeriodErrors chainId bid previouslyVoted rangeMax = do
   lids :: [Id ErrorLogVotingReminder] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogVotingReminder" t
@@ -424,7 +424,7 @@ clearPastVotingPeriodErrors chainId bid rangeMax = do
       AND el.stopped IS NULL
       AND t."chainId" = ?chainId
       AND t."baker#publicKeyHash" = ?bid
-      AND t."rangeMax" <> ?rangeMax
+      AND (t."rangeMax" <> ?rangeMax OR ?previouslyVoted IS NULL OR t."previouslyVoted" <> ?previouslyVoted)
     RETURNING t.log |]
   for_ lids notifyDefault
 
