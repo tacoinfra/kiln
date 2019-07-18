@@ -1322,7 +1322,7 @@ startNodeWorkflow backWF = Workflow $ do
   mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
   let
     formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  _ <- for mUri $ \uri -> postForms (Uri.render uri) formUploadEv
+  for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
@@ -1889,7 +1889,7 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concat . (fmap NEL.toList) <$> dEbb
+            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
@@ -1906,7 +1906,7 @@ bakersTab =
               fmap $ \bakerSummary ->
                 bakerStatus $ bakerSummary <$ cns
             wantBakerData = (||)
-              <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
+              <$> (elem MonitoredStatus_Unknown <$> bakerStatus')
               <*> (any isNothing <$> joinDynThroughMap bakersDetails)
           (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
             holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case

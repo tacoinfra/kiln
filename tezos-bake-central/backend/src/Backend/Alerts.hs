@@ -260,7 +260,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   for_ lids notifyDefault
   node' <- project (NodeExternal_dataField ~> DeletableRow_dataSelector) $ (NodeExternal_idField `in_` [nodeId]) `limitTo` 1
   --  $(logDebugSH) ("LIDs we've supposedly blanked out"::String, lids)
-  when (not $ null lids) $ for_ node' $ \node -> do
+  unless (null lids) $ for_ node' $ \node -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Now able to connect to node" $
         "Able to again connect to node" <> maybe "" (" " <>) (_nodeExternalData_alias node) <> " at " <> Uri.render (_nodeExternalData_address node)
 
@@ -305,7 +305,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.log |]
   for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
-  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+  unless (null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
       nodeName <> " is on correct network"
 
@@ -347,7 +347,7 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
     RETURNING t.log |]
   for_ lids notifyDefault
   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
-  when (not $ null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+  unless (null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
       nodeName <> " now meets or exceeds the required minimum number of connected peers."
 
@@ -627,7 +627,7 @@ clearMissedBake f right pkh lvl = do
         AND elbm.level = ?lvl
       RETURNING elbm.log |]
   for_ lids notifyDefault
-  when (not $ null lids) $ queueAlert Nothing $
+  unless (null lids) $ queueAlert Nothing $
     Alert Resolved
       ("Resolved: Missed " <> rightTxt <> " opportunity")
       ("Resolved: Baker with address:" <> toPublicKeyHashText pkh <> " " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl) <> " included due to branch reorganization")
