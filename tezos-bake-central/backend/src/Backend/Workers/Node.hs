@@ -146,7 +146,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ] <> (maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp))
+        ] <> maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp)
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails

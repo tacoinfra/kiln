@@ -14,8 +14,8 @@
 
 module Backend where
 
-import Control.Concurrent
-import Control.Concurrent.STM (atomically, readTQueue)
+import Control.Concurrent.MVar (MVar, newEmptyMVar)
+import Control.Concurrent.STM (atomically, readTQueue, newTQueueIO, newTVarIO)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -63,15 +63,17 @@ import qualified Text.URI as URI
 
 import Backend.Db (gargoyleSupported, withDb)
 import Tezos.Chain (mainnetChainId)
+import Tezos.History (emptyCache)
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (blankNodeDataSource, NodeDataSource(..))
+import Backend.CachedNodeRPC (NodeDataSource(..))
 import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
+import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -95,7 +97,7 @@ import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
-import Backend.NodeCmd
+
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -347,9 +349,28 @@ backendImpl cfg serve = do
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
         }
-    -- If the user disables the OS node from command line and only monitors it
-    -- then we wont use it for CacheRPC
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel (if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing) (kilnNodeRpcURI appConfig)
+
+    dataSrc <- liftIO $ do
+      hist <- newTVarIO $ emptyCache minLevel
+      cache <- newTVarIO mempty
+      protoInfoVar <- newTVarIO params
+      latestHead <- newTVarIO Nothing
+      ioQueue <- newTQueueIO
+
+      -- If the user disables the OS node from command line and only monitors it then we wont use it for CacheRPC.
+      pure NodeDataSource
+        { _nodeDataSource_history = hist
+        , _nodeDataSource_cache = cache
+        , _nodeDataSource_chain = chainId
+        , _nodeDataSource_parameters = protoInfoVar
+        , _nodeDataSource_httpMgr = httpMgr
+        , _nodeDataSource_pool = db
+        , _nodeDataSource_latestHead = latestHead
+        , _nodeDataSource_logger = logger
+        , _nodeDataSource_ioQueue = ioQueue
+        , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
+        , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
+        }
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
