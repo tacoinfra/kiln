@@ -1322,7 +1322,7 @@ startNodeWorkflow backWF = Workflow $ do
   mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
   let
     formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  _ <- for mUri $ \uri -> postForms (Uri.render uri) formUploadEv
+  for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
 
   launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
