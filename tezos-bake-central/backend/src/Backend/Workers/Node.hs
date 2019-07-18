@@ -568,13 +568,12 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     votingState <- case currentPeriodKind of
       VotingPeriodKind_Proposal -> throwing $ runNodeQueryT $ do
         let blk = latestHead ^. hash
-        proposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
-        let inProposals = In $ S.toList proposals
+        bakerProposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
 
-        pps <- [queryQ|
+        pps <- let inBakerProposals = In $ S.toList bakerProposals in [queryQ|
           UPDATE "BakerProposal" SET included = ?blk
           FROM "PeriodProposal" pp
-          WHERE pp.id = proposal AND pp.hash IN ?inProposals
+          WHERE pp.id = proposal AND pp.hash IN ?inBakerProposals
             AND pp."chainId" = ?chainId
             AND pp."votingPeriod" = ?votingPeriod
           RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, attempted
@@ -587,15 +586,18 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           then pure ProposalVotingState_SilentRange
           else fmap NE.nonEmpty getProposals >>= \case
             Nothing -> pure ProposalVotingState_CaughtUp
-            Just ps
-              | length (NE.filter (isJust . snd . snd) ps) >= maxProposalUpvotes ->
+            Just proposals
+              | length (NE.filter (isJust . snd . snd) proposals) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
               | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
-                  proposalsWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote lastAttempt pkh
-                  let unseenProposals = proposals S.\\ proposalsWhenLastVoting
-                  pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
+                  proposalVotesWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_Proposals lastAttempt
+                  let
+                    proposalHashes = S.fromList $ toList $ (^. _2 . _1 . periodProposal_hash) <$> proposals
+                    proposalHashesWhenLastVoting = S.fromList $ toList $ fst . unProposalVotes <$> proposalVotesWhenLastVoting
+                    unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
+                  pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
