@@ -69,7 +69,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (blankNodeDataSource, NodeDataSource(..))
 import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..))
+import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NotifyHandler (notifyHandler)
@@ -337,9 +337,19 @@ backendImpl cfg serve = do
       minLevel = case maybeNamedChain of
         Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
         _ -> 2
+      appConfig = AppConfig
+        { _appConfig_emailFromAddress = emailFromAddress
+        , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
+        , _appConfig_kilnNodeNetPort = kilnNodeNetPort
+        , _appConfig_kilnDataDir = kilnDataDir
+        , _appConfig_kilnNodeConfig = defaultNodeConfigFile
+        , _appConfig_chainId = chainId
+        , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
+        , _appConfig_binaryPaths = binaryPaths
+        }
     -- If the user disables the OS node from command line and only monitors it
     -- then we wont use it for CacheRPC
-    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel (if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing)
+    dataSrc <- liftIO $ blankNodeDataSource db chainId params httpMgr logger minLevel (if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing) (kilnNodeRpcURI appConfig)
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -349,16 +359,6 @@ backendImpl cfg serve = do
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
 
       let
-        appConfig = AppConfig
-          { _appConfig_emailFromAddress = emailFromAddress
-          , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
-          , _appConfig_kilnNodeNetPort = kilnNodeNetPort
-          , _appConfig_kilnDataDir = kilnDataDir
-          , _appConfig_kilnNodeConfig = defaultNodeConfigFile
-          , _appConfig_chainId = chainId
-          , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
-          , _appConfig_binaryPaths = binaryPaths
-          }
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
