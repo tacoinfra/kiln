@@ -1399,7 +1399,7 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems." *> osPublicNodeRemoveMessage
+      PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
       PublicNode_TzScan -> text "API provided by tzscan.io, the block explorer by OCamlPro."
 
