@@ -1239,7 +1239,7 @@ tryFetchFromCache chainId q = do
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
 getActiveNodeDetails kilnNodeUri = do
-  int <- [queryQ|
+  int <- let runningState = ProcessState_Running in [queryQ|
       SELECT d."data#headLevel"
            , d."data#headBlockHash"
            , d."data#headBlockPred"
@@ -1248,7 +1248,9 @@ getActiveNodeDetails kilnNodeUri = do
            , d."data#savePoint"
         FROM "NodeInternal" n
         JOIN "NodeDetails" d ON d.id = n.id
+        JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
+        AND p."state" = ?runningState
       |] <&> fmap (\(l, b, p, t, f, s) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
   ext <- [queryQ|
       SELECT n."data#data#address"
