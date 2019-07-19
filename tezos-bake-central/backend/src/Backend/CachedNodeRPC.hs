@@ -1264,7 +1264,7 @@ getActiveNodeDetails kilnNodeUri = do
         JOIN "NodeDetails" d ON d.id = n.id
       WHERE NOT n."data#deleted"
       |] <&> fmap (\(addr, l, b, p, t, f, s) -> (addr, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
-  pure $ int <> ext
+  pure $ ext <> int
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
