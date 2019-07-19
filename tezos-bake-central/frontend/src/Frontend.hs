@@ -1293,7 +1293,6 @@ startNodeWorkflow backWF = Workflow $ do
       el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-        el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
       divClass "" $ do
         rec
           let fileName = headMay <$> value fi
