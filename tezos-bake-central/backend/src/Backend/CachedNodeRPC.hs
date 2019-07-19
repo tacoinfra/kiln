@@ -1248,7 +1248,9 @@ getActiveNodeDetails kilnNodeUri = do
            , d."data#savePoint"
         FROM "NodeInternal" n
         JOIN "NodeDetails" d ON d.id = n.id
+        JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
+        AND p."state" = 'ProcessState_Running'
       |] <&> fmap (\(l, b, p, t, f, s) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
   ext <- [queryQ|
       SELECT n."data#data#address"
@@ -1262,7 +1264,7 @@ getActiveNodeDetails kilnNodeUri = do
         JOIN "NodeDetails" d ON d.id = n.id
       WHERE NOT n."data#deleted"
       |] <&> fmap (\(addr, l, b, p, t, f, s) -> (addr, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
-  pure $ ext <> int
+  pure $ int <> ext
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
