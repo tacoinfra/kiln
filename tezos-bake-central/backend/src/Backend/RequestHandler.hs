@@ -396,14 +396,14 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         -- Initialize the config to have NULL bot name and NULL enabled.
         -- NULL enabled means the bot is not yet validated.
         $(logInfo) "Adding a Telegram configuration"
-        inDb $ void $ updateTelegramCfg apiKey Nothing True Nothing
+        cid <- inDb $ updateTelegramCfg apiKey Nothing True Nothing
 
         -- Fork a thread to collect meta info about this bot.
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
-          connectTelegram apiKey
+          connectTelegram apiKey cid
 
         where
-          connectTelegram botApiKey = do
+          connectTelegram botApiKey cid = do
             result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $
               Telegram.getBotAndLastSender botApiKey
             inDb $ case result' of
@@ -417,8 +417,10 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 let
                   botName = Telegram._botGetMe_firstName botMeta
                 $(logInfo) $ "Telegram Bot found: " <> botName
-                cid <- updateTelegramCfg botApiKey (Just botName) True (Just True)
+                -- Since we sample recipient in frontend based on update on telegram config
+                -- update this before updating the telegram config
                 rid <- updateRecipient cid chat sender
+                _ <- updateTelegramCfg botApiKey (Just botName) True (Just True)
                 now <- getTime
                 void $ insert' TelegramMessageQueue
                   { _telegramMessageQueue_recipient = rid
