@@ -1276,7 +1276,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
            pure close
 
-startNodeWorkflow ::
+startNodeWorkflow :: forall m t.
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadJSM m
   , MonadJSM (Performable m)
@@ -1293,13 +1293,15 @@ startNodeWorkflow backWF = Workflow $ do
       el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-      divClass "" $ do
+      divClass "file-selection" $ do
         rec
           let fileName = headMay <$> value fi
           dyn_ $ ffor fileName $ mapM $ \file -> do
             name <- liftJSM $ File.getName file
             divClass "file-name" $ text name
-          fi <- fileInput def
+          elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
+          fi <- fileInput $ (def :: FileInputConfig t)
+            & fileInputConfig_attributes .~ (constDyn ("id" =: "fileId"))
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
