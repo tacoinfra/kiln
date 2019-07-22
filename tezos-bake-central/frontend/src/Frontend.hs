@@ -698,7 +698,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -1898,7 +1898,7 @@ bakersTab =
             toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
