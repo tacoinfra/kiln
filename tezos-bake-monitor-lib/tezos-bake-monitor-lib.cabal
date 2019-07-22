@@ -32,6 +32,7 @@ library
     Tezos.Ledger
     Tezos.Level
     Tezos.Micheline
+    Tezos.Michelson
     Tezos.NodeRPC.Class
     Tezos.NodeRPC.Sources
     Tezos.NodeRPC.Types
