@@ -78,9 +78,6 @@
 - ignore: {name: "Evaluate"}
 - ignore: {name: "Use notElem"}
 - ignore: {name: "Use record patterns"}
-- ignore: {name: "Use mapMaybe"}
-- ignore: {name: "Use fromMaybe"}
-- ignore: {name: "Use maybe"}
 - ignore: {name: "Use &&"}
 - ignore: {name: "Use >>"}
 - ignore: {name: "Functor law"}

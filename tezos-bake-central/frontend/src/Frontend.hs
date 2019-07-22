@@ -698,7 +698,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -751,9 +751,7 @@ liveErrorsWidget = void $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> "Last Detected"
             Just _ -> "Stopped"
-          localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> _errorLog_lastSeen log
-            Just x -> x
+          localTimestamp' $ ffor logDyn $ \log -> fromMaybe (_errorLog_lastSeen log) (_errorLog_stopped log)
   where
     localTimestamp' dt = do
       tz <- asks (^. timeZone)
@@ -1566,7 +1564,7 @@ nodesTab =
               (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
-              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat)
               nodeDetails
 
           void $ listWithKey internal $ \nodeId nodeData -> do
@@ -1648,7 +1646,7 @@ nodesTab =
                     ])
                   (Just $ _processData_state . fst)
                   (Just $ (=<<) _nodeDetailsData_peerCount . snd)
-                  (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
+                  (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                   ((,) <$> nodeData <*> nodeDetails)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
@@ -1898,7 +1896,7 @@ bakersTab =
             toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
