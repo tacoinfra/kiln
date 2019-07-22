@@ -13,6 +13,7 @@
 module Frontend.Watch where
 
 import qualified Data.List.NonEmpty as NEL
+import Data.Dependent.Map (DMap)
 import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
@@ -259,7 +260,7 @@ watchUpstreamVersion = holdUniqDyn <=<
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upstreamVersion = viewJust 1 }
 
-watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe Int))
+watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (DMap LogTag (Const Int))))
 watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1

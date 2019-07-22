@@ -25,9 +25,10 @@ import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
-import Data.Dependent.Sum (DSum (..))
+import Data.Dependent.Map (DMap)
+import qualified Data.Dependent.Map as DMap
+import Data.Dependent.Sum (DSum(..))
 import Data.List (intersperse)
-import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
@@ -175,7 +176,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
       pure (telegramConfig, telegramRecipients)
 
-  alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
@@ -482,11 +483,11 @@ getAlertCount
   ( MonadLogger m
   , PersistBackend m
   )
-  => m (Map (Some LogTag) Int)
-getAlertCount = Map.fromList . concat <$> traverse (\(This lTag) -> do
+  => m (DMap LogTag (Const Int))
+getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
   (x, _) <- runQuery lTag
   $(logDebugSH) x
-  pure $ (map (\(t, v) -> (This t, v)) x)) universe
+  pure $ (map (\(t, v) -> (t :=> Const v)) x)) universe
   where
     {-# INLINE queryAlert #-}
     queryAlert
