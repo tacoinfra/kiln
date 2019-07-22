@@ -2,6 +2,7 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,6 +15,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -79,7 +81,6 @@ import Common.Alerts (
     bakerInsufficientFundsDescriptions,
     bakerMissedDescriptions,
     bakerVotingReminderDescriptions,
-    isUserResolvable,
     networkUpdateDescription,
     standardTimeFormat,
   )
@@ -597,35 +598,64 @@ newtype SynthError
   = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
+data AlertSeverity
+  = AlertSeverity_Error
+  | AlertSeverity_Warning
+  | AlertSeverity_Info
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
 -- | Meta info for alerts to customize their appearance/behaviour
 data AlertMetaData = AlertMetaData
   { _alertMetaData_isEventBased :: !Bool
+  , _alertMetaData_isUserResolvable :: !Bool
+  , _alertMetaData_severity :: !AlertSeverity
   }
 
 class HasAlertMetaData a where
   getAlertMetaData :: a -> AlertMetaData
 
+isUserResolvable :: (HasAlertMetaData a) => a -> Bool
+isUserResolvable = _alertMetaData_isUserResolvable . getAlertMetaData
+
 instance Default AlertMetaData where
   def = AlertMetaData
     { _alertMetaData_isEventBased = False
+    , _alertMetaData_isUserResolvable = False
+    , _alertMetaData_severity = AlertSeverity_Error
     }
 
 instance HasAlertMetaData ErrorLogView' where
-  getAlertMetaData (ErrorLogView' (logTag :=> _) _) = case logTag of
+  getAlertMetaData (ErrorLogView' l _) = getAlertMetaData l
+
+instance HasAlertMetaData ErrorLogView where
+  getAlertMetaData (logTag :=> eLog) = case logTag of
     LogTag_Node nlt -> case nlt of
       NodeLogTag_InaccessibleNode -> def
       NodeLogTag_NodeWrongChain -> def
-      NodeLogTag_NodeInvalidPeerCount -> def
+      NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
       NodeLogTag_BadNodeHead -> def
-    LogTag_Baker blt -> case blt of
-      BakerLogTag_BakerMissed -> def { _alertMetaData_isEventBased = True }
-      BakerLogTag_BakerDeactivated -> def
-      BakerLogTag_BakerDeactivationRisk -> def
-      BakerLogTag_BakerAccused -> def { _alertMetaData_isEventBased = True }
-      BakerLogTag_InsufficientFunds -> def
-      BakerLogTag_VotingReminder -> def { _alertMetaData_isEventBased = True }
-    LogTag_BakerNoHeartbeat -> def
-    LogTag_NetworkUpdate -> def { _alertMetaData_isEventBased = True }
+    LogTag_Baker blt -> getAlertMetaData (blt :=> eLog)
+    LogTag_BakerNoHeartbeat -> def { _alertMetaData_isUserResolvable = True }
+    LogTag_NetworkUpdate ->
+      def { _alertMetaData_isEventBased = True
+          , _alertMetaData_isUserResolvable = True
+          , _alertMetaData_severity = AlertSeverity_Info
+          }
+
+instance HasAlertMetaData BakerErrorLogView where
+  getAlertMetaData (logTag :=> _) = case logTag of
+    BakerLogTag_BakerMissed ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_BakerDeactivated -> def
+    BakerLogTag_BakerDeactivationRisk -> def
+    BakerLogTag_BakerAccused ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_InsufficientFunds -> def
+    BakerLogTag_VotingReminder -> def
+      { _alertMetaData_isEventBased = True
+      , _alertMetaData_isUserResolvable = True
+      , _alertMetaData_severity = AlertSeverity_Info
+      }
 
 instance HasAlertMetaData SynthError where
   getAlertMetaData (SynthError_BakersInformationDown _) = def
@@ -1889,12 +1919,12 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concatMap NEL.toList <$> dEbb
+            anyErrors = (any isUserResolvable) . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
           let
-            toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
+            toLogTag l@(f :=> k) = let g = LogTag_Baker f in if isUserResolvable l
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
             alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
@@ -2240,7 +2270,7 @@ renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
 renderResolvableSplashAlert es@((etag :=> _) :| _) splashIcon title entity desc = do
   renderSplashAlert splashIcon title entity $ do
     desc
-    when (isUserResolvable etag) $ do
+    when (isUserResolvable $ NEL.head es) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"
