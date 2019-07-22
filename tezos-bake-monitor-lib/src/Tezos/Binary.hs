@@ -1,5 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 module Tezos.Binary where
 
 import Control.Applicative (many)
@@ -17,6 +20,7 @@ import Data.Functor.Const
 import Data.Int
 import Data.Maybe (Maybe(..))
 import Data.Sequence (Seq)
+import Data.Tagged (Tagged(..))
 import qualified Data.Sequence as Seq
 import Data.Time.Clock (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
@@ -48,6 +52,17 @@ decode x = runGet (isolate (BS.length x) get) $ LBS.fromChunks $ pure x
 
 decodeEither :: TezosBinary a => BS.ByteString -> Either String a
 decodeEither x = either (\(_,_,r) -> Left r) (\(_,_,r) -> Right r) $ runGetOrFail (isolate (BS.length x) get) $ LBS.fromChunks $ pure x
+
+pattern TezosBinary :: TezosBinary a => a -> BS.ByteString
+pattern TezosBinary x <- (decodeEither -> Right x) where
+  TezosBinary x = encode x
+
+pattern Undecodable :: forall a. TezosBinary a => Tagged a String -> BS.ByteString
+pattern Undecodable x <- (decodeEither @a -> Left (Untagged x))
+
+pattern Untagged :: forall t x. Tagged t x -> x
+pattern Untagged x <- (Tagged @t -> x) where
+  Untagged (Tagged x) = x
 
 class TezosUnsignedBinary a where
   putUnsigned :: a -> Const Builder ()

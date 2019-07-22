@@ -76,6 +76,7 @@ library
     , safe-exceptions
     , scientific
     , semigroups
+    , tagged
     , template-haskell
     , text
     , time
