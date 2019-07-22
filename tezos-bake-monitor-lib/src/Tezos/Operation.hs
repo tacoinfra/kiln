@@ -2,23 +2,26 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 
 module Tezos.Operation where
 
-import Control.Lens ((<&>),Traversal')
+import Control.Lens (Traversal')
 import Control.Lens.TH (makeLenses, makePrisms)
 import Control.Applicative ((<|>))
+import Control.Monad ((<=<))
+import Control.Monad.Fail (MonadFail, fail)
 import Data.Aeson
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
@@ -36,6 +39,7 @@ import GHC.Word
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Vector as Vector
+import Prelude hiding (fail)
 
 import Tezos.BalanceUpdate
 import Tezos.Base16ByteString
@@ -91,7 +95,7 @@ data OpKindTag opKind where
 
 data OpsKindTag opKinds where
   OpsKindTag_Single :: OpKindTag k -> OpsKindTag k
-  -- OpsKindTag_Cons :: OpKindTag (OpKind_Manager (k : '[])) -> OpsKindTag (OpKind_Manager ks) -> OpsKindTag (OpKind_Manager (k : ks))
+  OpsKindTag_Cons :: OpKindTag ('OpKind_Manager (k ': '[])) -> OpsKindTag ('OpKind_Manager (kk ': ks)) -> OpsKindTag ('OpKind_Manager (k ': kk ': ks))
   -- TODO support operation batching since this attempt did not work
   deriving (Typeable)
 
@@ -145,7 +149,7 @@ data OperationContents
 
 data OpContentsList (a :: OpKind) where
   OpContentsList_Single :: OpContents a -> OpContentsList a
-  -- OpContentsList_Cons :: OpContents ('OpKind_Manager '[a]) -> OpContentsList ('OpKind_Manager as) -> OpContentsList ('OpKind_Manager (a : as))
+  OpContentsList_Cons :: OpContents ('OpKind_Manager '[k]) -> OpContentsList ('OpKind_Manager (kk ': ks)) -> OpContentsList ('OpKind_Manager (k ': kk ': ks))
   deriving Typeable
 
 deriving instance Eq (OpContentsList a)
@@ -688,25 +692,53 @@ instance B.TezosBinary (OpContentsList 'OpKind_Endorsement) where
   get = OpContentsList_Single <$> B.get
 
 instance ToJSON (DSum OpsKindTag OpContentsList) where
-  toJSON = \case
-    OpsKindTag_Single t :=> OpContentsList_Single op ->
-      Array $ Vector.fromList [toJSON $ t :=> op]
+  toJSON = Array . Vector.fromList . toJSONs
+    where
+    toJSONs = \case
+      otl :=> ocl -> case otl of
+        OpsKindTag_Cons (t :: OpKindTag ('OpKind_Manager '[k])) (ts :: OpsKindTag ('OpKind_Manager (kk ': ks))) ->
+          case (ocl :: OpContentsList ('OpKind_Manager (k ': kk ': ks))) of
+            OpContentsList_Cons op ops ->
+              toJSON (t :=> op) : toJSONs (ts :=> ops)
+            OpContentsList_Single op -> case op of {}
+        OpsKindTag_Single (t :: OpKindTag k) ->
+          case (ocl :: OpContentsList k) of
+            OpContentsList_Single op ->
+              [toJSON $ t :=> op]
+            OpContentsList_Cons (_ :: OpContents ('OpKind_Manager '[kay])) (_ :: OpContentsList ('OpKind_Manager (kk ': ks))) ->
+              case (t :: OpKindTag ('OpKind_Manager (kay ': kk ': ks))) of {}
 
 instance FromJSON (DSum OpsKindTag OpContentsList) where
-  parseJSON = withArray "contents list" $ (. toList) $ \case
-    [v] -> parseJSON v >>= \case
-      t :=> op -> pure $ OpsKindTag_Single t :=> OpContentsList_Single op
-    _ -> fail "batch not yet supported" -- FIXME
+  parseJSON = withArray "contents list" $ (checkBatch . toList) <=< traverse parseJSON
+
+checkBatch :: MonadFail m => [DSum OpKindTag OpContents] -> m (DSum OpsKindTag OpContentsList)
+checkBatch = \case
+  [t :=> op] -> pure $ OpsKindTag_Single t :=> OpContentsList_Single op
+  [] -> fail "empty batch not supported"
+  v:vs -> case v of
+    t@(OpKindTag_Manager _) :=> op -> checkBatch vs >>= \case
+      ts@(OpsKindTag_Single (OpKindTag_Manager _)) :=> ops ->
+        return $ OpsKindTag_Cons t ts :=> OpContentsList_Cons op ops
+      OpsKindTag_Single _ :=> _ -> fail "only manager ops allowed in batches"
+      ts@(OpsKindTag_Cons _ _) :=> ops ->
+        return $ OpsKindTag_Cons t ts :=> OpContentsList_Cons op ops
+    _ :=> _ -> fail "only manager ops allowed in batches"
 
 instance B.TezosBinary (DSum OpsKindTag OpContentsList) where
   put = \case
-    OpsKindTag_Single t :=> OpContentsList_Single op ->
-      B.put $ t :=> op
-    -- OpsKindTag_Cons t ts :=> OpContentsList_Cons op ops -> do
-    --   B.put $ t :=> op
-    --   B.put $ ts :=> ops
-  get = B.get <&> \case
-    t :=> op -> OpsKindTag_Single t :=> OpContentsList_Single op
+    otl :=> ocl -> case otl of
+      OpsKindTag_Cons (t :: OpKindTag ('OpKind_Manager '[k])) (ts :: OpsKindTag ('OpKind_Manager (kk ': ks))) ->
+        case (ocl :: OpContentsList ('OpKind_Manager (k ': kk ': ks))) of
+          OpContentsList_Cons op ops ->
+            (B.put $ t :=> op) <* (B.put $ ts :=> ops)
+          OpContentsList_Single op -> case op of {}
+      OpsKindTag_Single (t :: OpKindTag k) ->
+        case (ocl :: OpContentsList k) of
+          OpContentsList_Single op ->
+            B.put $ t :=> op
+          OpContentsList_Cons (_ :: OpContents ('OpKind_Manager '[kay])) (_ :: OpContentsList ('OpKind_Manager (kk ': ks))) ->
+            case (t :: OpKindTag ('OpKind_Manager (kay ': kk ': ks))) of {}
+  get = B.get >>= (checkBatch . toList @Seq)
 
 instance B.TezosUnsignedBinary (Op 'OpKind_Endorsement) where
   putUnsigned = shellHeaderEncoding <** B.puts _op_contents
@@ -747,6 +779,7 @@ instance B.TezosUnsignedBinary (DSum OpsKindTag Op) where
 instance B.TezosBinary (DSum OpsKindTag Op) where
   put op@(_ :=> body) =
       B.putUnsigned op *> traverse_ B.put (_op_signature body)
+  -- XXX get doesn't really work because it will try to parse the signature as a batched operation
   get = B.getUnsigned >>= \case
     (t :=> op) -> do
       sig <- B.get
