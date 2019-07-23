@@ -646,11 +646,7 @@ instance HasAlertMetaData ErrorLogView where
 
 instance HasAlertMetaData (LogTag a) where
   getAlertMetaData = \case
-    LogTag_Node nlt -> case nlt of
-      NodeLogTag_InaccessibleNode -> def
-      NodeLogTag_NodeWrongChain -> def
-      NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
-      NodeLogTag_BadNodeHead -> def
+    LogTag_Node nlt -> getAlertMetaData nlt
     LogTag_Baker blt -> getAlertMetaData blt
     LogTag_BakerNoHeartbeat -> def { _alertMetaData_isUserResolvable = True }
     LogTag_NetworkUpdate ->
@@ -658,6 +654,13 @@ instance HasAlertMetaData (LogTag a) where
           , _alertMetaData_isUserResolvable = True
           , _alertMetaData_severity = AlertSeverity_Info
           }
+
+instance HasAlertMetaData (NodeLogTag a) where
+  getAlertMetaData = \case
+    NodeLogTag_InaccessibleNode -> def
+    NodeLogTag_NodeWrongChain -> def
+    NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
+    NodeLogTag_BadNodeHead -> def
 
 instance HasAlertMetaData BakerErrorLogView where
   getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
@@ -1596,9 +1599,10 @@ nodesTab =
           ebn <- snd <$$$$> watchErrorsByNode alertWindow
 
           let
+            withSeverity e m = (_alertMetaData_severity $ getAlertMetaData e, m)
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> case lTag of
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
                 NodeLogTag_InaccessibleNode -> text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> text "On wrong network."
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
@@ -1798,7 +1802,7 @@ nodesTab =
       -> m () -- ^ Subtitle
       -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
       -> m ()
     tileHeader title subtitle menuContents badge errors' = do
       case menuContents of
@@ -1811,7 +1815,8 @@ nodesTab =
       tileErrors errors'
 
     tileErrors = traverse_ $ \errors ->
-      dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+      dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
+        divClass ("ui message " <> severityColor severity) m
 
     tileBadgeImpliedByErrors
       :: Maybe (Dynamic t [a])
@@ -1878,7 +1883,7 @@ nodesTab =
       -> m () -- ^ Subtitle
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (Dynamic t Bool) -- ^ (Optional) Are we connected to the node?
       -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
