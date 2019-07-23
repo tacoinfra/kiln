@@ -28,6 +28,7 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import Data.Default
+import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
@@ -415,16 +416,27 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" $ ensureHealthyNodes
 
-headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
+headerBell :: forall t m . MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
-  alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
-  let hasAlerts = fmap (> 0) alertCount
+  alertCount <- watchAlertCount
+  let
+    totalAlertCount :: Dynamic t Int
+    totalAlertCount = maybe 0 (DMap.foldlWithKey (\v _ (Const c) -> c + v) 0) <$> alertCount
+    maxSeverity :: Dynamic t (Maybe AlertSeverity)
+    maxSeverity = (=<<) (DMap.foldlWithKey (\v l (Const c) ->
+      if c > 0 then max v (Just $ _alertMetaData_severity $ getAlertMetaData l) else v) Nothing) <$> alertCount
+    hasAlerts = fmap (> 0) totalAlertCount
+    color = ffor maxSeverity $ \case
+      Nothing -> "basic"
+      Just AlertSeverity_Info -> "blue"
+      Just AlertSeverity_Warning -> "orange"
+      Just AlertSeverity_Error -> "red"
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ((<>) "ui circular label link ") . bool "basic" "red")
+      & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color)
       )
     $ do
-        dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+        dynText $ ffor totalAlertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
         text " "
         SemUi.icon "icon-bell"
           (def
@@ -599,9 +611,9 @@ newtype SynthError
   deriving (Eq, Ord, Show)
 
 data AlertSeverity
-  = AlertSeverity_Error
+  = AlertSeverity_Info
   | AlertSeverity_Warning
-  | AlertSeverity_Info
+  | AlertSeverity_Error
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Meta info for alerts to customize their appearance/behaviour
