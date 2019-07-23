@@ -426,11 +426,7 @@ headerBell = do
     maxSeverity = (=<<) (DMap.foldlWithKey (\v l (Const c) ->
       if c > 0 then max v (Just $ _alertMetaData_severity $ getAlertMetaData l) else v) Nothing) <$> alertCount
     hasAlerts = fmap (> 0) totalAlertCount
-    color = ffor maxSeverity $ \case
-      Nothing -> "basic"
-      Just AlertSeverity_Info -> "blue"
-      Just AlertSeverity_Warning -> "orange"
-      Just AlertSeverity_Error -> "red"
+    color = maybe "basic" severityColor <$> maxSeverity
   (e,_) <- SemUi.ui' "span"
     (def
       & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color)
@@ -616,6 +612,12 @@ data AlertSeverity
   | AlertSeverity_Error
   deriving (Eq, Ord, Show, Enum, Bounded)
 
+severityColor :: (IsString t) => AlertSeverity -> t
+severityColor = \case
+  AlertSeverity_Info -> "blue"
+  AlertSeverity_Warning -> "orange"
+  AlertSeverity_Error -> "red"
+
 -- | Meta info for alerts to customize their appearance/behaviour
 data AlertMetaData = AlertMetaData
   { _alertMetaData_isEventBased :: !Bool
@@ -677,6 +679,14 @@ instance HasAlertMetaData (BakerLogTag a) where
 
 instance HasAlertMetaData SynthError where
   getAlertMetaData (SynthError_BakersInformationDown _) = def
+
+instance HasAlertMetaData CollectiveNodesFailure where
+  getAlertMetaData _ = def
+
+instance HasAlertMetaData BakerAlert where
+  getAlertMetaData = \case
+    BakerAlert_Alert a -> getAlertMetaData a
+    BakerAlert_GroupedAlert _ _ _ -> getAlertMetaData BakerLogTag_BakerMissed
 
 instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a b) where
   getAlertMetaData (Left v) = getAlertMetaData v
@@ -1985,7 +1995,8 @@ bakersTab =
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor bakerAlerts $ mapMaybe $ \case
+                withSeverity e = fmap $ \m -> (_alertMetaData_severity $ getAlertMetaData e, m)
+                errorMessages = ffor bakerAlerts $ mapMaybe $ \e -> withSeverity e $ case e of
                   Left (_ :: CollectiveNodesFailure) -> Just $ text "Cannot gather baker data."
                   Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
                     BakerLogTag_BakerMissed -> Just $ text $ "Missed " <> aRight <> "."
@@ -2099,7 +2110,7 @@ bakersTab =
       -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t (Either CollectiveNodesFailure ())
@@ -2226,7 +2237,8 @@ bakersTab =
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
-          dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+          dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
+            divClass ("ui message " <> severityColor severity) m
 
         let
           nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
