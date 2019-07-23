@@ -494,7 +494,7 @@ getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
       :: forall f c b. (Monad f, PersistBackend f, MonadLogger f, PersistEntity b, EntityConstr b c)
       => c (ConstructorMarker b)
       -> [Some (Related b c)]
-      -> f ([Int], b)
+      -> f ([Int], Proxy b)
     queryAlert ctor _related = do
       let
         build :: [PersistValue] -> f Int
@@ -513,12 +513,12 @@ getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
           \ WHERE el.stopped IS NULL"
       $(logDebugSH) ("queryAlert" :: Text, sqlTable)
       v <- traceQuery qBase id build
-      pure (v, undefined :: b)
+      pure (v, Proxy @b)
 
-    runQuery :: LogTag e -> m ([(LogTag e, Int)] , DSum LogTag Identity)
+    runQuery :: LogTag e -> m ([(LogTag e, Int)] , DSum LogTag Proxy)
     runQuery lTag = do
       vus <- logAssume lTag $ queryAlert (singleConstructor $ proxify lTag) (logDep lTag)
-      pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> Identity u)) vus
+      pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> u)) vus
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)
