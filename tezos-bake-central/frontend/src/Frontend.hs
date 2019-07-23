@@ -628,13 +628,16 @@ instance HasAlertMetaData ErrorLogView' where
   getAlertMetaData (ErrorLogView' l _) = getAlertMetaData l
 
 instance HasAlertMetaData ErrorLogView where
-  getAlertMetaData (logTag :=> eLog) = case logTag of
+  getAlertMetaData (logTag :=> _eLog) = getAlertMetaData logTag
+
+instance HasAlertMetaData (LogTag a) where
+  getAlertMetaData = \case
     LogTag_Node nlt -> case nlt of
       NodeLogTag_InaccessibleNode -> def
       NodeLogTag_NodeWrongChain -> def
       NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
       NodeLogTag_BadNodeHead -> def
-    LogTag_Baker blt -> getAlertMetaData (blt :=> eLog)
+    LogTag_Baker blt -> getAlertMetaData blt
     LogTag_BakerNoHeartbeat -> def { _alertMetaData_isUserResolvable = True }
     LogTag_NetworkUpdate ->
       def { _alertMetaData_isEventBased = True
@@ -643,7 +646,10 @@ instance HasAlertMetaData ErrorLogView where
           }
 
 instance HasAlertMetaData BakerErrorLogView where
-  getAlertMetaData (logTag :=> _) = case logTag of
+  getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
+
+instance HasAlertMetaData (BakerLogTag a) where
+  getAlertMetaData = \case
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
