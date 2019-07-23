@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, modifyTVar, retry)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -106,12 +106,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
           pure Nothing
     for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
-  atomically $ do
-    updateNodeDataSource nds nodeAddr headBlockInfo
-    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
-
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe RawLevel -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
     -- This isn't very nuanced: old, stale nodes, even if they are catching
@@ -137,19 +133,23 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
           , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
           , _nodeDetailsData_updated = Just now
           , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
+          , _nodeDetailsData_savePoint = mSp
           }
         }
       (_:_) -> update
-        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        ([ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
         , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
         , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ]
+        ] <> maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp)
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
+
+  atomically $ do
+    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
 
 updateNetworkStats
   :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
@@ -284,41 +284,39 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        updateCheckpoint blk = do
+        updateCheckpoint :: (BlockLike blk, MonadIO m, MonadLogger m) => blk -> Maybe RawLevel -> m (Maybe RawLevel)
+        updateCheckpoint blk mSp = do
           mParams <- liftIO $ readTVarIO $ _nodeDataSource_parameters nds
-          nData <- Map.lookup nodeAddr <$> (liftIO $ readTVarIO $ _nodeDataSource_nodes nds)
           let
-            shouldUpdate = maybe True checkCycle (liftA2 (,) mParams nData)
-            checkCycle (protoInfo, (NodeDataSourceData _ mSp)) = mSp == Nothing || thisCycle /= predCycle
+            shouldUpdate = maybe True checkCycle mParams
+            checkCycle protoInfo = mSp == Nothing || thisCycle /= predCycle
               where
                 thisCycle = levelToCycle protoInfo (blk ^. level)
                 predCycle = levelToCycle protoInfo $ pred (blk ^. level)
 
-          when shouldUpdate $ do
-            $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
-            newSavePoint <- liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-              Left e ->
-                case e of
-                  RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
-                  _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
-              Right checkpoint ->
-                pure $ Just $ _checkpoint_savePoint checkpoint
-
-            liftIO $ atomically $ modifyTVar (_nodeDataSource_nodes nds) $
-              flip Map.alter nodeAddr $ Just . \case
-                Nothing -> NodeDataSourceData Nothing newSavePoint
-                Just v -> v & nodeDataSourceData_savePoint .~ newSavePoint
+          if not shouldUpdate
+            then pure Nothing
+            else do
+              $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+              liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
+                Left e ->
+                  case e of
+                    RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
+                    _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
+                Right checkpoint ->
+                  pure $ Just $ _checkpoint_savePoint checkpoint
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
-          runLoggingEnv (_nodeDataSource_logger nds) $ do
-            inDb $ do
+          mNewSp <- runLoggingEnv (_nodeDataSource_logger nds) $ do
+            mOldSp <- inDb $ do
               clearInaccessibleNodeError nodeId
               clearNodeWrongChainError nodeId
-            updateCheckpoint block
+              project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector) (NodeDetails_idField `in_` [nodeId])
+            updateCheckpoint block $ join mOldSp
 
-          nodeMonitor nds appConfig nodeAddr nodeId block
+          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
@@ -335,6 +333,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
 
   where
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
@@ -569,13 +568,12 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     votingState <- case currentPeriodKind of
       VotingPeriodKind_Proposal -> throwing $ runNodeQueryT $ do
         let blk = latestHead ^. hash
-        proposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
-        let inProposals = In $ S.toList proposals
+        bakerProposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
 
-        pps <- [queryQ|
+        pps <- let inBakerProposals = In $ S.toList bakerProposals in [queryQ|
           UPDATE "BakerProposal" SET included = ?blk
           FROM "PeriodProposal" pp
-          WHERE pp.id = proposal AND pp.hash IN ?inProposals
+          WHERE pp.id = proposal AND pp.hash IN ?inBakerProposals
             AND pp."chainId" = ?chainId
             AND pp."votingPeriod" = ?votingPeriod
           RETURNING pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, attempted
@@ -588,15 +586,18 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
           then pure ProposalVotingState_SilentRange
           else fmap NE.nonEmpty getProposals >>= \case
             Nothing -> pure ProposalVotingState_CaughtUp
-            Just ps
-              | length (NE.filter (isJust . snd . snd) ps) >= maxProposalUpvotes ->
+            Just proposals
+              | length (NE.filter (isJust . snd . snd) proposals) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
               | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
-                  proposalsWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote lastAttempt pkh
-                  let unseenProposals = proposalsWhenLastVoting S.\\ proposals
-                  pure $ if null unseenProposals then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
+                  proposalVotesWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_Proposals lastAttempt
+                  let
+                    proposalHashes = S.fromList $ toList $ (^. _2 . _1 . periodProposal_hash) <$> proposals
+                    proposalHashesWhenLastVoting = S.fromList $ toList $ fst . unProposalVotes <$> proposalVotesWhenLastVoting
+                    unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
+                  pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
@@ -617,9 +618,9 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
               | otherwise -> 100 -- 90 to 100
 
           singleVotePhase = bool (reportError False) clearAllErrors
-          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+          clearAllErrors = clearPastVotingPeriodErrors chainId (Id pkh) Nothing rangeMax
           reportError previouslyVoted = do
-            clearPastVotingPeriodErrors chainId (Id pkh) rangeMax
+            clearPastVotingPeriodErrors chainId (Id pkh) (Just previouslyVoted) rangeMax
             reportVotingReminderError chainId (Id pkh) votingPeriod currentPeriodKind previouslyVoted rangeMax endTime
 
         case votingState of

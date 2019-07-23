@@ -119,12 +119,6 @@ h6.ui.header {
   opacity: 0.50;
 }
 
-.amendment-period > .icon {
-  margin-left: @8px;
-  font-size: @20px;
-  vertical-align: middle;
-}
-
 .vote-modal {
   min-width: 700px;
   .detail {
@@ -630,48 +624,64 @@ body {
   height: 100%;
 
   .ui.segment.vertical.primary {
+    display: flex;
+    justify-content: space-between;
+
     padding-top: @6px;
     padding-bottom: @6px;
+    padding-left: @30px;
     padding-right: @20px;
     border-bottom-width: @2px;
     background-color: #FEFEFE;
 
-    .column {
-      .ui.circular.label.link {
-        cursor: pointer;
-        height: @40px;
-        font-size: 16px;
-        margin-top: 2px;
-        &.basic {
-          border-color: transparent;
-        }
-        i.icon-bell {
-          margin-right: 0;
-        }
+
+    .ui.circular.label.link {
+      cursor: pointer;
+      height: @40px;
+      font-size: 16px;
+      margin-top: 2px;
+      &.basic {
+        border-color: transparent;
+      }
+      i.icon-bell {
+        margin-right: 0;
       }
     }
 
-    .topbar.column {
-      padding-left: @30px;
+    .topbar {
       display: flex;
       align-items: center;
 
-      > .ui.horizontal.list .item .content {
-        font-weight: bold;
-        font-size: @13px;
-        padding-left: @30px;
-        margin-right: @40px;
+      > .ui.horizontal.list > .item {
+        &:not(:first-child) {
+          margin-left: @40px;
+        }
 
         .metadescription {
           font-weight: normal;
         }
-        > .header {
-          font-size: @12px;
-          font-weight: normal;
-          color: rgba(0, 0, 0, .6);
-          padding-bottom: @4px;
+
+        .content {
+          .header {
+            font-size: @12px;
+            font-weight: normal;
+            color: rgba(0, 0, 0, .6);
+            padding-bottom: @4px;
+          }
+          .description {
+            display: flex;
+            align-items: center;
+            color: black;
+            font-weight: bold;
+            font-size: @13px;
+            .icon {
+              margin-left: @8px;
+              font-size: @20px;
+            }
+          }
         }
       }
+
 
       .disconnected-tooltip {
         width: 260px;
@@ -1189,7 +1199,14 @@ img.credits-obsidian {
     .generating-icons {
       margin-top: @15px;
       margin-bottom: @19px;
-      .icon-id-badge { color: #d8dce6; }
+      .icon {
+        color: #d8dce6;
+        margin-right: @15px;
+        width: @28px;
+      }
+    }
+    .tile-header-spacing {
+      margin-bottom: @24px;
     }
     .content > .title {
       overflow: hidden;
@@ -1727,7 +1744,51 @@ h4.dashboard-section-title {
   }
 }
 
+.modal-box.start-node {
+  width: unit(560 / @emSize, rem);
+  .back-button {
+    ._link-like();
+    margin-bottom: @15px;
+    color: @blue;
+    .icon {
+      transform: translate(0px, 2px);
+    }
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+  }
+  .file-selection > input {
+    display: none;
+  }
+}
+
+.modal-box.show-error-log {
+  width: unit(560 / @emSize, rem);
+
+  .log-message {
+    overflow: auto;
+  }
+
+  .ui.button.primary {
+    margin-top: unit(40 / @emSize, rem);
+    /* TODO make this padding standard for all primary buttons? */
+    padding-left: unit(50 / @emSize, rem);
+    padding-right: unit(50 / @emSize, rem);
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+  }
+}
+
 .modal-box.confirmation {
+  width: unit(658 / @emSize, rem);
   .ui.header {
     font-size: @24px;
     line-height: @36px;
@@ -1736,6 +1797,70 @@ h4.dashboard-section-title {
       font-size: @28px;
       margin-right: @25px;
     }
+  }
+  .verify-top-message {
+    &.centered {
+      text-align: center;
+      padding: @20px;
+      .icon { margin-right: @20px; }
+      .header:only-child {
+        margin-bottom: 0;
+      }
+    }
+    margin: @20px 0 @25px;
+    text-align: left;
+    border: @1px solid @lightGrey;
+    border-radius: @3px;
+    padding: @18px @20px @8px unit(61 / @emSize, rem);
+    position: relative;
+    .header {
+      font-size: @16px;
+      font-weight: bold;
+      margin-bottom: @9px;
+    }
+    a { word-break: break-word; }
+    .icon-warning {
+      position: absolute;
+      top: @20px;
+      left: @20px;
+    }
+  }
+  .field {
+    margin: @10px;
+    .detail {
+      font-size: @12px;
+      color: #6a6a6a;
+    }
+  }
+}
+
+.internal-node-tile-body {
+  .ui.row {
+    margin-top: @10px;
+    margin-bottom: @10px;
+
+    .ui.error.message {
+      margin-top: @10px;
+      font-weight: bold;
+      font-size: @13px;
+      color: black;
+      line-height: 1;
+
+      padding-top: @12px;
+      padding-bottom: @11px;  // Because it doesn't look right without this.
+      padding-left: @12px;
+      padding-right: @12px;
+
+      border-radius: @3px;
+      border: solid @1px #ff0000;
+      box-shadow: none;
+      background-color: #fff5f5;
+    }
+  }
+  .ui.button {
+    margin-top: @20px;
+    margin-bottom: @20px;
+    .icon { transform: translate(-2px, 2px); }
   }
 }
 

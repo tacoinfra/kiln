@@ -15,6 +15,26 @@ obelisk.project ./. ({ pkgs, ... }@args:
       inherit pkgs;
       tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
     };
+
+    hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
+      src = pkgs.lib.cleanSourceWith {
+        filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
+        src = pkgs.lib.cleanSource src;
+      };
+    });
+
+    checkHlint = pkg: pkg.overrideAttrs ({ preConfigure ? "", src, ... }: {
+      preConfigure = ''
+        (
+          echo "Checking for lint"
+
+          set -x
+          '${pkgs.hlint}/bin/hlint' --version
+          '${pkgs.hlint}/bin/hlint' --hint '${builtins.path { path = ../.hlint.yaml; name = "hlint.yaml"; }}' '${src}' || exit 1
+        )
+        ${preConfigure}
+      '';
+    });
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
@@ -33,12 +53,12 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions (rhyolite args).haskellOverrides (self: super: with pkgs.haskell.lib; {
-      common = if distMethod == null
+      common = checkHlint (hsOnly (if distMethod == null
         then super.common
-        else enableCabalFlag super.common distMethod;
-      backend = overrideCabal super.backend (drv:{
+        else enableCabalFlag super.common distMethod));
+      backend = checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
-      });
+      })));
       backend-db = if supportGargoyle
         then
           enableCabalFlag (addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
@@ -47,11 +67,14 @@ obelisk.project ./. ({ pkgs, ... }@args:
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
+      frontend = checkHlint (hsOnly super.frontend);
       markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
       silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
-      tezos-noderpc = dontHaddock super.tezos-noderpc;
+      tezos-bake-monitor-lib = checkHlint (dontHaddock super.tezos-bake-monitor-lib);
+      tezos-noderpc = checkHlint( dontHaddock super.tezos-noderpc);
     });
-  })
+  }) // {
+    dev.extraGhciArgs = ["-fobject-code"];
+  }

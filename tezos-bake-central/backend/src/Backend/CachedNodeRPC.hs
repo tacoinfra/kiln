@@ -30,15 +30,22 @@ import Prelude hiding (cycle)
 
 import Control.Applicative (ZipList (..))
 import Control.Arrow (left)
-import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, readTVar, readTVarIO,
-                               retry, writeTQueue, writeTVar)
+import Control.Concurrent.STM (
+    STM,
+    TQueue,
+    TVar,
+    atomically,
+    readTVar,
+    readTVarIO,
+    retry,
+    writeTQueue,
+    writeTVar,
+  )
 import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
 -- import Control.Lens (TraversableWithIndex)
-import Control.Lens ((&))
-import Control.Lens ((?~))
 import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
@@ -94,6 +101,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..))
@@ -102,7 +110,7 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History
+import Tezos.History (CachedHistory (..))
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources
@@ -113,7 +121,7 @@ import Tezos.Types
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime, modifyTVar_',
+import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime,
                     newTVar', readTVar', retry', writeTVar')
 import qualified Backend.STM as Stm
 import Common (unixEpoch)
@@ -184,7 +192,6 @@ makeLenses 'NodeDataSourceData
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
-  , _nodeDataSource_nodes :: !(TVar (Map URI NodeDataSourceData))
   , _nodeDataSource_cache :: !(TVar (DMap NodeQuery (Compose TVar CacheLine)))
   , _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_parameters :: !(TVar (Maybe ProtoInfo))
@@ -192,8 +199,9 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_pool :: !(Pool Postgresql)
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
-  , _nodeDataSource_ioQueue :: TQueue (IO ())
-  , _nodeDataSource_osPublicNode :: Maybe URI
+  , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
+  , _nodeDataSource_osPublicNode :: !(Maybe URI)
+  , _nodeDataSource_kilnNodeUri :: !URI
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -270,9 +278,10 @@ instance MonadNodeQuery NodeQueryQueued where
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
   nodeRPCOrBust protoInfo qBranch q = do
     dsrc <- askNodeDataSource
-    mNodesToTry <- NodeQueryQueued $ atomicallyWith (validNodes q >>= \case
+    nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
+    mNodesToTry <- NodeQueryQueued $ atomicallyWith (validNodes nodes q >>= \case
       Left e -> pure $ Left e
-      Right nodes -> Right . maybeToList <$> pickNode qBranch nodes)
+      Right nodes' -> Right . maybeToList <$> pickNode qBranch nodes')
     result <- case mNodesToTry of
       Left e -> pure $ Left e
       Right [] -> case _nodeDataSource_osPublicNode dsrc of
@@ -535,35 +544,6 @@ lookupBlock nds x = do
   let xPath = Map.lookup x $ _cachedHistory_blocks history
   return $ fmap (histToBlockLike (_cachedHistory_minLevel history)) . LCA.uncons =<< xPath
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Maybe ProtoInfo -> Http.Manager -> LoggingEnv -> RawLevel -> Maybe URI -> IO NodeDataSource
-blankNodeDataSource db chain protoInfo' mgr logger minLevel osPublicNode = do
-  nodes <- newTVarIO mempty
-  hist <- newTVarIO $ emptyCache minLevel
-  cache <- newTVarIO mempty
-  protoInfoVar <- newTVarIO protoInfo'
-  latestHead <- newTVarIO Nothing
-  ioQueue <- newTQueueIO
-
-  return NodeDataSource
-    { _nodeDataSource_history = hist
-    , _nodeDataSource_nodes = nodes
-    , _nodeDataSource_cache = cache
-    , _nodeDataSource_chain = chain
-    , _nodeDataSource_parameters = protoInfoVar
-    , _nodeDataSource_httpMgr = mgr
-    , _nodeDataSource_pool = db
-    , _nodeDataSource_latestHead = latestHead
-    , _nodeDataSource_logger = logger
-    , _nodeDataSource_ioQueue = ioQueue
-    , _nodeDataSource_osPublicNode = osPublicNode
-    }
-{-
-
-withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
-withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
-
--}
-
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: NodeDataSource -> IO ()
 waitForNewHeadWithTimeout nds = do
@@ -590,17 +570,6 @@ histToBlockLike minLevel (h, (), path) = VeryBlockLike h p mempty blkLevel unixE
   where
     blkLevel = minLevel + fromIntegral (length path)
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
-
-updateNodeDataSource
-  :: forall nds b m. (HasNodeDataSource nds, BlockLike b, MonadSTM m)
-  => nds -> URI -> b -> m ()
-updateNodeDataSource nds nodeAddr blk = do
-  let nodesVar = nds ^. nodeDataSource . nodeDataSource_nodes
-      f = Just . \case
-        Nothing -> NodeDataSourceData (Just $ mkVeryBlockLike blk) Nothing
-        Just v -> v & nodeDataSourceData_latestHead ?~ mkVeryBlockLike blk
-
-  modifyTVar_' nodesVar $ pure . Map.alter f nodeAddr
 
 -- Make sure that the protocol parameters have been loaded and the datasource initialized.
 initParams :: Foldable f => NodeDataSource -> f (Maybe PublicNode, URI) -> IO Bool
@@ -874,8 +843,8 @@ unliftEither action = (Right <$> action) `catchError` (pure . Left)
 -- Check the level of the query and determine the nodes which could service the queries
 validNodes
   :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
-validNodes q = case q of
+  => [(URI, Maybe VeryBlockLike, Maybe RawLevel)] -> NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
+validNodes nodes q = case q of
   NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_Block ctx -> findNode =<< getLvl ctx
@@ -898,17 +867,15 @@ validNodes q = case q of
 
     findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
     findNode mLvl = do
-      dsrc <- asks (^. nodeDataSource)
-      nodes <- Map.assocs <$> readTVar' (_nodeDataSource_nodes dsrc)
       case mLvl of
         Nothing -> pure $ Right $ mapMaybe
-          (\(nUri, s) -> (nUri,) <$> s ^. nodeDataSourceData_latestHead) nodes
+          (\(nUri, mBlk, _) -> (nUri,) <$> mBlk) nodes
         Just lvl -> pure $ Right candidateNodes
           where
             candidateNodes = flip mapMaybe nodes $
-              \(nUri, NodeDataSourceData mHead mSavepoint) -> mSavepoint >>= \sp ->
+              \(nUri, mBlk, mSp) -> mSp >>= \sp ->
                 if sp <= lvl
-                  then (nUri,) <$> mHead
+                  then (nUri,) <$> mBlk
                   else Nothing
 
 pickNode
@@ -1078,12 +1045,12 @@ nodeQueryIx q = do
       where (_, mCtx) = rightsContext protoInfo hist ctx lvl
     getCheckpointContext ctx lvl = do
       let (ctxLvl, _) = rightsContext protoInfo hist ctx lvl
-      nodes <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_nodes
+      nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
       let
-        fitNodes :: [(URI, NodeDataSourceData)]
-        fitNodes = filter (\v -> (v ^? _2 . nodeDataSourceData_latestHead . _Just . level) >= Just ctxLvl) $ Map.assocs nodes
+        fitNodes :: [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
+        fitNodes = filter (\v -> v ^? _2 . _Just . level >= Just ctxLvl) nodes
         mCtxCp = (\l -> levelAncestor hist l ctx) =<< fmap (max ctxLvl) (minimumMay $
-          mapMaybe (view $ _2 . nodeDataSourceData_savePoint) fitNodes)
+          mapMaybe (view _3) fitNodes)
       pure $ fromMaybe ctx mCtxCp
 
   q1 <- modifyContext getRightsContext q
@@ -1268,6 +1235,36 @@ tryFetchFromCache chainId q = do
         Aeson.Error bad -> do
           $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
           return Nothing
+
+getActiveNodeDetails
+  :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
+getActiveNodeDetails kilnNodeUri = do
+  int <- let runningState = ProcessState_Running in [queryQ|
+      SELECT d."data#headLevel"
+           , d."data#headBlockHash"
+           , d."data#headBlockPred"
+           , d."data#headBlockBakedAt" AT TIME ZONE 'UTC'
+           , d."data#fitness"
+           , d."data#savePoint"
+        FROM "NodeInternal" n
+        JOIN "NodeDetails" d ON d.id = n.id
+        JOIN "ProcessData" p ON p.id = n."data#data"
+      WHERE NOT n."data#deleted"
+        AND p."state" = ?runningState
+      |] <&> fmap (\(l, b, p, t, f, s) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
+  ext <- [queryQ|
+      SELECT n."data#data#address"
+           , d."data#headLevel"
+           , d."data#headBlockHash"
+           , d."data#headBlockPred"
+           , d."data#headBlockBakedAt" AT TIME ZONE 'UTC'
+           , d."data#fitness"
+           , d."data#savePoint"
+        FROM "NodeExternal" n
+        JOIN "NodeDetails" d ON d.id = n.id
+      WHERE NOT n."data#deleted"
+      |] <&> fmap (\(addr, l, b, p, t, f, s) -> (addr, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
+  pure $ ext <> int
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery

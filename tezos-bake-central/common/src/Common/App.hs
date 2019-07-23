@@ -265,6 +265,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
+  , _bakeViewSelector_snapshotMeta :: !(MaybeSelector SnapshotMeta a)
   , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
   , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable (PublicKeyHash, Tez)) a)
   , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
@@ -302,6 +303,7 @@ data BakeView a = BakeView
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
+  , _bakeView_snapshotMeta :: !(MaybeView SnapshotMeta a)
   -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
   , _bakeView_connectedLedger :: !(MaybeView (Maybe ConnectedLedger) a)
@@ -413,6 +415,7 @@ cropBakeView vs v = BakeView
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
   , _bakeView_alertCount = cropView (_bakeViewSelector_alertCount vs) (_bakeView_alertCount v)
+  , _bakeView_snapshotMeta = cropView (_bakeViewSelector_snapshotMeta vs) (_bakeView_snapshotMeta v)
   , _bakeView_connectedLedger = cropView (_bakeViewSelector_connectedLedger vs) (_bakeView_connectedLedger v)
   , _bakeView_showLedger = cropView (_bakeViewSelector_showLedger vs) (_bakeView_showLedger v)
   , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
@@ -445,6 +448,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_telegramConfig = mapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = mapMaybe f (_bakeViewSelector_telegramRecipients a)
     , _bakeViewSelector_alertCount = mapMaybe f (_bakeViewSelector_alertCount a)
+    , _bakeViewSelector_snapshotMeta = mapMaybe f (_bakeViewSelector_snapshotMeta a)
     , _bakeViewSelector_connectedLedger = mapMaybe f (_bakeViewSelector_connectedLedger a)
     , _bakeViewSelector_showLedger = mapMaybe f (_bakeViewSelector_showLedger a)
     , _bakeViewSelector_prompting = mapMaybe f (_bakeViewSelector_prompting a)
@@ -477,6 +481,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
     , _bakeViewSelector_alertCount = nil
+    , _bakeViewSelector_snapshotMeta = nil
     , _bakeViewSelector_connectedLedger = nil
     , _bakeViewSelector_showLedger = nil
     , _bakeViewSelector_prompting = nil
@@ -509,6 +514,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
     , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
+    , _bakeViewSelector_snapshotMeta = f' _bakeViewSelector_snapshotMeta
     , _bakeViewSelector_connectedLedger = f' _bakeViewSelector_connectedLedger
     , _bakeViewSelector_showLedger = f' _bakeViewSelector_showLedger
     , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
@@ -544,6 +550,7 @@ instance Filterable BakeView where
     , _bakeView_telegramConfig = mapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = mapMaybe f $ _bakeView_telegramRecipients a
     , _bakeView_alertCount = mapMaybe f $ _bakeView_alertCount a
+    , _bakeView_snapshotMeta = mapMaybe f $ _bakeView_snapshotMeta a
     , _bakeView_connectedLedger = mapMaybe f $ _bakeView_connectedLedger a
     , _bakeView_showLedger = mapMaybe f $ _bakeView_showLedger a
     , _bakeView_prompting = mapMaybe f $ _bakeView_prompting a
@@ -584,6 +591,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
     , _bakeViewSelector_alertCount = (<>) (_bakeViewSelector_alertCount u) (_bakeViewSelector_alertCount v)
+    , _bakeViewSelector_snapshotMeta = (<>) (_bakeViewSelector_snapshotMeta u) (_bakeViewSelector_snapshotMeta v)
     , _bakeViewSelector_connectedLedger = (<>) (_bakeViewSelector_connectedLedger u) (_bakeViewSelector_connectedLedger v)
     , _bakeViewSelector_showLedger = (<>) (_bakeViewSelector_showLedger u) (_bakeViewSelector_showLedger v)
     , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
@@ -616,6 +624,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
     , _bakeViewSelector_alertCount = mempty
+    , _bakeViewSelector_snapshotMeta = mempty
     , _bakeViewSelector_connectedLedger = mempty
     , _bakeViewSelector_showLedger = mempty
     , _bakeViewSelector_prompting = mempty
@@ -657,6 +666,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
     , _bakeView_alertCount = mempty
+    , _bakeView_snapshotMeta = mempty
     , _bakeView_connectedLedger = mempty
     , _bakeView_showLedger = mempty
     , _bakeView_prompting = mempty
@@ -692,6 +702,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v
     , _bakeView_alertCount = _bakeView_alertCount u <> _bakeView_alertCount v
+    , _bakeView_snapshotMeta = _bakeView_snapshotMeta u <> _bakeView_snapshotMeta v
     , _bakeView_connectedLedger = _bakeView_connectedLedger u <> _bakeView_connectedLedger v
     , _bakeView_showLedger = _bakeView_showLedger u <> _bakeView_showLedger v
     , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v

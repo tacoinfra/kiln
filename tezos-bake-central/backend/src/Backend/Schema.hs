@@ -129,6 +129,7 @@ data NotifyTag a where
   NotifyTag_Parameters :: NotifyTag (Id Parameters, Parameters)
   NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
   NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
+  NotifyTag_SnapshotMeta :: NotifyTag SnapshotMeta
   NotifyTag_TelegramConfig :: NotifyTag (Id TelegramConfig, TelegramConfig)
   NotifyTag_TelegramRecipient :: NotifyTag (Id TelegramRecipient, Maybe TelegramRecipient)
   NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
@@ -1080,6 +1081,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         fields: [_telegramConfig_botApiKey]
   - entity: TelegramMessageQueue
   - entity: TelegramRecipient
+  - entity: SnapshotMeta
   - entity: UpstreamVersion
   - embedded: RightNotificationLimit
   - entity: RightNotificationSettings
@@ -1123,6 +1125,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
+  , (''SnapshotMeta, 'SnapshotMetaKey)
   , (''TelegramConfig, 'TelegramConfigKey)
   , (''TelegramRecipient, 'TelegramRecipientKey)
   , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
@@ -1342,6 +1345,7 @@ instance ArgDict NotifyTag where
     , c (Id Parameters, Parameters)
     , c (Id PublicNodeConfig, PublicNodeConfig)
     , c (Id PublicNodeHead, Maybe PublicNodeHead)
+    , c SnapshotMeta
     , c (Id TelegramConfig, TelegramConfig)
     , c (Id TelegramRecipient, Maybe TelegramRecipient)
     , c (Maybe ConnectedLedger)
@@ -1386,6 +1390,7 @@ instance ArgDict NotifyTag where
     NotifyTag_Parameters -> Dict
     NotifyTag_PublicNodeConfig -> Dict
     NotifyTag_PublicNodeHead -> Dict
+    NotifyTag_SnapshotMeta -> Dict
     NotifyTag_TelegramConfig -> Dict
     NotifyTag_TelegramRecipient -> Dict
     NotifyTag_ConnectedLedger -> Dict

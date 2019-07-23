@@ -3,11 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -266,6 +263,12 @@ watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe I
 watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
+    }
+
+watchSnapshotMeta :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe SnapshotMeta))
+watchSnapshotMeta =
+  (fmap . fmap) (getMaybeView . _bakeView_snapshotMeta) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_snapshotMeta = viewJust 1
     }
 
 watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))

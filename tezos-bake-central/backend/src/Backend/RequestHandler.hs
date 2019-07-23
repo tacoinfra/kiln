@@ -107,12 +107,14 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      PublicRequest_AddInternalNode -> inDb $ do
+      PublicRequest_AddInternalNode mNodeProcessState -> inDb $ do
+        let ps = maybe ProcessState_Stopped ProcessState_Node mNodeProcessState
+            pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
         getInternalNode >>= \case
           Nothing -> do
             let processData = ProcessData
-                  { _processData_control = ProcessControl_Stop
-                  , _processData_state = ProcessState_Stopped
+                  { _processData_control = pc
+                  , _processData_state = ps
                   , _processData_updated = Nothing
                   , _processData_backend = Nothing
                   }
@@ -138,7 +140,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                 ]
                 (NodeInternal_idField ==. nid)
-              update [ProcessData_controlField =. ProcessControl_Run]
+              update [ProcessData_controlField =. pc, ProcessData_stateField =. ps]
                 (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
               notify NotifyTag_NodeInternal (nid, Just processData)
 
@@ -357,6 +359,12 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
           void $ updateUpstreamVersion upgradeBranch (_nodeDataSource_httpMgr nds) inDb
 
+      PublicRequest_DismissUpgradeAlert -> inDb $ do
+        update [ UpstreamVersion_dismissedField =. True ] CondEmpty
+        mId <- project1 AutoKeyField (UpstreamVersion_dismissedField ==. UpstreamVersion_dismissedField)
+        for_ mId $ \i -> do
+          get i >>= traverse_ (notify NotifyTag_UpstreamVersion . (toId i,))
+
       PublicRequest_SetPublicNodeConfig publicNode enabled -> do
         inDb $ do
           cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
@@ -388,14 +396,14 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         -- Initialize the config to have NULL bot name and NULL enabled.
         -- NULL enabled means the bot is not yet validated.
         $(logInfo) "Adding a Telegram configuration"
-        inDb $ void $ updateTelegramCfg apiKey Nothing True Nothing
+        cid <- inDb $ updateTelegramCfg apiKey Nothing True Nothing
 
         -- Fork a thread to collect meta info about this bot.
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
-          connectTelegram apiKey
+          connectTelegram apiKey cid
 
         where
-          connectTelegram botApiKey = do
+          connectTelegram botApiKey cid = do
             result' <- try @_ @SomeException $ runHttpT (_nodeDataSource_httpMgr nds) $
               Telegram.getBotAndLastSender botApiKey
             inDb $ case result' of
@@ -409,8 +417,10 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 let
                   botName = Telegram._botGetMe_firstName botMeta
                 $(logInfo) $ "Telegram Bot found: " <> botName
-                cid <- updateTelegramCfg botApiKey (Just botName) True (Just True)
+                -- Since we sample recipient in frontend based on update on telegram config
+                -- update this before updating the telegram config
                 rid <- updateRecipient cid chat sender
+                _ <- updateTelegramCfg botApiKey (Just botName) True (Just True)
                 now <- getTime
                 void $ insert' TelegramMessageQueue
                   { _telegramMessageQueue_recipient = rid

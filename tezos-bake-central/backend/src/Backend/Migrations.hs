@@ -69,6 +69,8 @@ preMigrate chainId =
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
   >=> migrateProcessDataTable
+  >=> migrateProcessDataTable2
+  >=> migrateUpstreamVersionTable
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTesting") (ColumnExists "votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
@@ -402,6 +404,33 @@ migrateProcessDataTable ta = do
               UPDATE "ProcessData" SET "control" = 'ProcessControl_Run' WHERE "running" = TRUE;
               ALTER TABLE "ProcessData" DROP COLUMN "running";
               ALTER TABLE "ProcessData" ALTER COLUMN "control" SET NOT NULL;
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+-- Fix for enhancement to ProcessState
+migrateProcessDataTable2 :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataTable2 ta = do
+  let table = (Nothing, "ProcessData")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+      void [traceExecuteQ|
+          UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
+        |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateUpstreamVersionTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateUpstreamVersionTable ta = do
+  let table = (Nothing, "UpstreamVersion")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | all ((/= "dismissed") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "UpstreamVersion" ADD COLUMN "dismissed" BOOLEAN NULL;
+              UPDATE "UpstreamVersion" SET "dismissed" = FALSE;
+              ALTER TABLE "UpstreamVersion" ALTER COLUMN "dismissed" SET NOT NULL;
             |]
           getTableAnalysis
     _ -> pure ta

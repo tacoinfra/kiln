@@ -51,8 +51,8 @@ instance FromJSON StaticDirectory where
 instance FoldServices StaticDirectory where
   getServices sd = these <> those
     where
-      these = maybe [] id $ fmap getServices $ _staticDirectoryService_subdirs sd
-      those = (fmap.fmap) Just $ catMaybes $ fmap (\f -> (,) <$> pure [] <*> f sd)
+      these = maybe [] getServices $ _staticDirectoryService_subdirs sd
+      those = (fmap.fmap) Just $ mapMaybe (\f -> (,) <$> pure [] <*> f sd)
         [ _staticDirectoryService_getService
         , _staticDirectoryService_postService
         , _staticDirectoryService_deleteService

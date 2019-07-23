@@ -51,7 +51,7 @@ import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
 import Backend.CachedNodeRPC
-import Backend.Common (workerWithDelay)
+import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
@@ -366,16 +366,17 @@ runClientCommand
   :: (MonadLogger m, MonadIO m, Show e)
   => AppConfig -> Either NamedChain BinaryPaths -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
 runClientCommand appConfig chain args handleError = do
-  $(logWarn) $ "runClientCommand: " <> T.pack (unwords args)
-  (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args) ""
+  let
+    procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
+  (exitCode, stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
   case exitCode of
-    ExitSuccess -> pure $ T.strip $ T.pack stdout
+    ExitSuccess -> pure $ T.strip stdout
     ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> T.pack stderr
-      let strippedLines = fmap T.strip $ T.lines $ T.pack stderr
+      $(logWarn) $ "runClientCommand failed: " <> stderr
+      let strippedLines = fmap T.strip $ T.lines stderr
           warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
           errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
-          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines $ T.pack stdout -- yes, fatal errors go to stdout
+          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
       case handleError warnings (fatal ++ errors) of
         Right t -> pure t
         Left e -> do
@@ -430,6 +431,7 @@ registerKeyAsDelegate logger db nds sk pkh appConfig chain fee
             { Process.std_err = Process.UseHandle writePipe
             , Process.std_out = Process.UseHandle writePipe
             }
+      $(logInfoSH) $ ("registerKeyAsDelegate: process: " :: Text, p)
       result <- liftIO $ Process.withCreateProcess p $ \_ _ _ ph -> runLoggingEnv logger $ do
         let notifyStep rs = runDb (Identity db) $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First rs })
             go mrs' = liftIO (hIsEOF readPipe) >>= \case

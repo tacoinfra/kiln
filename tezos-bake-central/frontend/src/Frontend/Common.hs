@@ -639,3 +639,11 @@ instance HasTimeZone (FrontendContext t) where
 
 instance HasTimer t (FrontendContext t) where
   timer = frontendContext_oneSecondTimer
+
+-- UI element with left pointing arrow
+backButton :: DomBuilder t m => m (Event t ())
+backButton = do
+  (e, _) <- elClass' "div" "back-button" $ do
+    icon "icon-angle-left blue"
+    el "span" $ text "Back"
+  pure $ domEvent Click e

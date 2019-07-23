@@ -282,14 +282,27 @@ data NodeInternal = NodeInternal
 instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
 
+data NodeProcessState
+  = NodeProcessState_ImportingSnapshot
+  | NodeProcessState_ImportComplete
+  | NodeProcessState_ImportFailed
+  | NodeProcessState_ImportTimeout
+  | NodeProcessState_GeneratingIdentity
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data ProcessState
    = ProcessState_Stopped
    | ProcessState_Initializing
-   | ProcessState_GeneratingIdentity -- only applicable to Node
+   | ProcessState_Node NodeProcessState -- only applicable to Node
    | ProcessState_Starting
    | ProcessState_Running
    | ProcessState_Failed
-  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+  deriving (Eq, Ord, Show, Read, Generic, Typeable)
+
+isProcessStateNode :: ProcessState -> Bool
+isProcessStateNode = \case
+  ProcessState_Node _ -> True
+  _ -> False
 
 data ProcessControl
   = ProcessControl_Run
@@ -320,6 +333,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
   , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
   , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
+  , _nodeDetailsData_savePoint :: !(Maybe RawLevel)
   , _nodeDetailsData_peerCount :: !(Maybe Word64)
   , _nodeDetailsData_networkStat :: !NetworkStat
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
@@ -335,6 +349,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_headBlockHash = Nothing
   , _nodeDetailsData_headBlockPred = Nothing
   , _nodeDetailsData_headBlockBakedAt = Nothing
+  , _nodeDetailsData_savePoint = Nothing
   , _nodeDetailsData_peerCount = Nothing
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
@@ -863,6 +878,7 @@ data UpstreamVersion = UpstreamVersion
   { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
   , _upstreamVersion_version :: !(Maybe Version)
   , _upstreamVersion_updated :: !UTCTime
+  , _upstreamVersion_dismissed :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
@@ -906,6 +922,20 @@ data TelegramMessageQueue = TelegramMessageQueue
   , _telegramMessageQueue_created :: !UTCTime
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
+
+type SnapshotImportError = Text
+
+data SnapshotMeta = SnapshotMeta
+  { _snapshotMeta_filename :: !Text -- user supplied
+  , _snapshotMeta_storePath :: !Text -- where stored
+  , _snapshotMeta_uploadTime :: !UTCTime
+  , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
+  , _snapshotMeta_headBlock :: !(Maybe BlockHash)
+  , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
+  , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
+  , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId SnapshotMeta
 
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
@@ -991,6 +1021,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
+  , ''NodeProcessState
   , ''Parameters
   , ''PeriodTestingVote
   , ''PeriodPromotionVote
@@ -1007,6 +1038,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''RightNotificationLimit
   , ''RightNotificationSettings
   , ''SeenEvent
+  , ''SnapshotMeta
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -1067,6 +1099,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'RightNotificationLimit
   , 'RightNotificationSettings
   , 'SeenEvent
+  , 'SnapshotMeta
   , 'TelegramConfig
   , 'TelegramMessageQueue
   , 'TelegramRecipient

@@ -61,6 +61,23 @@
 # Define some custom infix operators
 # - fixity: infixr 3 ~^#^~
 
-
-# To generate a suitable file for HLint do:
-# $ hlint --default > .hlint.yaml
+# Warnings currently triggered by your code
+- ignore: {name: "Use fewer imports"}
+- ignore: {name: "Reduce duplication"}
+- ignore: {name: "Redundant bracket"}
+- ignore: {name: "Move brackets to avoid $"}
+- ignore: {name: "Avoid lambda"}
+- ignore: {name: "Use const"}
+- ignore: {name: "Redundant $"}
+- ignore: {name: "Avoid restricted function"}
+- ignore: {name: "Use tuple-section"}
+- ignore: {name: "Use isNothing"}
+- ignore: {name: "Parse error"}
+- ignore: {name: "Eta reduce"}
+- ignore: {name: "Use newtype instead of data"}
+- ignore: {name: "Evaluate"}
+- ignore: {name: "Use notElem"}
+- ignore: {name: "Use record patterns"}
+- ignore: {name: "Use &&"}
+- ignore: {name: "Use >>"}
+- ignore: {name: "Functor law"}

@@ -178,6 +178,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  snapshotMeta <- maybeViewHandler _bakeViewSelector_snapshotMeta $ selectSingle CondEmpty
+
   let amendmentVS = _bakeViewSelector_amendment vs
   amendment <- whenM (not $ null amendmentVS) $ do
     as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
@@ -327,6 +329,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
     , _bakeView_alertCount = alertCount
+    , _bakeView_snapshotMeta = snapshotMeta
     , _bakeView_connectedLedger = connectedLedger
     , _bakeView_showLedger = showLedger
     , _bakeView_prompting = prompting

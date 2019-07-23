@@ -62,6 +62,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_Parameters :=> Identity (_eid, ent) -> handleParameters ent
     NotifyTag_PublicNodeConfig :=> Identity (_eid, ent) -> handlePublicNodeConfig ent
     NotifyTag_PublicNodeHead :=> Identity (eid, ent) -> handlePublicNodeHead eid ent
+    NotifyTag_SnapshotMeta :=> Identity ent -> handleSnapshotMeta ent
     NotifyTag_TelegramConfig :=> Identity (_eid, ent) -> handleTelegramConfig ent
     NotifyTag_TelegramRecipient :=> Identity (eid, ent) -> handleTelegramRecipient eid ent
     NotifyTag_UpstreamVersion :=> Identity (_eid, ent) -> handleUpstreamVersion ent
@@ -291,6 +292,12 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
+
+    snapshotMetaVS = _bakeViewSelector_snapshotMeta aggVS
+
+    handleSnapshotMeta :: Applicative m' => SnapshotMeta -> m' (BakeView a)
+    handleSnapshotMeta cfg = whenM (viewSelects () snapshotMetaVS) $ do
+      pure $ mempty { _bakeView_snapshotMeta = toMaybeView snapshotMetaVS $ Just cfg }
 
     telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
 

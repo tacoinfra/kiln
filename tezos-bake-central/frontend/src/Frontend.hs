@@ -29,6 +29,7 @@ import Data.Default
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
+import Data.Functor.Sum
 import Data.List (intersperse, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -40,9 +41,11 @@ import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time (UTCTime)
 import Data.Word (Word64)
+import Data.Version
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
-import GHCJS.DOM.Types (MonadJSM)
+import qualified GHCJS.DOM.File as File
+import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig
 import Obelisk.Frontend (Frontend (..))
@@ -87,7 +90,7 @@ import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain
                      ,frontendConfig_chainId, frontendConfig_appVersion, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute(..))
+import Common.Route
 import Common.Schema hiding (Event)
 import ExtraPrelude
 import Frontend.Amendment
@@ -122,37 +125,38 @@ frontendBody
     )
   => m ()
 frontendBody = void $ do
-  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
-    Nothing ->
-      Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
-
-  let
-    routeScheme = T.toLower . Uri.unRText <$> Uri.uriScheme route
-    host = Uri.unRText . Uri.authHost <$> routeAuthority
-    renderPathPieces pieces = T.intercalate "/" (map Uri.unRText $ toList pieces)
-    routeAuthority = Uri.uriAuthority route ^? _Right
-    wsPort = (Uri.authPort =<< routeAuthority)
-      <|> ffor routeScheme (\case
-        "http" -> 80
-        "https" -> 443
-        _ -> 80)
-    listenPath = fromMaybe (error "sulk") $ Uri.mkPathPiece "listen" -- TODO: try to use BackendRoute_Listen instead
-
-    wsUrl = ffor2 routeScheme host $ \s h -> mconcat
-      [ T.replace "http" "ws" s
-      , "://", h
-      , ":", tshow (fromMaybe 80 wsPort)
-      , "/", renderPathPieces [listenPath]
-      ]
+  mWsUri <- getBackendPath (InL BackendRoute_Listen :/ ()) True
   rec
-    (socketState, _) <- runRhyoliteWidget (fromMaybe (error "Invalid WS URL") wsUrl) $ do
+    (socketState, _) <- runRhyoliteWidget (maybe (error "Invalid WS URL") Uri.render mWsUri) $ do
       withFrontendContext $
         withConnectivityModal socketState $
           runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
             appMain
   pure ()
+
+getBackendPath :: (MonadJSM m) => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
+getBackendPath backendRoute isWebsocket = do
+  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
+  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
+    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
+    Nothing ->
+      Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
+  let
+    url = do
+      encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
+      let path = fst $ encode encoder $ backendRoute
+      pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
+      scheme <- if isWebsocket
+        then case Uri.uriScheme route of
+          rtextScheme | rtextScheme == Uri.mkScheme "https" -> Uri.mkScheme "wss"
+          rtextScheme | rtextScheme == Uri.mkScheme "http" -> Uri.mkScheme "ws"
+          _ -> Nothing
+        else Uri.uriScheme route
+      return $ route
+        { Uri.uriPath = Just (False, pathPiece)
+        , Uri.uriScheme = Just scheme
+        }
+  pure url
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
@@ -204,6 +208,7 @@ appMain
     , MonadJSM (Performable (ModalM m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
+    , HasJSContext (Performable (ModalM m))
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
@@ -249,6 +254,7 @@ appSidebar
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
+     , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      , RouteConstraints t AppRoute m
      )
@@ -303,6 +309,7 @@ appGutter
      , MonadRhyoliteFrontendWidget Bake t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
+     , HasJSContext (Performable (ModalM m))
      , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
      )
   => m ()
@@ -357,52 +364,49 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
         Right () -> False
-  divClass "ui stackable grid" $ do
-    divClass "twelve wide column topbar" $ do
-      divClass "ui horizontal list" $ do
-        latestHead <- watchLatestHead
-        let infoItem faded title body = divClass "item" $
-              elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
-                divClass "header" $ text title
-                body
 
-        infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+  divClass "topbar" $ do
+    divClass "ui horizontal list" $ do
+      latestHead <- watchLatestHead
+      let infoItem faded title body = divClass "item" $
+            elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
+              divClass "header" $ text title
+              divClass "description" body
 
-        protoInfo' <- watchProtoInfo
-        cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
-        whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-          text $ tshow $ unCycle c
+      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-        whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
-          text $ tshow (unRawLevel $ b ^. level)
-          elClass "span" "metadescription" $ text " Baked "
-          localHumanizedTimestampBasic $ pure $ b ^. timestamp
+      protoInfo' <- watchProtoInfo
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
+        text $ tshow $ unCycle c
 
-        amendments <- watchAmendment
-        mProtoInfo <- maybeDyn protoInfo'
-        mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
-          let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
-          tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
-            kind <- holdUniqDyn $ _amendment_period <$> amendment
-            divClass "header" $ text "Amendment Period"
-            divClass "amendment-period" $ do
-              dynText $ textPeriod <$> kind
-              text " "
-              display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
-              text "/"
-              display $ unCycle . cyclesPerPeriod <$> protoInfo
-              dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
+      whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
+        text $ tshow (unRawLevel $ b ^. level)
+        elClass "span" "metadescription" $ text " Baked "
+        localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
-      dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-        SemUi.icon "icon-disconnected"
-        (def
-          & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-          & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-          )
+      amendments <- watchAmendment
+      mProtoInfo <- maybeDyn protoInfo'
+      mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
+      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+        let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
+        tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
+          kind <- holdUniqDyn $ _amendment_period <$> amendment
+          infoItem (pure False) "Amendment Period" $ do
+            dynText $ textPeriod <$> kind
+            text " "
+            display $ (\a -> unCycle . currentCyclePosition a) <$> amendment <*> protoInfo
+            text "/"
+            display $ unCycle . cyclesPerPeriod <$> protoInfo
+            dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
-    divClass "four wide column right aligned" $ do
-      headerBell
+    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+      SemUi.icon "icon-disconnected"
+      (def
+        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+        )
+  headerBell
 
   where
     disconnectedTooltip = divClass "disconnected-tooltip" $ do
@@ -479,20 +483,7 @@ nodesTabOrWelcome = do
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
-  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
-  whenJust mchain $ \chain -> do
-    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
-    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
-    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
-        guard $ _errorLogNetworkUpdate_namedChain ua == chain
-        return ua
-      _ -> Nothing
-    dyn_ $ ffor mUpgradeLog $ \case
-      Just elua -> divClass "dashboard-section dashboard-section-global-alerts" $ do
-        SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $
-          networkUpdateAlert elua
-      Nothing -> return ()
+  globalAlerts
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
@@ -501,6 +492,40 @@ nodesTabOrWelcome = do
       when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
+
+globalAlerts
+  :: forall r m t.
+    ( MonadRhyoliteFrontendWidget Bake t m
+    , MonadReader r m, HasFrontendConfig r
+    )
+  => m ()
+globalAlerts = do
+  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
+  mNetworkAlert <- for mchain $ \chain -> do
+    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
+        guard $ _errorLogNetworkUpdate_namedChain ua == chain
+        return ua
+      _ -> Nothing
+    pure $ fmap networkUpdateAlert <$> mUpgradeLog
+
+  currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
+  upstreamVersion <- watchUpstreamVersion
+  let
+    mUpdateAlert :: Dynamic t (Maybe (m ()))
+    mUpdateAlert = ffor upstreamVersion $ \case
+      Just uv
+        | Just v <- _upstreamVersion_version uv
+        , v > currentVersion
+        , not (_upstreamVersion_dismissed uv) -> Just $ kilnUpdateAlert v
+      _ -> Nothing
+
+    allAlerts :: Dynamic t [m ()]
+    allAlerts = catMaybes <$> sequence [ (fmap join . sequence) mNetworkAlert, mUpdateAlert ]
+  dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
+    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ m
 
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
@@ -517,6 +542,26 @@ networkUpdateAlert elua = do
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+
+kilnUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => Version -> m ()
+kilnUpdateAlert v = do
+  let
+    header = "Kiln " <> T.pack (showVersion v) <> " is available!"
+    body = el "div" $ do
+      el "p" $ do
+        text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
+        let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
+        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+      el "p" $ do
+        resolve <- divClass "buttons" $ uiButtonM "primary" $ do
+          icon "icon-check"
+          text "Dismiss"
+        void $ requestingIdentity $ public PublicRequest_DismissUpgradeAlert <$ resolve
+  renderSplashAlert
+    (icon "icon-update-circle big blue")
+    (text header)
+    Nothing
+    body
 
 welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
 welcomeScreen hasOsPubNode = mdo
@@ -655,7 +700,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -709,9 +754,7 @@ liveErrorsWidget = void $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> "Last Detected"
             Just _ -> "Stopped"
-          localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> _errorLog_lastSeen log
-            Just x -> x
+          localTimestamp' $ ffor logDyn $ \log -> fromMaybe (_errorLog_lastSeen log) (_errorLog_stopped log)
   where
     localTimestamp' dt = do
       tz <- asks (^. timeZone)
@@ -869,7 +912,7 @@ sidebarList name nodes' modal = do
 
         divClass "description" $ dynText $ fromMaybe "" <$> subtitle
 
-    openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> name)
+    openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses modal
 
 bakerStatus :: Either CollectiveNodesFailure BakerSummary -> MonitoredStatus
@@ -890,6 +933,7 @@ bakersList ::
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
+  , HasJSContext (Performable (ModalM m))
   , HasModal t m
   )
   => m ()
@@ -908,6 +952,7 @@ bakersList = do
 addBakerModal :: forall t m r.
   ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
   , MonadReader r m, HasTimer t r
+  , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
 addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
@@ -917,21 +962,26 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       divClass "ui grid stackable divided" $ do
         start <- startBaking
         close' <- connectBaker
-        ebn :: Behavior t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
-          <- fmap current . watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
-        node <- current <$> watchInternalNode
-        let nodeNotReady = handleClientErrorWorkflow splash ClientError_NodeNotReady
-            f (Nothing, _) () = launchNode -- With no internal node, we prompt the user to launch a kiln node
-            f (Just (nid, pd), es) ()
+        ebn :: Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
+          <- watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+        node <- watchInternalNode
+        nodeDetails <- fmap join $ holdDyn (constDyn Nothing) <=< dyn $ ffor node $ \case
+          Nothing -> pure $ constDyn Nothing
+          Just (nid, pd) -> (fmap . fmap . fmap) (nid, pd,) $ watchNodeDetails nid
+        let isBootstrapLevel = (< 2)
+            nodeNotReady = handleClientErrorWorkflow splash ClientError_NodeNotReady
+            f Nothing _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f (Just (nid, pd, nd)) es
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es = nodeNotReady
               | ProcessControl_Stop == _processData_control pd = nodeNotReady
-              | ProcessState_GeneratingIdentity == _processData_state pd = nodeNotReady
+              | isProcessStateNode (_processData_state pd) = nodeNotReady
+              | maybe True isBootstrapLevel (_nodeDetailsData_headLevel nd) = nodeNotReady
               | otherwise = Workflow $ do
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
                 pure ((["ledger-setup-steps"], close <> done), handleClientErrorWorkflow splash <$> err)
-            afterDisclaimer = attachWith f (liftA2 (,) node ebn)
+            afterDisclaimer = tag $ current (liftA2 f nodeDetails ebn)
         pure (([], close'), disclaimer afterDisclaimer <$ start)
 
     startBaking = divClass "start-baking column" $ do
@@ -963,9 +1013,8 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
     launchNode = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln needs to launch a Tezos node which must be fully synced with the blockchain before baking."
       divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
-      launch <- uiButton "primary" "Launch Node"
-      close' <- requestingIdentity $ launch $> public PublicRequest_AddInternalNode
-      pure ((["launch-node"], close'), never)
+      start <- uiButton "primary" "Start Node"
+      pure ((["launch-node"], never), startNodeWorkflow launchNode <$ start)
 
     disclaimer next = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
@@ -1130,7 +1179,7 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
       Just internalState -> case internalState of
         ProcessState_Stopped -> MonitoredStatus_Stopped
         ProcessState_Initializing -> MonitoredStatus_Unknown
-        ProcessState_GeneratingIdentity -> MonitoredStatus_Unknown
+        ProcessState_Node _ -> MonitoredStatus_Unknown
         ProcessState_Starting -> MonitoredStatus_Unknown
         ProcessState_Running -> MonitoredStatus_Healthy
         ProcessState_Failed -> MonitoredStatus_Unhealthy
@@ -1143,6 +1192,9 @@ nodesList ::
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , HasModal t m
+  , MonadJSM (ModalM m)
+  , MonadJSM (Performable (ModalM m))
+  , HasJSContext (Performable (ModalM m))
   )
   => m ()
 nodesList = do
@@ -1157,66 +1209,181 @@ nodesList = do
       )
   sidebarList "Node" nodes addNodeModal
 
-addNodeModal :: MonadRhyoliteFrontendWidget Bake t m => Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal close = do
-  divClass "ui header" $ text "Add Nodes"
-  e <- divClass "ui grid stackable divided" $ do
-    addInternal *> addExternal <* addPublic
-  pure (pure ["add-node"], e)
+addNodeModal ::
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadJSM m
+  , MonadJSM (Performable m)
+  , HasJSContext (Performable m)
+  )
+  => Event t () -> m (Dynamic t [Text], Event t ())
+addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
 
   where
-    section header explanation = do
-      elClass "h5" "ui header" $ text header
-      divClass "explanation" $ text explanation
+    splash = Workflow $ do
+      divClass "ui header" $ text "Add Nodes"
+      divClass "ui grid stackable divided" $ do
+        startNodeEv <- addInternal
+        e <- addExternal
+        addPublic
+        pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
 
-    addPublic = do
-      divClass "add-public column" $ do
-        section
-          "Connect to a Public Node"
-          "We recommend adding all public nodes to enhance monitoring accuracy."
-        publicNodeOptions
+      where
+        section header explanation = do
+          elClass "h5" "ui header" $ text header
+          divClass "explanation" $ text explanation
 
-    addInternal = do
-      divClass "add-internal column" $ do
-        section
-          "Launch a Kiln node"
-          "Launch a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
-        node <- maybeDyn =<< watchInternalNode
-        dyn_ $ ffor node $ \case
-          Nothing -> do
-            launch <- uiButton "primary" "Launch Node"
-            void $ requestingIdentity $ launch $> public PublicRequest_AddInternalNode
+        addPublic = do
+          divClass "add-public column" $ do
+            section
+              "Connect to a Public Node"
+              "We recommend adding all public nodes to enhance monitoring accuracy."
+            publicNodeOptions
 
-          Just _ -> do
-            kilnLogo
-            text "A Kiln node is running."
+        addInternal = do
+          divClass "add-internal column" $ do
+            section
+              "Start a Kiln Node"
+              "Start a node that is managed from within Kiln. Required if you intend to use Kiln to bake. Kiln only supports running a single node."
+            node <- maybeDyn =<< watchInternalNode
+            dEv <- dyn $ ffor node $ \case
+              Nothing -> do
+                uiButton "primary" "Start Node"
 
-    addExternal = do
-     divClass "add-external column" $ mdo
-       let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
-             icon "check blue"
-             text "Node added!"
+              Just _ -> do
+                kilnLogo
+                text "A Kiln node is running."
+                pure never
+            switchHold never dEv
 
-       section
-         "Monitor via Address"
-         "Monitor nodes running locally or remotely via RPC."
+        addExternal = do
+         divClass "add-external column" $ mdo
+           let feedback = elDynAttr "div" (ffor showSuccess $ ("class" =: "feedback" <>) . bool ("style" =: "display:none") mempty) $ do
+                 icon "check blue"
+                 text "Node added!"
 
-       addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
-         zipFields
-           (zipFields
-             (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
-             (formItem $ aliasField "Public Facing Node 1"))
-           (formItem minConnectionsField)
+           section
+             "Monitor via Address"
+             "Monitor nodes running locally or remotely via RPC."
 
-       showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
-       hideMsg <- delay 3 showMsg
-       showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
-       pure close
+           addE <- formWithReset "Add Node" "Begin monitoring the node at the address entered." feedback showMsg $ do
+             zipFields
+               (zipFields
+                 (formItem' "required" $ uriField "Node Address" "127.0.0.1:8732")
+                 (formItem $ aliasField "Public Facing Node 1"))
+               (formItem minConnectionsField)
 
+           showMsg <- requestingIdentity $ fmap (\((addr,alias),minPeerConn) -> public (PublicRequest_AddExternalNode addr alias minPeerConn)) addE
+           hideMsg <- delay 3 showMsg
+           showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
+           pure close
+
+startNodeWorkflow :: forall m t.
+  ( MonadRhyoliteFrontendWidget Bake t m
+  , MonadJSM m
+  , MonadJSM (Performable m)
+  , HasJSContext (Performable m)
+  )
+  => Workflow t m ([Text], Event t ()) -> Workflow t m ([Text], Event t ())
+startNodeWorkflow backWF = Workflow $ do
+  backEv <- backButton
+  divClass "ui header" $ text "Start a Kiln Node"
+  elClass "h5" "ui header" $ text "Initialize Chain Data From:"
+  rec
+    useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
+    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ el "div" $ do
+      el "div" $ text "Snapshot (Recommended)"
+      divClass "explanation" $ do
+        el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+      divClass "file-selection" $ do
+        rec
+          let fileName = headMay <$> value fi
+          dyn_ $ ffor fileName $ mapM $ \file -> do
+            name <- liftJSM $ File.getName file
+            divClass "file-name" $ text name
+          elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
+          fi <- fileInput $ (def :: FileInputConfig t)
+            & fileInputConfig_attributes .~ (constDyn ("id" =: "fileId"))
+        pure fileName
+    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
+      divClass "" $ text "Peer to Peer Download"
+      divClass "explanation" $ do
+        el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+
+  contEv <- uiButton "primary" "Add Node"
+  let
+    ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) contEv
+    next = ffor ev $ \(b, s) -> if b
+      then Left s
+      else Right ()
+    launch = filterRight next
+    uploadSnapshotEv = fmapMaybe id $ filterLeft next
+  formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
+    liftIO $ putStrLn "starting file upload"
+    fileToFormValue f
+
+  mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
+  let
+    formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
+  for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
+
+  launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
+  launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
+
+  pure ((pure "start-node", leftmost [launchedEv, launchedEv2]), leftmost
+       [ backWF <$ backEv
+       ])
+
+verifySnapshotModal ::
+  ( MonadReader r m
+  , HasTimer t r
+  , HasTimeZone r
+  , MonadJSM (Performable m)
+  , MonadRhyoliteFrontendWidget Bake t m
+  )
+  => SnapshotMeta -> Event t () -> m (Event t ())
+verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ text "Verify Snapshot"
+  divClass "verify-top-message" $ do
+    icon "large orange icon-warning"
+    divClass "header" $ text "Verifying the Block Hash"
+    divClass "explanation" $ do
+      el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
+      el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date corresponds to the date the snapshot was taken."
+      el "p" $ text "If you are in doubt that the snapshot is valid, close this window, remove the node and restart using a snapshot you trust."
+
+  divClass "field" $ do
+    divClass "detail" $ text "Snapshot's Highest Block Hash:"
+    let
+      hashText = case smd ^. snapshotMeta_headBlock of
+        Just blk -> toBase58Text blk
+        Nothing -> fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
+    divClass "proposal-hash" $ do
+      copyButton $ pure hashText
+      text hashText
+  divClass "field" $ do
+    divClass "detail" $ text "Highest Block Level:"
+    divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
+  divClass "field" $ do
+    divClass "detail" $ text "Date Baked:"
+    divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+  start <- divClass "buttons" $ uiButton "primary" "Start Node"
+  response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+  pure (pure ["confirmation"], leftmost [() <$ response, close])
+
+showImportLogModal ::
+  ( MonadReader r m
+  , MonadRhyoliteFrontendWidget Bake t m
+  )
+  => Text -> Event t () -> m (Event t ())
+showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ text "Snapshot import log"
+  divClass "log-message" $ el "pre" $ text errorLog
+  close1 <- uiButton "primary" "Close"
+  pure (pure ["show-error-log"], leftmost [close1, close])
 
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
-  text "This Node can only be turned off via "
+  text $ "This Node can only be turned off via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1234,28 +1401,28 @@ publicNodeOptions = do
       PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
-      PublicNode_Obsidian -> \v -> text "Public Node Caching Service provided by Obsidian Systems." *> case v of
-        Just True -> osPublicNodeRemoveMessage
-        _ -> pure ()
-      PublicNode_Blockscale -> const $ text "Load-balanced collection of nodes provided by the Tezos Foundation."
-      PublicNode_TzScan -> const $ text "API provided by tzscan.io, the block explorer by OCamlPro."
+      PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
+      PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
+      PublicNode_TzScan -> text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
-  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
+        activeClass = if pn == PublicNode_Obsidian
+          then constDyn "active"
+          else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn $ bool "" "active" <$> pnActiveDyn)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool "Add Node" "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ showPublicNode pn
-        divClass "description" $ dyn_ $ describePublicNode pn <$> mUsingOsPubNode
+        divClass "description" $ describePublicNode pn
 
-    let toggled = tag (current $ not . isPublicNodeEnabled pn <$> pncDyn)
-          $ ffilter (\b -> not $ pn == PublicNode_Obsidian && b == Just True)
-          $ tag (current mUsingOsPubNode) (domEvent Click element')
+    let toggled = if pn == PublicNode_Obsidian
+          then never
+          else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
 
 thirtySixHoursToInfinity
@@ -1288,7 +1455,10 @@ tileMenuEntryModal txt modal = do
 nodesTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
+    , MonadReader r m
+    , MonadReader r (ModalM m)
+    , MonadJSM (Performable (ModalM m))
+    , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1307,10 +1477,58 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
+        partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+        (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+        kilnNodeState = ((fmap _processData_state) . headMay . Map.elems) <$> internal
+
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
 
+      kilnNodeStateD <- holdUniqDyn kilnNodeState
+      -- Node alerts
+      let
+        verifySnapshotAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          dSm <- watchSnapshotMeta
+          tz <- asks (^. timeZone)
+          let
+            i = icon "icon-check big blue"
+            title = text "Snapshot import complete, verify to start node."
+            timeFormat = "%-l:%M%P"
+            time t = T.pack $ Time.formatTime Time.defaultTimeLocale timeFormat $ Time.utcToZonedTime tz t
+
+            desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported "
+              <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
+              <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
+            btn = do
+              ev <- divClass "buttons" $ uiButtonM "" $ do
+                icon "icon-angle-right"
+                text "Start Verification"
+              dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
+          renderSplashAlert i title Nothing (desc *> btn)
+
+        snapshotImportFailedAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          let
+            i = icon "icon-warning big red"
+            title = text "Snapshot import failed."
+            desc = do
+              el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
+              el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
+          renderSplashAlert i title Nothing desc
+
+      dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
+        ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
+        ProcessState_Node NodeProcessState_ImportFailed -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportTimeout -> snapshotImportFailedAlert
+        ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
+        ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
+        ProcessState_Initializing -> pure ()
+        ProcessState_Failed -> pure ()
+        ProcessState_Starting -> pure ()
+        ProcessState_Stopped -> pure ()
+        ProcessState_Running -> pure ()
+
+      -- Node tiles
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
@@ -1325,9 +1543,6 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
-
-          let partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
-              (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
@@ -1352,95 +1567,143 @@ nodesTab =
               (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
-              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat)
               nodeDetails
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
             state <- holdUniqDyn $ _processData_state <$> nodeData
+
+            bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
+              <$> watchInternalBaker
             let
-                internalNodeMenu :: m ()
-                internalNodeMenu = do
-                  let
-                    preface = "This node is run by Kiln. "
-                    notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
-                    bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
-                      <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
-                    body = bool notBakingBody bakingBody
-                    epilogue = "All data for this node will be deleted from Kiln."
-                    stopModal running = warningModal "Stop Node?"
-                      [preface, body running "Stopping"]
-                      "Stop Node"
+              preface = "This node is run by Kiln. "
+              notBakingBody action = action <> " it may affect any bakers you are running which depend on it."
+              bakingBody action = "Kiln is also running a Baker that relies on this node to bake. "
+                <> action <> " this node will stop Kiln’s Baker and may affect any other bakers you are running which depend on this node."
+              body = bool notBakingBody bakingBody
 
-                  runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
-                  bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
-                    <$> watchInternalBaker
-                  dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
-                    (True, bRunning) ->
-                      tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
-                    _ -> do
-                      start <- tileMenuEntry "Start Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+              startStopNodeMenu :: m ()
+              startStopNodeMenu = do
+                let
+                  stopModal running = warningModal "Stop Node?"
+                    [preface, body running "Stopping"]
+                    "Stop Node"
 
-                  let
-                    removeInternalNodeModal running = warningModal "Remove Node?"
-                      [preface, body running "Removing", epilogue]
-                      "Stop and Remove Node"
-                  dyn_ $ ffor bakerRunning $ \running ->
-                    tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
-                      (PublicRequest_RemoveNode (Right ()) <$)
+                runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
+                dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
+                  (True, bRunning) ->
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                  _ -> do
+                    start <- tileMenuEntry "Start Node"
+                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
-                title :: m ()
-                title = text "Kiln Node"
+              verifyAndStartMenu sm = do
+                tileMenuEntryModal "Verify and start node" $ (verifySnapshotModal sm)
 
-                subtitle :: m ()
-                subtitle =
-                  divClass "internal-subtitle" $ do
-                    kilnLogo
-                    divClass "ui sub header" $ dynText $ ffor state $ \case
-                      ProcessState_Stopped -> "Stopped"
-                      ProcessState_Initializing -> "Initializing"
-                      ProcessState_GeneratingIdentity -> "Initializing"
-                      ProcessState_Starting -> "Starting"
-                      ProcessState_Running -> "Running"
-                      ProcessState_Failed -> "Failed"
+              showLogMenu errorLog = do
+                tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
 
-                workingTile :: m ()
-                workingTile = do
-                  nodeDetails <- watchNodeDetails nodeId
-                  standardNodeTile @(ProcessData, Maybe NodeDetailsData)
-                    title
-                    subtitle
-                    internalNodeMenu
-                    ((=<<) getNodeHeadBlock . snd)
-                    (Just errors)
-                    (Just $ ffor2 ebn nodeData $ \es nd -> and
-                      [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
-                      , _processData_state nd == ProcessState_Running
-                      ])
-                    (Just $ _processData_state . fst)
-                    (Just $ (=<<) _nodeDetailsData_peerCount . snd)
-                    (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
-                    ((,) <$> nodeData <*> nodeDetails)
+              removeNodeMenu = do
+                let
+                  epilogue = "All data for this node will be deleted from Kiln."
+                  removeInternalNodeModal running = warningModal "Remove Node?"
+                    [preface, body running "Removing", epilogue]
+                    "Stop and Remove Node"
+                dyn_ $ ffor bakerRunning $ \running ->
+                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                    (PublicRequest_RemoveNode (Right ()) <$)
 
-                generatingTile :: m ()
-                generatingTile = nodeTileWithSections $
-                  [ tileHeader title subtitle internalNodeMenu badge Nothing
-                  , divClass "internal-node-tile-body" $ do
-                      divClass "generating-icons" $ do
+              title :: m ()
+              title = text "Kiln Node"
+
+              subtitle :: m ()
+              subtitle =
+                divClass "internal-subtitle" $ do
+                  kilnLogo
+                  divClass "ui sub header" $ dynText $ ffor state $ \case
+                    ProcessState_Stopped -> "Stopped"
+                    ProcessState_Initializing -> "Initializing"
+                    ProcessState_Node s -> case s of
+                      NodeProcessState_ImportingSnapshot -> "SETUP"
+                      NodeProcessState_ImportComplete -> "SETUP"
+                      NodeProcessState_ImportFailed -> "FAILED"
+                      NodeProcessState_ImportTimeout -> "FAILED"
+                      NodeProcessState_GeneratingIdentity -> "STARTING"
+                    ProcessState_Starting -> "Starting"
+                    ProcessState_Running -> "Running"
+                    ProcessState_Failed -> "Failed"
+
+              workingTile :: m ()
+              workingTile = do
+                nodeDetails <- watchNodeDetails nodeId
+                standardNodeTile @(ProcessData, Maybe NodeDetailsData)
+                  title
+                  subtitle
+                  (startStopNodeMenu *> removeNodeMenu)
+                  ((=<<) getNodeHeadBlock . snd)
+                  (Just errors)
+                  (Just $ ffor2 ebn nodeData $ \es nd -> and
+                    [ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) (MMap.lookup nodeId es)
+                    , _processData_state nd == ProcessState_Running
+                    ])
+                  (Just $ _processData_state . fst)
+                  (Just $ (=<<) _nodeDetailsData_peerCount . snd)
+                  (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
+                  ((,) <$> nodeData <*> nodeDetails)
+
+              nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
+              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections $
+                [ tileHeader title subtitle menu badge Nothing
+                , divClass "internal-node-tile-body" $ do
+                    -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
+                    case nodeState of
+                      NodeProcessState_ImportingSnapshot -> divClass "generating-icons" $ do
+                        icon "icon-install big"
+                        divClass "ui active tiny inline loader blue small" blank
+                      NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
-                      divClass "ui row" $ divClass "ui sub header" $ text "Generating node identity"
-                      divClass "ui row" $ divClass "explanation" $ text "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                  ]
-                  where
-                    badge :: m ()
-                    badge = tileBadgeImpliedByErrors (Just errors) (Just state)
+                      _ -> blank
+                    let
+                      subHeader t = divClass "ui sub header" $ text t
+                      errorMessage t = divClass "ui error message" $ text t
+                    divClass "ui row" $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> subHeader "Importing snapshot"
+                      NodeProcessState_ImportComplete -> subHeader "Verify snapshot"
+                      NodeProcessState_ImportFailed -> errorMessage "Snapshot import failed"
+                      NodeProcessState_ImportTimeout -> errorMessage "Snapshot import failed"
+                      NodeProcessState_GeneratingIdentity -> subHeader "Generating identity"
+                    divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
+                      NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
+                      NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
+                      NodeProcessState_ImportFailed -> ""
+                      NodeProcessState_ImportTimeout -> ""
+                      NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
+                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                      ev <- divClass "buttons" $ uiButtonM "" $ do
+                        icon "icon-angle-right"
+                        text "Start Verification"
+                      tellModal $ ev $> verifySnapshotModal sm
+                ]
+                where
+                  menu = case nodeState of
+                    NodeProcessState_ImportingSnapshot -> Nothing -- no way to cancel this
+                    NodeProcessState_ImportComplete -> Just $ do
+                      mapM_ verifyAndStartMenu mSnapshotMeta
+                      removeNodeMenu
+                    NodeProcessState_ImportFailed -> Just $ do
+                      mapM_ showLogMenu (_snapshotMeta_importError =<< mSnapshotMeta)
+                      removeNodeMenu
+                    NodeProcessState_ImportTimeout -> Just removeNodeMenu
+                    NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
+                  badge :: m ()
+                  badge = tileBadgeImpliedByErrors (Just errors) (Just state)
+            dSnapshotMeta <- watchSnapshotMeta
+            dyn_ $ ffor2 state dSnapshotMeta $ \case
+              (ProcessState_Node s) -> nodeStartTile s
+              _ -> const workingTile
 
-            isInitializing <- holdUniqDyn $ (== ProcessState_GeneratingIdentity) <$> state
-            dyn_ $ bool workingTile generatingTile <$> isInitializing
-
-          mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
@@ -1453,7 +1716,7 @@ nodesTab =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor2 source mUsingOsPubNode $ \s u -> if s == PublicNode_Obsidian && u == Just True
+                dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
                   then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
@@ -1472,12 +1735,14 @@ nodesTab =
     tileHeader
       :: m () -- ^ Title
       -> m () -- ^ Subtitle
-      -> m () -- ^ Tile menu contents
+      -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
       -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
       -> m ()
     tileHeader title subtitle menuContents badge errors' = do
-      tileMenu menuContents
+      case menuContents of
+        Nothing -> divClass "tile-header-spacing" blank
+        Just c -> tileMenu c
       divClass "title" $ do
         badge
         title
@@ -1562,7 +1827,7 @@ nodesTab =
     standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
-        [ tileHeader title subtitle menuContents badge errors'
+        [ tileHeader title subtitle (Just menuContents) badge errors'
         , tileBlockStats getBlock node
         ]
         <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
@@ -1626,7 +1891,7 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concat . (fmap NEL.toList) <$> dEbb
+            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
@@ -1634,7 +1899,7 @@ bakersTab =
             toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1643,7 +1908,7 @@ bakersTab =
               fmap $ \bakerSummary ->
                 bakerStatus $ bakerSummary <$ cns
             wantBakerData = (||)
-              <$> (any (== MonitoredStatus_Unknown) <$> bakerStatus')
+              <$> (elem MonitoredStatus_Unknown <$> bakerStatus')
               <*> (any isNothing <$> joinDynThroughMap bakersDetails)
           (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
             holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
