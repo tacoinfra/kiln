@@ -801,13 +801,13 @@ liveErrorsWidget = void $ do
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
       let resolvedDyn = isJust . _errorLog_stopped <$> logDyn
-          color w = case (_alertMetaData_severity $ getAlertMetaData w) of
+          severity w = case (_alertMetaData_severity $ getAlertMetaData w) of
             AlertSeverity_Info -> "info"
             AlertSeverity_Warning -> "warning"
             AlertSeverity_Error -> "error"
       wDyn <- holdUniqDyn widgetDyn
       elDynAttr "div" (ffor2 resolvedDyn wDyn $ \resolved w ->
-        "class" =: ("app-notification ui message " <> if resolved then "success" else color w)) $ do
+        "class" =: ("app-notification ui message " <> if resolved then "success" else severity w)) $ do
         dyn_ $ ffor wDyn $ either logEntry synthEntry
         let isEv = _alertMetaData_isEventBased . getAlertMetaData <$> wDyn
         el "div" $ do
