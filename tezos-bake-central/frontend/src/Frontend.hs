@@ -665,10 +665,10 @@ instance HasAlertMetaData (BakerLogTag a) where
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
-    BakerLogTag_BakerDeactivationRisk -> def
+    BakerLogTag_BakerDeactivationRisk -> def { _alertMetaData_severity = AlertSeverity_Warning }
     BakerLogTag_BakerAccused ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
-    BakerLogTag_InsufficientFunds -> def
+    BakerLogTag_InsufficientFunds -> def { _alertMetaData_severity = AlertSeverity_Warning }
     BakerLogTag_VotingReminder -> def
       { _alertMetaData_isEventBased = True
       , _alertMetaData_isUserResolvable = True
@@ -2077,9 +2077,10 @@ bakersTab =
       where
         renderBakerError :: NonEmpty ErrorLogView -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
-          let warning = _bakerErrorDescriptions_warning <$> dsc
+          let isWarning = (_alertMetaData_severity $ getAlertMetaData $ NEL.head ev) /= AlertSeverity_Error
+              warning = _bakerErrorDescriptions_warning <$> dsc
           renderResolvableSplashAlert ev
-            (iconDyn $ ffor warning $ \w -> "icon-warning big " <> bool "red" "orange" (isJust w))
+            (icon $ "icon-warning big " <> bool "red" "orange" isWarning)
             (dynText (_bakerErrorDescriptions_title <$> dsc) *> text ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
