@@ -61,8 +61,7 @@
 - ignore: {name: "Use isNothing"}
 - ignore: {name: "Eta reduce"}
 - ignore: {name: "Use newtype instead of data"}
-# - ignore: {name: Use const, within: SpecialModule} # Only within certain modules
-
+- ignore: {name: "Avoid restricted function", within Backend.ViewSelectorHandler} # groundhog
 
 # Define some custom infix operators
 # - fixity: infixr 3 ~^#^~
@@ -73,7 +72,6 @@
 - ignore: {name: "Redundant bracket"}
 - ignore: {name: "Move brackets to avoid $"}
 - ignore: {name: "Redundant $"}
-- ignore: {name: "Avoid restricted function"}
 - ignore: {name: "Parse error"}
 - ignore: {name: "Evaluate"}
 - ignore: {name: "Use notElem"}
