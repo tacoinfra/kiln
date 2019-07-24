@@ -589,6 +589,7 @@ reportAccusation
      , MonadLogger m)
   => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
 reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ (accusedBakeLog pkh opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  Just _ -> pure ()
   Nothing -> do
     (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
       { _errorLogBakerAccused_log = eid
@@ -601,8 +602,6 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
       , _errorLogBakerAccused_accusedCycle = aCycle
       }
     queueAlert (Just eid) alert
-  Just xs -> for_ xs $ \(_eid, _elbmid) ->
-    pure ()
   where
     alert = Alert Unresolved
       ("Double " <> rightTxt)
