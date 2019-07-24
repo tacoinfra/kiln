@@ -10,19 +10,21 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.NodeCmd where
 
 import Control.Exception.Safe (catch, throwIO)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
-import Data.List (find)
+import Data.List (find, intersperse)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Version
@@ -34,11 +36,12 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (sendFile, MonadSnap)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.Process (readProcessWithExitCode, proc)
+import System.Process (readProcessWithExitCode, proc, shell, readCreateProcess)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
+import Backend.CachedNodeRPC
 import Backend.Workers.Process
 import ExtraPrelude
 import System.Exit (ExitCode(..))
@@ -46,6 +49,7 @@ import System.Which
 import Tezos.Chain (NamedChain(..))
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
+import Common.Route (ExportLog(..))
 import Common.Schema
 
 hasHistoryModes :: Version -> Bool
@@ -301,6 +305,24 @@ fetchProtocol pid =
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
-handleExportLogs :: MonadSnap m => a -> m ()
-handleExportLogs _lType = do
-  sendFile "file.log"
+handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
+handleExportLogs nds lType = do
+  let
+    logger = _nodeDataSource_logger nds
+    logIdentifier :: String
+    logIdentifier = "kiln-" <> case lType of
+      ExportLog_Baker :=> _ -> "baker"
+      ExportLog_Endorser :=> _ -> "endorser"
+      ExportLog_Node :=> _ -> "node"
+    command = shell $ concat $ intersperse " "
+      [ "journalctl"
+      , "--no-hostname"
+      , "--no-pager"
+      , "-t", logIdentifier
+      , ">", logIdentifier
+      ]
+  runLoggingEnv logger $ do
+    $(logDebug) $ "Exporting logs for: " <> (T.pack logIdentifier)
+    $(logDebug) $ "Running command " <> (tshow command)
+  _ <- liftIO $ readCreateProcess command ""
+  sendFile logIdentifier

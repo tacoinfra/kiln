@@ -440,7 +440,7 @@ backendImpl cfg serve = do
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
-        BackendRoute_ExportLogs :=> lType -> handleExportLogs lType
+        BackendRoute_ExportLogs :=> Identity lType -> handleExportLogs dataSrc lType
 
 backend :: Backend BackendRoute AppRoute
 backend = backend' mempty
