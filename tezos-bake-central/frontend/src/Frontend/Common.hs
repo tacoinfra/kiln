@@ -53,7 +53,10 @@ import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, t
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest)
-import Common.Alerts (ErrorDescription(..))
+import Common.Alerts (
+    ErrorDescription(..),
+    standardTimeFormat,
+  )
 import Common.App (Bake, BakerSummary(..), NodeSummary,
                    bakerSummaryIdentification, nodeSummaryIdentification)
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
@@ -118,9 +121,6 @@ fancyTez :: DomBuilder t m => Tez -> m ()
 fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
   text $ w <> p
   elClass "span" "tez" $ text tz
-
-standardTimeFormat :: String
-standardTimeFormat = "%A, %b %-d, %Y @ %-l:%M%P %Z"
 
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
@@ -582,7 +582,7 @@ zipFieldsWith :: (Applicative m, Reflex t)
               -> m (Dynamic t (Either Text a))
               -> m (Dynamic t (Either Text b))
               -> m (Dynamic t (Either Text c))
-zipFieldsWith = (liftA2 . liftA2 . liftA2)
+zipFieldsWith = liftA2 . liftA2 . liftA2
 
 formWithReset
   :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m)
@@ -639,3 +639,11 @@ instance HasTimeZone (FrontendContext t) where
 
 instance HasTimer t (FrontendContext t) where
   timer = frontendContext_oneSecondTimer
+
+-- UI element with left pointing arrow
+backButton :: DomBuilder t m => m (Event t ())
+backButton = do
+  (e, _) <- elClass' "div" "back-button" $ do
+    icon "icon-angle-left blue"
+    el "span" $ text "Back"
+  pure $ domEvent Click e

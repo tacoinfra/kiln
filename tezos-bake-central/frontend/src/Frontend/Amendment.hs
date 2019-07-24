@@ -11,8 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -22,8 +20,8 @@
 module Frontend.Amendment where
 
 import Control.Monad.Fix (MonadFix)
-import Data.List (sortBy)
-import Data.Ord (Down (..), comparing)
+import Data.List (sortOn)
+import Data.Ord (Down (..))
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
@@ -65,8 +63,8 @@ textPeriod = \case
   VotingPeriodKind_Testing -> "Testing"
   VotingPeriodKind_PromotionVote -> "Promotion"
 
-periodHasVote :: VotingPeriodKind -> Bool
-periodHasVote = \case
+isVotingPeriod :: VotingPeriodKind -> Bool
+isVotingPeriod = \case
   VotingPeriodKind_Proposal -> True
   VotingPeriodKind_TestingVote -> True
   VotingPeriodKind_Testing -> False
@@ -96,7 +94,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
         (e, _) <- elDynAttr' "div" itemConf $ do
           divClass "title" $ do
             text $ textPeriod p <> " Period"
-            when (periodHasVote p) $ elClass "i" "blue icon-vote-badge icon" blank
+            when (isVotingPeriod p) $ elClass "i" "blue icon-vote-badge icon" blank
           divClass "date" $ do
             tz <- asks (^. timeZone)
             let startTime = getStartTimeForPeriod p <$> amendment <*> amendments <*> protoInfo
@@ -154,7 +152,7 @@ periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m))
   => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
 periodProposals proposals' = do
-  let proposals = sortBy (comparing $ Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
+  let proposals = sortOn (Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
   el "table" $ do
     el "thead" $ do
       el "tr" $ do
@@ -228,29 +226,6 @@ periodVote promote vote = el "dl" $ do
 intPercentage :: Int -> Text
 intPercentage i = tshow wholes <> "." <> T.drop 1 (tshow $ 100 + decimals) <> "%"
   where (wholes, decimals) = i `divMod` 100
-
--- | Get or estimate the start time of a period. Return 'Bool' indicates if the date is estimated
-getStartTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
-getStartTimeForPeriod p a as proto
-  | Just a' <- Map.lookup p as = (_amendment_start a', False)
-  | otherwise = (estimate, True)
-  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
-        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
-
--- | Get or estimate the end time of a period. Return 'Bool' indicates if the date is estimated
-getEndTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
-getEndTimeForPeriod p a as proto
-  | Just p' <- safeSucc p, Just a' <- Map.lookup p' as = (_amendment_start a', False)
-  | otherwise = (estimate, True)
-  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
-        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
-
-safeSucc :: (Eq a, Enum a, Bounded a) => a -> Maybe a
-safeSucc a = if a /= maxBound then Just (succ a) else Nothing
 
 -- | Display green progress dots for given cycles
 progressDots
@@ -328,7 +303,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
         divClass "item" $ do
           divClass "title" $ text "Votes will be cast as your Kiln Baker."
-          divClass "detail" $ text $ toPublicKeyHashText $ bakerPkh
+          divClass "detail" $ text $ toPublicKeyHashText bakerPkh
         extras
 
     proposalFlow :: Workflow t m (Event t ())
@@ -336,9 +311,10 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       proposals <- watchProposals
       headerWithCycles
         "Proposal Period"
-        "During the Proposal Period a baker may upvote up to 20 proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested."
+        ("During the Proposal Period a baker may upvote up to " <> tshow maxProposalUpvotes <> " proposals. The proposal with the most upvotes will advance to the Exploration Period, where bakers may vote on whether it should be tested.")
         (divClass "item" $ do
-          divClass "title" $ dynText $ ffor proposals $ \ps -> tshow (Map.size $ Map.filter (isJust . snd) ps) <> " / 20"
+          divClass "title" $ dynText $ ffor proposals $ \ps ->
+            tshow (Map.size $ Map.filter (isJust . snd) ps) <> " / " <> tshow maxProposalUpvotes
           divClass "detail" $ text "Votes Cast")
       divClass "proposals" $ do
         el "label" $ text "Filter Proposals by Hash"
@@ -353,7 +329,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           voteE <- el "tbody" $ listViewWithKey proposals $ \_ pp -> do
             let protocolHash = toBase58Text . _periodProposal_hash . fst <$> pp
                 attrs = ffor2 protocolHash hashFilter $ \h h' ->
-                  if (T.strip $ T.toCaseFold h') `T.isInfixOf` (T.toCaseFold h)
+                  if T.strip (T.toCaseFold h') `T.isInfixOf` T.toCaseFold h
                   then mempty
                   else "class" =: "filtered"
             elDynAttr "tr" attrs $ do
@@ -375,7 +351,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
         elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
           text "No proposals have been submitted for this voting period yet."
-        pure (never, waitForWalletAppFlow . (castVoteFlow False Nothing) <$> vote)
+        pure (never, waitForWalletAppFlow . castVoteFlow False Nothing <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
@@ -486,7 +462,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             divClass "confirm-title" $ text "Confirm Vote"
             divClass "confirm-content" $ text $ textBallot ballot
         divClass "confirm-title" $ text "Source"
-        divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+        divClass "confirm-content" $ text $ toPublicKeyHashText bakerPkh
         divClass "confirm-title" $ text "Protocol"
         divClass "confirm-content" $ text $ toBase58Text $ snd proposal
         divClass "confirm-title" $ text "Period"
@@ -541,12 +517,12 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
       divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
-      pure $ devFound
+      pure devFound
 
     nextBakingRights = do
       mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
       let
-        mLevel = ffor ((fmap _bakerSummary_nextRight) <$> mBakerDyn) $ \case
+        mLevel = ffor (fmap _bakerSummary_nextRight <$> mBakerDyn) $ \case
           Just (BakerNextRight_KnownRights (_,l)) -> pure l
           _ -> Nothing
       dyn_ $ ffor mLevel $ \case

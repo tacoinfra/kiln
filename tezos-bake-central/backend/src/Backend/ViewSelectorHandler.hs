@@ -74,7 +74,6 @@ import Safe (minimumByMay)
 import Tezos.PublicKeyHash
 import Tezos.Types
 
-import Backend.BalanceTracking
 import Backend.CachedNodeRPC
 import Backend.Schema
 import Backend.STM (atomicallyWith)
@@ -105,19 +104,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     maybeViewHandler getVS xs = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> xs
 
-  let clientAddresses = mempty
-  -- clientAddresses <- whenJust (_bakeViewSelector_clientAddresses vs) $ \a -> do
-  --   rs <- [queryQ| SELECT c.id, c.address FROM "Client" c WHERE NOT c.data#deleted|]
-  --   return $ Map.fromList [(cid, (First (Just addr), a)) | (cid, addr) <- rs]
-  -- clients <- do
-  --   let selClients = In (Map.keys (_bakeViewSelector_clients vs))
-  --   rs <- [queryQ| SELECT c.id, i.report, i.config
-  --                  FROM "Client" c LEFT JOIN "ClientInfo" i ON c.id = i.client
-  --                  WHERE c.id IN ?selClients AND NOT c.data#deleted|]
-  --   let clientInfo = Map.fromList $ do
-  --         (cid, report, config) <- rs
-  --         return (cid, First (ClientInfo cid <$> report <*> config))
-  --   return $ Map.intersectionWith (,) clientInfo (_bakeViewSelector_clients vs)
   parameters <- maybeViewHandler _bakeViewSelector_parameters $
     fmap _parameters_protoInfo <$> selectSingle (Parameters_chainField ==. _nodeDataSource_chain nds)
 
@@ -166,8 +152,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
 
-  summaryView <- maybeViewHandler _bakeViewSelector_summary getSummaryReport
-
   let errorsVS = _bakeViewSelector_errors vs
   errors <- itraverse getErrorLogs errorsVS
 
@@ -194,6 +178,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
+  snapshotMeta <- maybeViewHandler _bakeViewSelector_snapshotMeta $ selectSingle CondEmpty
+
   let amendmentVS = _bakeViewSelector_amendment vs
   amendment <- whenM (not $ null amendmentVS) $ do
     as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
@@ -201,34 +187,23 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let periodProposalsVS = _bakeViewSelector_proposals vs
   periodProposals <- whenM (not $ null periodProposalsVS) $ do
-    results :: [(Id PeriodProposal, ProtocolHash, ChainId, RawLevel, Int, Bool, Bool)] <- [queryQ|
-      SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
-      FROM "PeriodProposal" pp
-      LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
-      JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
-      WHERE NOT b."data#deleted"
-    |]
-    pure $ toRangeView periodProposalsVS $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (Bounded pid, First $ Just (PeriodProposal
-      { _periodProposal_hash = phash
-      , _periodProposal_chainId = chain
-      , _periodProposal_votingPeriod = vp
-      , _periodProposal_votes = votes
-      }, if voted then Just included else Nothing))
+    toRangeView periodProposalsVS . fmap (bimap Bounded (First . Just)) <$> getProposals
 
   bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
     let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
-      SELECT v.pkh, v.proposal, v.ballot, v.included
+      SELECT v.pkh, v.proposal, v.ballot, v.included, v.attempted
       FROM "BakerVote" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included) -> BakerVote
+    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included, attempted) -> BakerVote
       { _bakerVote_pkh = pkh
       , _bakerVote_proposal = proposal
       , _bakerVote_ballot = ballot
       , _bakerVote_included = included
+      , _bakerVote_attempted = attempted
       }
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
@@ -318,7 +293,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     las <- select CondEmpty
     let rangeView = toRangeView votePromptingVS $ flip fmap las $ \la ->
           ( _ledgerAccount_secretKey la
-          , First $ Just $ mempty
+          , First $ Just mempty
           )
     pure rangeView
 
@@ -333,8 +308,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   return BakeView
     { _bakeView_config = config
-    , _bakeView_clients = mempty -- clients
-    , _bakeView_clientAddresses = clientAddresses
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
@@ -343,9 +316,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
-    -- , _bakeView_summaryGraph = summaryGraph
-    , _bakeView_summary = summaryView
-    -- , _bakeView_graphs = mempty
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
@@ -359,6 +329,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients
     , _bakeView_alertCount = alertCount
+    , _bakeView_snapshotMeta = snapshotMeta
     , _bakeView_connectedLedger = connectedLedger
     , _bakeView_showLedger = showLedger
     , _bakeView_prompting = prompting
@@ -710,3 +681,19 @@ getNodeAddresses nid = do
     intExt :: Map.Map (WithInfinity (Id Node)) (Either NodeExternalData ProcessData)
     intExt = fmap Left ext `Map.union` fmap Right int
   return $ Map.toList $ fmap (First . Just) $ liftF2 NodeSummary intExt counts
+
+getProposals :: (Monad m, PostgresRaw m) => m [(Id PeriodProposal, (PeriodProposal, Maybe Bool))]
+getProposals = do
+  results <- [queryQ|
+    SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes, bp.pkh IS NOT NULL, bp.included IS NOT NULL
+    FROM "PeriodProposal" pp
+    LEFT JOIN "BakerProposal" bp ON pp.id = bp.proposal
+    LEFT JOIN "BakerDaemonInternal" b ON bp.pkh = b."data#data#publicKeyHash"
+    WHERE COALESCE(NOT b."data#deleted", TRUE)
+  |]
+  pure $ flip fmap results $ \(pid, phash, chain, vp, votes, voted, included) -> (pid, (PeriodProposal
+    { _periodProposal_hash = phash
+    , _periodProposal_chainId = chain
+    , _periodProposal_votingPeriod = vp
+    , _periodProposal_votes = votes
+    }, if voted then Just included else Nothing))

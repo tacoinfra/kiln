@@ -176,8 +176,7 @@ doPrompt title explanation prompt sk handleStep = divClass "central" $ do
             ]
           interstitial = select selector PromptResult_Interstitial
       pure (finished, splash . Just <$> back)
-  done <- switch . current <$> workflow (splash Nothing)
-  pure done
+  switch . current <$> workflow (splash Nothing)
 
 declinedError :: DomBuilder t m => m ()
 declinedError = text "The Ledger prompt was rejected or timed out. Please try again."
@@ -218,8 +217,8 @@ authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
   isRegisteredD <- watchBakerRegistered sk pkh
   let (err, ok) = fanEither e
-      isRegistered = fmap (== (Just True)) $ tag (current isRegisteredD) ok
-  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ (fforMaybe isRegistered $ \r -> if r then Just () else Nothing)
+      isRegistered = fmap (== Just True) $ tag (current isRegisteredD) ok
+  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ fforMaybe isRegistered (\r -> if r then Just () else Nothing)
   pure $ leftmost [Left <$> err, ffor isRegistered $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
@@ -439,5 +438,4 @@ setupComplete (_sk, pkh) = divClass "central" $ do
     text "Setup is complete!"
   elClass "h6" "ui header prompt-text" $ text $ "Kiln is now running a baker using the address: " <> toPublicKeyHashText pkh
   divClass "centered explanation" $ text "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or endorse. It takes at least 6 cycles after registering to receive rights."
-  continue <- uiButton "primary" "Continue"
-  pure continue
+  uiButton "primary" "Continue"

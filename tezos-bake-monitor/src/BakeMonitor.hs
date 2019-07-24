@@ -1,7 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-} -- for the parsers specifically
 
 import Control.Concurrent
@@ -53,12 +51,12 @@ blockPrefix = BlockPrefix <$> P.takeWhile isAlphaNum
 errorCont :: Parser MessageType
 errorCont = do
   string "Error, dumping error stack:" <|> string "  "
-  return $ MessageType_ErrorCont
+  return MessageType_ErrorCont
 
 errorLine :: Parser MessageType
 errorLine = do
   string "Error"
-  return $ MessageType_Error
+  return MessageType_Error
 
 selectCandidate :: Parser MessageType
 selectCandidate = do
@@ -149,7 +147,7 @@ mainArgs monitorPort nodeRPCLocation clientExecutable identity = do
       , std_err = CreatePipe
       }
   dataRef <- newMVar $ Report
-    { _report_counts = (Count 0 0 0)
+    { _report_counts = Count 0 0 0
     , _report_lastBaked = []
     , _report_errors = []
     , _report_failedBaker = []

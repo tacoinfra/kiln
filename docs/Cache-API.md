@@ -26,7 +26,7 @@ Most endpoints require that Kiln is successfully connected to at least one non-p
 
 Retrieve the *chain ID* of the chain/network being monitored/cached. This will never be a name like `mainnet` or `alphanet`.
 
-> `GET /api/v1/chain HTTP/1.1`
+> `GET /api/v2/chain HTTP/1.1`
 
 ```json
 "NetXdQprcVkpaWU"
@@ -36,9 +36,9 @@ Retrieve the *chain ID* of the chain/network being monitored/cached. This will n
 
 Retrieve network parameter state at the time the cache was started. Note that this will have meaningless values for baking rewards/deposits.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
 
-> `GET /api/v1/NetXdQprcVkpaWU/params HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/params HTTP/1.1`
 
 ```json
 {
@@ -76,9 +76,9 @@ Retrieve network parameter state at the time the cache was started. Note that th
 
 Retrieve the latest (a.k.a. head) block of all nodes being monitored.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
 
-> `GET /api/v1/NetXdQprcVkpaWU/head HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/head HTTP/1.1`
 
 ```json
 {
@@ -97,11 +97,11 @@ Retrieve the latest (a.k.a. head) block of all nodes being monitored.
 
 Retrieve block data for the most recent common ancestor of two blocks. This can be useful for exploring branches. For technical reasons, some included data may not be accurate (in particular, fitness and timestamp will not be known for blocks older than the time the cache started).
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
   * Replace `BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv` with a block hash.
   * Replace `BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE` with a block hash.
 
-> `GET /api/v1/NetXdQprcVkpaWU/lca?block=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&block=BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/lca?block=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&block=BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE HTTP/1.1`
 
 ```json
 {
@@ -117,11 +117,11 @@ Retrieve block data for the most recent common ancestor of two blocks. This can 
 
 Retrieve a list of ordered block hashes from a starting block and some number of levels backward.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
   * Replace `BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv` with some block hash.
   * Replace `10` with the number of levels backward from the given block.
 
-> `GET /api/v1/NetXdQprcVkpaWU/ancestors?branch=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&level=10 HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/ancestors?branch=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&level=10 HTTP/1.1`
 
 ```json
 [
@@ -142,11 +142,11 @@ Retrieve a list of ordered block hashes from a starting block and some number of
 
 Retrieve the all baking rights at a specific level as seen by a given branch.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
-  * Replace `151128` with a level that is at or before the block hash used as the branch.
+  * Replace `151128` with the level for desired baking rights data.
 
-> `GET /api/v1/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
 ```json
 [
@@ -181,11 +181,11 @@ Retrieve the all baking rights at a specific level as seen by a given branch.
 
 Retrieve the all endorsing rights at a specific level as seen by a given branch.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
-  * Replace `151128` with a level that is at or before the block hash used as the branch.
+  * Replace `151128` with the level for desired endorsing rights data.
 
-> `GET /api/v1/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+> `GET /api/v2/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
 ```json
 [
@@ -218,161 +218,4 @@ Retrieve the all endorsing rights at a specific level as seen by a given branch.
     "estimated_time": "2018-10-18T07:36:25Z"
   }
 ]
-```
-
-
-### Baker and endorsers for a block
-
-Retrieve the the baker and endorsers for a block at a given level as seen by a given branch.
-
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v1/chain`.
-  * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
-  * Replace `151128` with a level that is at or before the block hash used as the branch.
-
-> `GET /api/v1/NetXdQprcVkpaWU/block-baker?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
-
-```json
-{
-  "public_key_hash": "tz1iDu3tHhf7H4jyXk6rGV4FNUsMqQmRkwLp",
-  "priority": 0,
-  "endorsements": [
-    [
-      "tz1KksC8RvjUWAbXYJuNrUbontHGor26Cztk",
-      [
-        4
-      ]
-    ],
-    [
-      "tz1LH4L6XYT2JNPhvWYC4Zq3XEiGgEwzNRvo",
-      [
-        1
-      ]
-    ],
-    [
-      "tz1Lhf4J9Qxoe3DZ2nfe8FGDnvVj7oKjnMY6",
-      [
-        0
-      ]
-    ],
-    [
-      "tz1NpWrAyDL9k2Lmnyxcgr9xuJakbBxdq7FB",
-      [
-        31,
-        3
-      ]
-    ],
-    [
-      "tz1TNWtofRofCU11YwCNwTMWNFBodYi6eNqU",
-      [
-        29,
-        9,
-        6
-      ]
-    ],
-    [
-      "tz1TRqbYbUf2GyrjErf3hBzgBJPzW8y36qEs",
-      [
-        21
-      ]
-    ],
-    [
-      "tz1VQnqCCqX4K5sP3FNkVSNKTdCAMJDd3E1n",
-      [
-        17
-      ]
-    ],
-    [
-      "tz1WCd2jm4uSt4vntk4vSuUWoZQGhLcDuR9q",
-      [
-        15
-      ]
-    ],
-    [
-      "tz1Yju7jmmsaUiG9qQLoYv35v5pHgnWoLWbt",
-      [
-        24,
-        20
-      ]
-    ],
-    [
-      "tz1ZccvXdgxwN5jxHDW3WfmwcSHj5QD1tMgq",
-      [
-        27,
-        22
-      ]
-    ],
-    [
-      "tz1aviwxpVSjzBnepQMdMjEGksxgkKMKUZS6",
-      [
-        16
-      ]
-    ],
-    [
-      "tz1bHzftcTKZMTZgLLtnrXydCm6UEqf4ivca",
-      [
-        10
-      ]
-    ],
-    [
-      "tz1bnaLWidmdDR4R1Fz6NwJ1oeBPyuTnkSEH",
-      [
-        25
-      ]
-    ],
-    [
-      "tz1dZQdp66wDHyPQR1fSMygv5N9vY9MMcMoR",
-      [
-        11
-      ]
-    ],
-    [
-      "tz1hx8hMmmeyDBi6WJgpKwK4n5S2qAEpavx2",
-      [
-        5
-      ]
-    ],
-    [
-      "tz1iZEKy4LaAjnTmn2RuGDf2iqdAQKnRi8kY",
-      [
-        23
-      ]
-    ],
-    [
-      "tz3RB4aoyjov4KEVRbuhvQ1CKJgBJMWhaeB8",
-      [
-        19,
-        18
-      ]
-    ],
-    [
-      "tz3RDC3Jdn4j15J7bBHZd29EUee9gVB1CxD9",
-      [
-        30,
-        26,
-        14,
-        13,
-        8
-      ]
-    ],
-    [
-      "tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r",
-      [
-        28
-      ]
-    ],
-    [
-      "tz3VEZ4k6a4Wx42iyev6i2aVAptTRLEAivNN",
-      [
-        12,
-        7
-      ]
-    ],
-    [
-      "tz3WMqdzXqRWXwyvj5Hp2H7QEepaUuS7vd9K",
-      [
-        2
-      ]
-    ]
-  ]
-}
 ```

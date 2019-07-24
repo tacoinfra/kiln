@@ -24,6 +24,7 @@ library
     Tezos.Block
     Tezos.BlockHeader
     Tezos.Chain
+    Tezos.Checkpoint
     Tezos.Contract
     Tezos.Envelope
     Tezos.Fitness

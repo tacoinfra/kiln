@@ -36,7 +36,7 @@ module Backend.Schema
   ) where
 
 import Control.Lens (Field1, Field2)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, NominalDiffTime)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -53,7 +53,7 @@ import Data.Dependent.Sum (ShowTag)
 import Data.Dependent.Sum (compareTagged)
 import Data.Dependent.Sum (eqTagged)
 import Data.Dependent.Sum (showTaggedPrec)
-import Data.Fixed (Fixed (MkFixed), HasResolution, Micro)
+import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
@@ -116,7 +116,6 @@ stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
 
 data NotifyTag a where
-  NotifyTag_BakerDaemonExternal :: NotifyTag (Id BakerDaemon, Maybe BakerDaemonExternalData)
   NotifyTag_Baker :: NotifyTag (Id Baker, Maybe BakerData)
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
@@ -130,6 +129,7 @@ data NotifyTag a where
   NotifyTag_Parameters :: NotifyTag (Id Parameters, Parameters)
   NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
   NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
+  NotifyTag_SnapshotMeta :: NotifyTag SnapshotMeta
   NotifyTag_TelegramConfig :: NotifyTag (Id TelegramConfig, TelegramConfig)
   NotifyTag_TelegramRecipient :: NotifyTag (Id TelegramRecipient, Maybe TelegramRecipient)
   NotifyTag_ConnectedLedger :: NotifyTag (Maybe ConnectedLedger)
@@ -202,7 +202,6 @@ instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
-instance HasDefaultNotify (Id ErrorLogMultipleBakersForSameBaker)
 instance HasDefaultNotify (Id ErrorLogBakerAccused)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk)
@@ -210,6 +209,7 @@ instance HasDefaultNotify (Id ErrorLogBakerMissed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
+instance HasDefaultNotify (Id ErrorLogVotingReminder)
 
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
@@ -220,8 +220,6 @@ instance HasNotification NotifyTag ErrorLogBadNodeHead where
 instance HasNotification NotifyTag ErrorLogInaccessibleNode where
   notification _ = mkNodeNotify NodeLogTag_InaccessibleNode
 
-instance HasNotification NotifyTag ErrorLogMultipleBakersForSameBaker where
-  notification _ = mkBakerNotify BakerLogTag_MultipleBakersForSameBaker
 instance HasNotification NotifyTag ErrorLogBakerAccused where
   notification _ = mkBakerNotify BakerLogTag_BakerAccused
 instance HasNotification NotifyTag ErrorLogBakerDeactivated where
@@ -232,6 +230,8 @@ instance HasNotification NotifyTag ErrorLogBakerMissed where
   notification _ = mkBakerNotify BakerLogTag_BakerMissed
 instance HasNotification NotifyTag ErrorLogInsufficientFunds where
   notification _ = mkBakerNotify BakerLogTag_InsufficientFunds
+instance HasNotification NotifyTag ErrorLogVotingReminder where
+  notification _ = mkBakerNotify BakerLogTag_VotingReminder
 
 instance HasNotification NotifyTag ErrorLogNetworkUpdate where
   notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
@@ -319,12 +319,29 @@ selectIds
   -> m [(Id v, v)]
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
+data CacheBakingRights = CacheBakingRights
+  { _cacheBakingRights_context :: !BlockHash
+  , _cacheBakingRights_level :: !RawLevel
+  , _cacheBakingRights_result :: !(Json Aeson.Value)
+  }
+  deriving (Eq, Show, Typeable)
+
+data CacheEndorsingRights = CacheEndorsingRights
+  { _cacheEndorsingRights_context :: !BlockHash
+  , _cacheEndorsingRights_level :: !RawLevel
+  , _cacheEndorsingRights_result :: !(Json Aeson.Value)
+  }
+  deriving (Eq, Show, Typeable)
+
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
 -- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
+
+instance FromField (Fixed a) where
+  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance HasResolution a => PrimitivePersistField (Fixed a) where
   toPrimitivePersistValue p (MkFixed x) = toPrimitivePersistValue p (fromInteger x :: Int64)
@@ -339,6 +356,19 @@ instance HasResolution a => PersistField (Fixed a) where
 instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
+
+instance FromField NominalDiffTime where
+  fromField f b = toEnum <$> fromField f b
+
+instance PrimitivePersistField NominalDiffTime where
+  toPrimitivePersistValue p x = toPrimitivePersistValue p $ fromEnum x
+  fromPrimitivePersistValue p v = toEnum $ fromPrimitivePersistValue p v
+
+instance PersistField NominalDiffTime where
+  persistName _ = "NominalDiffTime"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = dbType p (fromEnum x)
 
 instance PersistField NamedChainOrChainId where
   persistName _ = "NamedChainOrChainId"
@@ -389,6 +419,12 @@ instance FromField ProcessControl where
 instance ToField ProcessControl where
   toField v = toField (show v)
 
+instance FromField VotingPeriodKind where
+  fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
+
+instance ToField VotingPeriodKind where
+  toField v = toField (show v)
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
@@ -404,9 +440,6 @@ instance PersistField PeriodSequence where
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
-
-instance FromField Micro where
-  fromField f b = MkFixed . toInteger @Int64 <$> fromField f b
 
 instance NeverNull (HashedValue a)
 instance NeverNull (Json BakedEvent)
@@ -611,11 +644,6 @@ instance FromField PublicKeyHash where
   -- TODO: Write a real Conversion for this.
   fromField f b = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8 <$> fromField f b
 
-instance ToField ClientWorker where
-  toField = toField . show
-instance FromField ClientWorker where
-  fromField f b = maybe (fail "Invalid value for ClientWorker") pure . readMaybe =<< fromField f b
-
 instance ToField RightKind where
   toField = toField . show
 instance FromField RightKind where
@@ -750,18 +778,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: BakerDaemon
     constructors:
       - name: BakerDaemon
-  - entity: BakerDaemonExternal
-    autoKey: null
-    constructors:
-      - name: BakerDaemonExternal
-        uniques:
-          - name: BakerDaemonExternalId
-            type: primary
-            fields: [_bakerDaemonExternal_id]
-          - name: BakerDaemonExternal_uniqueness
-            type: constraint
-            fields: [_bakerDaemonExternal_data] #data#address
-  - embedded: BakerDaemonExternalData
   - entity: BakerDaemonInternal
     autoKey: null
     keys:
@@ -774,23 +790,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_bakerDaemonInternal_id]
   - embedded: BakerDaemonInternalData
-  - entity: BakerDaemonInfo
-    autoKey: null
-    keys:
-      - name: BakerDaemonInfoId
-        default: true
-    constructors:
-      - name: BakerDaemonInfo
-        uniques:
-          - name: BakerDaemonInfoId
-            type: primary
-            fields: [_bakerDaemonInfo_id]
-        fields:
-          - name: _bakerDaemonInfo_id
-            reference:
-              table: BakerDaemon
-              onDelete: cascade
-  - embedded: BakerDaemonInfoData
   - entity: Node
     constructors:
       - name: Node
@@ -919,7 +918,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: Bool
             default: "True"
   - primitive: RightKind
-  - primitive: ClientWorker
   - primitive: UpgradeCheckError
   - primitive: PublicNode
   - primitive: NamedChain
@@ -958,17 +956,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInaccessibleNodeId
             type: primary
             fields: [_errorLogInaccessibleNode_log]
-  - entity: ErrorLogMultipleBakersForSameBaker
-    autoKey: null
-    keys:
-      - name: ErrorLogMultipleBakersForSameBakerId
-        default: true
-    constructors:
-      - name: ErrorLogMultipleBakersForSameBaker
-        uniques:
-          - name: ErrorLogMultipleBakersForSameBakerId
-            type: primary
-            fields: [_errorLogMultipleBakersForSameBaker_log]
   - entity: ErrorLogBakerAccused
     autoKey: null
     keys:
@@ -1057,7 +1044,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerMissedId
             type: primary
             fields: [_errorLogBakerMissed_log]
-
+  - entity: ErrorLogVotingReminder
+    autoKey: null
+    keys:
+      - name: ErrorLogVotingReminderId
+        default: true
+    constructors:
+      - name: ErrorLogVotingReminder
+        uniques:
+          - name: ErrorLogVotingReminderId
+            type: primary
+            fields: [_errorLogVotingReminder_log]
   - entity: CachedProtocolConstants
     constructors:
      - name: CachedProtocolConstants
@@ -1084,6 +1081,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         fields: [_telegramConfig_botApiKey]
   - entity: TelegramMessageQueue
   - entity: TelegramRecipient
+  - entity: SnapshotMeta
   - entity: UpstreamVersion
   - embedded: RightNotificationLimit
   - entity: RightNotificationSettings
@@ -1094,6 +1092,22 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
       - name: RightNotificationSettingsId
         type: primary
         fields: [_rightNotificationSettings_rightKind]
+  - entity: CacheBakingRights
+    autoKey: null
+    constructors:
+      - name: CacheBakingRights
+        uniques:
+          - name: CacheBakingRights_context
+            type: primary
+            fields: [_cacheBakingRights_context, _cacheBakingRights_level]
+  - entity: CacheEndorsingRights
+    autoKey: null
+    constructors:
+      - name: CacheEndorsingRights
+        uniques:
+          - name: CacheEndorsingRights_context
+            type: primary
+            fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -1111,6 +1125,7 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
   , (''PublicNodeHead, 'PublicNodeHeadKey)
+  , (''SnapshotMeta, 'SnapshotMetaKey)
   , (''TelegramConfig, 'TelegramConfigKey)
   , (''TelegramRecipient, 'TelegramRecipientKey)
   , (''TelegramMessageQueue, 'TelegramMessageQueueKey)
@@ -1148,9 +1163,6 @@ instance DefaultKeyId ErrorLogBakerNoHeartbeat where
 instance DefaultKeyId ErrorLogInaccessibleNode where
   toIdData _ (ErrorLogInaccessibleNodeIdKey eid) = eid
   fromIdData _ = ErrorLogInaccessibleNodeIdKey
-instance DefaultKeyId ErrorLogMultipleBakersForSameBaker where
-  toIdData _ (ErrorLogMultipleBakersForSameBakerIdKey eid) = eid
-  fromIdData _ = ErrorLogMultipleBakersForSameBakerIdKey
 instance DefaultKeyId ErrorLogBakerAccused where
   toIdData _ (ErrorLogBakerAccusedIdKey eid) = eid
   fromIdData _ = ErrorLogBakerAccusedIdKey
@@ -1172,6 +1184,9 @@ instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
 instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
+instance DefaultKeyId ErrorLogVotingReminder where
+  toIdData _ (ErrorLogVotingReminderIdKey eid) = eid
+  fromIdData _ = ErrorLogVotingReminderIdKey
 
 fmap concat $ traverse (\n ->
   let u = mkName (nameBase n <> "Id") in
@@ -1218,12 +1233,12 @@ nodeLogAssume = \case
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
-  BakerLogTag_MultipleBakersForSameBaker -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
   BakerLogTag_InsufficientFunds -> id
+  BakerLogTag_VotingReminder -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
 logAssume = \case
@@ -1286,12 +1301,12 @@ nodeLogDep = \case
 
 bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
 bakerLogDep = \case
-  BakerLogTag_MultipleBakersForSameBaker -> depBakerAlert ErrorLogMultipleBakersForSameBaker_publicKeyHashField
   BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
+  BakerLogTag_VotingReminder -> depBakerAlert' ErrorLogVotingReminder_bakerField
   where
     depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
@@ -1306,8 +1321,7 @@ embeddedSecretKeyEquals f sk =
 
 instance ArgDict NotifyTag where
   type ConstraintsFor NotifyTag c =
-    ( c (Id BakerDaemon, Maybe BakerDaemonExternalData)
-    , c (Id Baker, Maybe BakerData)
+    ( c (Id Baker, Maybe BakerData)
     , c BakerDetails
     , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
     , c (Id ErrorLogNetworkUpdate)
@@ -1316,12 +1330,12 @@ instance ArgDict NotifyTag where
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogBadNodeHead)
-    , c (Id ErrorLogMultipleBakersForSameBaker)
     , c (Id ErrorLogBakerMissed)
     , c (Id ErrorLogBakerDeactivated)
     , c (Id ErrorLogBakerDeactivationRisk)
     , c (Id ErrorLogBakerAccused)
     , c (Id ErrorLogInsufficientFunds)
+    , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
     , c (Id Node, Maybe NodeExternalData)
@@ -1331,6 +1345,7 @@ instance ArgDict NotifyTag where
     , c (Id Parameters, Parameters)
     , c (Id PublicNodeConfig, PublicNodeConfig)
     , c (Id PublicNodeHead, Maybe PublicNodeHead)
+    , c SnapshotMeta
     , c (Id TelegramConfig, TelegramConfig)
     , c (Id TelegramRecipient, Maybe TelegramRecipient)
     , c (Maybe ConnectedLedger)
@@ -1348,7 +1363,6 @@ instance ArgDict NotifyTag where
     , c (PublicKeyHash, Bool)
     )
   argDict = \case
-    NotifyTag_BakerDaemonExternal -> Dict
     NotifyTag_Baker -> Dict
     NotifyTag_BakerDetails -> Dict
     NotifyTag_BakerRightsProgress -> Dict
@@ -1361,12 +1375,12 @@ instance ArgDict NotifyTag where
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
       LogTag_Baker t -> case t of
-        BakerLogTag_MultipleBakersForSameBaker -> Dict
         BakerLogTag_BakerMissed -> Dict
         BakerLogTag_BakerDeactivated -> Dict
         BakerLogTag_BakerDeactivationRisk -> Dict
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
+        BakerLogTag_VotingReminder -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict
     NotifyTag_NodeExternal -> Dict
@@ -1376,6 +1390,7 @@ instance ArgDict NotifyTag where
     NotifyTag_Parameters -> Dict
     NotifyTag_PublicNodeConfig -> Dict
     NotifyTag_PublicNodeHead -> Dict
+    NotifyTag_SnapshotMeta -> Dict
     NotifyTag_TelegramConfig -> Dict
     NotifyTag_TelegramRecipient -> Dict
     NotifyTag_ConnectedLedger -> Dict

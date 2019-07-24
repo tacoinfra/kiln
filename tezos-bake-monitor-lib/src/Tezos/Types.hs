@@ -12,6 +12,7 @@ import Tezos.Base58Check as X (BlindedPublicKeyHash, BlockHash, ChainId, Context
 import Tezos.Block as X
 import Tezos.BlockHeader as X
 import Tezos.Chain as X
+import Tezos.Checkpoint as X
 import Tezos.Contract as X
 import Tezos.Fitness as X
 import Tezos.Json as X (TezosWord64 (..))
