@@ -132,15 +132,15 @@ instance B.TezosBinary Expression where
     Expression_Int x -> B.put @Word8 0 *> B.put @Integer (fromIntegral x)
     Expression_Bytes x -> B.put @Word8 10 *> B.put (B.DynamicSize x)
   get = B.get @Word8 >>= \case
-    0 -> (Expression_Int . fromIntegral) <$> B.get @Integer
-    1 -> (Expression_String . B.unDynamicSize) <$> B.get
-    2 -> (Expression_Seq . B.unDynamicSize) <$> B.get
-    3 -> (Expression_Prim . flip MichelinePrimAp Seq.Empty) <$> B.get
-    4 -> (Expression_Prim . flip MichelinePrimAp Seq.Empty) <$> B.get <* B.get @(B.DynamicSize Text) -- FIXME don't toss annots
+    0 -> Expression_Int . fromIntegral <$> B.get @Integer
+    1 -> Expression_String . B.unDynamicSize <$> B.get
+    2 -> Expression_Seq . B.unDynamicSize <$> B.get
+    3 -> Expression_Prim . flip MichelinePrimAp Seq.Empty <$> B.get
+    4 -> Expression_Prim . flip MichelinePrimAp Seq.Empty <$> B.get <* B.get @(B.DynamicSize Text) -- FIXME don't toss annots
     5 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.singleton <$> B.get))
     6 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.singleton <$> B.get) <* B.get @(B.DynamicSize Text)) -- FIXME don't toss annots
-    7 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.replicateA 2 B.get))
-    8 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.replicateA 2 B.get) <* B.get @(B.DynamicSize Text)) -- FIXME don't toss annots
+    7 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> Seq.replicateA 2 B.get)
+    8 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> Seq.replicateA 2 B.get <* B.get @(B.DynamicSize Text)) -- FIXME don't toss annots
     9 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> B.get <* B.get @(B.DynamicSize Text)) -- FIXME don't toss annots
-    10 -> (Expression_Bytes . B.unDynamicSize) <$> B.get
+    10 -> Expression_Bytes . B.unDynamicSize <$> B.get
     _ -> fail "invalid Micheline expression tag"

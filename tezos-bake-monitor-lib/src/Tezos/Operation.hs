@@ -934,7 +934,7 @@ instance B.TezosBinary (DSum OpsKindTag OpContentsList) where
       OpsKindTag_Cons (t :: OpKindTag ('OpKind_Manager '[k])) (ts :: OpsKindTag ('OpKind_Manager (kk ': ks))) ->
         case (ocl :: OpContentsList ('OpKind_Manager (k ': kk ': ks))) of
           OpContentsList_Cons op ops ->
-            (B.put $ t :=> op) <* (B.put $ ts :=> ops)
+            B.put (t :=> op) <* B.put (ts :=> ops)
           OpContentsList_Single op -> case op of {}
       OpsKindTag_Single (t :: OpKindTag k) ->
         case (ocl :: OpContentsList k) of
