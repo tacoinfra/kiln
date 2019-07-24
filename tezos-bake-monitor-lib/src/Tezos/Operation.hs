@@ -94,7 +94,7 @@ instance FromJSON EmptyMetadata where
   parseJSON = withObject "EmptyMetadata" $ const $ pure EmptyMetadata
 
 instance ToJSON EmptyMetadata where
-  toJSON _ = Object $ mempty
+  toJSON _ = Object mempty
   toEncoding _ = pairs mempty
 
 
@@ -322,7 +322,7 @@ instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
       content = case toJSON <$> _operationResult_content x of
           Nothing -> mempty
           Just (Object x') -> x'
-          _ -> error ("ToJSON did not produce an object for:" <> (show $ typeRep $ (Proxy :: Proxy a)))
+          _ -> error ("ToJSON did not produce an object for:" <> show (typeRep (Proxy :: Proxy a)))
 
   -- toEncoding :: forall a. (ToJSON a, Typeable a) => OperationResult a -> Value
   -- toEncoding x = Object (status <> errors <> content)
@@ -466,15 +466,15 @@ data OperationResultDelegation = OperationResultDelegation
   deriving (Eq, Ord, Show, Typeable)
 
 stripEndorsement :: Operation -> Maybe (Op 'OpKind_Endorsement)
-stripEndorsement (Operation { _operation_branch = branch, _operation_contents = contents, _operation_signature = sig })
+stripEndorsement Operation { _operation_branch = branch, _operation_contents = contents, _operation_signature = sig }
   | length contents /= 1 = Nothing
   | otherwise = case Seq.index contents 0 of
-      OperationContents_Endorsement (OperationContentsEndorsement { _operationContentsEndorsement_level = level }) ->
+      OperationContents_Endorsement OperationContentsEndorsement { _operationContentsEndorsement_level = level } ->
         Just $ Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }
       _ -> Nothing
 
 outlineEndorsement :: InlinedEndorsement -> Op 'OpKind_Endorsement
-outlineEndorsement (InlinedEndorsement { _inlinedEndorsement_branch = branch, _inlinedEndorsement_operations = contents, _inlinedEndorsement_signature = sig })
+outlineEndorsement InlinedEndorsement { _inlinedEndorsement_branch = branch, _inlinedEndorsement_operations = contents, _inlinedEndorsement_signature = sig }
   = case contents of
       InlinedEndorsementContents { _inlinedEndorsementContents_level = level } ->
         Op { _op_branch = branch, _op_contents = OpContentsList_Single $ OpContents_Endorsement $ OpContentsEndorsement level, _op_signature = sig }

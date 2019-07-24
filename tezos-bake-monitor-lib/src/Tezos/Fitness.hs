@@ -91,4 +91,4 @@ instance Ord a => Monoid (FitnessF a) where
 instance B.TezosBinary Fitness where
   build (FitnessF xs) = B.build $ B.DynamicSize $ fmap (B.DynamicSize . fromShort . unbase16ByteString) xs
   put (FitnessF xs) = B.put $ B.DynamicSize $ fmap (B.DynamicSize . fromShort . unbase16ByteString) xs
-  get = (FitnessF . fmap (Base16ByteString . toShort . B.unDynamicSize) . B.unDynamicSize) <$> B.get
+  get = FitnessF . fmap (Base16ByteString . toShort . B.unDynamicSize) . B.unDynamicSize <$> B.get
