@@ -77,7 +77,6 @@
 - ignore: {name: "Parse error"}
 - ignore: {name: "Evaluate"}
 - ignore: {name: "Use notElem"}
-- ignore: {name: "Use record patterns"}
 - ignore: {name: "Use &&"}
 - ignore: {name: "Use >>"}
 - ignore: {name: "Functor law"}
