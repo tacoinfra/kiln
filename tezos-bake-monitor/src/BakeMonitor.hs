@@ -147,7 +147,7 @@ mainArgs monitorPort nodeRPCLocation clientExecutable identity = do
       , std_err = CreatePipe
       }
   dataRef <- newMVar $ Report
-    { _report_counts = (Count 0 0 0)
+    { _report_counts = Count 0 0 0
     , _report_lastBaked = []
     , _report_errors = []
     , _report_failedBaker = []

@@ -420,7 +420,7 @@ headerBell = do
   let hasAlerts = fmap (> 0) alertCount
   (e,_) <- SemUi.ui' "span"
     (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ((<>) "ui circular label link ") . bool "basic" "red")
+      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ("ui circular label link " <>) . bool "basic" "red")
       )
     $ do
         dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
@@ -430,7 +430,7 @@ headerBell = do
             & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
             & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
             & SemUi.iconConfig_link SemUi.|~ True
-            & SemUi.iconConfig_fitted .~ (SemUi.Dyn hasAlerts)
+            & SemUi.iconConfig_fitted .~ SemUi.Dyn hasAlerts
             )
   return $ domEvent Click e
 
@@ -488,7 +488,7 @@ nodesTabOrWelcome = do
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
     Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
-      when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
+      when (onlyOsNode && not haveBakers) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
 
@@ -1299,7 +1299,7 @@ startNodeWorkflow backWF = Workflow $ do
             divClass "file-name" $ text name
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
           fi <- fileInput $ (def :: FileInputConfig t)
-            & fileInputConfig_attributes .~ (constDyn ("id" =: "fileId"))
+            & fileInputConfig_attributes .~ constDyn ("id" =: "fileId")
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
@@ -1409,7 +1409,7 @@ publicNodeOptions = do
           then constDyn "active"
           else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
@@ -1476,7 +1476,7 @@ nodesTab =
 
         partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
         (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
-        kilnNodeState = ((fmap _processData_state) . headMay . Map.elems) <$> internal
+        kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
@@ -1756,7 +1756,7 @@ nodesTab =
     tileBadgeImpliedByErrors mErrors mInternalState = do
       let color = fmap statusColor $ nodeStatus
             <$> sequence mInternalState
-            <*> (maybe (pure 0) (fmap length) mErrors)
+            <*> maybe (pure 0) (fmap length) mErrors
       iconDyn $ ("tiny circle " <>) <$> color
 
     tileBlockStats getBlock node = do
@@ -1845,7 +1845,7 @@ data BakerAlert
   deriving (Eq, Ord, Show)
 
 groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
-groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (group endorseMiss)
+groupBakerAlerts bs = map BakerAlert_Alert others ++ group bakerMiss ++ group endorseMiss
   where
     (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
     partitionF
@@ -1888,7 +1888,7 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f)) . map snd . concatMap NEL.toList <$> dEbb
+            anyErrors = any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f) . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
@@ -1914,7 +1914,7 @@ bakersTab =
           dyn_ $ ffor bakersBanner mkBakersBanner
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . (fmap (groupBakerAlerts . NEL.toList)) <$> dEbb
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap (groupBakerAlerts . NEL.toList) <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash

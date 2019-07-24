@@ -486,7 +486,7 @@ tryNodeQueryT
 tryNodeQueryT bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
-      bail = (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
+      bail = DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn
   runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f bad)) nds >>= \case
     e@(Left _) -> e <$ bail
     v@(Right (NodeQueryTResult_Done _)) -> return v
@@ -655,7 +655,7 @@ cycleStartHashes blkHash = do
   protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
   history <- readTVar' $ _nodeDataSource_history dsrc
   return $ do
-    branch <- blkHash `Map.lookup` (_cachedHistory_blocks history)
+    branch <- blkHash `Map.lookup` _cachedHistory_blocks history
     let
       minLvl = _cachedHistory_minLevel history
       lvl = minLvl + RawLevel (fromIntegral $ length branch)

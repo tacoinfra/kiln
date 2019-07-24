@@ -226,7 +226,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         where
           removeDataDir = do
             let dataDir = nodeDataDir appConfig
-            $(logDebug) ("Removing Kiln node's data dir: " <> (tshow dataDir))
+            $(logDebug) ("Removing Kiln node's data dir: " <> tshow dataDir)
             liftIO $ removeDirectoryRecursive dataDir
           clearErrors nid = do
             let

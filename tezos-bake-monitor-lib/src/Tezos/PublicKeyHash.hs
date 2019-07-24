@@ -75,7 +75,7 @@ instance ToJSONKey PublicKeyHash
 instance Show PublicKeyHash where
   show = ("fromString " <>) . show . toPublicKeyHashText
 
-instance Read (PublicKeyHash) where
+instance Read PublicKeyHash where
   readsPrec =
     Read.readPrec_to_S $ (PublicKeyHash_Ed25519 <$> Read.readS_to_Prec readsPrec)
                 Read.<++ (PublicKeyHash_Secp256k1 <$> Read.readS_to_Prec readsPrec)
@@ -116,4 +116,3 @@ rawContextLink pkh = T.intercalate "/"
         , T.drop 8 $ T.take 10 x
         , T.drop 10 x
         ]
-

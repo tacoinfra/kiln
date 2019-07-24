@@ -217,7 +217,7 @@ authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
   isRegisteredD <- watchBakerRegistered sk pkh
   let (err, ok) = fanEither e
-      isRegistered = fmap (== (Just True)) $ tag (current isRegisteredD) ok
+      isRegistered = fmap (== Just True) $ tag (current isRegisteredD) ok
   _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ (fforMaybe isRegistered $ \r -> if r then Just () else Nothing)
   pure $ leftmost [Left <$> err, ffor isRegistered $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where

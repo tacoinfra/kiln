@@ -217,7 +217,7 @@ watchCollectiveNodesStatus alertWindow = do
             Min $
             fmap Down $
             -- if there are errors, we went "ill" when the first one started
-            minimumMay $ (_errorLog_started . fst)
+            minimumMay $ _errorLog_started . fst
               <$> maybe [] toList (MMap.lookup nid nodeErrors)
         of
           Nothing -> Right ()

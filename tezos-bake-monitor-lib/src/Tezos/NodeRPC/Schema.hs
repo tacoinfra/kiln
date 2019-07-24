@@ -14,7 +14,7 @@ import JSONSchema.Draft4 (Schema(..))
 
 -- TODO:  i'm not sure this is really useful, but it's at least convenient for now
 class FoldServices a where
-  getServices :: a -> [([PathItem], (Maybe Service))]
+  getServices :: a -> [([PathItem], Maybe Service)]
 
 data DirectoryDescr
   = Static StaticDirectory
