@@ -37,23 +37,34 @@ appRouteSegment = \case
   AppRoute_Options -> PathSegment "options" $ unitEncoder mempty
 
 data BackendRoute :: * -> * where
+  BackendRoute_ExportLogs :: BackendRoute (R ExportLog)
   BackendRoute_Listen :: BackendRoute ()
   BackendRoute_Missing :: BackendRoute () -- Used to handle unparseable routes.
   BackendRoute_PublicCacheApi :: BackendRoute PageName
   BackendRoute_SnapshotUpload :: BackendRoute ()
+
+data ExportLog :: * -> * where
+  ExportLog_Node :: ExportLog ()
+  ExportLog_Baker :: ExportLog ()
+  ExportLog_Endorser :: ExportLog ()
 
 backendRouteEncoder
   :: Encoder (Either Text) Identity (R (Sum BackendRoute (ObeliskRoute AppRoute))) PageName
 backendRouteEncoder = handleEncoder (const (InR (ObeliskRoute_App AppRoute_Index) :/ ())) $
   pathComponentEncoder $ \case
     InL backendRoute -> case backendRoute of
+      BackendRoute_ExportLogs -> PathSegment "export-logs" $ pathComponentEncoder $ \case
+        ExportLog_Node -> PathSegment "node" $ unitEncoder mempty
+        ExportLog_Baker -> PathSegment "baker" $ unitEncoder mempty
+        ExportLog_Endorser -> PathSegment "endorser" $ unitEncoder mempty
       BackendRoute_Listen -> PathSegment "listen" $ unitEncoder mempty
       BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
-      BackendRoute_SnapshotUpload -> PathSegment "snapshot-upload" $ unitEncoder mempty
       BackendRoute_PublicCacheApi -> PathSegment "api" id
+      BackendRoute_SnapshotUpload -> PathSegment "snapshot-upload" $ unitEncoder mempty
     InR obeliskRoute -> obeliskRouteSegment obeliskRoute appRouteSegment
 
 concat <$> mapM deriveRouteComponent
   [ ''BackendRoute
   , ''AppRoute
+  , ''ExportLog
   ]

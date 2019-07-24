@@ -73,7 +73,7 @@ import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
-import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker)
+import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker, handleExportLogs)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -440,6 +440,7 @@ backendImpl cfg serve = do
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
+        BackendRoute_ExportLogs :=> lType -> handleExportLogs lType
 
 backend :: Backend BackendRoute AppRoute
 backend = backend' mempty

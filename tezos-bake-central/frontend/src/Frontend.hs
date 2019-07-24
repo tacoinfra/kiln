@@ -458,7 +458,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , MonadReader r (ModalM m), MonadJSM (Performable (ModalM m))
+    , MonadReader r (ModalM m), MonadJSM m, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1454,6 +1454,7 @@ nodesTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m
     , MonadReader r (ModalM m)
+    , MonadJSM m
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
@@ -1601,6 +1602,11 @@ nodesTab =
               showLogMenu errorLog = do
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
 
+              exportLogsMenu = do
+                mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Node :/ ())) False
+                for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
+                  SemUi.listItem' def $ text "Export Logs"
+
               removeNodeMenu = do
                 let
                   epilogue = "All data for this node will be deleted from Kiln."
@@ -1637,7 +1643,7 @@ nodesTab =
                 standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                   title
                   subtitle
-                  (startStopNodeMenu *> removeNodeMenu)
+                  (exportLogsMenu *> startStopNodeMenu *> removeNodeMenu)
                   ((=<<) getNodeHeadBlock . snd)
                   (Just errors)
                   (Just $ ffor2 ebn nodeData $ \es nd -> and

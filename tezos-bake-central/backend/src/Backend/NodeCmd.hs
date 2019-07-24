@@ -31,6 +31,7 @@ import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Snap.Core (sendFile, MonadSnap)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
 import System.Process (readProcessWithExitCode, proc)
@@ -299,3 +300,7 @@ fetchProtocol pid =
       in if pid == tbpid || pid == tepid
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
+
+handleExportLogs :: MonadSnap m => a -> m ()
+handleExportLogs _lType = do
+  sendFile "file.log"
