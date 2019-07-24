@@ -210,10 +210,8 @@ importSnapshotData appConfig nds chain sm smId = do
                 Nothing -> (# blkHashPrefix | | #)
           inDb $ do
             updateSnapshotMeta blkDetails smId
-            for_ nodePPid $ \(nid,_) -> updateNodeDetails blkDetails nid
             updateState NodeProcessState_ImportComplete
     ExitFailure _ -> inDb $ importFailed $ "importSnapshotData failed: " <> stderr
-
 
 updateSnapshotMeta
   :: (PersistBackend m)
@@ -235,55 +233,6 @@ updateSnapshotMeta blkDetails smId = do
       ]
       (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
-
-updateNodeDetails
-  :: (PersistBackend m)
-  => (# Text | BlockHash | VeryBlockLike #)
-  -> Id Node
-  -> m ()
-updateNodeDetails blkDetails nodeId = do
-  let p = (NodeDetails_dataField ~>)
-  now <- getTime
-  case blkDetails of
-    (# _hashPrefix | | #) -> pure ()
-    (# | blkHash | #) ->
-      project NodeDetails_idField (NodeDetails_idField ==. nodeId) >>= \case
-        [] -> insert $ NodeDetails
-          { _nodeDetails_id = nodeId
-          , _nodeDetails_data = mkNodeDetails
-            { _nodeDetailsData_headBlockHash = Just blkHash
-            , _nodeDetailsData_updated = Just now
-            }
-          }
-        (_:_) -> update
-          [ p NodeDetailsData_headBlockHashSelector =. Just blkHash
-          , p NodeDetailsData_updatedSelector =. Just now
-          ]
-          (NodeDetails_idField ==. nodeId)
-    (# | | headBlockInfo #) -> do
-      project NodeDetails_idField (NodeDetails_idField ==. nodeId) >>= \case
-        [] -> insert $ NodeDetails
-          { _nodeDetails_id = nodeId
-          , _nodeDetails_data = mkNodeDetails
-            { _nodeDetailsData_headLevel = Just (headBlockInfo ^. level)
-            , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. hash)
-            , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. timestamp)
-            , _nodeDetailsData_fitness = Just (headBlockInfo ^. fitness)
-            , _nodeDetailsData_updated = Just now
-            , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. predecessor)
-            }
-          }
-        _ -> update
-          [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. level)
-          , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. hash)
-          , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. timestamp)
-          , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. fitness)
-          , p NodeDetailsData_updatedSelector =. Just now
-          , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. predecessor)
-          ]
-          (NodeDetails_idField ==. nodeId)
-  newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-  traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
 -- Simple test
 -- for_ (Map.keys $ _cachedHistory_blocks hist) $ \blk ->
