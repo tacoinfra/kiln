@@ -69,7 +69,6 @@
 # Warnings currently triggered by your code
 - ignore: {name: "Use fewer imports"}
 - ignore: {name: "Reduce duplication"}
-- ignore: {name: "Move brackets to avoid $"}
 - ignore: {name: "Parse error"}
 - ignore: {name: "Evaluate"}
 - ignore: {name: "Use notElem"}

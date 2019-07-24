@@ -218,7 +218,7 @@ authorizeLedger (sk, pkh) = do
   isRegisteredD <- watchBakerRegistered sk pkh
   let (err, ok) = fanEither e
       isRegistered = fmap (== Just True) $ tag (current isRegisteredD) ok
-  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ (fforMaybe isRegistered $ \r -> if r then Just () else Nothing)
+  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ fforMaybe isRegistered (\r -> if r then Just () else Nothing)
   pure $ leftmost [Left <$> err, ffor isRegistered $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do

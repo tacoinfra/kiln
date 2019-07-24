@@ -1474,7 +1474,7 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
-        partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+        partition = fmapMaybe (preview _Left) &&& fmapMaybe (preview _Right)
         (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
         kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
 
@@ -1571,7 +1571,7 @@ nodesTab =
             errors <- errorMessages nodeId
             state <- holdUniqDyn $ _processData_state <$> nodeData
 
-            bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
+            bakerRunning <- fmap ((== Just True) . fmap (_bakerInternalData_running . snd))
               <$> watchInternalBaker
             let
               preface = "This node is run by Kiln. "
@@ -1926,7 +1926,7 @@ bakersTab =
                 renderBakerError = text . _bakerErrorDescriptions_tile
 
                 bakerAlerts = (++)
-                  <$> (ffor dCollectiveNodesStatus $ \case
+                  <$> ffor dCollectiveNodesStatus (\case
                           Left e -> [Left e]
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)

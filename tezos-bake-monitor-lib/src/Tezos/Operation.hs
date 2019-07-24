@@ -322,7 +322,7 @@ instance (Typeable a, ToJSON a) => ToJSON (OperationResult a) where
       content = case toJSON <$> _operationResult_content x of
           Nothing -> mempty
           Just (Object x') -> x'
-          _ -> error ("ToJSON did not produce an object for:" <> (show $ typeRep (Proxy :: Proxy a)))
+          _ -> error ("ToJSON did not produce an object for:" <> show (typeRep (Proxy :: Proxy a)))
 
   -- toEncoding :: forall a. (ToJSON a, Typeable a) => OperationResult a -> Value
   -- toEncoding x = Object (status <> errors <> content)

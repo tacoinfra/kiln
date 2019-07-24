@@ -329,7 +329,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           voteE <- el "tbody" $ listViewWithKey proposals $ \_ pp -> do
             let protocolHash = toBase58Text . _periodProposal_hash . fst <$> pp
                 attrs = ffor2 protocolHash hashFilter $ \h h' ->
-                  if (T.strip $ T.toCaseFold h') `T.isInfixOf` T.toCaseFold h
+                  if T.strip (T.toCaseFold h') `T.isInfixOf` T.toCaseFold h
                   then mempty
                   else "class" =: "filtered"
             elDynAttr "tr" attrs $ do
