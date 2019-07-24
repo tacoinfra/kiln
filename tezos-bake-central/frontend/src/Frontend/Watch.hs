@@ -209,7 +209,7 @@ watchCollectiveNodesStatus alertWindow = do
   holdUniqDyn $ ffor3 dUsingOsPublicNode dmNids ebn $ \case
     Just True -> const $ const $ Right ()
     _ -> \case
-      Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
+      Nothing -> const $ Left CollectiveNodesFailure_NoNodes
       Just nids -> \nodeErrors -> case
           -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
           -- the greatest element rather than least element.

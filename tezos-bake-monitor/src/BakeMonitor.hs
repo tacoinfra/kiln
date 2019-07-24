@@ -51,12 +51,12 @@ blockPrefix = BlockPrefix <$> P.takeWhile isAlphaNum
 errorCont :: Parser MessageType
 errorCont = do
   string "Error, dumping error stack:" <|> string "  "
-  return $ MessageType_ErrorCont
+  return MessageType_ErrorCont
 
 errorLine :: Parser MessageType
 errorLine = do
   string "Error"
-  return $ MessageType_Error
+  return MessageType_Error
 
 selectCandidate :: Parser MessageType
 selectCandidate = do

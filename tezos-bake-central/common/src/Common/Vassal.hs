@@ -203,7 +203,7 @@ deriving instance (Traversable (View v), Traversable (View w)) => Traversable (V
 instance (ViewSelector v, ViewSelector w, Ord (ViewIndex v))
     => Filterable (View (Compose v w)) where
   mapMaybe :: forall a b. (a -> Maybe b) -> View (Compose v w) a -> View (Compose v w) b
-  mapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap $  lower')
+  mapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap lower')
     where
       swizzle :: ViewIndex v -> a -> Writer (Map.Map (ViewIndex v) (View w b)) (Maybe b)
       swizzle i x = case f x of

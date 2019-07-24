@@ -143,7 +143,7 @@ getBackendPath backendRoute isWebsocket = do
   let
     url = do
       encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
-      let path = fst $ encode encoder $ backendRoute
+      let path = fst $ encode encoder backendRoute
       pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
       scheme <- if isWebsocket
         then case Uri.uriScheme route of
@@ -412,7 +412,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
-        el "p" $ ensureHealthyNodes
+        el "p" ensureHealthyNodes
 
 headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -524,7 +524,7 @@ globalAlerts = do
     allAlerts :: Dynamic t [m ()]
     allAlerts = catMaybes <$> sequence [ (fmap join . sequence) mNetworkAlert, mUpdateAlert ]
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
-    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ m
+    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
@@ -698,7 +698,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -1146,7 +1146,7 @@ handleClientErrorWorkflow recover = \case
       elClass "h5" "ui header" $ do
         icon "red icon-x"
         text "The request was declined by the Ledger Device."
-      divClass "explanation" $ text $ "If you did not intend to reject the prompt on the Ledger Device you may click retry."
+      divClass "explanation" $ text "If you did not intend to reject the prompt on the Ledger Device you may click retry."
       retry <- uiButton "primary" "Retry"
       pure ((["ledger-declined"], never), tryAgain <$ retry)
 
@@ -1380,7 +1380,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
-  text $ "This Node can only be turned off via "
+  text "This Node can only be turned off via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1590,13 +1590,13 @@ nodesTab =
                 runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                 dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                   (True, bRunning) ->
-                    tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
                   _ -> do
                     start <- tileMenuEntry "Start Node"
                     void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
               verifyAndStartMenu sm = do
-                tileMenuEntryModal "Verify and start node" $ (verifySnapshotModal sm)
+                tileMenuEntryModal "Verify and start node" (verifySnapshotModal sm)
 
               showLogMenu errorLog = do
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
@@ -1608,7 +1608,7 @@ nodesTab =
                     [preface, body running "Removing", epilogue]
                     "Stop and Remove Node"
                 dyn_ $ ffor bakerRunning $ \running ->
-                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running
                     (PublicRequest_RemoveNode (Right ()) <$)
 
               title :: m ()
@@ -1650,7 +1650,7 @@ nodesTab =
                   ((,) <$> nodeData <*> nodeDetails)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
-              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections $
+              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
                 [ tileHeader title subtitle menu badge Nothing
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
@@ -1911,7 +1911,7 @@ bakersTab =
             holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
               Left _ -> \_ -> Just BakersBanner_CannotGather
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
-          dyn_ $ ffor bakersBanner $ mkBakersBanner
+          dyn_ $ ffor bakersBanner mkBakersBanner
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
               notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . (fmap (groupBakerAlerts . NEL.toList)) <$> dEbb
@@ -2253,11 +2253,11 @@ renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   -> m () -- ^ Description body
   -> m ()
 renderSplashAlert splashIcon title entity desc = do
-  elClass "div" "dashboard-section-overview-icon" $ splashIcon
+  elClass "div" "dashboard-section-overview-icon" splashIcon
   elClass "div" "dashboard-section-overview-body" $ do
-    divClass "ui header" $ title
+    divClass "ui header" title
     for_ entity $ divClass "alert-entity"
-    divClass "description" $ desc
+    divClass "description" desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"
