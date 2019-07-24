@@ -62,7 +62,7 @@ import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode (..), tzScanUri)
+import Tezos.NodeRPC.Sources (PublicNode (..), publicNodeShortName, tzScanUri)
 import Tezos.NodeRPC.Types
 import Tezos.Types
 
@@ -1392,10 +1392,6 @@ publicNodeOptions = do
       , PublicNode_Blockscale
       , PublicNode_TzScan
       ]
-    showPublicNode = \case
-      PublicNode_Obsidian -> "Obsidian Systems"
-      PublicNode_Blockscale -> "Tezos Foundation"
-      PublicNode_TzScan -> "tzscan.io"
 
     describePublicNode = \case
       PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
@@ -1414,7 +1410,7 @@ publicNodeOptions = do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
-        divClass "header" $ text $ showPublicNode pn
+        divClass "header" $ text $ publicNodeShortName pn
         divClass "description" $ describePublicNode pn
 
     let toggled = if pn == PublicNode_Obsidian
@@ -1705,10 +1701,9 @@ nodesTab =
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
             let
-              title = dyn_ $ ffor2 source chain $ \s c -> case s of
-                PublicNode_TzScan -> either (urlLink . tzScanUri) (flip const) c $ text "tzscan"
-                PublicNode_Blockscale -> text "Foundation Nodes"
-                PublicNode_Obsidian -> text "Obsidian Systems"
+              title = dyn_ $ ffor2 source chain $ \n c -> text (publicNodeShortName n) & case (n,c) of
+                (PublicNode_TzScan, Left namedChain) -> urlLink (tzScanUri namedChain)
+                _ -> id
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
