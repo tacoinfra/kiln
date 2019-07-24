@@ -24,12 +24,16 @@ import Control.Monad ((<=<))
 import Control.Monad.Fail (MonadFail, fail)
 import Data.Aeson
 import Data.Binary.Get (isolate)
+import Data.Function ((&))
+import Data.Functor.Compose (Compose(..))
 #if !(MIN_VERSION_base(4,11,0))
 import Data.Semigroup
 #endif
 import Data.ByteString (ByteString)
 import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (traverse_, toList)
+import Data.Functor ((<&>))
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..), withSome)
@@ -110,6 +114,9 @@ data OpKindManagerTag opKindManager where
   OpKindManagerTag_Origination :: OpKindManagerTag 'OpKindManager_Origination
   OpKindManagerTag_Delegation :: OpKindManagerTag 'OpKindManager_Delegation
   deriving (Typeable)
+
+data BatchableOp k where
+  BatchableOp :: OpKindManagerTag k -> BatchableOp ('OpKind_Manager '[k])
 
 data Op (a :: OpKind) = Op
   { _op_branch :: !BlockHash
@@ -1087,3 +1094,43 @@ instance HasBalanceUpdates Operation where
       mgOpFees :: forall a. Traversal' (ManagerOperationMetadata a) BalanceUpdate
       mgOpFees = managerOperationMetadata_balanceUpdates . traverse
 -- src/proto_002_PsYLVpVv/lib_protocol/src/helpers_services.ml:358:             (dft "proof_of_work_nonce"
+
+mkOp :: BlockHash -> DSum OpsKindTag OpContentsList -> Maybe Signature -> DSum OpsKindTag Op
+mkOp branch (ts :=> ops) sig = ts :=> Op branch ops sig
+
+mkSignedOp :: BlockHash -> DSum OpsKindTag OpContentsList -> Signature -> DSum OpsKindTag Op
+mkSignedOp branch contents = mkOp branch contents . Just
+
+mkUnsignedOp :: BlockHash -> DSum OpsKindTag OpContentsList -> DSum OpsKindTag Op
+mkUnsignedOp branch contents = mkOp branch contents Nothing
+
+batchOperations :: NonEmpty (DSum BatchableOp OpContents) -> DSum OpsKindTag OpContentsList
+batchOperations (x :| xs) = go x xs & \(Compose t :=> Compose l) -> t :=> l
+  where
+  go :: DSum BatchableOp OpContents -> [DSum BatchableOp OpContents] -> DSum (Compose OpsKindTag 'OpKind_Manager) (Compose OpContentsList 'OpKind_Manager)
+  go (BatchableOp t :=> op) = \case
+    [] -> Compose (OpsKindTag_Single (OpKindTag_Manager t)) :=> Compose (OpContentsList_Single op)
+    y:ys -> go y ys & \case
+      Compose ts :=> Compose ops -> Compose (consOpTags t ts) :=> Compose (consOpContents op ops)
+
+consOpTags :: OpKindManagerTag k -> OpsKindTag ('OpKind_Manager ks) -> OpsKindTag ('OpKind_Manager (k ': ks))
+consOpTags x = \case
+  xs@(OpsKindTag_Single (OpKindTag_Manager _)) -> OpsKindTag_Cons (OpKindTag_Manager x) xs
+  xs@(OpsKindTag_Cons _ _) -> OpsKindTag_Cons (OpKindTag_Manager x) xs
+
+consOpContents :: OpContents ('OpKind_Manager '[k]) -> OpContentsList ('OpKind_Manager ks) -> OpContentsList ('OpKind_Manager (k ': ks))
+consOpContents x = \case
+  xs@(OpContentsList_Single (OpContents_Reveal _)) -> OpContentsList_Cons x xs
+  xs@(OpContentsList_Single (OpContents_Transaction _)) -> OpContentsList_Cons x xs
+  xs@(OpContentsList_Single (OpContents_Origination _)) -> OpContentsList_Cons x xs
+  xs@(OpContentsList_Single (OpContents_Delegation _)) -> OpContentsList_Cons x xs
+  xs@(OpContentsList_Cons _ _) -> OpContentsList_Cons x xs
+
+batchUnfoldrM :: forall m a. Monad m => (a -> m (DSum BatchableOp OpContents, Maybe a)) -> a -> m (DSum OpsKindTag OpContentsList)
+batchUnfoldrM f x = go x <&> \(Compose ts :=> Compose ops) -> ts :=> ops
+  where
+  go :: a -> m (DSum (Compose OpsKindTag 'OpKind_Manager) (Compose OpContentsList 'OpKind_Manager))
+  go seed = f seed >>= \case
+    (BatchableOp t :=> op, next) -> traverse go next <&> \case
+      Nothing -> Compose (OpsKindTag_Single (OpKindTag_Manager t)) :=> Compose (OpContentsList_Single op)
+      Just (Compose ts :=> Compose ops) -> Compose (consOpTags t ts) :=> Compose (consOpContents op ops)
