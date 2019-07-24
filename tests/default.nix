@@ -70,7 +70,7 @@ in {
       --root-path "$root_path" \
       --waiting-attempts 2000 \
       --extra-dummy-proposals-batch-size 1 \
-      --extra-dummy-proposals-batch-levels 13,14,15,16,17,18,19,20,21,22,23 \
+      --extra-dummy-proposals-batch-levels "$(seq -s, 5 "$blocks_per_voting_period")" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
