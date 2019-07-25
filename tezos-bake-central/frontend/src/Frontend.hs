@@ -86,7 +86,7 @@ import Common.Alerts (
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -1603,9 +1603,11 @@ nodesTab =
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
 
               exportLogsMenu = do
-                mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Node :/ ())) False
-                for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
-                  SemUi.listItem' def $ text "Export Logs"
+                isAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
+                when isAvailable $ do
+                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Node :/ ())) False
+                  for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
+                    SemUi.listItem' def $ text "Export Logs"
 
               removeNodeMenu = do
                 let

@@ -48,8 +48,9 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
-                                 RhyoliteLogLevel (..), runLoggingEnv, withLogging)
+import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender(..),
+                                 RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel,
+                                RhyoliteLogAppenderJournald(..))
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -91,6 +92,7 @@ import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient
 import qualified Common.Config as Config
+import Common.Distribution
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
@@ -114,14 +116,30 @@ backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
 
-  let defaultLoggingConfig = [LoggingConfig
-        { _loggingConfig_logger = def @ RhyoliteLogAppender
-        , _loggingConfig_filters = Just $ Map.fromList
-          [ ("SQL", RhyoliteLogLevel_Error)
-          ]
-        }]
+  let
+    loggingConfigForDistro = case distributionMethod of
+      Distribution_FromSource -> defaultLoggingConfig
+      Distribution_Docker -> defaultLoggingConfig
+      Distribution_LinuxPackage -> map (\(t, p, l) -> LoggingConfig
+        { _loggingConfig_logger = RhyoliteLogAppender_Journald (RhyoliteLogAppenderJournald t)
+        , _loggingConfig_filters = Just $ Map.fromList [(p, l)]
+        })
+        [ ("kiln", "", RhyoliteLogLevel_Warn)
+        , ("kiln-node", "kiln-node", RhyoliteLogLevel_Info)
+        , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
+        , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
+        ]
 
-  !loggingConfig <- fromMaybe defaultLoggingConfig <$> getJSONConfigFromFile (configPath "loggers")
+    defaultLoggingConfig = [LoggingConfig
+      { _loggingConfig_logger = def @ RhyoliteLogAppender
+      , _loggingConfig_filters = Just $ Map.fromList
+        [ ("SQL", RhyoliteLogLevel_Error)
+        ]
+      }]
+
+  mLoggingConfig <- getJSONConfigFromFile (configPath "loggers")
+  let !loggingConfig = fromMaybe loggingConfigForDistro mLoggingConfig
+      logExportAvailable = distributionMethod == Distribution_LinuxPackage && mLoggingConfig == Nothing
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
@@ -238,7 +256,7 @@ backendImpl cfg serve = do
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
-  withDb dbSpec $ \db -> withLogging loggingConfig $ do
+  withDb dbSpec $ \db -> withLoggingMinLevel Nothing loggingConfig $ do
     logger <- askLogger
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
 
@@ -386,6 +404,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
+          , Config._frontendConfig_logExportAvailable = logExportAvailable
           }
 
       -- migrate old kiln storage
@@ -440,7 +459,7 @@ backendImpl cfg serve = do
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
-        BackendRoute_ExportLogs :=> Identity lType -> handleExportLogs dataSrc lType
+        BackendRoute_ExportLogs :=> Identity lType -> when logExportAvailable $ handleExportLogs dataSrc lType
 
 backend :: Backend BackendRoute AppRoute
 backend = backend' mempty

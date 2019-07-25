@@ -188,6 +188,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_upgradeBranch :: !(Maybe Text)
   , _frontendConfig_appVersion :: !Version
   , _frontendConfig_usingOsPublicNode :: !Bool
+  , _frontendConfig_logExportAvailable :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 class HasFrontendConfig r where
