@@ -1603,8 +1603,8 @@ nodesTab =
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
 
               exportLogsMenu = do
-                isAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
-                when isAvailable $ do
+                isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
+                when isExportAvailable $ do
                   mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Node :/ ())) False
                   for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
                     SemUi.listItem' def $ text "Export Logs"
@@ -1878,7 +1878,7 @@ bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
-    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM m, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -2134,6 +2134,15 @@ bakersTab =
                           Right b -> Just (pkh, _bakerInternalData_secretKey b)
                         xs = (liftA3 . liftA3) (,,) (current mProtoInfo) (pure . pure <$> current amendment) baker
                     tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
+
+              isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
+              when isExportAvailable $ do
+                mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Baker :/ ())) False
+                for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
+                  SemUi.listItem' def $ text "Export Baker Logs"
+                mUri2 <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Endorser :/ ())) False
+                for_ mUri2 $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
+                  SemUi.listItem' def $ text "Export Endorser Logs"
 
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
