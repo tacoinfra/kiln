@@ -1,7 +1,7 @@
 {
   "owner": "obsidiansystems",
   "repo": "rhyolite",
-  "branch": "dn-logging-filter-configurable",
-  "rev": "535d26e1337bc0cd8853b7ece9df723011acfa85",
-  "sha256": "0q8abjsz7l46ykrwvi6bmlnzxr71hknakgdcb884z46lk4v3i0wh"
+  "branch": "develop",
+  "rev": "2e446afbc47cdee78f3ab906f2176553bccaf569",
+  "sha256": "022cj1ccxhvz3ifdspw6pmz7pfwpv5k1lyls2iiysnhd6mzxphd0"
 }
