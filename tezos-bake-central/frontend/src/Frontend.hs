@@ -2,6 +2,7 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -26,6 +27,7 @@ import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import Data.Default
+import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
@@ -79,7 +81,6 @@ import Common.Alerts (
     bakerInsufficientFundsDescriptions,
     bakerMissedDescriptions,
     bakerVotingReminderDescriptions,
-    isUserResolvable,
     networkUpdateDescription,
     standardTimeFormat,
   )
@@ -414,16 +415,22 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
 
-headerBell :: MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
+headerBell :: forall t m . MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
-  alertCount <- holdUniqDyn =<< fmap (fromMaybe 0) <$> watchAlertCount
-  let hasAlerts = fmap (> 0) alertCount
+  alertCount <- watchAlertCount
+  let
+    alertData :: Dynamic t (Int, Maybe AlertSeverity)
+    alertData = maybe (0, Nothing) (DMap.foldlWithKey (\(v1, v2) l (Const c) -> (,) (c + v1)
+      (if c > 0 then max v2 (Just $ _alertMetaData_severity $ getAlertMetaData l) else v2)) (0, Nothing)) <$> alertCount
+  totalAlertCount <- holdUniqDyn (fst <$> alertData)
+  maxSeverity <- holdUniqDyn (snd <$> alertData)
+  let
+    hasAlerts = fmap (> 0) totalAlertCount
+    color = maybe "basic" severityColor <$> maxSeverity
   (e,_) <- SemUi.ui' "span"
-    (def
-      & SemUi.classes .~ (SemUi.Dyn $ ffor hasAlerts $ ("ui circular label link " <>) . bool "basic" "red")
-      )
+    (def & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color))
     $ do
-        dynText $ ffor alertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
+        dynText $ ffor totalAlertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
         text " "
         SemUi.icon "icon-bell"
           (def
@@ -597,38 +604,90 @@ newtype SynthError
   = SynthError_BakersInformationDown (NonEmpty (PublicKeyHash, BakerData))
   deriving (Eq, Ord, Show)
 
+data AlertSeverity
+  = AlertSeverity_Info
+  | AlertSeverity_Warning
+  | AlertSeverity_Error
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+severityColor :: (IsString t) => AlertSeverity -> t
+severityColor = \case
+  AlertSeverity_Info -> "blue"
+  AlertSeverity_Warning -> "orange"
+  AlertSeverity_Error -> "red"
+
 -- | Meta info for alerts to customize their appearance/behaviour
 data AlertMetaData = AlertMetaData
   { _alertMetaData_isEventBased :: !Bool
+  , _alertMetaData_isUserResolvable :: !Bool
+  , _alertMetaData_severity :: !AlertSeverity
   }
 
 class HasAlertMetaData a where
   getAlertMetaData :: a -> AlertMetaData
 
+isUserResolvable :: (HasAlertMetaData a) => a -> Bool
+isUserResolvable = _alertMetaData_isUserResolvable . getAlertMetaData
+
 instance Default AlertMetaData where
   def = AlertMetaData
     { _alertMetaData_isEventBased = False
+    , _alertMetaData_isUserResolvable = False
+    , _alertMetaData_severity = AlertSeverity_Error
     }
 
 instance HasAlertMetaData ErrorLogView' where
-  getAlertMetaData (ErrorLogView' (logTag :=> _) _) = case logTag of
-    LogTag_Node nlt -> case nlt of
-      NodeLogTag_InaccessibleNode -> def
-      NodeLogTag_NodeWrongChain -> def
-      NodeLogTag_NodeInvalidPeerCount -> def
-      NodeLogTag_BadNodeHead -> def
-    LogTag_Baker blt -> case blt of
-      BakerLogTag_BakerMissed -> def { _alertMetaData_isEventBased = True }
-      BakerLogTag_BakerDeactivated -> def
-      BakerLogTag_BakerDeactivationRisk -> def
-      BakerLogTag_BakerAccused -> def { _alertMetaData_isEventBased = True }
-      BakerLogTag_InsufficientFunds -> def
-      BakerLogTag_VotingReminder -> def { _alertMetaData_isEventBased = True }
-    LogTag_BakerNoHeartbeat -> def
-    LogTag_NetworkUpdate -> def { _alertMetaData_isEventBased = True }
+  getAlertMetaData (ErrorLogView' l _) = getAlertMetaData l
+
+instance HasAlertMetaData ErrorLogView where
+  getAlertMetaData (logTag :=> _eLog) = getAlertMetaData logTag
+
+instance HasAlertMetaData (LogTag a) where
+  getAlertMetaData = \case
+    LogTag_Node nlt -> getAlertMetaData nlt
+    LogTag_Baker blt -> getAlertMetaData blt
+    LogTag_BakerNoHeartbeat -> def { _alertMetaData_isUserResolvable = True }
+    LogTag_NetworkUpdate ->
+      def { _alertMetaData_isEventBased = True
+          , _alertMetaData_isUserResolvable = True
+          , _alertMetaData_severity = AlertSeverity_Info
+          }
+
+instance HasAlertMetaData (NodeLogTag a) where
+  getAlertMetaData = \case
+    NodeLogTag_InaccessibleNode -> def
+    NodeLogTag_NodeWrongChain -> def
+    NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
+    NodeLogTag_BadNodeHead -> def
+
+instance HasAlertMetaData BakerErrorLogView where
+  getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
+
+instance HasAlertMetaData (BakerLogTag a) where
+  getAlertMetaData = \case
+    BakerLogTag_BakerMissed ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_BakerDeactivated -> def
+    BakerLogTag_BakerDeactivationRisk -> def { _alertMetaData_severity = AlertSeverity_Warning }
+    BakerLogTag_BakerAccused ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_InsufficientFunds -> def { _alertMetaData_severity = AlertSeverity_Warning }
+    BakerLogTag_VotingReminder -> def
+      { _alertMetaData_isEventBased = True
+      , _alertMetaData_isUserResolvable = True
+      , _alertMetaData_severity = AlertSeverity_Info
+      }
 
 instance HasAlertMetaData SynthError where
   getAlertMetaData (SynthError_BakersInformationDown _) = def
+
+instance HasAlertMetaData CollectiveNodesFailure where
+  getAlertMetaData _ = def
+
+instance HasAlertMetaData BakerAlert where
+  getAlertMetaData = \case
+    BakerAlert_Alert a -> getAlertMetaData a
+    BakerAlert_GroupedAlert {} -> getAlertMetaData BakerLogTag_BakerMissed
 
 instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a b) where
   getAlertMetaData (Left v) = getAlertMetaData v
@@ -740,8 +799,13 @@ liveErrorsWidget = void $ do
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
       let resolvedDyn = isJust . _errorLog_stopped <$> logDyn
-      elDynAttr "div" (ffor resolvedDyn $ \resolved -> "class" =: ("app-notification ui message " <> if resolved then "success" else "error")) $ do
-        wDyn <- holdUniqDyn widgetDyn
+          severity w = case _alertMetaData_severity $ getAlertMetaData w of
+            AlertSeverity_Info -> "info"
+            AlertSeverity_Warning -> "warning"
+            AlertSeverity_Error -> "error"
+      wDyn <- holdUniqDyn widgetDyn
+      elDynAttr "div" (ffor2 resolvedDyn wDyn $ \resolved w ->
+        "class" =: ("app-notification ui message " <> if resolved then "success" else severity w)) $ do
         dyn_ $ ffor wDyn $ either logEntry synthEntry
         let isEv = _alertMetaData_isEventBased . getAlertMetaData <$> wDyn
         el "div" $ do
@@ -1528,9 +1592,10 @@ nodesTab =
           ebn <- snd <$$$$> watchErrorsByNode alertWindow
 
           let
+            withSeverity e m = (_alertMetaData_severity $ getAlertMetaData e, m)
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> case lTag of
+              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
                 NodeLogTag_InaccessibleNode -> text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> text "On wrong network."
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
@@ -1729,7 +1794,7 @@ nodesTab =
       -> m () -- ^ Subtitle
       -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
       -> m ()
     tileHeader title subtitle menuContents badge errors' = do
       case menuContents of
@@ -1742,7 +1807,8 @@ nodesTab =
       tileErrors errors'
 
     tileErrors = traverse_ $ \errors ->
-      dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+      dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
+        divClass ("ui message " <> severityColor severity) m
 
     tileBadgeImpliedByErrors
       :: Maybe (Dynamic t [a])
@@ -1809,7 +1875,7 @@ nodesTab =
       -> m () -- ^ Subtitle
       -> m () -- ^ Tile menu contents
       -> (a -> Maybe VeryBlockLike) -- ^ Function to get block information from a node
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (Dynamic t Bool) -- ^ (Optional) Are we connected to the node?
       -> Maybe (a -> ProcessState) -- ^ (Optional) Function to build list of error messages for this node
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
@@ -1883,12 +1949,12 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = any (\(f :=> _) -> isUserResolvable $ LogTag_Baker f) . map snd . concatMap NEL.toList <$> dEbb
+            anyErrors = any isUserResolvable . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
           let
-            toLogTag (f :=> k) = let g = LogTag_Baker f in if isUserResolvable g
+            toLogTag l@(f :=> k) = let g = LogTag_Baker f in if isUserResolvable l
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
             alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
@@ -1926,7 +1992,8 @@ bakersTab =
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
 
-                errorMessages = ffor bakerAlerts $ mapMaybe $ \case
+                withSeverity e = fmap $ \m -> (_alertMetaData_severity $ getAlertMetaData e, m)
+                errorMessages = ffor bakerAlerts $ mapMaybe $ \e -> withSeverity e $ case e of
                   Left (_ :: CollectiveNodesFailure) -> Just $ text "Cannot gather baker data."
                   Right (BakerAlert_Alert (lTag :=> Identity log)) -> case lTag of
                     BakerLogTag_BakerMissed -> Just $ text $ "Missed " <> aRight <> "."
@@ -2018,9 +2085,10 @@ bakersTab =
       where
         renderBakerError :: NonEmpty ErrorLogView -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
-          let warning = _bakerErrorDescriptions_warning <$> dsc
+          let severity = _alertMetaData_severity $ getAlertMetaData $ NEL.head ev
+              warning = _bakerErrorDescriptions_warning <$> dsc
           renderResolvableSplashAlert ev
-            (iconDyn $ ffor warning $ \w -> "icon-warning big " <> bool "red" "orange" (isJust w))
+            (icon $ "icon-warning big " <> severityColor severity)
             (dynText (_bakerErrorDescriptions_title <$> dsc) *> text ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
@@ -2039,7 +2107,7 @@ bakersTab =
       -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
       -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
-      -> Maybe (Dynamic t [m ()]) -- ^ (Optional) Function to build list of error messages for this baker
+      -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
       -> Dynamic t (Either CollectiveNodesFailure ())
@@ -2165,7 +2233,8 @@ bakersTab =
           divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
-          dyn_ $ ffor errors $ traverse_ (divClass "ui error message")
+          dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
+            divClass ("ui message " <> severityColor severity) m
 
         let
           nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
@@ -2233,7 +2302,7 @@ renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
 renderResolvableSplashAlert es@((etag :=> _) :| _) splashIcon title entity desc = do
   renderSplashAlert splashIcon title entity $ do
     desc
-    when (isUserResolvable etag) $ do
+    when (isUserResolvable $ NEL.head es) $ do
       resolve <- divClass "buttons" $ uiButtonM "primary" $ do
         icon "icon-check"
         text "Resolve"

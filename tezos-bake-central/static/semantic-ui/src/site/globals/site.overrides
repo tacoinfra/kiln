@@ -1291,7 +1291,7 @@ img.credits-obsidian {
         }
       }
 
-      > .ui.error.message {
+      > .ui.message {
         margin-top: @10px;
         font-weight: bold;
         font-size: @13px;
@@ -1304,9 +1304,22 @@ img.credits-obsidian {
         padding-right: @12px;
 
         border-radius: @3px;
-        border: solid @1px #ff0000;
         box-shadow: none;
+      }
+
+      > .ui.message.red {
+        border: solid @1px @red;
         background-color: #fff5f5;
+      }
+
+      > .ui.message.orange {
+        border: solid @1px @orange;
+        background-color: #fff9f5;
+      }
+
+      > .ui.message.blue {
+        border: solid @1px @blue;
+        background-color: #f5f9ff;
       }
 
       > .divider {
