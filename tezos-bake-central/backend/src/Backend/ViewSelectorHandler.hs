@@ -486,7 +486,7 @@ getAlertCount
   => m (DMap LogTag (Const Int))
 getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
   (x, _) <- runQuery lTag
-  pure $ (map (\(t, v) -> (t :=> Const v)) x)) universe
+  pure $ map (\(t, v) -> t :=> Const v) x) universe
   where
     {-# INLINE queryAlert #-}
     queryAlert

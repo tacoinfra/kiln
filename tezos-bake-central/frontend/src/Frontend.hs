@@ -688,7 +688,7 @@ instance HasAlertMetaData CollectiveNodesFailure where
 instance HasAlertMetaData BakerAlert where
   getAlertMetaData = \case
     BakerAlert_Alert a -> getAlertMetaData a
-    BakerAlert_GroupedAlert _ _ _ -> getAlertMetaData BakerLogTag_BakerMissed
+    BakerAlert_GroupedAlert {} -> getAlertMetaData BakerLogTag_BakerMissed
 
 instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a b) where
   getAlertMetaData (Left v) = getAlertMetaData v
@@ -800,7 +800,7 @@ liveErrorsWidget = void $ do
     listWithKey combinedErrors $ \_ vDyn -> do
       (logDyn, widgetDyn) <- splitDynPure <$> holdUniqDyn vDyn
       let resolvedDyn = isJust . _errorLog_stopped <$> logDyn
-          severity w = case (_alertMetaData_severity $ getAlertMetaData w) of
+          severity w = case _alertMetaData_severity $ getAlertMetaData w of
             AlertSeverity_Info -> "info"
             AlertSeverity_Warning -> "warning"
             AlertSeverity_Error -> "error"
@@ -1955,7 +1955,7 @@ bakersTab =
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = (any isUserResolvable) . map snd . concatMap NEL.toList <$> dEbb
+            anyErrors = any isUserResolvable . map snd . concatMap NEL.toList <$> dEbb
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
