@@ -2145,8 +2145,7 @@ bakersTab =
 
         divClass "title" $ do
           let bakerStatusDyn = (\b n -> bakerStatus $ b <$ n) <$> bakerDyn <*> dCollectiveNodesStatus
-          for_ errors' $ \errors -> do
-            _errorsEmpty <- holdUniqDyn $ null <$> errors
+          for_ errors' $ \_ -> do
             iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title
           isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> bakerDyn
