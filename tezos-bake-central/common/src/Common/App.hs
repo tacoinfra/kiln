@@ -632,7 +632,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_rightNotificationSettings = mempty
     , _bakeViewSelector_bakerRegistered = mempty
     }
-  mappend = (<>)
 
 
 instance Group (BakeViewSelector SelectedCount) where
@@ -674,7 +673,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_rightNotificationSettings = mempty
     , _bakeView_bakerRegistered = mempty
     }
-  mappend u v = u <> v
 
 instance Semigroup a => Semigroup (BakeView a) where
   u <> v = BakeView

@@ -675,7 +675,6 @@ instance Semigroup BakeEfficiency where
 
 instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
-  mappend = (<>)
 
 data Notificatee = Notificatee
   { _notificatee_email :: !Email

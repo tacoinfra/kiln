@@ -186,7 +186,6 @@ instance (ViewSelector f, ViewSelector g, Semigroup a, Ord (ViewIndex f)) => Sem
 
 
 instance (Ord (ViewIndex f), ViewSelector f, ViewSelector g, Semigroup a) => Monoid (View (Compose f g) a) where
-  mappend = (<>)
   mempty = ComposeView mempty (Compose mempty)
     \\ (viewIsMonoid :: Semigroup a :- Monoid (View f a))
     \\ (viewIsSemigroup :: Semigroup a :- Semigroup (View g a))
@@ -371,7 +370,6 @@ getIntervalViewI (IntervalView _ entries) = IMap.fromList $ (\(i, First (v, k)) 
 
 instance (Ord i, Ord e, Semigroup a) => Monoid (View (IntervalSelector e i v) a ) where
   mempty = IntervalView mempty mempty
-  mappend = (<>)
 
 instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v) a) where
   IntervalView s1 e1 <> IntervalView s2 e2 = IntervalView (s1 <> s2) (e1 <> e2)
@@ -469,7 +467,6 @@ instance (Semigroup a, Ord e) => Semigroup (View (RangeSelector e v) a) where
       inI k v = if null $ IMap.containing i k then Nothing else Just v
 
 instance (Semigroup a, Ord e) => Monoid (View (RangeSelector e v) a) where
-  mappend = (<>)
   mempty = RangeView mempty MMap.empty
 
 instance (Ord e) => Filterable (View (RangeSelector e v)) where
