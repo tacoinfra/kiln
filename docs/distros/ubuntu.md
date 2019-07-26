@@ -62,3 +62,11 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
 ```
 
 To use the binaries for a different network please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'
+
+## Uninstalling Kiln
+
+Kiln can be uninstalled using the following command. Note this will remove all the configurations and node data.
+
+```
+sudo dpkg --purge kiln
+```
