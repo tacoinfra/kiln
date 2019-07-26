@@ -34,7 +34,7 @@ in {
     kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
     : "''${size:=3}"
     : "''${speed:=10}"
-    : "''${block_per_voting_period:=40}"
+    : "''${block_per_voting_period:=24}"
 
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
@@ -69,7 +69,8 @@ in {
       --pause-on-error true \
       --root-path "$root_path" \
       --waiting-attempts 2000 \
-      --extra-dummy-proposals=3 \
+      --extra-dummy-proposals-batch-size 1 \
+      --extra-dummy-proposals-batch-levels "$(seq -s, 5 "$blocks_per_voting_period")" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \

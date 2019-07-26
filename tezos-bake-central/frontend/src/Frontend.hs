@@ -145,7 +145,7 @@ getBackendPath backendRoute isWebsocket = do
   let
     url = do
       encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
-      let path = fst $ encode encoder $ backendRoute
+      let path = fst $ encode encoder backendRoute
       pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
       scheme <- if isWebsocket
         then case Uri.uriScheme route of
@@ -414,7 +414,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
-        el "p" $ ensureHealthyNodes
+        el "p" ensureHealthyNodes
 
 headerBell :: forall t m . MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
 headerBell = do
@@ -429,9 +429,7 @@ headerBell = do
     hasAlerts = fmap (> 0) totalAlertCount
     color = maybe "basic" severityColor <$> maxSeverity
   (e,_) <- SemUi.ui' "span"
-    (def
-      & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color)
-      )
+    (def & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color))
     $ do
         dynText $ ffor totalAlertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
         text " "
@@ -440,7 +438,7 @@ headerBell = do
             & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
             & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
             & SemUi.iconConfig_link SemUi.|~ True
-            & SemUi.iconConfig_fitted .~ (SemUi.Dyn hasAlerts)
+            & SemUi.iconConfig_fitted .~ SemUi.Dyn hasAlerts
             )
   return $ domEvent Click e
 
@@ -498,7 +496,7 @@ nodesTabOrWelcome = do
     Nothing -> divClass "app-content app-welcome" waitingForResponse
     Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
     Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
-      when (onlyOsNode && (not haveBakers)) $ welcomeScreen True
+      when (onlyOsNode && not haveBakers) $ welcomeScreen True
       when haveBakers bakersTab
       when haveNodes nodesTab
 
@@ -534,7 +532,7 @@ globalAlerts = do
     allAlerts :: Dynamic t [m ()]
     allAlerts = catMaybes <$> sequence [ (fmap join . sequence) mNetworkAlert, mUpdateAlert ]
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
-    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ m
+    SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
 networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
@@ -760,7 +758,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ catMaybes $ map getBaker $ MMap.toList $ MMap.map _bakerSummary_baker $ bakers
+          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -818,9 +816,7 @@ liveErrorsWidget = void $ do
           el "label" $ dynText $ ffor logDyn $ \log -> case _errorLog_stopped log of
             Nothing -> "Last Detected"
             Just _ -> "Stopped"
-          localTimestamp' $ ffor logDyn $ \log -> case _errorLog_stopped log of
-            Nothing -> _errorLog_lastSeen log
-            Just x -> x
+          localTimestamp' $ ffor logDyn $ \log -> fromMaybe (_errorLog_lastSeen log) (_errorLog_stopped log)
   where
     localTimestamp' dt = do
       tz <- asks (^. timeZone)
@@ -1215,7 +1211,7 @@ handleClientErrorWorkflow recover = \case
       elClass "h5" "ui header" $ do
         icon "red icon-x"
         text "The request was declined by the Ledger Device."
-      divClass "explanation" $ text $ "If you did not intend to reject the prompt on the Ledger Device you may click retry."
+      divClass "explanation" $ text "If you did not intend to reject the prompt on the Ledger Device you may click retry."
       retry <- uiButton "primary" "Retry"
       pure ((["ledger-declined"], never), tryAgain <$ retry)
 
@@ -1343,7 +1339,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
            pure close
 
-startNodeWorkflow ::
+startNodeWorkflow :: forall m t.
   ( MonadRhyoliteFrontendWidget Bake t m
   , MonadJSM m
   , MonadJSM (Performable m)
@@ -1360,14 +1356,15 @@ startNodeWorkflow backWF = Workflow $ do
       el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-        el "p" $ text "Obsidian Systems hosts snapshots here: https://someplace.com"
-      divClass "" $ do
+      divClass "file-selection" $ do
         rec
           let fileName = headMay <$> value fi
           dyn_ $ ffor fileName $ mapM $ \file -> do
             name <- liftJSM $ File.getName file
             divClass "file-name" $ text name
-          fi <- fileInput def
+          elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
+          fi <- fileInput $ (def :: FileInputConfig t)
+            & fileInputConfig_attributes .~ constDyn ("id" =: "fileId")
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
@@ -1448,7 +1445,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
-  text $ "This Node can only be turned off via "
+  text "This Node can only be turned off via "
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
@@ -1477,7 +1474,7 @@ publicNodeOptions = do
           then constDyn "active"
           else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> (SemUi.Dyn activeClass)) $ divClass "row" $ do
+        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
@@ -1542,9 +1539,9 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
-        partition = (fmapMaybe $ preview _Left) &&& (fmapMaybe $ preview _Right)
+        partition = fmapMaybe (preview _Left) &&& fmapMaybe (preview _Right)
         (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
-        kilnNodeState = ((fmap _processData_state) . headMay . Map.elems) <$> internal
+        kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
@@ -1633,14 +1630,14 @@ nodesTab =
               (Just $ maybe True (all (\(t :=> _) -> case t of NodeLogTag_InaccessibleNode -> False; _ -> True)) . MMap.lookup nodeId <$> ebn)
               Nothing
               (Just $ (=<<) _nodeDetailsData_peerCount)
-              (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat)
+              (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat)
               nodeDetails
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
             state <- holdUniqDyn $ _processData_state <$> nodeData
 
-            bakerRunning <- fmap ((== Just True) . (fmap $ _bakerInternalData_running . snd))
+            bakerRunning <- fmap ((== Just True) . fmap (_bakerInternalData_running . snd))
               <$> watchInternalBaker
             let
               preface = "This node is run by Kiln. "
@@ -1659,13 +1656,13 @@ nodesTab =
                 runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                 dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                   (True, bRunning) ->
-                    tileMenuEntryModal "Stop Node" $ stopModal bRunning $ (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
                   _ -> do
                     start <- tileMenuEntry "Start Node"
                     void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
 
               verifyAndStartMenu sm = do
-                tileMenuEntryModal "Verify and start node" $ (verifySnapshotModal sm)
+                tileMenuEntryModal "Verify and start node" (verifySnapshotModal sm)
 
               showLogMenu errorLog = do
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
@@ -1677,7 +1674,7 @@ nodesTab =
                     [preface, body running "Removing", epilogue]
                     "Stop and Remove Node"
                 dyn_ $ ffor bakerRunning $ \running ->
-                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running $
+                  tileMenuEntryModal "Remove Node" $ removeInternalNodeModal running
                     (PublicRequest_RemoveNode (Right ()) <$)
 
               title :: m ()
@@ -1715,11 +1712,11 @@ nodesTab =
                     ])
                   (Just $ _processData_state . fst)
                   (Just $ (=<<) _nodeDetailsData_peerCount . snd)
-                  (Just $ fromMaybe (NetworkStat 0 0 0 0) . fmap _nodeDetailsData_networkStat . snd)
+                  (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                   ((,) <$> nodeData <*> nodeDetails)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
-              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections $
+              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
                 [ tileHeader title subtitle menu badge Nothing
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
@@ -1826,7 +1823,7 @@ nodesTab =
     tileBadgeImpliedByErrors mErrors mInternalState = do
       let color = fmap statusColor $ nodeStatus
             <$> sequence mInternalState
-            <*> (maybe (pure 0) (fmap length) mErrors)
+            <*> maybe (pure 0) (fmap length) mErrors
       iconDyn $ ("tiny circle " <>) <$> color
 
     tileBlockStats getBlock node = do
@@ -1915,7 +1912,7 @@ data BakerAlert
   deriving (Eq, Ord, Show)
 
 groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
-groupBakerAlerts bs = (map BakerAlert_Alert others) ++ (group bakerMiss) ++ (group endorseMiss)
+groupBakerAlerts bs = map BakerAlert_Alert others ++ group bakerMiss ++ group endorseMiss
   where
     (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
     partitionF
@@ -1966,7 +1963,7 @@ bakersTab =
             toLogTag l@(f :=> k) = let g = LogTag_Baker f in if isUserResolvable l
               then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
               else Nothing
-            alerts = concatMap (catMaybes . fmap toLogTag . map snd . NEL.toList) . MMap.elems <$> current dEbb
+            alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
           _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
@@ -1981,10 +1978,10 @@ bakersTab =
             holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
               Left _ -> \_ -> Just BakersBanner_CannotGather
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
-          dyn_ $ ffor bakersBanner $ mkBakersBanner
+          dyn_ $ ffor bakersBanner mkBakersBanner
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . (fmap (groupBakerAlerts . NEL.toList)) <$> dEbb
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap (groupBakerAlerts . NEL.toList) <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
@@ -1996,7 +1993,7 @@ bakersTab =
                 renderBakerError = text . _bakerErrorDescriptions_tile
 
                 bakerAlerts = (++)
-                  <$> (ffor dCollectiveNodesStatus $ \case
+                  <$> ffor dCollectiveNodesStatus (\case
                           Left e -> [Left e]
                           Right _ -> [])
                   <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
@@ -2326,11 +2323,11 @@ renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
   -> m () -- ^ Description body
   -> m ()
 renderSplashAlert splashIcon title entity desc = do
-  elClass "div" "dashboard-section-overview-icon" $ splashIcon
+  elClass "div" "dashboard-section-overview-icon" splashIcon
   elClass "div" "dashboard-section-overview-body" $ do
-    divClass "ui header" $ title
+    divClass "ui header" title
     for_ entity $ divClass "alert-entity"
-    divClass "description" $ desc
+    divClass "description" desc
 
 withPlaceholder :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe (m ())) -> m ()
 withPlaceholder = withPlaceholder' "-"

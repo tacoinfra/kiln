@@ -210,7 +210,7 @@ watchCollectiveNodesStatus alertWindow = do
   holdUniqDyn $ ffor3 dUsingOsPublicNode dmNids ebn $ \case
     Just True -> const $ const $ Right ()
     _ -> \case
-      Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
+      Nothing -> const $ Left CollectiveNodesFailure_NoNodes
       Just nids -> \nodeErrors -> case
           -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
           -- the greatest element rather than least element.
@@ -218,7 +218,7 @@ watchCollectiveNodesStatus alertWindow = do
             Min $
             fmap Down $
             -- if there are errors, we went "ill" when the first one started
-            minimumMay $ (_errorLog_started . fst)
+            minimumMay $ _errorLog_started . fst
               <$> maybe [] toList (MMap.lookup nid nodeErrors)
         of
           Nothing -> Right ()

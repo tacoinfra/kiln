@@ -1777,6 +1777,9 @@ h4.dashboard-section-title {
     margin-right: auto;
     display: block;
   }
+  .file-selection > input {
+    display: none;
+  }
 }
 
 .modal-box.show-error-log {

@@ -295,7 +295,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     las <- select CondEmpty
     let rangeView = toRangeView votePromptingVS $ flip fmap las $ \la ->
           ( _ledgerAccount_secretKey la
-          , First $ Just $ mempty
+          , First $ Just mempty
           )
     pure rangeView
 

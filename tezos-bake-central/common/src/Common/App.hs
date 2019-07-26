@@ -141,7 +141,7 @@ instance ToJSON NodeSummary
 
 bakerSummaryIdentification :: (IdData BakerData, BakerSummary) -> (Text, Maybe Text)
 bakerSummaryIdentification = aliasedIdentification
-  ((either _bakerData_alias (const $ Just "Kiln Baker")) . _bakerSummary_baker . snd)
+  (either _bakerData_alias (const $ Just "Kiln Baker") . _bakerSummary_baker . snd)
   (toPublicKeyHashText . fst)
 
 nodeSummaryIdentification :: NodeSummary -> (Text, Maybe Text)
@@ -150,7 +150,7 @@ nodeSummaryIdentification = nodeDataIdentification . _nodeSummary_node
 nodeDataIdentification :: Either NodeExternalData ProcessData -> (Text, Maybe Text)
 nodeDataIdentification = \case
   Left e -> aliasedIdentification
-    (_nodeExternalData_alias)
+    _nodeExternalData_alias
     (uriHostPortPath . _nodeExternalData_address)
     e
   Right _ -> ("Kiln Node", Nothing)

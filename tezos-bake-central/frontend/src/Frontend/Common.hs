@@ -582,7 +582,7 @@ zipFieldsWith :: (Applicative m, Reflex t)
               -> m (Dynamic t (Either Text a))
               -> m (Dynamic t (Either Text b))
               -> m (Dynamic t (Either Text c))
-zipFieldsWith = (liftA2 . liftA2 . liftA2)
+zipFieldsWith = liftA2 . liftA2 . liftA2
 
 formWithReset
   :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m)

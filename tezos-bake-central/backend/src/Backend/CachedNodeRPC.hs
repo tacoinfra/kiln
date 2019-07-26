@@ -486,7 +486,7 @@ tryNodeQueryT
 tryNodeQueryT bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
-      bail = (DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn)
+      bail = DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn
   runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f bad)) nds >>= \case
     e@(Left _) -> e <$ bail
     v@(Right (NodeQueryTResult_Done _)) -> return v
@@ -655,7 +655,7 @@ cycleStartHashes blkHash = do
   protoInfo <- maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc)
   history <- readTVar' $ _nodeDataSource_history dsrc
   return $ do
-    branch <- blkHash `Map.lookup` (_cachedHistory_blocks history)
+    branch <- blkHash `Map.lookup` _cachedHistory_blocks history
     let
       minLvl = _cachedHistory_minLevel history
       lvl = minLvl + RawLevel (fromIntegral $ length branch)
@@ -909,7 +909,7 @@ nodeQueryImpl
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ (runLoggingEnv logger $ $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -1239,7 +1239,7 @@ tryFetchFromCache chainId q = do
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
 getActiveNodeDetails kilnNodeUri = do
-  int <- [queryQ|
+  int <- let runningState = ProcessState_Running in [queryQ|
       SELECT d."data#headLevel"
            , d."data#headBlockHash"
            , d."data#headBlockPred"
@@ -1248,7 +1248,9 @@ getActiveNodeDetails kilnNodeUri = do
            , d."data#savePoint"
         FROM "NodeInternal" n
         JOIN "NodeDetails" d ON d.id = n.id
+        JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
+        AND p."state" = ?runningState
       |] <&> fmap (\(l, b, p, t, f, s) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
   ext <- [queryQ|
       SELECT n."data#data#address"
