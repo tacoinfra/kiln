@@ -49,8 +49,8 @@ data Expression
    = Expression_Int !TezosWord64
    | Expression_String !Text
    | Expression_Bytes !(Base16ByteString ByteString)
-   | Expression_Seq !(Seq (Expression))
-   | Expression_Prim !(MichelinePrimAp)
+   | Expression_Seq !(Seq Expression)
+   | Expression_Prim !MichelinePrimAp
   deriving (Eq, Ord, Show, Typeable)
 
 data MichelinePrimAp = MichelinePrimAp

@@ -95,8 +95,8 @@ parseBakerAddr v = do
     Left $ "The character " <> tshow ch <> " is not allowed in a baker address."
   when (T.length v /= 36) $ Left $ "Baker address is too " <> (if T.length v < 36 then "short" else "long") <> " (must be 36 characters)."
   flip first (tryReadPublicKeyHashText v) $ \case
-    HashBase58Error_InvalidPrefix _ _ -> "This address is outside the valid range for " <> T.take 3 v <> " addresses."
-    HashBase58Error_BadChecksum _ _ _ -> "This address failed the integrity check. Please check that it has been copied correctly."
+    HashBase58Error_InvalidPrefix {} -> "This address is outside the valid range for " <> T.take 3 v <> " addresses."
+    HashBase58Error_BadChecksum {} -> "This address failed the integrity check. Please check that it has been copied correctly."
     e -> "An unknown error happened, please report this as a bug: " <> tshow e
   where
     okPrefixes :: NE.NonEmpty Text

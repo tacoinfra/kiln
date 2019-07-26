@@ -631,7 +631,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
             ProposalVotingState_NoPreviousVote -> reportError False
             ProposalVotingState_OutdatedVote -> reportError True
           BakerVotingState_Exploration previouslyVoted -> singleVotePhase previouslyVoted
-          BakerVotingState_Testing -> pure ()
+          BakerVotingState_Testing -> clearAllErrors
           BakerVotingState_Promotion previouslyVoted -> singleVotePhase previouslyVoted
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.

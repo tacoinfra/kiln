@@ -14,7 +14,7 @@ import JSONSchema.Draft4 (Schema(..))
 
 -- TODO:  i'm not sure this is really useful, but it's at least convenient for now
 class FoldServices a where
-  getServices :: a -> [([PathItem], (Maybe Service))]
+  getServices :: a -> [([PathItem], Maybe Service)]
 
 data DirectoryDescr
   = Static StaticDirectory
@@ -83,7 +83,7 @@ instance FromJSON StaticSubdirsSuffixes where
     <$> v .: "name"
     <*> v .: "tree"
 instance FoldServices StaticSubdirsSuffixes where
-  getServices x = (\(p, s) -> (PStatic (_staticSubdirsSuffixes_name x) : p, s)) <$> (getServices $ _staticSubdirsSuffixes_tree x)
+  getServices x = (\(p, s) -> (PStatic (_staticSubdirsSuffixes_name x) : p, s)) <$> getServices (_staticSubdirsSuffixes_tree x)
 
 data StaticSubdirsDynamic = StaticSubdirsDynamic
   { _staticSubdirsDynamic_arg :: Arg
@@ -96,7 +96,7 @@ instance FromJSON StaticSubdirsDynamic where
     <*> v .: "tree"
 
 instance FoldServices StaticSubdirsDynamic where
-  getServices x = (\(p, s) -> (PDynamic dname : p, s)) <$> (getServices $ _staticSubdirsDynamic_tree x)
+  getServices x = (\(p, s) -> (PDynamic dname : p, s)) <$> getServices (_staticSubdirsDynamic_tree x)
     where
       dname = _staticSubdirsDynamic_arg x
 
