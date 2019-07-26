@@ -16,15 +16,15 @@
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (catch, throwIO)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logErrorNS)
+import Control.Exception.Safe (catch, throwIO, IOException)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
-import Data.List (find, intersperse)
+import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Version
@@ -34,7 +34,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (sendFile, MonadSnap)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath (combine)
 import System.Process (readProcessWithExitCode, proc, shell, readCreateProcess)
 import qualified Data.Text as T
@@ -305,24 +305,29 @@ fetchProtocol pid =
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
-handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
-handleExportLogs nds lType = do
+handleExportLogs :: MonadSnap m => AppConfig -> NodeDataSource -> DSum ExportLog Identity -> m ()
+handleExportLogs appConfig nds lType = do
   let
     logger = _nodeDataSource_logger nds
+    dir = _appConfig_kilnDataDir appConfig <> "/export-logs/"
     logIdentifier :: String
     logIdentifier = "kiln-" <> case lType of
       ExportLog_Baker :=> _ -> "baker"
       ExportLog_Endorser :=> _ -> "endorser"
       ExportLog_Node :=> _ -> "node"
-    command = shell $ concat $ intersperse " "
+    fileName = dir <> logIdentifier
+    command = shell $ unwords
       [ "journalctl"
       , "--no-hostname"
       , "--no-pager"
       , "-t", logIdentifier
-      , ">", logIdentifier
+      , ">", fileName
       ]
+
+  liftIO $ (createDirectoryIfMissing True dir)
+    `catch` \(e :: IOException) -> runLoggingEnv logger $ $(logWarn) ("Make dir failed: " <> tshow dir <> ": " <> tshow e)
   runLoggingEnv logger $ do
     $(logDebug) $ "Exporting logs for: " <> (T.pack logIdentifier)
     $(logDebug) $ "Running command " <> (tshow command)
   _ <- liftIO $ readCreateProcess command ""
-  sendFile logIdentifier
+  sendFile fileName
