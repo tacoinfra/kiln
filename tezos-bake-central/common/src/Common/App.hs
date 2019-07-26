@@ -748,20 +748,14 @@ instance OrdTag BakerLogTag (Const Int) where
 instance ShowTag BakerLogTag (Const Int) where
   showTaggedPrec t = bakerLogAssumeConst t showsPrec
 
-type LogTagConstraintsConst e =
-  ( Eq (Const Int e)
-  , Ord (Const Int e)
-  , Show (Const Int e)
-  )
-
-nodeLogAssumeConst :: NodeLogTag e -> (LogTagConstraintsConst e => x) -> x
+nodeLogAssumeConst :: NodeLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
 nodeLogAssumeConst = \case
   NodeLogTag_InaccessibleNode -> id
   NodeLogTag_NodeWrongChain -> id
   NodeLogTag_NodeInvalidPeerCount -> id
   NodeLogTag_BadNodeHead -> id
 
-bakerLogAssumeConst :: BakerLogTag e -> (LogTagConstraintsConst e => x) -> x
+bakerLogAssumeConst :: BakerLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
 bakerLogAssumeConst = \case
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
@@ -770,7 +764,7 @@ bakerLogAssumeConst = \case
   BakerLogTag_InsufficientFunds -> id
   BakerLogTag_VotingReminder -> id
 
-logAssumeConst :: LogTag e -> (LogTagConstraintsConst e => x) -> x
+logAssumeConst :: LogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
 logAssumeConst = \case
   LogTag_NetworkUpdate -> id
   LogTag_Node nTag -> nodeLogAssumeConst nTag

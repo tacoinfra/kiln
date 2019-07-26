@@ -420,11 +420,12 @@ headerBell :: forall t m . MonadRhyoliteFrontendWidget Bake t m => m (Event t ()
 headerBell = do
   alertCount <- watchAlertCount
   let
-    totalAlertCount :: Dynamic t Int
-    totalAlertCount = maybe 0 (DMap.foldlWithKey (\v _ (Const c) -> c + v) 0) <$> alertCount
-    maxSeverity :: Dynamic t (Maybe AlertSeverity)
-    maxSeverity = (=<<) (DMap.foldlWithKey (\v l (Const c) ->
-      if c > 0 then max v (Just $ _alertMetaData_severity $ getAlertMetaData l) else v) Nothing) <$> alertCount
+    alertData :: Dynamic t (Int, Maybe AlertSeverity)
+    alertData = maybe (0, Nothing) (DMap.foldlWithKey (\(v1, v2) l (Const c) -> (,) (c + v1)
+      (if c > 0 then max v2 (Just $ _alertMetaData_severity $ getAlertMetaData l) else v2)) (0, Nothing)) <$> alertCount
+  totalAlertCount <- holdUniqDyn (fst <$> alertData)
+  maxSeverity <- holdUniqDyn (snd <$> alertData)
+  let
     hasAlerts = fmap (> 0) totalAlertCount
     color = maybe "basic" severityColor <$> maxSeverity
   (e,_) <- SemUi.ui' "span"
@@ -2093,10 +2094,10 @@ bakersTab =
       where
         renderBakerError :: NonEmpty ErrorLogView -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()
         renderBakerError ev dsc pkh = do
-          let isWarning = (_alertMetaData_severity $ getAlertMetaData $ NEL.head ev) /= AlertSeverity_Error
+          let severity = _alertMetaData_severity $ getAlertMetaData $ NEL.head ev
               warning = _bakerErrorDescriptions_warning <$> dsc
           renderResolvableSplashAlert ev
-            (icon $ "icon-warning big " <> bool "red" "orange" isWarning)
+            (icon $ "icon-warning big " <> severityColor severity)
             (dynText (_bakerErrorDescriptions_title <$> dsc) *> text ".")
             (Just $ dyn_ $ ffor tilesDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh)
             (do
