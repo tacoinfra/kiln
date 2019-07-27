@@ -16,11 +16,12 @@
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (catch, throwIO, IOException)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logErrorNS)
+import Control.Exception.Safe (catch, throwIO, tryJust)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Builder as Builder
 import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
@@ -33,10 +34,15 @@ import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Snap.Core (sendFile, MonadSnap)
-import System.Directory (doesFileExist, createDirectoryIfMissing)
+import Snap.Core (addToOutput, MonadSnap)
+import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.Process (readProcessWithExitCode, proc, shell, readCreateProcess)
+import System.Process as Proc
+import System.IO (hGetContents)
+import System.IO.Error (isEOFError)
+import System.IO.Streams (connect)
+import System.IO.Streams.Handle (handleToInputStream)
+import System.IO.Streams.Combinators as Combinators
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
@@ -305,29 +311,38 @@ fetchProtocol pid =
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
-handleExportLogs :: MonadSnap m => AppConfig -> NodeDataSource -> DSum ExportLog Identity -> m ()
-handleExportLogs appConfig nds lType = do
+handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
+handleExportLogs nds lType = do
   let
     logger = _nodeDataSource_logger nds
-    dir = _appConfig_kilnDataDir appConfig <> "/export-logs/"
     logIdentifier :: String
     logIdentifier = "kiln-" <> case lType of
       ExportLog_Baker :=> _ -> "baker"
       ExportLog_Endorser :=> _ -> "endorser"
       ExportLog_Node :=> _ -> "node"
-    fileName = dir <> logIdentifier
-    command = shell $ unwords
+    command = (shell $ unwords
       [ "journalctl"
       , "--no-hostname"
       , "--no-pager"
       , "-t", logIdentifier
-      , ">", fileName
-      ]
+      ])
+      { Proc.std_out = Proc.CreatePipe
+      , Proc.std_err = Proc.CreatePipe
+      }
 
-  liftIO $ (createDirectoryIfMissing True dir)
-    `catch` \(e :: IOException) -> runLoggingEnv logger $ $(logWarn) ("Make dir failed: " <> tshow dir <> ": " <> tshow e)
   runLoggingEnv logger $ do
-    $(logDebug) $ "Exporting logs for: " <> (T.pack logIdentifier)
-    $(logDebug) $ "Running command " <> (tshow command)
-  _ <- liftIO $ readCreateProcess command ""
-  sendFile fileName
+    $(logDebug) $ "Exporting logs for: " <> T.pack logIdentifier
+      <> "\nRunning command :" <> tshow command
+  addToOutput $ \str -> do
+    withCreateProcess command $ \_ mStdout mStderr ph -> for_ mStdout $ \stdout -> do
+      iStr <- handleToInputStream stdout
+      iStr1 <- Combinators.map Builder.byteString iStr
+      connect iStr1 str
+      waitForProcess ph >>= runLoggingEnv logger . \case
+        ExitSuccess -> $(logDebug) "Exported logs successfully"
+        ExitFailure code -> do
+          $(logWarn) $ "Error in exporting logs: journalctl returned: " <> tshow code
+          for_ mStderr $ \stderr -> liftIO (tryJust (guard . isEOFError) (hGetContents stderr)) >>= \case
+            Left _ -> pure ()
+            Right c -> $(logError) $ "Stderr: " <> T.pack c
+    pure str
