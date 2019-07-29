@@ -48,8 +48,15 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender,
-                                 RhyoliteLogLevel (..), runLoggingEnv, withLogging)
+import Rhyolite.Backend.Logging (
+    LoggingConfig (..),
+    LoggingEnv (..),
+    RhyoliteLogAppender(..),
+    RhyoliteLogAppenderJournald(..),
+    RhyoliteLogLevel (..),
+    runLoggingEnv,
+    withLoggingMinLevel,
+  )
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -73,7 +80,7 @@ import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
-import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker)
+import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker, handleExportLogs)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -91,13 +98,13 @@ import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient
 import qualified Common.Config as Config
+import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
-
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure
@@ -114,14 +121,29 @@ backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
 
-  let defaultLoggingConfig = [LoggingConfig
-        { _loggingConfig_logger = def @ RhyoliteLogAppender
-        , _loggingConfig_filters = Just $ Map.fromList
-          [ ("SQL", RhyoliteLogLevel_Error)
-          ]
-        }]
+  let
+    loggingConfigForDistro = case distributionMethod of
+      Distribution_FromSource -> defaultLoggingConfig
+      Distribution_Docker -> defaultLoggingConfig
+      Distribution_LinuxPackage -> map (\(t, p, l) -> LoggingConfig
+        { _loggingConfig_logger = RhyoliteLogAppender_Journald (RhyoliteLogAppenderJournald t)
+        , _loggingConfig_filters = Just $ Map.fromList [(p, l)]
+        })
+        [ ("kiln", "", RhyoliteLogLevel_Warn)
+        , ("kiln-node", "kiln-node", RhyoliteLogLevel_Info)
+        , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
+        , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
+        ]
 
-  !loggingConfig <- fromMaybe defaultLoggingConfig <$> getJSONConfigFromFile (configPath "loggers")
+    defaultLoggingConfig = [LoggingConfig
+      { _loggingConfig_logger = def @ RhyoliteLogAppender
+      , _loggingConfig_filters = Just $ Map.fromList
+        [ ("SQL", RhyoliteLogLevel_Error)
+        ]
+      }]
+
+  !loggingConfig <- fromMaybe loggingConfigForDistro <$> getJSONConfigFromFile (configPath "loggers")
+  let logExportAvailable = distributionMethod == Distribution_LinuxPackage && loggingConfig == loggingConfigForDistro
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
@@ -238,7 +260,7 @@ backendImpl cfg serve = do
         "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
       Right chainId -> pure chainId
 
-  withDb dbSpec $ \db -> withLogging loggingConfig $ do
+  withDb dbSpec $ \db -> withLoggingMinLevel Nothing loggingConfig $ do
     logger <- askLogger
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
 
@@ -386,6 +408,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
+          , Config._frontendConfig_logExportAvailable = logExportAvailable
           }
 
       -- migrate old kiln storage
@@ -440,6 +463,7 @@ backendImpl cfg serve = do
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v2PublicApi dataSrc
           | otherwise -> return ()
+        BackendRoute_ExportLogs :=> Identity lType -> when logExportAvailable $ handleExportLogs dataSrc lType
 
 backend :: Backend BackendRoute AppRoute
 backend = backend' mempty

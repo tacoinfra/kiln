@@ -49,6 +49,7 @@ library
     , http-client-tls
     , http-conduit
     , http-types
+    , io-streams
     , IntervalMap
     , lattices
     , lens

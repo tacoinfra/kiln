@@ -87,7 +87,7 @@ import Common.Alerts (
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, FrontendConfig(..))
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -465,7 +465,7 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , MonadReader r (ModalM m), MonadJSM (Performable (ModalM m))
+    , MonadReader r (ModalM m), MonadJSM m, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -1514,6 +1514,7 @@ nodesTab
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m
     , MonadReader r (ModalM m)
+    , MonadJSM m
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
@@ -1662,6 +1663,13 @@ nodesTab =
               showLogMenu errorLog = do
                 tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
 
+              exportLogsMenu = do
+                isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
+                when isExportAvailable $ do
+                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
+                  for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
+                    SemUi.listItem' def $ text "Export Logs"
+
               removeNodeMenu = do
                 let
                   epilogue = "All data for this node will be deleted from Kiln."
@@ -1698,7 +1706,7 @@ nodesTab =
                 standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                   title
                   subtitle
-                  (startStopNodeMenu *> removeNodeMenu)
+                  (exportLogsMenu *> startStopNodeMenu *> removeNodeMenu)
                   ((=<<) getNodeHeadBlock . snd)
                   (Just errors)
                   (Just $ ffor2 ebn nodeData $ \es nd -> and
@@ -1931,7 +1939,7 @@ bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
-    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM (Performable (ModalM m))
+    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM m, MonadJSM (Performable (ModalM m))
     , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
     )
   => m ()
@@ -2189,6 +2197,15 @@ bakersTab =
                           Right b -> Just (pkh, _bakerInternalData_secretKey b)
                         xs = (liftA3 . liftA3) (,,) (current mProtoInfo) (pure . pure <$> current amendment) baker
                     tellModal $ attachWithMaybe (\ma () -> ffor ma $ \(p,a,b) -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . voteModal b p a) xs open
+
+              isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
+              when isExportAvailable $ do
+                mBakerUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
+                for_ mBakerUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
+                  SemUi.listItem' def $ text "Export Baker Logs"
+                mEndorserUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
+                for_ mEndorserUri $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
+                  SemUi.listItem' def $ text "Export Endorser Logs"
 
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
