@@ -143,7 +143,7 @@ backendImpl cfg serve = do
 
   mLoggingConfig <- getJSONConfigFromFile (configPath "loggers")
   let !loggingConfig = fromMaybe loggingConfigForDistro mLoggingConfig
-      logExportAvailable = distributionMethod == Distribution_LinuxPackage && mLoggingConfig == Nothing
+      logExportAvailable = distributionMethod == Distribution_LinuxPackage && loggingConfig == loggingConfigForDistro
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)
