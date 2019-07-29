@@ -48,14 +48,15 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging
-  ( LoggingConfig (..),
+import Rhyolite.Backend.Logging (
+    LoggingConfig (..),
     LoggingEnv (..),
     RhyoliteLogAppender(..),
+    RhyoliteLogAppenderJournald(..),
     RhyoliteLogLevel (..),
     runLoggingEnv,
     withLoggingMinLevel,
-    RhyoliteLogAppenderJournald(..))
+  )
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -97,7 +98,7 @@ import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient
 import qualified Common.Config as Config
-import Common.Distribution
+import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
 import Common.Schema
@@ -141,9 +142,8 @@ backendImpl cfg serve = do
         ]
       }]
 
-  mLoggingConfig <- getJSONConfigFromFile (configPath "loggers")
-  let !loggingConfig = fromMaybe loggingConfigForDistro mLoggingConfig
-      logExportAvailable = distributionMethod == Distribution_LinuxPackage && loggingConfig == loggingConfigForDistro
+  !loggingConfig <- fromMaybe loggingConfigForDistro <$> getJSONConfigFromFile (configPath "loggers")
+  let logExportAvailable = distributionMethod == Distribution_LinuxPackage && loggingConfig == loggingConfigForDistro
 
   !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
     liftA2 (<|>)

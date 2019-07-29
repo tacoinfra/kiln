@@ -36,27 +36,26 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
 import System.Directory (doesFileExist)
-import System.FilePath (combine)
+import System.Exit (ExitCode(..))
+import qualified System.FilePath as FilePath
 import System.Process as Proc
 import System.IO (hGetContents)
 import System.IO.Error (isEOFError)
-import System.IO.Streams (connect)
-import System.IO.Streams.Handle (handleToInputStream)
-import System.IO.Streams.Combinators as Combinators
+import qualified System.IO.Streams as Streams
+import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
-import Backend.CachedNodeRPC
-import Backend.Workers.Process
-import ExtraPrelude
-import System.Exit (ExitCode(..))
-import System.Which
 import Tezos.Chain (NamedChain(..))
+
+import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
+import Backend.Workers.Process
 import Common.Route (ExportLog(..))
 import Common.Schema
+import ExtraPrelude
 
 hasHistoryModes :: Version -> Bool
 hasHistoryModes = (>= Version [0,0,3] [])
@@ -152,7 +151,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
 getVersion :: AppConfig -> IO (Maybe Version)
 getVersion appConfig = do
   let dataDir = nodeDataDir appConfig
-  let versionFile = dataDir `combine` "version.json"
+  let versionFile = dataDir `FilePath.combine` "version.json"
   hasVersionFile <- liftIO $ doesFileExist versionFile
   case hasVersionFile of
     False -> pure Nothing
@@ -172,7 +171,7 @@ initNode
   -> IO (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
-  let identityFile = dataDir `combine` "identity.json"
+  let identityFile = dataDir `FilePath.combine` "identity.json"
       upgrade = runCommandWithLogging nodePath
         ["upgrade", "storage", "--data-dir", T.pack dataDir]
       showConfig = runCommandWithLogging nodePath
@@ -335,9 +334,9 @@ handleExportLogs nds lType = do
       <> "\nRunning command :" <> tshow command
   addToOutput $ \str -> do
     withCreateProcess command $ \_ mStdout mStderr ph -> for_ mStdout $ \stdout -> do
-      iStr <- handleToInputStream stdout
-      iStr1 <- Combinators.map Builder.byteString iStr
-      connect iStr1 str
+      iStr <- Streams.handleToInputStream stdout
+      iStr1 <- Streams.map Builder.byteString iStr
+      Streams.connect iStr1 str
       waitForProcess ph >>= runLoggingEnv logger . \case
         ExitSuccess -> $(logDebug) "Exported logs successfully"
         ExitFailure code -> do
