@@ -48,9 +48,14 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender(..),
-                                 RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel,
-                                RhyoliteLogAppenderJournald(..))
+import Rhyolite.Backend.Logging
+  ( LoggingConfig (..),
+    LoggingEnv (..),
+    RhyoliteLogAppender(..),
+    RhyoliteLogLevel (..),
+    runLoggingEnv,
+    withLoggingMinLevel,
+    RhyoliteLogAppenderJournald(..))
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -99,7 +104,6 @@ import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
-
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure

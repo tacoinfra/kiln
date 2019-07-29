@@ -1605,7 +1605,7 @@ nodesTab =
               exportLogsMenu = do
                 isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
                 when isExportAvailable $ do
-                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Node :/ ())) False
+                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
                   for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
                     SemUi.listItem' def $ text "Export Logs"
 
@@ -2137,11 +2137,11 @@ bakersTab =
 
               isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
               when isExportAvailable $ do
-                mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Baker :/ ())) False
-                for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
+                mBakerUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
+                for_ mBakerUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Baker Logs"
-                mUri2 <- getBackendPath (InL BackendRoute_ExportLogs :/ (ExportLog_Endorser :/ ())) False
-                for_ mUri2 $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
+                mEndorserUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
+                for_ mEndorserUri $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Endorser Logs"
 
               let sk = _bakerInternalData_secretKey bid
