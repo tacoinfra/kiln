@@ -234,11 +234,10 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
         -- (marked for update)
         | isNothing (_connectedLedger_updated cl) ->
           runClientT (getConnectedLedger appConfig chain) >>= \case
-        Left err -> $(logError) (T.pack (show err))
+        Left err -> $(logError) (tshow err)
         Right mliv -> do
-          liftIO $ print mliv
           inDb $ do
-            $(logWarn) "updating connectedledger"
+            $(logDebug) ("Updating connectedledger: " <> tshow mliv)
             now <- getTime
             let connectedLedger = ConnectedLedger
                   { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
