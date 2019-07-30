@@ -276,9 +276,15 @@ data LedgerApp
   | LedgerApp_Wallet
   deriving (Show, Eq)
 
-getConnectedLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, LedgerApp, Text))
+defaultTimeout :: Maybe (NominalDiffTime, ClientError)
+defaultTimeout = Just (5, ClientError_Other "Timeout")
+
+noTimeout :: Maybe (NominalDiffTime, e)
+noTimeout = Nothing
+
+getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, LedgerApp, Text))
 getConnectedLedger appConfig chain = do
-  stdout <- runClientCommand appConfig chain ["list", "connected", "ledgers"] $ \_warnings errors -> if
+  stdout <- runClientCommand appConfig chain defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
   case chain of
@@ -309,9 +315,9 @@ getConnectedLedger appConfig chain = do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
 
-getBalanceFor :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
+getBalanceFor :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
 getBalanceFor appConfig chain pkh = do
-  stdout <- runClientCommand appConfig chain ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
+  stdout <- runClientCommand appConfig chain defaultTimeout ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
     | "Failed to acquire the protocol version from the node" : _ <- warnings
     , "Unrecognized command." : _ <- errors -> Left ClientError_NodeNotReady
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
@@ -325,9 +331,9 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
+showLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
 showLedger appConfig chain sk = do
-  stdout <- runClientCommand appConfig chain ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
+  stdout <- runClientCommand appConfig chain defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
@@ -353,34 +359,45 @@ showLedger appConfig chain sk = do
         -> Just pkh
       xs -> getPublicKeyHashZeronet xs
 
-importSecretKey :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> m ImportSecretKeyStep
+importSecretKey :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> m ImportSecretKeyStep
 importSecretKey appConfig chain sk = do
-  e <- runExceptT $ runClientCommand appConfig chain ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommand appConfig chain noTimeout ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ImportSecretKeyStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left ImportSecretKeyStep_Disconnected
     | otherwise -> Left $ ImportSecretKeyStep_Failed $ T.unlines errors
   pure $ either id (const ImportSecretKeyStep_Done) e
 
 runClientCommand
-  :: (MonadLogger m, MonadIO m, Show e)
-  => AppConfig -> Either NamedChain BinaryPaths -> [String] -> ([Text] -> [Text] -> Either e Text) -> ExceptT e m Text
-runClientCommand appConfig chain args handleError = do
+  :: (MonadLoggerIO m, Show e)
+  => AppConfig
+  -> Either NamedChain BinaryPaths
+  -> Maybe (NominalDiffTime, e)
+  -> [String]
+  -> ([Text] -> [Text] -> Either e Text)
+  -> ExceptT e m Text
+runClientCommand appConfig chain mTimeout args handleError = do
+  le <- askLoggerIO
   let
     procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
-  (exitCode, stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
-  case exitCode of
-    ExitSuccess -> pure $ T.strip stdout
-    ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> stderr
-      let strippedLines = fmap T.strip $ T.lines stderr
-          warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
-          errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
-          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
-      case handleError warnings (fatal ++ errors) of
-        Right t -> pure t
-        Left e -> do
-          $(logWarn) $ T.pack $ show e
-          throwError e
+    runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
+    withTimeout = maybe (fmap Just . id) timeout' (fst <$> mTimeout)
+  (liftIO $ withTimeout runProc) >>= \case
+    Just (exitCode, stdout, stderr) -> case exitCode of
+      ExitSuccess -> pure $ T.strip stdout
+      ExitFailure _ -> do
+        $(logWarn) $ "runClientCommand failed: " <> stderr
+        let strippedLines = fmap T.strip $ T.lines stderr
+            warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
+            errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
+            fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
+        case handleError warnings (fatal ++ errors) of
+          Right t -> pure t
+          Left e -> do
+            $(logWarn) $ T.pack $ show e
+            throwError e
+    Nothing -> do
+      $(logWarn) $ "runClientCommand Timedout"
+      maybe (pure "tezos-client timeout") throwError (snd <$> mTimeout)
 
 runClientT :: (MonadIO m, MonadLoggerIO m) => ExceptT ClientError (LoggingT IO) a -> m (Either ClientError a)
 runClientT m = do
@@ -389,9 +406,9 @@ runClientT m = do
     Nothing -> pure $ Left $ ClientError_Other "Timeout"
     Just a -> pure a
 
-setupLedgerToBake :: (MonadIO m, MonadLogger m) => AppConfig -> Either NamedChain BinaryPaths -> m SetupLedgerToBakeStep
+setupLedgerToBake :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m SetupLedgerToBakeStep
 setupLedgerToBake appConfig chain = do
-  e <- runExceptT $ runClientCommand appConfig chain ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommand appConfig chain noTimeout ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
     | "Ledger Application level error (setup): Conditions of use not satisfied" : _ <- errors -> Left SetupLedgerToBakeStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left SetupLedgerToBakeStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetupLedgerToBakeStep_Disconnected
@@ -475,7 +492,7 @@ parseRegisterStep fee (T.strip -> err)
 
 setHighWaterMark :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> RawLevel -> m SetHWMStep
 setHighWaterMark appConfig chain sk bl = do
-  e <- runExceptT $ runClientCommand appConfig chain ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommand appConfig chain noTimeout ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
     | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetHWMStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left SetHWMStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
@@ -484,7 +501,7 @@ setHighWaterMark appConfig chain sk bl = do
 
 submitProposals :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> [ProtocolHash] -> m VoteStep
 submitProposals appConfig chain proposals = do
-  e <- runExceptT $ runClientCommand appConfig chain (["submit", "proposals", "for", "ledger_kiln"] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommand appConfig chain noTimeout (["submit", "proposals", "for", "ledger_kiln"] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
     | "Submission failed because of invalid proposals." : _ <- errors -> Left $ VoteStep_Failed "Invalid proposals"
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
@@ -497,7 +514,7 @@ submitProposals appConfig chain proposals = do
 
 submitBallot :: MonadLoggerIO m => AppConfig -> Either NamedChain BinaryPaths -> ProtocolHash -> Ballot -> m VoteStep
 submitBallot appConfig chain proposal ballot = do
-  e <- runExceptT $ runClientCommand appConfig chain ["submit", "ballot", "for", "ledger_kiln", T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommand appConfig chain noTimeout ["submit", "ballot", "for", "ledger_kiln", T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
     | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"
