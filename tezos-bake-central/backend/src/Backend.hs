@@ -129,6 +129,7 @@ backendImpl cfg serve = do
         , _loggingConfig_filters = Just $ Map.fromList [(p, l)]
         })
         [ ("kiln", "", RhyoliteLogLevel_Warn)
+        , ("kiln", "SQL", RhyoliteLogLevel_Error)
         , ("kiln-node", "kiln-node", RhyoliteLogLevel_Info)
         , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
         , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
@@ -138,6 +139,7 @@ backendImpl cfg serve = do
       { _loggingConfig_logger = def @ RhyoliteLogAppender
       , _loggingConfig_filters = Just $ Map.fromList
         [ ("SQL", RhyoliteLogLevel_Error)
+        , ("", RhyoliteLogLevel_Warn)
         ]
       }]
 
