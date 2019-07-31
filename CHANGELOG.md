@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+  * Support for monitoring nodes running in *full* history mode. (Note that monitoring nodes running in *rolling* history mode is still not officially supported.)
+  * Support for starting the Kiln Node in *full* mode from a snapshot. If you upgrade from a previous version of Kiln where you've already started a Kiln Node, that node will remain in *archive* history mode. If you delete that node and create a new Kiln Node, it will run in *full* history mode and allow you to start from a snapshot. All newly created Kiln Nodes will run in *full* history mode.
+  * The Obsidian Public Node is now enabled by default. You can disable it with a command-line option. However, if you do this, you must monitor at least one node in *archive* history mode for Kiln to work correctly. This is because Kiln needs access to at least one source of network history that can go back to the beginning.
+  * New voting reminder alerts.
+  * A new alert for Kiln upgrades.
+  * Bug fixes and UI improvements.
+
+
 ## 0.5.3
 *June 11, 2019*
 
