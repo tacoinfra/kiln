@@ -38,7 +38,6 @@ import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
-import System.Timeout (timeout)
 import System.Which
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
@@ -128,7 +127,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           -- run appropriate 'show ledger' commands, but only do one at a time
           -- to allow other commands to take precedence
           inDb (project1 LedgerAccount_secretKeyField (isFieldNothing LedgerAccount_publicKeyHashField)) >>= \msk -> for_ msk $ \sk -> do
-            runClientT (showLedger appConfig chain sk) >>= \case
+            showLedger appConfig chain sk >>= \case
               Left ClientError_LedgerDisconnected -> inDb $ do
                 now <- getTime
                 -- Mark ledger as disconnected
@@ -145,7 +144,8 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
               Right mPkh -> do
                 case mPkh of
                   Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
-                  Just pkh -> runClientT (getBalanceFor appConfig chain pkh) >>= \case
+                  Just pkh -> getBalanceFor appConfig chain pkh >>= \case
+                    -- In case of error, give another try in the code further down
                     Left err -> $(logError) (T.pack (show err))
                     Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                     Right (Just tez) -> inDb $ do
@@ -157,7 +157,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           -- get any missing balances
           las <- inDb $ select $ LedgerAccount_publicKeyHashField /=. (Nothing :: Maybe PublicKeyHash) &&. isFieldNothing LedgerAccount_balanceField
           let las' = mapMaybe (\la -> (,) (_ledgerAccount_secretKey la) <$> _ledgerAccount_publicKeyHash la) las
-          for_ las' $ \(sk, pkh) -> runClientT (getBalanceFor appConfig chain pkh) >>= \case
+          for_ las' $ \(sk, pkh) -> getBalanceFor appConfig chain pkh >>= \case
             Left err -> $(logError) (T.pack (show err))
             Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
             Right (Just tez) -> inDb $ do
@@ -233,7 +233,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
         | isNothing (_connectedLedger_updated cl) ->
-          runClientT (getConnectedLedger appConfig chain) >>= \case
+          getConnectedLedger appConfig chain >>= \case
         Left err -> $(logError) (tshow err)
         Right mliv -> do
           inDb $ do
@@ -282,8 +282,8 @@ defaultTimeout = Just (5, ClientError_Other "Timeout")
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
 
-getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> ExceptT ClientError m (Maybe (LedgerIdentifier, LedgerApp, Text))
-getConnectedLedger appConfig chain = do
+getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
+getConnectedLedger appConfig chain = runExceptT $ do
   stdout <- runClientCommand appConfig chain defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
@@ -315,8 +315,8 @@ getConnectedLedger appConfig chain = do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
 
-getBalanceFor :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> PublicKeyHash -> ExceptT ClientError m (Maybe Tez)
-getBalanceFor appConfig chain pkh = do
+getBalanceFor :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> PublicKeyHash -> m (Either ClientError (Maybe Tez))
+getBalanceFor appConfig chain pkh = runExceptT $ do
   stdout <- runClientCommand appConfig chain defaultTimeout ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
     | "Failed to acquire the protocol version from the node" : _ <- warnings
     , "Unrecognized command." : _ <- errors -> Left ClientError_NodeNotReady
@@ -331,8 +331,8 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> ExceptT ClientError m (Maybe PublicKeyHash)
-showLedger appConfig chain sk = do
+showLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> SecretKey -> m (Either ClientError (Maybe PublicKeyHash))
+showLedger appConfig chain sk = runExceptT $ do
   stdout <- runClientCommand appConfig chain defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
@@ -398,13 +398,6 @@ runClientCommand appConfig chain mTimeout args handleError = do
     Nothing -> do
       $(logWarn) $ "runClientCommand Timedout"
       maybe (pure "tezos-client timeout") throwError (snd <$> mTimeout)
-
-runClientT :: (MonadIO m, MonadLoggerIO m) => ExceptT ClientError (LoggingT IO) a -> m (Either ClientError a)
-runClientT m = do
-  le <- askLoggerIO
-  liftIO $ timeout (45000000) (runLoggingEnv (LoggingEnv le) (runExceptT m)) >>= \case
-    Nothing -> pure $ Left $ ClientError_Other "Timeout"
-    Just a -> pure a
 
 setupLedgerToBake :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m SetupLedgerToBakeStep
 setupLedgerToBake appConfig chain = do
