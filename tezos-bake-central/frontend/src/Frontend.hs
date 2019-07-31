@@ -117,11 +117,12 @@ frontend = Frontend
   }
 
 frontendBody
-  :: forall m t x.
+  :: forall m js t x.
     ( MonadWidget t m
     , HasJS x m
     , PrimMonad m
     , RouteConstraints t AppRoute m
+    , Prerender js t m
     )
   => m ()
 frontendBody = void $ do
@@ -159,7 +160,7 @@ getBackendPath backendRoute isWebsocket = do
   pure url
 
 withConnectivityModal
-  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadJSM m, TriggerEvent t m, MonadFix m)
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, Prerender js t m)
   => AppWebSocket t app -> m () -> m ()
 withConnectivityModal socketState f = do
   connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected socketState)
