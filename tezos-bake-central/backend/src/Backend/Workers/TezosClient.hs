@@ -158,6 +158,11 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           las <- inDb $ select $ LedgerAccount_publicKeyHashField /=. (Nothing :: Maybe PublicKeyHash) &&. isFieldNothing LedgerAccount_balanceField
           let las' = mapMaybe (\la -> (,) (_ledgerAccount_secretKey la) <$> _ledgerAccount_publicKeyHash la) las
           for_ las' $ \(sk, pkh) -> getBalanceFor appConfig chain pkh >>= \case
+            Left (ClientError_Timeout)-> do
+              $(logError) ("Client Timout: getBalanceFor: " <> toPublicKeyHashText pkh)
+              inDb $ do
+                delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                notify NotifyTag_ShowLedger (sk, Nothing)
             Left err -> $(logError) (T.pack (show err))
             Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
             Right (Just tez) -> inDb $ do
