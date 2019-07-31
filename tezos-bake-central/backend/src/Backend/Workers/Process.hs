@@ -19,14 +19,14 @@
 module Backend.Workers.Process where
 
 import Control.Concurrent.Async (withAsync)
-import Control.Exception.Safe (tryJust)
-import Control.Monad.Catch (bracket)
-import Control.Monad.Logger (MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Exception.Safe (tryJust, throwIO)
+import Control.Monad.Catch (bracket, catch)
+import Control.Monad.Logger (MonadLogger, LoggingT, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
 import qualified Data.Text as T
-import Data.Time (getCurrentTime, addUTCTime)
+import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
 import Database.Groundhog.Postgresql
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -34,8 +34,10 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
+import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
+import System.Exit (ExitCode(..))
 import System.IO (hFlush, hGetLine)
 import System.IO.Error (isEOFError)
 import System.IO.Temp (withTempFile)
@@ -68,12 +70,10 @@ import ExtraPrelude
 
 processWorker
   :: (MonadIO m)
-  => ( forall m'
-       . (Monad m', MonadIO m', MonadLogger m', MonadBaseNoPureAborts IO m')
-       => "db" :! Pool Postgresql
-       -> "updateState" :! (ProcessState -> m' ())
+  => (    "db" :! Pool Postgresql
+       -> "updateState" :! (ProcessState -> IO ())
        -> "configFile" :! FilePath
-       -> m' a
+       -> IO a
      )
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
@@ -87,17 +87,29 @@ processWorker
 processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
-    updateState ProcessState_Initializing
+    inDb $ updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
-      v <- runLoggingEnv logger $ initialize ! #db db ! #updateState updateState ! #configFile configFile
-      updateState ProcessState_Starting
-      let procSpec = (mkProcess v configFile)
-            { Proc.std_out = Proc.CreatePipe
-            , Proc.std_err = Proc.CreatePipe
-            }
+      let
+        initF = initialize ! #db db ! #updateState (\ps -> inDb $ updateState ps) ! #configFile configFile
+      v <- catch initF $ \e -> do
+        inDb $ do
+          update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
+          updateState ProcessState_Failed
+        throwIO (e :: ExitCode)
+      inDb $ updateState ProcessState_Starting
+      let
+        procSpec = (mkProcess v configFile)
+          { Proc.std_out = Proc.CreatePipe
+          , Proc.std_err = Proc.CreatePipe
+          }
+      runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
       withCreateProcess procSpec procMonitor
     threadDelay' 10
   where
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
+    inDb = runLoggingEnv logger . runDb (Identity db)
+    updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
+    updateState = updateProcessState pid makeNotify
     state_ = ProcessData_stateField
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
@@ -117,7 +129,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
       $(logDebugSH) ("Obtaining lock for process:" :: Text, pid, ", LockId:" :: Text, lockId)
       let
         state = ProcessState_Stopped
-        {-# INLINE claim #-}
+
         claim = do
           now <- liftIO getCurrentTime
           let nowMinus5min = addUTCTime (-60 * 5) now
@@ -147,7 +159,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
       withHandleCopyWith (logInfoNS namespace) hStdout $ do
         -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
         withHandleCopyWith (logInfoNS namespace) hStderr $ do
-          runLoggingEnv logger go
+          runLoggingEnv logger $ go Nothing
       where
         withHandleCopyWith perLine h' f = case h' of
           Nothing -> f
@@ -160,8 +172,8 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
                     Right ln -> perLine (T.pack ln) *> loop
 
         {-# INLINE go #-}
-        go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => m1 ()
-        go = do
+        go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => Maybe Int -> m1 ()
+        go mCount = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
@@ -169,38 +181,53 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
             (getPC <$> project control_ (AutoKeyField ==. fromId pid))
           liftIO (getProcessExitCode ph) >>= \case
             Nothing -> do
-              updateState ProcessState_Running
-              case procControl of
-                ProcessControl_Run -> return ()
-                _ -> liftIO $ terminateProcess ph
-              threadDelay' 1 *> go
+              inDb $ updateState ProcessState_Running
+              let
+                stop = procControl /= ProcessControl_Run
+                timeoutInSec = 60 :: Int
+                delayInSec = 1 :: NominalDiffTime
+              liftIO $ when stop $ if mCount < Just (ceiling $ (fromIntegral timeoutInSec) / delayInSec)
+                then terminateProcess ph
+                else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
             Just _ -> case procControl of
               ProcessControl_Stop -> do
-                updateState ProcessState_Stopped
+                inDb $ updateState ProcessState_Stopped
                 $(logInfoSH) ("Process exited successfully:" :: Text, pid)
               ProcessControl_Restart -> do
-                updateState ProcessState_Stopped
+                inDb $ do
+                  updateState ProcessState_Stopped
+                  update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
-                runDb (Identity db) $ update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
               ProcessControl_Run -> do
-                updateState ProcessState_Failed
+                inDb $ updateState ProcessState_Failed
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
-    updateState :: (MonadIO m, MonadBaseNoPureAborts IO m) => ProcessState -> m ()
-    updateState state = runLoggingEnv logger $ runDb (Identity db) $ do
-      $(logDebugSH) ("putState:" :: Text, pid, state)
-      get (fromId pid) >>= \case
-        Nothing -> return ()
-        Just p ->
-          when (_processData_state p /= state) $ do
-            now <- liftIO getCurrentTime
-            update [state_ =. state, updated_ =. Just now]
-              (AutoKeyField ==. fromId pid)
-            for_ makeNotify $ \f -> do
-              uncurry notify $ f $ Just $ p
-                    { _processData_state = state
-                    , _processData_updated = Just now
-                    }
+updateProcessState
+  :: ( MonadLogger m
+     , PersistBackend m
+     , MonadIO m
+     )
+  => Id ProcessData
+  -> Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  -> ProcessState -> m ()
+updateProcessState pid makeNotify state = do
+  let
+    state_ = ProcessData_stateField
+    updated_ = ProcessData_updatedField
+  $(logDebugSH) ("putState:" :: Text, pid, state)
+  get (fromId pid) >>= \case
+    Nothing -> return ()
+    Just p ->
+      when (_processData_state p /= state) $ do
+        now <- liftIO getCurrentTime
+        update [state_ =. state, updated_ =. Just now]
+          (AutoKeyField ==. fromId pid)
+        for_ makeNotify $ \f -> do
+          uncurry notify $ f $ Just $ p
+            { _processData_state = state
+            , _processData_updated = Just now
+            }
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
 withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do

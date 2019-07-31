@@ -65,7 +65,10 @@ module ExtraPrelude
   , void
   , when
 
+  , (?~)
+  , (.~)
   , (***)
+  , (&)
   , (&&&)
   , (%~)
   , (^?)
@@ -79,6 +82,7 @@ module ExtraPrelude
   , (>>>)
   , ($>)
 
+  , safeSucc
   , tshow
   , when'
   , whenJust
@@ -89,7 +93,8 @@ import Control.Applicative (Const (..), liftA2, liftA3, (<|>))
 import Control.Arrow ((***), (&&&))
 import Control.Category ((<<<), (>>>))
 import Control.Lens (Iso, Lens, Lens', Prism, Prism', ifor, ifor_, itraverse, itraverse_, preview, view,
-                     views, (%~), (<&>), (^.), (^?), _1, _2, _3, _Just, _Left, _Nothing, _Right)
+                     views, _1, _2, _3, _Just, _Left, _Nothing, _Right,
+                     (?~), (.~), (%~), (^.), (^?), (<&>))
 import Control.Monad (foldM, guard, join, when, unless, (<=<), (>=>))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (MonadReader (ask), asks, runReaderT)
@@ -99,7 +104,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Default (def)
 import Data.Either (isLeft, isRight)
 import Data.Foldable (fold, for_, toList, traverse_)
-import Data.Function (fix, on)
+import Data.Function (fix, on, (&))
 import Data.Functor (void, ($>))
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
@@ -115,6 +120,9 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
 import qualified Data.Text as T
+
+safeSucc :: (Eq a, Enum a, Bounded a) => a -> Maybe a
+safeSucc a = if a /= maxBound then Just (succ a) else Nothing
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show

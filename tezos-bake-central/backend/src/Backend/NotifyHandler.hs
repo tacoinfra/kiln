@@ -13,7 +13,7 @@ import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (PersistBackend, get, project, (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend, get, Cond(..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
@@ -25,9 +25,7 @@ import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
 
-import Backend.BalanceTracking
 import Backend.CachedNodeRPC
--- import Backend.Graphs
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
@@ -51,7 +49,6 @@ notifyHandler
 notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
   --  $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
   case _dbNotification_message notification of
-    NotifyTag_BakerDaemonExternal :=> Identity (eid, mBaker) -> handleClient eid mBaker
     NotifyTag_Baker :=> Identity (bid, mBaker) -> handleBaker bid mBaker
     NotifyTag_BakerDetails :=> Identity bakerDetails -> handleBakerDetails bakerDetails
     NotifyTag_BakerRightsProgress :=> Identity (_x, y, _z) -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
@@ -65,6 +62,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_Parameters :=> Identity (_eid, ent) -> handleParameters ent
     NotifyTag_PublicNodeConfig :=> Identity (_eid, ent) -> handlePublicNodeConfig ent
     NotifyTag_PublicNodeHead :=> Identity (eid, ent) -> handlePublicNodeHead eid ent
+    NotifyTag_SnapshotMeta :=> Identity ent -> handleSnapshotMeta ent
     NotifyTag_TelegramConfig :=> Identity (_eid, ent) -> handleTelegramConfig ent
     NotifyTag_TelegramRecipient :=> Identity (eid, ent) -> handleTelegramRecipient eid ent
     NotifyTag_UpstreamVersion :=> Identity (_eid, ent) -> handleUpstreamVersion ent
@@ -81,8 +79,6 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
     NotifyTag_BakerRegistered :=> Identity (pkh, b) -> handleBakerRegistered pkh b
   where
-    clientsVS = _bakeViewSelector_clients aggVS
-    clientAddressesVS = _bakeViewSelector_clientAddresses aggVS
     latestHeadVS = _bakeViewSelector_latestHead aggVS
 
     connectedLedgerVS = _bakeViewSelector_connectedLedger aggVS
@@ -117,27 +113,6 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         { _bakeView_votePrompting = toRangeView1 votePromptingVS sk $ Just $ First step
         }
       | otherwise = pure mempty
-
-    summaryVS = _bakeViewSelector_summary aggVS
-
-    handleClient :: PersistBackend m' => Id BakerDaemon -> Maybe BakerDaemonExternalData -> m' (BakeView a)
-    handleClient cid client = whenM ( viewSelects cid clientsVS || viewSelects (Bounded cid) clientAddressesVS ) $ do
-      infos :: Maybe BakerDaemonInfoData <- fmap listToMaybe $ project BakerDaemonInfo_dataField (BakerDaemonInfo_idField ==. cid)
-      let
-        clientsPatch = mempty
-          { _bakeView_clients = toRangeView1 clientsVS cid $ Just $ First infos
-          , _bakeView_clientAddresses = toRangeView1 clientAddressesVS (Bounded cid) $ Just $ First $ _bakerDaemonExternalData_address <$> client
-          }
-      summaryPatch <- whenM (viewSelects () summaryVS) $ do
-        -- maxLevel <- getMaxLevel
-        summaryReport <- getSummaryReport
-        -- summaryGraph <- whenJust maxLevel $ \l -> do
-        --   mGraph <- liftIO $ cumulativeRewardsGraph (fromIntegral l) (fmap (getFirst . fst) rewardMap)
-        --   return $ single mGraph a
-        return $ mempty
-          { _bakeView_summary = toMaybeView (_bakeViewSelector_summary aggVS) summaryReport
-          }
-      return $ clientsPatch <> summaryPatch
 
     paramsVS = _bakeViewSelector_parameters aggVS
 
@@ -317,6 +292,12 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           latestHead <- liftIO $ atomically $ dataSourceHead nds
           pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
+
+    snapshotMetaVS = _bakeViewSelector_snapshotMeta aggVS
+
+    handleSnapshotMeta :: Applicative m' => SnapshotMeta -> m' (BakeView a)
+    handleSnapshotMeta cfg = whenM (viewSelects () snapshotMetaVS) $ do
+      pure $ mempty { _bakeView_snapshotMeta = toMaybeView snapshotMetaVS $ Just cfg }
 
     telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
 

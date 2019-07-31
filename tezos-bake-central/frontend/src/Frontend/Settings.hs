@@ -136,10 +136,6 @@ settingsTab = do
       let textKind = case rk of
             RightKind_Baking -> "bake"
             RightKind_Endorsing -> "endorsement"
-          fakeRadioItem :: Dynamic t Bool -> m a -> m (Event t (), a)
-          fakeRadioItem checked ma = do
-            (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
-            pure (domEvent Click e, a)
       divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
       (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
       rec
@@ -291,3 +287,8 @@ settingsTab = do
             else
               text "Up to date as of " *> localHumanizedTimestamp (pure Nothing) (pure updatedTime)
           _ -> blank
+
+fakeRadioItem :: (DomBuilder t m, PostBuild t m) => Dynamic t Bool -> m a -> m (Event t (), a)
+fakeRadioItem checked ma = do
+  (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
+  pure (domEvent Click e, a)

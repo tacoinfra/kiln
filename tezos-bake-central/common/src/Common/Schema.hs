@@ -82,6 +82,9 @@ import Tezos.Types
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
 
+maxProposalUpvotes :: Int
+maxProposalUpvotes = 20
+
 data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger
@@ -187,39 +190,6 @@ data BakerDaemon = BakerDaemon
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDaemon
 
--- data BakerDaemonExternal = BakerDaemonExternal (WithId (Id BakerDaemon) (Deletable BakerDaemonExternal'))
-
-data BakerDaemonExternal = BakerDaemonExternal
-  { _bakerDaemonExternal_id :: !(Id BakerDaemon)
-  , _bakerDaemonExternal_data :: !(DeletableRow BakerDaemonExternalData)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonExternal where
-  -- Should be the same as `IdData BakerDaemonExternalData` always.
-  type IdData BakerDaemonExternal = Id BakerDaemon
-
-data BakerDaemonExternalData = BakerDaemonExternalData
-  { _bakerDaemonExternalData_address :: !URI
-  , _bakerDaemonExternalData_alias :: !(Maybe Text)
-  , _bakerDaemonExternalData_updated :: !(Maybe UTCTime)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonExternalData where
-  type IdData BakerDaemonExternalData = Id BakerDaemon
-
--- data BakerDaemonDetails = BakerDaemonDetails (WithId (Id BakerDaemon) BakerDaemonDetails')
-
-data BakerDaemonInfo = BakerDaemonInfo
-  { _bakerDaemonInfo_id :: !(Id BakerDaemon)
-  , _bakerDaemonInfo_data :: !BakerDaemonInfoData
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-
-data BakerDaemonInfoData = BakerDaemonInfoData
-  { _bakerDaemonInfoData_report :: !(Json Report)
-  , _bakerDaemonInfoData_config :: !(Json ClientConfig)
-  -- , _bakerDaemonInfo_node :: Id Node
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerDaemonInfoData where
-  type IdData BakerDaemonInfoData = Id BakerDaemon
-
 data BakerDaemonInternal = BakerDaemonInternal
   { _bakerDaemonInternal_id :: !(Id BakerDaemon)
   , _bakerDaemonInternal_data :: !(DeletableRow BakerDaemonInternalData)
@@ -312,14 +282,27 @@ data NodeInternal = NodeInternal
 instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
 
+data NodeProcessState
+  = NodeProcessState_ImportingSnapshot
+  | NodeProcessState_ImportComplete
+  | NodeProcessState_ImportFailed
+  | NodeProcessState_ImportTimeout
+  | NodeProcessState_GeneratingIdentity
+  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+
 data ProcessState
    = ProcessState_Stopped
    | ProcessState_Initializing
-   | ProcessState_GeneratingIdentity -- only applicable to Node
+   | ProcessState_Node NodeProcessState -- only applicable to Node
    | ProcessState_Starting
    | ProcessState_Running
    | ProcessState_Failed
-  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+  deriving (Eq, Ord, Show, Read, Generic, Typeable)
+
+isProcessStateNode :: ProcessState -> Bool
+isProcessStateNode = \case
+  ProcessState_Node _ -> True
+  _ -> False
 
 data ProcessControl
   = ProcessControl_Run
@@ -350,6 +333,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
   , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
   , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
+  , _nodeDetailsData_savePoint :: !(Maybe RawLevel)
   , _nodeDetailsData_peerCount :: !(Maybe Word64)
   , _nodeDetailsData_networkStat :: !NetworkStat
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
@@ -365,6 +349,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_headBlockHash = Nothing
   , _nodeDetailsData_headBlockPred = Nothing
   , _nodeDetailsData_headBlockBakedAt = Nothing
+  , _nodeDetailsData_savePoint = Nothing
   , _nodeDetailsData_peerCount = Nothing
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
@@ -529,17 +514,21 @@ data PeriodPromotionVote = PeriodPromotionVote
   , _periodPromotionVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Proposal period
 data BakerProposal = BakerProposal
   { _bakerProposal_pkh :: !PublicKeyHash
   , _bakerProposal_proposal :: !(Id PeriodProposal)
   , _bakerProposal_included :: !(Maybe BlockHash)
+  , _bakerProposal_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+-- Exploration/promotion period
 data BakerVote = BakerVote
   { _bakerVote_pkh :: !PublicKeyHash
   , _bakerVote_proposal :: !(Id PeriodProposal)
   , _bakerVote_ballot :: !Ballot
   , _bakerVote_included :: !(Maybe BlockHash)
+  , _bakerVote_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data BlockTodo = BlockTodo
@@ -774,18 +763,6 @@ data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
 instance HasId ErrorLogBakerNoHeartbeat where
   type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
 
-data ClientWorker = ClientWorker_Baking | ClientWorker_Endorsing
-  deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
-
-data ErrorLogMultipleBakersForSameBaker = ErrorLogMultipleBakersForSameBaker
-  { _errorLogMultipleBakersForSameBaker_log :: !(Id ErrorLog)
-  , _errorLogMultipleBakersForSameBaker_publicKeyHash :: !PublicKeyHash
-  , _errorLogMultipleBakersForSameBaker_client :: !(Id BakerDaemon)
-  , _errorLogMultipleBakersForSameBaker_worker :: !ClientWorker
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogMultipleBakersForSameBaker where
-  type IdData ErrorLogMultipleBakersForSameBaker = Id ErrorLog
-
 data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
   { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
   , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
@@ -834,7 +811,7 @@ instance HasId ErrorLogBadNodeHead where
 --
 -- in particular, there's two ways to "resolve" this type of alert, either a
 -- new uncle occurs in which the baker /did/ exercise their rights, or the user
--- manually acknowledges the error.  If the network is branch hopping; its
+-- manually acknowledges the error.  If the network is branch hopping; it's
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
 data ErrorLogBakerMissed = ErrorLogBakerMissed
@@ -854,6 +831,19 @@ data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInsufficientFunds where
   type IdData ErrorLogInsufficientFunds = Id ErrorLog
+
+data ErrorLogVotingReminder = ErrorLogVotingReminder
+  { _errorLogVotingReminder_log :: !(Id ErrorLog)
+  , _errorLogVotingReminder_chainId :: !ChainId
+  , _errorLogVotingReminder_baker :: !(Id Baker)
+  , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
+  , _errorLogVotingReminder_votingPeriod :: !RawLevel
+  , _errorLogVotingReminder_previouslyVoted :: !Bool
+  , _errorLogVotingReminder_rangeMax :: !Int
+  , _errorLogVotingReminder_periodEndsAt :: !UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogVotingReminder where
+  type IdData ErrorLogVotingReminder = Id ErrorLog
 
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
@@ -888,6 +878,7 @@ data UpstreamVersion = UpstreamVersion
   { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
   , _upstreamVersion_version :: !(Maybe Version)
   , _upstreamVersion_updated :: !UTCTime
+  , _upstreamVersion_dismissed :: !Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
@@ -932,6 +923,20 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
+type SnapshotImportError = Text
+
+data SnapshotMeta = SnapshotMeta
+  { _snapshotMeta_filename :: !Text -- user supplied
+  , _snapshotMeta_storePath :: !Text -- where stored
+  , _snapshotMeta_uploadTime :: !UTCTime
+  , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
+  , _snapshotMeta_headBlock :: !(Maybe BlockHash)
+  , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
+  , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
+  , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId SnapshotMeta
+
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
 data LogTag a where
@@ -962,12 +967,12 @@ deriving instance Show (NodeLogTag a)
 -- of a background process and a delegate. we should really rename one or both
 -- to minimize confusion between these two ideas.
 data BakerLogTag a where
-  BakerLogTag_MultipleBakersForSameBaker :: BakerLogTag ErrorLogMultipleBakersForSameBaker
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
+  BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -982,10 +987,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakedEventOperation
   , ''Baker
   , ''BakerDaemon
-  , ''BakerDaemonExternal
-  , ''BakerDaemonExternalData
-  , ''BakerDaemonInfo
-  , ''BakerDaemonInfoData
   , ''BakerDaemonInternalData
   , ''BakerData
   , ''BakerDetails
@@ -996,9 +997,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BlockBaker
   , ''BlockTodo
   , ''CacheDelegateInfo
-  , ''ClientConfig
-  , ''ClientDaemonWorker
-  , ''ClientWorker
   , ''DeletableRow
   , ''EndorseEvent
   , ''ErrorEvent
@@ -1011,10 +1009,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
-  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   , ''Event
   , ''MailServerConfig
   , ''Node
@@ -1023,6 +1021,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternal
   , ''NodeExternalData
   , ''NodeInternal
+  , ''NodeProcessState
   , ''Parameters
   , ''PeriodTestingVote
   , ''PeriodPromotionVote
@@ -1039,6 +1038,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''RightNotificationLimit
   , ''RightNotificationSettings
   , ''SeenEvent
+  , ''SnapshotMeta
   , ''SmtpProtocol
   , ''TelegramConfig
   , ''TelegramMessageQueue
@@ -1053,10 +1053,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakedEventOperation
   , 'Baker
   , 'BakerDaemon
-  , 'BakerDaemonExternal
-  , 'BakerDaemonExternalData
-  , 'BakerDaemonInfo
-  , 'BakerDaemonInfoData
   , 'BakerDaemonInternalData
   , 'BakerData
   , 'BakerDetails
@@ -1078,10 +1074,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
-  , 'ErrorLogMultipleBakersForSameBaker
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
+  , 'ErrorLogVotingReminder
   , 'Event
   , 'MailServerConfig
   , 'Node
@@ -1103,6 +1099,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'RightNotificationLimit
   , 'RightNotificationSettings
   , 'SeenEvent
+  , 'SnapshotMeta
   , 'TelegramConfig
   , 'TelegramMessageQueue
   , 'TelegramRecipient
@@ -1110,8 +1107,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   ] ++ map makePrisms
   [ ''UpgradeCheckError
   ])
-
-return []
 
 fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
@@ -1185,8 +1180,8 @@ errorLogNames =
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
-  , ''ErrorLogMultipleBakersForSameBaker
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogVotingReminder
   ]

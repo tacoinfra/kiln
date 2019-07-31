@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -32,16 +33,17 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Functor.Compose (Compose (..))
+import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.These (These (..), these)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, diffUTCTime)
+import qualified Data.Time as Time
 import Data.Word (Word16)
 import Data.Witherable (Filterable (mapMaybe))
 import Reflex (Additive, Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
 import Rhyolite.Schema (Email, Id(..), IdData)
-import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
@@ -62,6 +64,33 @@ getErrorInterval :: (ErrorLog, ErrorLogView) -> First ((ErrorLog, ErrorLogView),
 getErrorInterval ei@(el, _) = First (ei, ClosedInterval
   (Bounded $ _errorLog_started el)
   (maybe UpperInfinity Bounded $ _errorLog_stopped el))
+
+-- | Get or estimate the start time of a period. Return 'Bool' indicates if the date is estimated
+getStartTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
+getStartTimeForPeriod p a as proto
+  | Just a' <- Map.lookup p as = (_amendment_start a', False)
+  | otherwise = (estimate, True)
+  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
+        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
+
+-- | Get or estimate the end time of a period. Return 'Bool' indicates if the date is estimated
+getEndTimeForPeriod :: VotingPeriodKind -> Amendment -> Map.Map VotingPeriodKind Amendment -> ProtoInfo -> (Time.UTCTime, Bool)
+getEndTimeForPeriod p a as proto
+  | Just p' <- safeSucc p, Just a' <- Map.lookup p' as = (_amendment_start a', False)
+  | otherwise = (estimate, True)
+  where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
+        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
+
+calculatePeriodProgress :: UTCTime -> UTCTime -> UTCTime -> (Double, Time.NominalDiffTime)
+calculatePeriodProgress currentTime startTime endTime = (ellapsedFraction, remaining)
+  where
+    ellapsed = currentTime `diffUTCTime` startTime
+    remaining = endTime `diffUTCTime` currentTime
+    ellapsedFraction = realToFrac ellapsed / realToFrac (ellapsed + remaining)
 
 type Deletable a = First (Maybe a)
 
@@ -214,8 +243,6 @@ instance Semigroup VoteState where
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
-  , _bakeViewSelector_clientAddresses :: !(RangeSelector' (Id BakerDaemon) (Deletable URI) a)
-  , _bakeViewSelector_clients :: !(RangeSelector (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
@@ -225,7 +252,6 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_parameters :: !(MaybeSelector ProtoInfo a)
-  , _bakeViewSelector_summary :: !(MaybeSelector (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeViewSelector_latestHead :: !(MaybeSelector VeryBlockLike a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
   , _bakeViewSelector_proposals :: !(RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
@@ -239,6 +265,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
+  , _bakeViewSelector_snapshotMeta :: !(MaybeSelector SnapshotMeta a)
   , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
   , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable (PublicKeyHash, Tez)) a)
   , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
@@ -249,8 +276,6 @@ data BakeViewSelector a = BakeViewSelector
 
 data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
-  , _bakeView_clientAddresses :: !(RangeView' (Id BakerDaemon) (Deletable URI) a)
-  , _bakeView_clients :: !(RangeView (Id BakerDaemon) (Deletable BakerDaemonInfoData) a)
   , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
   , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
@@ -265,7 +290,6 @@ data BakeView a = BakeView
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
   , _bakeView_parameters :: !(MaybeView ProtoInfo a)
-  , _bakeView_summary :: !(MaybeView (Report, Int) a) -- The Int is the number of bakers we've yet to get a report from.
   , _bakeView_latestHead :: !(MaybeView VeryBlockLike a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
   , _bakeView_proposals :: !(RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
@@ -279,6 +303,7 @@ data BakeView a = BakeView
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
   , _bakeView_alertCount :: !(MaybeView Int a)
+  , _bakeView_snapshotMeta :: !(MaybeView SnapshotMeta a)
   -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
   , _bakeView_connectedLedger :: !(MaybeView (Maybe ConnectedLedger) a)
@@ -326,21 +351,21 @@ bakerIdForBakerErrorLogView (tag :=> Identity v) = bakerIdForBakerLogTag tag v
 
 bakerIdForBakerLogTag :: BakerLogTag t -> t -> PublicKeyHash
 bakerIdForBakerLogTag = \case
-  BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_publicKeyHash
   BakerLogTag_BakerMissed -> unId . _errorLogBakerMissed_baker
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
+  BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
-  BakerLogTag_MultipleBakersForSameBaker -> _errorLogMultipleBakersForSameBaker_log
   BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
+  BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
 errorLogIdForNodeLogTag = \case
@@ -369,8 +394,6 @@ mailServerConfigToView x ns = MailServerView
 cropBakeView :: (Semigroup a) => BakeViewSelector a -> BakeView b -> BakeView a
 cropBakeView vs v = BakeView
   { _bakeView_config = cropView (_bakeViewSelector_config vs) (_bakeView_config v)
-  , _bakeView_clientAddresses = cropView (_bakeViewSelector_clientAddresses vs) (_bakeView_clientAddresses v)
-  , _bakeView_clients = cropView (_bakeViewSelector_clients vs) (_bakeView_clients v)
   , _bakeView_parameters = cropView (_bakeViewSelector_parameters vs) (_bakeView_parameters v)
   , _bakeView_nodeAddresses = cropView (_bakeViewSelector_nodeAddresses vs) (_bakeView_nodeAddresses v)
   , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
@@ -380,7 +403,6 @@ cropBakeView vs v = BakeView
   , _bakeView_bakerDetails = cropView (_bakeViewSelector_bakerDetails vs) (_bakeView_bakerDetails v)
   , _bakeView_bakerStats = cropView (_bakeViewSelector_bakerStats vs) (_bakeView_bakerStats v)
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
-  , _bakeView_summary = cropView (_bakeViewSelector_summary vs) (_bakeView_summary v)
   , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
   , _bakeView_amendment = cropView (_bakeViewSelector_amendment vs) (_bakeView_amendment v)
@@ -393,6 +415,7 @@ cropBakeView vs v = BakeView
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
   , _bakeView_alertCount = cropView (_bakeViewSelector_alertCount vs) (_bakeView_alertCount v)
+  , _bakeView_snapshotMeta = cropView (_bakeViewSelector_snapshotMeta vs) (_bakeView_snapshotMeta v)
   , _bakeView_connectedLedger = cropView (_bakeViewSelector_connectedLedger vs) (_bakeView_connectedLedger v)
   , _bakeView_showLedger = cropView (_bakeViewSelector_showLedger vs) (_bakeView_showLedger v)
   , _bakeView_prompting = cropView (_bakeViewSelector_prompting vs) (_bakeView_prompting v)
@@ -404,8 +427,6 @@ cropBakeView vs v = BakeView
 instance Filterable BakeViewSelector where
   mapMaybe f a = BakeViewSelector
     { _bakeViewSelector_config = mapMaybe f $ _bakeViewSelector_config a
-    , _bakeViewSelector_clientAddresses = mapMaybe f $ _bakeViewSelector_clientAddresses a
-    , _bakeViewSelector_clients = mapMaybe f $ _bakeViewSelector_clients a
     , _bakeViewSelector_parameters = mapMaybe f $ _bakeViewSelector_parameters a
     , _bakeViewSelector_publicNodeConfig = mapMaybe f $ _bakeViewSelector_publicNodeConfig a
     , _bakeViewSelector_publicNodeHeads = mapMaybe f $ _bakeViewSelector_publicNodeHeads a
@@ -414,7 +435,6 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_bakerDetails = mapMaybe f $ _bakeViewSelector_bakerDetails a
     , _bakeViewSelector_bakerStats = mapMaybe f $ _bakeViewSelector_bakerStats a
     , _bakeViewSelector_mailServer = mapMaybe f $ _bakeViewSelector_mailServer a
-    , _bakeViewSelector_summary = mapMaybe f $ _bakeViewSelector_summary a
     , _bakeViewSelector_nodeAddresses = mapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_errors = (fmap.mapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = mapMaybe f $ _bakeViewSelector_latestHead a
@@ -428,6 +448,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_telegramConfig = mapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = mapMaybe f (_bakeViewSelector_telegramRecipients a)
     , _bakeViewSelector_alertCount = mapMaybe f (_bakeViewSelector_alertCount a)
+    , _bakeViewSelector_snapshotMeta = mapMaybe f (_bakeViewSelector_snapshotMeta a)
     , _bakeViewSelector_connectedLedger = mapMaybe f (_bakeViewSelector_connectedLedger a)
     , _bakeViewSelector_showLedger = mapMaybe f (_bakeViewSelector_showLedger a)
     , _bakeViewSelector_prompting = mapMaybe f (_bakeViewSelector_prompting a)
@@ -439,8 +460,6 @@ instance Filterable BakeViewSelector where
 instance Align BakeViewSelector where
   nil = BakeViewSelector
     { _bakeViewSelector_config = nil
-    , _bakeViewSelector_clientAddresses = nil
-    , _bakeViewSelector_clients = nil
     , _bakeViewSelector_parameters = nil
     , _bakeViewSelector_publicNodeConfig = nil
     , _bakeViewSelector_publicNodeHeads = nil
@@ -449,7 +468,6 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_bakerDetails = nil
     , _bakeViewSelector_bakerStats = nil
     , _bakeViewSelector_mailServer = nil
-    , _bakeViewSelector_summary = nil
     , _bakeViewSelector_nodeAddresses = nil
     , _bakeViewSelector_errors = nil
     , _bakeViewSelector_latestHead = nil
@@ -463,6 +481,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = nil
     , _bakeViewSelector_telegramRecipients = nil
     , _bakeViewSelector_alertCount = nil
+    , _bakeViewSelector_snapshotMeta = nil
     , _bakeViewSelector_connectedLedger = nil
     , _bakeViewSelector_showLedger = nil
     , _bakeViewSelector_prompting = nil
@@ -474,8 +493,6 @@ instance Align BakeViewSelector where
   alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
   alignWith f xs ys = BakeViewSelector
     { _bakeViewSelector_config = f' _bakeViewSelector_config
-    , _bakeViewSelector_clientAddresses = f' _bakeViewSelector_clientAddresses
-    , _bakeViewSelector_clients = f' _bakeViewSelector_clients
     , _bakeViewSelector_parameters = f' _bakeViewSelector_parameters
     , _bakeViewSelector_publicNodeConfig = f' _bakeViewSelector_publicNodeConfig
     , _bakeViewSelector_publicNodeHeads = f' _bakeViewSelector_publicNodeHeads
@@ -484,7 +501,6 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_bakerDetails = f' _bakeViewSelector_bakerDetails
     , _bakeViewSelector_bakerStats = f' _bakeViewSelector_bakerStats
     , _bakeViewSelector_mailServer = f' _bakeViewSelector_mailServer
-    , _bakeViewSelector_summary = f' _bakeViewSelector_summary
     , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
     , _bakeViewSelector_errors = alignWith (these (fmap $ f . This) (fmap $ f . That) (alignWith f)) (_bakeViewSelector_errors xs) (_bakeViewSelector_errors ys)
     , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
@@ -498,6 +514,7 @@ instance Align BakeViewSelector where
     , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
     , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
     , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
+    , _bakeViewSelector_snapshotMeta = f' _bakeViewSelector_snapshotMeta
     , _bakeViewSelector_connectedLedger = f' _bakeViewSelector_connectedLedger
     , _bakeViewSelector_showLedger = f' _bakeViewSelector_showLedger
     , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
@@ -512,8 +529,6 @@ instance Align BakeViewSelector where
 instance Filterable BakeView where
   mapMaybe f a = BakeView
     { _bakeView_config = mapMaybe f $ _bakeView_config a
-    , _bakeView_clientAddresses = mapMaybe f $ _bakeView_clientAddresses a
-    , _bakeView_clients = mapMaybe f $ _bakeView_clients a
     , _bakeView_parameters = mapMaybe f $ _bakeView_parameters a
     , _bakeView_publicNodeConfig = mapMaybe f $ _bakeView_publicNodeConfig a
     , _bakeView_publicNodeHeads = mapMaybe f $ _bakeView_publicNodeHeads a
@@ -522,7 +537,6 @@ instance Filterable BakeView where
     , _bakeView_bakerDetails = mapMaybe f $ _bakeView_bakerDetails a
     , _bakeView_bakerStats = mapMaybe f $ _bakeView_bakerStats a
     , _bakeView_mailServer = mapMaybe f $ _bakeView_mailServer a
-    , _bakeView_summary = mapMaybe f $ _bakeView_summary a
     , _bakeView_nodeAddresses = mapMaybe f $ _bakeView_nodeAddresses a
     , _bakeView_errors = (fmap.mapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = mapMaybe f $ _bakeView_latestHead a
@@ -536,6 +550,7 @@ instance Filterable BakeView where
     , _bakeView_telegramConfig = mapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = mapMaybe f $ _bakeView_telegramRecipients a
     , _bakeView_alertCount = mapMaybe f $ _bakeView_alertCount a
+    , _bakeView_snapshotMeta = mapMaybe f $ _bakeView_snapshotMeta a
     , _bakeView_connectedLedger = mapMaybe f $ _bakeView_connectedLedger a
     , _bakeView_showLedger = mapMaybe f $ _bakeView_showLedger a
     , _bakeView_prompting = mapMaybe f $ _bakeView_prompting a
@@ -555,9 +570,6 @@ alignTheseWith f = these (fmap (f . This)) (fmap (f . That)) (alignWith f)
 instance Semigroup a => Semigroup (BakeViewSelector a) where
   u <> v = BakeViewSelector
     { _bakeViewSelector_config = (<>) (_bakeViewSelector_config u) (_bakeViewSelector_config v)
-    , _bakeViewSelector_clientAddresses = (<>) (_bakeViewSelector_clientAddresses u) (_bakeViewSelector_clientAddresses v)
-    , _bakeViewSelector_summary = (<>) (_bakeViewSelector_summary u) (_bakeViewSelector_summary v)
-    , _bakeViewSelector_clients = (<>) (_bakeViewSelector_clients u) (_bakeViewSelector_clients v)
     , _bakeViewSelector_parameters = (<>) (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
     , _bakeViewSelector_publicNodeConfig = (<>) (_bakeViewSelector_publicNodeConfig u) (_bakeViewSelector_publicNodeConfig v)
     , _bakeViewSelector_publicNodeHeads = (<>) (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
@@ -579,6 +591,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
     , _bakeViewSelector_alertCount = (<>) (_bakeViewSelector_alertCount u) (_bakeViewSelector_alertCount v)
+    , _bakeViewSelector_snapshotMeta = (<>) (_bakeViewSelector_snapshotMeta u) (_bakeViewSelector_snapshotMeta v)
     , _bakeViewSelector_connectedLedger = (<>) (_bakeViewSelector_connectedLedger u) (_bakeViewSelector_connectedLedger v)
     , _bakeViewSelector_showLedger = (<>) (_bakeViewSelector_showLedger u) (_bakeViewSelector_showLedger v)
     , _bakeViewSelector_prompting = (<>) (_bakeViewSelector_prompting u) (_bakeViewSelector_prompting v)
@@ -590,9 +603,6 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
 instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
   mempty = BakeViewSelector
     { _bakeViewSelector_config = mempty
-    , _bakeViewSelector_clientAddresses = mempty
-    , _bakeViewSelector_summary = mempty
-    , _bakeViewSelector_clients = mempty
     , _bakeViewSelector_parameters = mempty
     , _bakeViewSelector_publicNodeConfig = mempty
     , _bakeViewSelector_publicNodeHeads = mempty
@@ -614,6 +624,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
     , _bakeViewSelector_alertCount = mempty
+    , _bakeViewSelector_snapshotMeta = mempty
     , _bakeViewSelector_connectedLedger = mempty
     , _bakeViewSelector_showLedger = mempty
     , _bakeViewSelector_prompting = mempty
@@ -632,8 +643,6 @@ instance Additive (BakeViewSelector SelectedCount)
 instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
   mempty = BakeView
     { _bakeView_config = mempty
-    , _bakeView_clientAddresses = mempty
-    , _bakeView_clients = mempty
     , _bakeView_parameters = mempty
     , _bakeView_publicNodeConfig = mempty
     , _bakeView_publicNodeHeads = mempty
@@ -644,7 +653,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_mailServer = mempty
     -- , _bakeView_graphs = mempty
     -- , _bakeView_summaryGraph = mempty
-    , _bakeView_summary = mempty
     , _bakeView_nodeAddresses = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
@@ -658,6 +666,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
     , _bakeView_alertCount = mempty
+    , _bakeView_snapshotMeta = mempty
     , _bakeView_connectedLedger = mempty
     , _bakeView_showLedger = mempty
     , _bakeView_prompting = mempty
@@ -670,8 +679,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
 instance Semigroup a => Semigroup (BakeView a) where
   u <> v = BakeView
     { _bakeView_config = _bakeView_config u <> _bakeView_config v
-    , _bakeView_clientAddresses = _bakeView_clientAddresses u <> _bakeView_clientAddresses v
-    , _bakeView_clients = _bakeView_clients u <> _bakeView_clients v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
     , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
     , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
@@ -682,7 +689,6 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_mailServer = _bakeView_mailServer u <> _bakeView_mailServer v
     -- , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
     -- , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v
-    , _bakeView_summary = _bakeView_summary u <> _bakeView_summary v
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
@@ -696,6 +702,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v
     , _bakeView_alertCount = _bakeView_alertCount u <> _bakeView_alertCount v
+    , _bakeView_snapshotMeta = _bakeView_snapshotMeta u <> _bakeView_snapshotMeta v
     , _bakeView_connectedLedger = _bakeView_connectedLedger u <> _bakeView_connectedLedger v
     , _bakeView_showLedger = _bakeView_showLedger u <> _bakeView_showLedger v
     , _bakeView_prompting = _bakeView_prompting u <> _bakeView_prompting v

@@ -25,7 +25,7 @@ import Tezos.Operation(Ballot)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
-import Common.Schema (ErrorLog, LogTag, PeriodProposal, RightKind, RightNotificationLimit)
+import Common.Schema
 
 instance HasRequest Bake where
   data PublicRequest Bake a where
@@ -35,7 +35,8 @@ instance HasRequest Bake where
       -> Maybe Int
       -> PublicRequest Bake ()
     PublicRequest_AddInternalNode
-      :: PublicRequest Bake ()
+      :: Maybe NodeProcessState
+      -> PublicRequest Bake ()
     PublicRequest_RemoveNode
       :: Either URI ()
       -> PublicRequest Bake ()
@@ -68,6 +69,8 @@ instance HasRequest Bake where
       :: PublicKeyHash
       -> PublicRequest Bake ()
     PublicRequest_CheckForUpgrade
+      :: PublicRequest Bake ()
+    PublicRequest_DismissUpgradeAlert
       :: PublicRequest Bake ()
     PublicRequest_SetPublicNodeConfig
       :: PublicNode

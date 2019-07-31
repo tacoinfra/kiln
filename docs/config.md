@@ -44,6 +44,10 @@ blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
 
 Serve Node Cache.  Default disabled.
 
+## enable-obsidian-node BOOL
+
+Enables the Public Node Caching library provided by Obsidian Systems.  Default Enabled.
+
 ## tzscan-api-uri URL
 
 Custom tzscan API URL.  Default none.

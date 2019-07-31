@@ -6,7 +6,7 @@ Users should be able to vote from within Kiln using a Kiln Baker. This should wo
 
 ## Tests
 
-**NOTE:** All commands must be run from the root of this repository.
+**NOTE:** All commands must be run from the root of this repository. If you're testing via `ob run`, use `tezos-bake-central` instead of `app`.
 
   1. Install Kiln to the `app` folder:
      ```shell
@@ -28,7 +28,7 @@ Users should be able to vote from within Kiln using a Kiln Baker. This should wo
      ```
   6. Add a Kiln Node and wait for it to sync.
   7. Add a Kiln baker and use the account that has a lot of tez.
-  8. Set the high-water mark of the baker to 0.
+  8. Reset the high-water mark of the baker via the options menu in the kiln baker tile.
   9. Wait for the `protocol-test` script to get to a point where it says the following:
      ```
      Flextesa.daemons-upgrade:
@@ -44,8 +44,15 @@ Users should be able to vote from within Kiln using a Kiln Baker. This should wo
 
 To clean up and start everything from scratch run:
 
+a) if using `./backend`
 ```shell
 rm -rf app
+```
+
+b ) if using `ob run`
+```shell
+git clean -f config
+git checkout config
 ```
 
 You may also need to run `pkill tezos-node` to stop old nodes.

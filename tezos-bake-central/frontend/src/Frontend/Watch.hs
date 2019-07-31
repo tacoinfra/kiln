@@ -3,11 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -15,7 +12,6 @@
 
 module Frontend.Watch where
 
-import Data.Fixed (Micro)
 import qualified Data.List.NonEmpty as NEL
 import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
@@ -29,7 +25,6 @@ import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
-import Text.URI (URI)
 
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
@@ -38,7 +33,7 @@ import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.Config (FrontendConfig)
+import Common.Config (FrontendConfig(..))
 import Common.Schema hiding (Event)
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
@@ -118,13 +113,6 @@ watchBakerDetails pkh = do
     }
   return $ ffor theView $ \v' -> MMap.lookup pkh $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
 
-watchClient :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Id BakerDaemon) -> m (Dynamic t (MonoidalMap (Id BakerDaemon) BakerDaemonInfoData))
-watchClient cidDyn = do
-  theView <- watchViewSelector . ffor cidDyn $ \cid -> mempty
-    { _bakeViewSelector_clients = viewRangeExactly cid 1
-    }
-  return $ ffor theView $ \v -> fmapMaybe getFirst $ getRangeView (_bakeView_clients v)
-
 watchBakerStats :: (MonadRhyoliteFrontendWidget Bake t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
 watchBakerStats bakers = do
   let levels :: (RawLevel, RawLevel) = (0, 30)
@@ -139,13 +127,6 @@ watchBakerStats bakers = do
   --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_bakerStats
 
-watchClientAddresses :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap (Id BakerDaemon) URI))
-watchClientAddresses = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_clientAddresses = viewRangeAll 1
-    }
-  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' $ _bakeView_clientAddresses v'
-
 watchMailServer
   :: MonadRhyoliteFrontendWidget Bake t m
   => m (Dynamic t (Maybe (Maybe MailServerView)))
@@ -154,27 +135,12 @@ watchMailServer =
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = viewJust 1 }
 
-watchSummary :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Report, Int)))
-watchSummary = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_summary = viewJust 1
-    }
-  improvingMaybe $ ffor theView $ \v -> getMaybeView $ _bakeView_summary v
-
 watchNotificatees :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Maybe [Email])))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_mailServer = viewJust 1
     }
   return $ fmap ((fmap . fmap) _mailServerView_notificatees . getMaybeView . _bakeView_mailServer) theView
-
-watchSummaryGraph :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (Micro, Text)))
-watchSummaryGraph = holdDyn Nothing never -- "big" "TODO"
--- watchSummaryGraph = do
---   theView <- watchViewSelector . pure $ mempty
---     { _bakeViewSelector_summary = Just 1
---     }
---   improvingMaybe $ ffor theView $ \v -> join $ getSingle $ _bakeView_summaryGraph v
 
 -- TODO: filter by alert type (that is, ErrorLogView constructor, or logical groups of such)
 watchErrors
@@ -232,6 +198,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
+  dUsingOsPublicNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys
@@ -239,20 +206,22 @@ watchCollectiveNodesStatus alertWindow = do
                      . nodeSummaryStateIfInternal)
         <$> dNodes
   ebn <- watchErrorsByNode alertWindow
-  holdUniqDyn $ ffor2 dmNids ebn $ \case
-    Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
-    Just nids -> \nodeErrors -> case
-        -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
-        -- the greatest element rather than least element.
-        getMin $ fold1 $ ffor nids $ \nid ->
-          Min $
-          fmap Down $
-          -- if there are errors, we went "ill" when the first one started
-          minimumMay $ (_errorLog_started . fst)
-            <$> maybe [] toList (MMap.lookup nid nodeErrors)
-      of
-        Nothing -> Right ()
-        Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
+  holdUniqDyn $ ffor3 dUsingOsPublicNode dmNids ebn $ \case
+    Just True -> const $ const $ Right ()
+    _ -> \case
+      Nothing -> const $ Left $ CollectiveNodesFailure_NoNodes
+      Just nids -> \nodeErrors -> case
+          -- Use `Min` and `Down` instead of `Max` so that Nothing effectively is
+          -- the greatest element rather than least element.
+          getMin $ fold1 $ ffor nids $ \nid ->
+            Min $
+            fmap Down $
+            -- if there are errors, we went "ill" when the first one started
+            minimumMay $ (_errorLog_started . fst)
+              <$> maybe [] toList (MMap.lookup nid nodeErrors)
+        of
+          Nothing -> Right ()
+          Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
 watchPublicNodeConfig :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
@@ -294,6 +263,12 @@ watchAlertCount :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe I
 watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
+    }
+
+watchSnapshotMeta :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe SnapshotMeta))
+watchSnapshotMeta =
+  (fmap . fmap) (getMaybeView . _bakeView_snapshotMeta) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_snapshotMeta = viewJust 1
     }
 
 watchConnectedLedger :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ConnectedLedger))

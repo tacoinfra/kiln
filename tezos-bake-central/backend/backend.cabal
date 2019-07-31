@@ -1,5 +1,5 @@
 name: backend
-version: 0.5.3
+version: 0.6.0
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -17,6 +17,7 @@ library
     , backend-db
     , base
     , base16-bytestring
+    , base58-bytestring
     , bytestring
     -- , Chart
     -- , Chart-diagrams
@@ -97,9 +98,9 @@ library
     , transformers-base
     , unix
     , universe
+    , unordered-containers
     , uri-encode
     , vector
-    , unordered-containers
 
   exposed-modules:
     Backend
@@ -108,7 +109,6 @@ library
     Paths_backend
     Backend.Alerts
     Backend.Alerts.Common
-    Backend.BalanceTracking
     Backend.CachedNodeRPC
     Backend.ChainHealth
     Backend.Common
@@ -120,6 +120,7 @@ library
     Backend.NotifyHandler
     Backend.RequestHandler
     Backend.Schema
+    Backend.Snapshot
     Backend.STM
     Backend.Supervisor
     Backend.Telegram
@@ -131,7 +132,6 @@ library
     Backend.Workers.Baker
     Backend.Workers.Block
     Backend.Workers.Cache
-    Backend.Workers.Client
     Backend.Workers.Node
     Backend.Workers.Process
     Backend.Workers.TezosClient

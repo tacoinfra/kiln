@@ -15,7 +15,8 @@
 
 module Backend.NodeCmd where
 
-import Control.Monad.Logger (MonadLogger, logInfo)
+import Control.Exception.Safe (catch, throwIO)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -32,18 +33,22 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Directory (doesFileExist)
 import System.FilePath (combine)
-import System.Process (readProcess, proc)
+import System.Process (readProcessWithExitCode, proc)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
 import Backend.Workers.Process
 import ExtraPrelude
+import System.Exit (ExitCode(..))
 import System.Which
 import Tezos.Chain (NamedChain(..))
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Common.Schema
+
+hasHistoryModes :: Version -> Bool
+hasHistoryModes = (>= Version [0,0,3] [])
 
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
@@ -109,7 +114,6 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
-    useArchiveMode = True
     -- use the user supplied config file if specified
     -- we can only specify this option once
     hasUserConfigFile = "--config-file" `elem` nodeExtraArgs
@@ -120,7 +124,6 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
         "--rpc-addr", "127.0.0.1:" <> nodeRpcPort,
         "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
-      ++ (if useArchiveMode then ["--history-mode", "archive"] else [])
       ++ nodeExtraArgs
 
   processWorker
@@ -129,53 +132,73 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #db db
     ! #config appConfig
     ! #logNamespace "kiln-node"
-    ! #mkProcess (\dataDir nodeConfigPath -> proc nodePath (nodeArgs nodeConfigPath dataDir))
+    ! #mkProcess (\(dataDir, extraArgs) nodeConfigPath ->
+                    proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-runCommandWithInfoLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m Text
-runCommandWithInfoLogging cmd args = do
-  out <- T.pack <$> liftIO (readProcess cmd (T.unpack <$> args) "")
-  $(logInfo) $ "Running command " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-  pure out
+getVersion :: AppConfig -> IO (Maybe Version)
+getVersion appConfig = do
+  let dataDir = nodeDataDir appConfig
+  let versionFile = dataDir `combine` "version.json"
+  hasVersionFile <- liftIO $ doesFileExist versionFile
+  case hasVersionFile of
+    False -> pure Nothing
+    True -> do
+      vf <- liftIO $ LBS.readFile versionFile
+      let parse :: Text -> Maybe Version
+          parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
+      pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
 
 initNode
-  :: (MonadIO m)
-  => "logger" :! LoggingEnv
+  :: "logger" :! LoggingEnv
   -> "config" :! AppConfig
   -> "nodePath" :! FilePath
   -> "db" :! Pool Postgresql
-  -> "updateState" :! (ProcessState -> m ())
+  -> "updateState" :! (ProcessState -> IO ())
   -> "configFile" :! FilePath
-  -> m FilePath
+  -> IO (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
-  let versionFile = dataDir `combine` "version.json"
   let identityFile = dataDir `combine` "identity.json"
-  hasVersionFile <- liftIO $ doesFileExist versionFile
-  if hasVersionFile
-    then do
-      vf <- liftIO $ LBS.readFile versionFile
-      let
-        v = getVersion =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
-        getVersion :: Text -> Maybe Version
-        getVersion = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
-      case v of
-        Nothing -> pure ()
-        Just ver -> when (ver < (Version [0,0,3] [])) $ do
-          void $ runCommandWithInfoLogging nodePath
-            ["upgrade", "storage", "--data-dir", T.pack dataDir]
-    else do
-      void $ runCommandWithInfoLogging nodePath
+      upgrade = runCommandWithLogging nodePath
+        ["upgrade", "storage", "--data-dir", T.pack dataDir]
+      showConfig = runCommandWithLogging nodePath
         ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
 
-  haveIdentityFile <- liftIO $ doesFileExist identityFile
-  when (not haveIdentityFile) $ do
-    lift $ updateState ProcessState_GeneratingIdentity
-    void $ runCommandWithInfoLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+  upgrade `catch` (\(_ :: ExitCode) -> showConfig)
 
-  return dataDir
+  let useArchiveMode = False
+  haveIdentityFile <- liftIO $ doesFileExist identityFile
+  enableHistoryMode <- if haveIdentityFile
+    then pure False -- Dont specify history mode if the node is already initialized
+    else do
+      -- Generate Identity
+      lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
+      runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+      -- Now we should have version.json also
+      liftIO (getVersion appConfig) >>= \case
+        Nothing -> False <$ logErrorNS "kiln-node" "version.json not found!"
+        Just ver -> pure $ hasHistoryModes ver && useArchiveMode
+  let extraArgs = if enableHistoryMode
+        then ["--history-mode", "archive"]
+        else []
+  return (dataDir, extraArgs)
+  where
+    runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
+    runCommandWithLogging cmd args = do
+      (exitCode, out', err') <- liftIO (readProcessWithExitCode cmd (T.unpack <$> args) "")
+      let
+        out = T.pack out'
+        err = T.pack err'
+      if exitCode == ExitSuccess
+        then do
+          logInfoNS "kiln-node" $ "Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
+        else do
+          logErrorNS "kiln-node" $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
+          liftIO $ throwIO exitCode
+
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
@@ -238,7 +261,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
                    , "run"
                    , alias]
     pw (pathF, args) pid = processWorker
-      (\(Arg db_) _ _ -> fetchProtocol pid db_)
+      (\_ _ _ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
@@ -264,9 +287,9 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol
-  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Id ProcessData -> Pool Postgresql -> m (Maybe ProtocolHash)
-fetchProtocol pid db = runDb (Identity db) $ do
+  :: (PersistBackend m)
+  => Id ProcessData -> m (Maybe ProtocolHash)
+fetchProtocol pid =
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
     Just bdid ->

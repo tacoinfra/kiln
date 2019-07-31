@@ -93,7 +93,7 @@ nodeRPCImpl' decoder requestBody method_ rpcSelector = do
   -- sayShow (node, method_, rpcSelector)
 
   let rpcUrl = T.dropWhileEnd (=='/') node <> rpcSelector
-  $(logDebugS) "NODERPC" $ rpcUrl
+  $(logDebugS) "NODERPC" rpcUrl
 
   let
     request = rpcBoilerplate method_ requestBody $ Http.parseRequest_ $ T.unpack rpcUrl
@@ -108,9 +108,8 @@ nodeRPCImpl' decoder requestBody method_ rpcSelector = do
           Left err -> throwLoggedError $ rpcResponse_NonJSON err body
           Right v -> return v
       Http.Status code phrase -> do
-        $(logInfoS) "NODERPC" $ T.pack $ show $ Http.responseStatus result
-        $(logDebugS) "NODERPC" $ T.pack $ show $ Http.responseBody result -- TODO: find a better way to log this
-
+        $(logDebugS) "NODERPC" $ "Non-200 response for request: " <>
+          T.pack (show request) <> " - " <> T.pack (show $ Http.responseBody result)
         throwLoggedError $ rpcResponse_UnexpectedStatus code phrase
 
 nodeRPCChunkedImpl :: forall a r s e m.
@@ -181,7 +180,7 @@ rpcBoilerplate method_ body req = req
   , Http.requestBody = if method_ == Http.methodGet then "" else Http.RequestBodyLBS $ Aeson.encodingToLazyByteString body
   , Http.requestHeaders =
     [(Http.hContentType, "application/json") | method_ /= Http.methodGet]
-    ++ [ (Http.hUserAgent, "tezos-bake-monitor-lib/" <> T.encodeUtf8 (T.pack $ showVersion version))
+    ++ [ (Http.hUserAgent, "tezos-noderpc/" <> T.encodeUtf8 (T.pack $ showVersion version))
        , (Http.hAccept, "*/*") -- TODO: Probably should pinned to JSON and use "application/json"
        ]
   }
@@ -191,9 +190,9 @@ data PublicNodeContext = PublicNodeContext
   }
 
 concat <$> traverse makeLenses
- [ 'NodeRPCContext
- , 'PublicNodeContext
- ]
+  [ 'NodeRPCContext
+  , 'PublicNodeContext
+  ]
 
 -- maybe we should really use a `ProxiedNode` wrapper so we don't unwittingly
 -- use public caches as regular nodes?  For now, we do so wittingly...
@@ -228,7 +227,7 @@ getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Nothing                    -> nodeRPC rChain
     Just PublicNode_Blockscale -> nodeRPC rChain
     Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v2/head/"
-    Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v1/chain"
+    Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v2/chain"
 
 getProtoConstants :: forall e r m.
   ( MonadIO m, MonadLogger m
@@ -240,7 +239,7 @@ getProtoConstants chain = asks (view (publicNodeContext . publicNodeContext_api)
   Nothing                    -> nodeRPC $ rAnyConstants chain
   Just PublicNode_Blockscale -> nodeRPC $ rAnyConstants chain
   Just PublicNode_TzScan     -> throwFeatureNotSupported
-  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet $ "/v1/" <> toBase58Text chain <> "/params"
+  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/params"
 
 getCurrentHead :: forall e r m.
   ( MonadIO m, MonadLogger m
@@ -252,7 +251,7 @@ getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >
   Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead chain
   Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead chain
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
-  Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v1/" <> toBase58Text chain <> "/head"
+  Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/head"
 
 canGetHistory :: PublicNode -> Bool
 canGetHistory PublicNode_Blockscale = True
@@ -261,11 +260,11 @@ canGetHistory PublicNode_TzScan = False
 
 obsidianLCA :: (BlockLike blk, Foldable f) => ChainId -> blk -> f BlockHash -> RpcQuery VeryBlockLike
 obsidianLCA chain blk branches = plainNodeRequest Http.methodGet $
-  "/v1/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
+  "/v2/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
 
 obsidianAncestors :: ChainId -> BlockHash -> RawLevel -> RpcQuery (Seq BlockHash)
 obsidianAncestors chain branch (RawLevel levels) = plainNodeRequest Http.methodGet $
-  "/v1/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&level=" <> T.pack (show levels)
+  "/v2/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&level=" <> T.pack (show levels)
 
 -- fetch some history, starting at head, for at most n levels, optionally stop at ancestors of branches
 getHistory :: forall blk e r m.
@@ -302,9 +301,9 @@ getBlock ::
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rBlock chainId blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash)
+  Nothing                    -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
+  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
-    ("/v1/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
+    ("/v2/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
