@@ -277,7 +277,7 @@ data LedgerApp
   deriving (Show, Eq)
 
 defaultTimeout :: Maybe (NominalDiffTime, ClientError)
-defaultTimeout = Just (5, ClientError_Other "Timeout")
+defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing

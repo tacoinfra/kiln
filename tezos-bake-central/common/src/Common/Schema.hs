@@ -89,6 +89,7 @@ data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger
   | ClientError_LedgerDisconnected
+  | ClientError_Timeout
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError
