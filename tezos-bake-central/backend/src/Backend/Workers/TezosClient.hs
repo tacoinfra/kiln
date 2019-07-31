@@ -385,24 +385,24 @@ runClientCommand appConfig chain mTimeout args handleError = do
   let
     procSpec = Process.proc (clientPath chain) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
     runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
-    withTimeout = maybe (fmap Just . id) timeout' (fst <$> mTimeout)
-  (liftIO $ withTimeout runProc) >>= \case
-    Just (exitCode, stdout, stderr) -> case exitCode of
-      ExitSuccess -> pure $ T.strip stdout
-      ExitFailure _ -> do
-        $(logWarn) $ "runClientCommand failed: " <> stderr
-        let strippedLines = fmap T.strip $ T.lines stderr
-            warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
-            errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
-            fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
-        case handleError warnings (fatal ++ errors) of
-          Right t -> pure t
-          Left e -> do
-            $(logWarn) $ T.pack $ show e
-            throwError e
-    Nothing -> do
-      $(logWarn) $ "runClientCommand Timedout"
-      maybe (pure "tezos-client timeout") throwError (snd <$> mTimeout)
+    withTimeout run handle = flip (maybe ((liftIO run) >>= handle)) mTimeout $ \(t, err) -> (liftIO $ timeout' t run) >>= \case
+      Just v -> handle v
+      Nothing -> do
+        $(logWarn) $ "runClientCommand Timedout"
+        throwError err
+  withTimeout runProc $ \(exitCode, stdout, stderr) -> case exitCode of
+    ExitSuccess -> pure $ T.strip stdout
+    ExitFailure _ -> do
+      $(logWarn) $ "runClientCommand failed: " <> stderr
+      let strippedLines = fmap T.strip $ T.lines stderr
+          warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
+          errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
+          fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
+      case handleError warnings (fatal ++ errors) of
+        Right t -> pure t
+        Left e -> do
+          $(logWarn) $ T.pack $ show e
+          throwError e
 
 setupLedgerToBake :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m SetupLedgerToBakeStep
 setupLedgerToBake appConfig chain = do
