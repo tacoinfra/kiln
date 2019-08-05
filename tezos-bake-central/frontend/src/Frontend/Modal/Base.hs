@@ -13,6 +13,7 @@
 
 module Frontend.Modal.Base where
 
+import Control.Applicative (liftA2)
 import Control.Lens (Rewrapped, Wrapped (Unwrapped, _Wrapped'), iso)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (MonadIO)
@@ -88,8 +89,15 @@ instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t m
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjustWithMove (coerce f) dm0 dm'
   traverseIntMapWithKeyWithAdjust f im0 im' = ModalT $ traverseIntMapWithKeyWithAdjust (coerce f) im0 im'
 
+-- | Like 'withModals' but with the full convenience of 'ModalT', allowing 'tellModal' to open a modal anywhere.
+--
+-- NB: This must wrap all other DOM building. This is because DOM for the modal
+-- must occur *after* all other DOM in order for it to appear on top of it.
 runModalT
-  :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m, MonadJSM m, TriggerEvent t m)
+  :: forall m js t a.
+   ( MonadFix m
+   , DomBuilder t m, MonadHold t m, PostBuild t m, Prerender js t m
+   )
   => ModalBackdropConfig -> ModalT t m a -> m a
 runModalT backdropCfg f = do
   rec
@@ -105,20 +113,37 @@ newtype ModalBackdropConfig = ModalBackdropConfig
 -- NB: This must wrap all other DOM building. This is because DOM for the modal
 -- must occur *after* all other DOM in order for it to appear on top of it.
 withModals
-  :: forall m a b t. (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, MonadJSM m, TriggerEvent t m)
+  :: forall m a b js t.
+   ( MonadFix m
+   , DomBuilder t m, MonadHold t m, PostBuild t m, Prerender js t m
+   )
   => ModalBackdropConfig
   -> Event t (Event t () -> m (Event t a))
   -- ^ Event to trigger a modal to open.
   -- The event carries a function that takes backdrop click events and builds a modal window
   -- which returns a close event.
   -> m b -- ^ Page body
-  -> m (b, Event t a)
-withModals backdropCfg open body = do
-  b <- body
-  document <- DOM.currentDocumentUnchecked
-  escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
-    key <- getKeyEvent
-    pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
+  -> m (b, Event t a) -- ^ Result of page body and an event firing whenever a modal closes
+withModals backdropCfg open body = liftA2 (,) body (modalDom backdropCfg open)
+
+-- | Builds modal-related DOM. Avoid using this and use 'withModals' instead.
+--
+-- NB: This must run after all other DOM building. This is because DOM for the modal
+-- must occur *after* all other DOM in order for it to appear on top of it.
+modalDom
+  :: forall a m js t. (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m, Prerender js t m)
+  => ModalBackdropConfig
+  -> Event t (Event t () -> m (Event t a))
+  -- ^ Event to trigger a modal to open.
+  -- The event carries a function that takes backdrop click events and builds a modal window
+  -- which returns a close event.
+  -> m (Event t a) -- ^ An event firing whenever the modal closes
+modalDom backdropCfg open = do
+  escPressed :: Event t () <- fmap switchDyn $ prerender (pure never) $ do
+    document <- DOM.currentDocumentUnchecked
+    wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
+      key <- getKeyEvent
+      pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
   rec
     isVisible <- holdDyn False $ leftmost [True <$ open, False <$ close]
     (backdropEl, _) <- elDynAttr' "div"
@@ -131,7 +156,7 @@ withModals backdropCfg open body = do
         [ ($ leftmost [escPressed, domEvent Click backdropEl]) <$> open
         , pure never <$ close
         ]
-  pure (b, close)
+  pure close
   where
     existingBackdropStyle = fromMaybe "" $ Map.lookup "style" $ _modalBackdropConfig_attrs backdropCfg
     isVisibleStyle isVis = "display:" <> (if isVis then "block" else "none")

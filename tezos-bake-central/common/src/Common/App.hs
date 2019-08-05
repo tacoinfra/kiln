@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -19,6 +20,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Common.App
   ( module Common.App
@@ -32,6 +34,7 @@ import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
+import Data.Dependent.Map (DMap)
 import Data.Functor.Compose (Compose (..))
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
@@ -240,7 +243,6 @@ instance Semigroup VoteState where
     { _voteState_step = _voteState_step s1 <> _voteState_step s2
     }
 
-
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
@@ -264,7 +266,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
-  , _bakeViewSelector_alertCount :: !(MaybeSelector Int a)
+  , _bakeViewSelector_alertCount :: !(MaybeSelector (DMap LogTag (Const Int)) a)
   , _bakeViewSelector_snapshotMeta :: !(MaybeSelector SnapshotMeta a)
   , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
   , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable (PublicKeyHash, Tez)) a)
@@ -302,7 +304,7 @@ data BakeView a = BakeView
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
-  , _bakeView_alertCount :: !(MaybeView Int a)
+  , _bakeView_alertCount :: !(MaybeView (DMap LogTag (Const Int)) a)
   , _bakeView_snapshotMeta :: !(MaybeView SnapshotMeta a)
   -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
   -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
@@ -632,7 +634,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_rightNotificationSettings = mempty
     , _bakeViewSelector_bakerRegistered = mempty
     }
-  mappend = (<>)
 
 
 instance Group (BakeViewSelector SelectedCount) where
@@ -674,7 +675,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_rightNotificationSettings = mempty
     , _bakeView_bakerRegistered = mempty
     }
-  mappend u v = u <> v
 
 instance Semigroup a => Semigroup (BakeView a) where
   u <> v = BakeView
@@ -724,6 +724,50 @@ instance (Semigroup a, ToJSON a) => ToJSON (BakeView a)
 instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
+
+instance EqTag LogTag (Const Int) where
+  eqTagged t _ = logAssumeConst t (==)
+instance OrdTag LogTag (Const Int) where
+  compareTagged t _ = logAssumeConst t compare
+instance ShowTag LogTag (Const Int) where
+  showTaggedPrec t = logAssumeConst t showsPrec
+
+instance EqTag NodeLogTag (Const Int) where
+  eqTagged t _ = nodeLogAssumeConst t (==)
+instance OrdTag NodeLogTag (Const Int) where
+  compareTagged t _ = nodeLogAssumeConst t compare
+instance ShowTag NodeLogTag (Const Int) where
+  showTaggedPrec t = nodeLogAssumeConst t showsPrec
+
+instance EqTag BakerLogTag (Const Int) where
+  eqTagged t _ = bakerLogAssumeConst t (==)
+instance OrdTag BakerLogTag (Const Int) where
+  compareTagged t _ = bakerLogAssumeConst t compare
+instance ShowTag BakerLogTag (Const Int) where
+  showTaggedPrec t = bakerLogAssumeConst t showsPrec
+
+nodeLogAssumeConst :: NodeLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
+nodeLogAssumeConst = \case
+  NodeLogTag_InaccessibleNode -> id
+  NodeLogTag_NodeWrongChain -> id
+  NodeLogTag_NodeInvalidPeerCount -> id
+  NodeLogTag_BadNodeHead -> id
+
+bakerLogAssumeConst :: BakerLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
+bakerLogAssumeConst = \case
+  BakerLogTag_BakerMissed -> id
+  BakerLogTag_BakerDeactivated -> id
+  BakerLogTag_BakerDeactivationRisk -> id
+  BakerLogTag_BakerAccused -> id
+  BakerLogTag_InsufficientFunds -> id
+  BakerLogTag_VotingReminder -> id
+
+logAssumeConst :: LogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
+logAssumeConst = \case
+  LogTag_NetworkUpdate -> id
+  LogTag_Node nTag -> nodeLogAssumeConst nTag
+  LogTag_Baker bTag -> bakerLogAssumeConst bTag
+  LogTag_BakerNoHeartbeat -> id
 
 fmap concat $ sequence $ concat
   [ map makeLenses

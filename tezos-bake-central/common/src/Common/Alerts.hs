@@ -129,23 +129,6 @@ data BakerErrorDescriptions = BakerErrorDescriptions
   , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
   }
 
-isUserResolvable :: LogTag t -> Bool
-isUserResolvable = \case
-  LogTag_Node nlt -> case nlt of
-    NodeLogTag_InaccessibleNode -> False
-    NodeLogTag_NodeWrongChain -> False
-    NodeLogTag_BadNodeHead -> False
-    NodeLogTag_NodeInvalidPeerCount -> True
-  LogTag_Baker blt -> case blt of
-    BakerLogTag_BakerMissed -> True
-    BakerLogTag_BakerDeactivated -> False
-    BakerLogTag_BakerDeactivationRisk -> False
-    BakerLogTag_BakerAccused -> True
-    BakerLogTag_InsufficientFunds -> False
-    BakerLogTag_VotingReminder -> True
-  LogTag_BakerNoHeartbeat -> True
-  LogTag_NetworkUpdate -> True
-
 data ErrorLogMessage = ErrorLogMessage
   { _errorLogMessage_resolved :: Bool
   , _errorLogMessage_subject :: Text

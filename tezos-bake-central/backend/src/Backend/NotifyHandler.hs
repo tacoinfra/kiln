@@ -253,7 +253,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       newCount <- whenM (viewSelects () alertCountVS) $ do
         alertCount <- getAlertCount
         pure mempty
-          { _bakeView_alertCount = toMaybeView alertCountVS alertCount
+          { _bakeView_alertCount = toMaybeView alertCountVS (Just alertCount)
           }
       newErrors <- whenJust specificLog' $ \specificLog -> do
         let logId = getLogId specificLog
