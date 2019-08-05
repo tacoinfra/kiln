@@ -126,16 +126,18 @@ frontendBody
     )
   => m ()
 frontendBody = void $ do
-  mWsUri <- getBackendPath (InL BackendRoute_Listen :/ ()) True
-  rec
-    (socketState, _) <- runRhyoliteWidget (maybe (error "Invalid WS URL") Uri.render mWsUri) $ do
-      withFrontendContext $
-        withConnectivityModal socketState $
-          runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
-            appMain
-  pure ()
+  wsUri :: Dynamic t Text <- prerender (pure "") $
+    fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (InL BackendRoute_Listen :/ ()) True
+  dyn_ $ ffor wsUri $ \ws -> do
+    rec
+      (socketState, _) <- runRhyoliteWidget ws $ do
+        withFrontendContext $
+          withConnectivityModal socketState $
+            runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
+              appMain
+    pure ()
 
-getBackendPath :: (MonadJSM m) => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
+getBackendPath :: MonadJSM m => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
 getBackendPath backendRoute isWebsocket = do
   let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
   route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
