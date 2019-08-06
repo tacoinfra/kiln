@@ -28,7 +28,7 @@ import qualified Language.Haskell.TH as TH
 --   deriving Show
 -- deriveShow1 =<< [t|YourThing []|]
 
-newtype WrappedShow1 f a = WrappedShow1 {unwrappedShow1 :: (f a)}
+newtype WrappedShow1 f a = WrappedShow1 {unwrappedShow1 :: f a}
 
 
 instance Show1 f => Show1 (WrappedShow1 f) where
@@ -41,7 +41,7 @@ instance (Show1 f, Show a) => Show (WrappedShow1 f a) where
 
 type ShowsPrec a = Int -> a -> ShowS
 type ShowList a = [a] -> ShowS
- 
+
 data ReifiedShow a = ReifiedShow
   { reifiedShowsPrec :: ShowsPrec a
   , reifiedShowList :: ShowList a
@@ -68,7 +68,7 @@ unreflectedShow (ReflectedShow a) _ = a
 
 -- reify :: forall a r. a -> (forall (s :: *). Reifies s a => Proxy s -> r) -> r
 reifyShow
-  :: forall a t. (ShowsPrec a) -> (ShowList a)
+  :: forall a t. ShowsPrec a -> ShowList a
   -> (forall (s :: *). Reifies s (ReifiedShow a) => Proxy s -> t)
   -> t
 reifyShow f z m = reify (ReifiedShow f z) m
@@ -101,22 +101,22 @@ deriveShow1Methods tyQ = do
   a <- TH.newName "a"
   s <- TH.newName "s"
   derivedLiftShowsPrec <- [d|
-      liftShowsPrec :: $(TH.forallT [TH.PlainTV a] (pure []) [t|LiftShowsPrec $(TH.varT a) ($(pure ty))|])
+      liftShowsPrec :: $(TH.forallT [TH.PlainTV a] (pure []) [t|LiftShowsPrec $(TH.varT a) $(pure ty)|])
       liftShowsPrec x y = reifyShow x y f
         where
         f :: $(TH.forallT [TH.KindedTV s TH.StarT]
                 (fmap pure [t|Reifies $(TH.varT s) (ReifiedShow $(TH.varT a))|])
                 [t|Proxy $(TH.varT s) -> ShowsPrec ($(pure ty) $(TH.varT a))|])
-        f _ = (unsafeCoerce :: CoerceShowsPrec $(TH.varT s) $(TH.varT a) ($(pure ty))) showsPrec
+        f _ = (unsafeCoerce :: CoerceShowsPrec $(TH.varT s) $(TH.varT a) $(pure ty)) showsPrec
     |]
   derivedLiftShowList <- [d|
-      liftShowList :: $(TH.forallT [TH.PlainTV a] (pure []) [t|LiftShowList $(TH.varT a) ($(pure ty))|])
+      liftShowList :: $(TH.forallT [TH.PlainTV a] (pure []) [t|LiftShowList $(TH.varT a) $(pure ty)|])
       liftShowList x y = reifyShow x y f
         where
         f :: $(TH.forallT [TH.KindedTV s TH.StarT]
                 (fmap pure [t|Reifies $(TH.varT s) (ReifiedShow $(TH.varT a))|])
                 [t|Proxy $(TH.varT s) -> ShowList ($(pure ty) $(TH.varT a))|])
-        f _ = (unsafeCoerce :: CoerceShowList $(TH.varT s) $(TH.varT a) ($(pure ty))) showList
+        f _ = (unsafeCoerce :: CoerceShowList $(TH.varT s) $(TH.varT a) $(pure ty)) showList
 
 
         |]
@@ -130,5 +130,5 @@ deriveShow1Methods tyQ = do
 --   = Bin (f b) b (f b)
 --   | Tip x
 --   deriving Show
--- 
+--
 -- deriveShow1Methods [d|instance Show x => Show1 (YourThing [] x)|]

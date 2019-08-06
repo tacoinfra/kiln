@@ -222,11 +222,11 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
               update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
-          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ removeDataDir
+          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) removeDataDir
         where
           removeDataDir = do
             let dataDir = nodeDataDir appConfig
-            $(logDebug) ("Removing Kiln node's data dir: " <> (tshow dataDir))
+            $(logDebug) ("Removing Kiln node's data dir: " <> tshow dataDir)
             liftIO $ removeDirectoryRecursive dataDir
           clearErrors nid = do
             let

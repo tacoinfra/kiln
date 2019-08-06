@@ -645,6 +645,7 @@ reportAccusation
 reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+    Just _ -> pure ()
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
         { _errorLogBakerAccused_log = eid
@@ -657,19 +658,15 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
         , _errorLogBakerAccused_accusedCycle = aCycle
         }
       queueAlert (Just eid) alert
-    Just xs -> for_ xs $ \(_eid, _elbmid) ->
-      pure ()
-    where
-      alert = Alert Unresolved
-        ("Double " <> rightTxt)
-        ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
-      rightTxt = case right of
-        RightKind_Baking -> "baked"
-        RightKind_Endorsing -> "endorsed"
+  where
+    alert = Alert Unresolved
+      ("Double " <> rightTxt)
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
+    rightTxt = case right of
+      RightKind_Baking -> "baked"
+      RightKind_Endorsing -> "endorsed"
 
-clearMissedBake
-  :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m)
-  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 clearMissedBake f right pkh lvl = do
   chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|

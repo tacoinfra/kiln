@@ -58,7 +58,6 @@ instance (IsInterval k e, Ord k, Semigroup v) => Semigroup (AppendIntervalMap k 
 
 instance (IsInterval k e, Ord k, Semigroup v) => Monoid (AppendIntervalMap k v) where
   mempty = AppendIntervalMap mempty
-  mappend = (<>)
 
 instance FunctorWithIndex k (AppendIntervalMap k)
 instance FoldableWithIndex k (AppendIntervalMap k)
@@ -161,7 +160,7 @@ within :: forall k v e. (IsInterval k e) => AppendIntervalMap k v -> k -> Append
 within m = AppendIntervalMap . IMap.within (unAppendIntervalMap m)
 
 empty :: AppendIntervalMap k v
-empty = AppendIntervalMap (IMap.empty)
+empty = AppendIntervalMap IMap.empty
 
 
 -- | Builds a new 'AppendIntervalMap' with a function that can combine adjacent intervals.

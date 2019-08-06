@@ -10,6 +10,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Binary.Get (isolate)
 import Data.Bits (Bits)
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
 import Data.Hashable (Hashable)
 import Data.Time
 import Data.Typeable
@@ -88,6 +89,13 @@ instance B.TezosUnsignedBinary BlockHeader where
                             -- May need to look out for this in the future. 
         <*> B.get -- seedNonceHash
         <*> pure Nothing -- no signature yet, because it's unsigned
+
+instance B.TezosBinary BlockHeader where
+  put bh = B.putUnsigned bh *> traverse_ B.put (_blockHeader_signature bh)
+  get = do
+    bh <- B.getUnsigned
+    sig <- B.get
+    pure $ bh { _blockHeader_signature = Just sig }
 
 concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderShell]
 concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderShell ]

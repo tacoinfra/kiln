@@ -47,6 +47,12 @@ canFetchHistory PublicNode_Blockscale = True
 canFetchHistory PublicNode_TzScan = False
 canFetchHistory PublicNode_Obsidian = True
 
+publicNodeShortName :: PublicNode -> T.Text
+publicNodeShortName = \case
+  PublicNode_Obsidian -> "Obsidian Systems"
+  PublicNode_Blockscale -> "Tezos Foundation"
+  PublicNode_TzScan -> "tzscan.io"
+
 
 getPublicNodeUri :: PublicNode -> NamedChain -> NonEmpty URI
 getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet    = pure [Uri.uri|https://zeronet-tezos-api.obsidian.systems/api|]

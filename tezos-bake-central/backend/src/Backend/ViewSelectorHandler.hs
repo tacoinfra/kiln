@@ -25,7 +25,9 @@ import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
-import Data.Dependent.Sum (DSum (..))
+import Data.Dependent.Map (DMap)
+import qualified Data.Dependent.Map as DMap
+import Data.Dependent.Sum (DSum(..))
 import Data.List (intersperse)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
@@ -174,7 +176,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
       pure (telegramConfig, telegramRecipients)
 
-  alertCount <- maybeViewHandler _bakeViewSelector_alertCount getAlertCount
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
@@ -293,7 +295,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     las <- select CondEmpty
     let rangeView = toRangeView votePromptingVS $ flip fmap las $ \la ->
           ( _ledgerAccount_secretKey la
-          , First $ Just $ mempty
+          , First $ Just mempty
           )
     pure rangeView
 
@@ -477,14 +479,45 @@ getErrorLogsImpl flt intervalMap = do
     leftBiasedUnions = MMap.unionsWith const
 
 getAlertCount
-  :: (Monad m, PostgresRaw m)
-  => m (Maybe Int)
-getAlertCount =
-  fmap Pg.fromOnly . listToMaybe <$> [queryQ|
-    SELECT
-      COUNT(*)
-    FROM "ErrorLog" el
-    WHERE el.stopped IS NULL|]
+  :: forall m.
+  ( MonadLogger m
+  , PersistBackend m
+  )
+  => m (DMap LogTag (Const Int))
+getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
+  (x, _) <- runQuery lTag
+  pure $ map (\(t, v) -> t :=> Const v) x) universe
+  where
+    {-# INLINE queryAlert #-}
+    queryAlert
+      :: forall f c b. (Monad f, PersistBackend f, MonadLogger f, PersistEntity b, EntityConstr b c)
+      => c (ConstructorMarker b)
+      -> [Some (Related b c)]
+      -> f ([Int], Proxy b)
+    queryAlert ctor _related = do
+      let
+        build :: [PersistValue] -> f Int
+        build = evalStateT $ do
+          StateT fromPersistValues
+        entityD = entityDef pg (undefined :: b)
+        constrD = constructors entityD !! constrNum
+        constrNum = entityConstrNum (Proxy @b) ctor
+        sqlTable = tableName id entityD constrD
+        qBase :: Utf8
+        qBase =
+          "SELECT \
+          \     COUNT(*) \
+          \ FROM \"ErrorLog\" el \
+          \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
+          \ WHERE el.stopped IS NULL"
+      $(logDebugSH) ("queryAlert" :: Text, sqlTable)
+      v <- traceQuery qBase id build
+      pure (v, Proxy @b)
+
+    runQuery :: LogTag e -> m ([(LogTag e, Int)] , DSum LogTag Proxy)
+    runQuery lTag = do
+      vus <- logAssume lTag $ queryAlert (singleConstructor $ proxify lTag) (logDep lTag)
+      pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> u)) vus
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)

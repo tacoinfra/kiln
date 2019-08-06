@@ -8,11 +8,13 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Frontend.Modal.Base where
 
+import Control.Applicative (liftA2)
 import Control.Lens (Rewrapped, Wrapped (Unwrapped, _Wrapped'), iso)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class (MonadIO)
@@ -36,12 +38,12 @@ import Reflex.Host.Class (MonadReflexCreateTrigger)
 
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))
 
-instance (Reflex t, Monad m) => HasModal t (ModalT t m) where
-  type ModalM (ModalT t m) = m
+instance (Reflex t, Monad m) => HasModal t (ModalT t modalM m) where
+  type ModalM (ModalT t modalM m) = modalM
   tellModal = ModalT . tellEvent . fmap First
 
-newtype ModalT t m a
-  = ModalT { unModalT :: EventWriterT t (First (Event t () -> m (Event t ()))) m a }
+newtype ModalT t modalM m a
+  = ModalT { unModalT :: EventWriterT t (First (Event t () -> modalM (Event t ()))) m a }
   deriving
     ( Functor, Applicative, Monad
     , MonadFix, MonadIO, MonadRef, MonadAtomicRef, MonadReader r
@@ -50,47 +52,65 @@ newtype ModalT t m a
     , MonadReflexCreateTrigger t, MonadQuery t q, Requester t
     )
 
-instance PrimMonad m => PrimMonad (ModalT t m) where
-  type PrimState (ModalT t m) = PrimState m
+instance PrimMonad m => PrimMonad (ModalT t modalM m) where
+  type PrimState (ModalT t modalM m) = PrimState m
   primitive = lift . primitive
 
-instance Wrapped (ModalT t m a) where
-  type Unwrapped (ModalT t m a) = EventWriterT t (First (Event t () -> m (Event t ()))) m a
+instance Wrapped (ModalT t modalM m a) where
+  type Unwrapped (ModalT t modalM m a) = EventWriterT t (First (Event t () -> modalM (Event t ()))) m a
   _Wrapped' = iso coerce coerce
-instance ModalT t m a ~ x => Rewrapped (ModalT t m a) x
+instance ModalT t modalM m a ~ x => Rewrapped (ModalT t modalM m a) x
 
-instance HasDocument m => HasDocument (ModalT t m)
-instance HasJSContext m => HasJSContext (ModalT t m) where
-  type JSContextPhantom (ModalT t m) = JSContextPhantom m
+instance HasDocument m => HasDocument (ModalT t modalM m)
+instance HasJSContext m => HasJSContext (ModalT t modalM m) where
+  type JSContextPhantom (ModalT t modalM m) = JSContextPhantom m
   askJSContext = ModalT askJSContext
 #if !defined(ghcjs_HOST_OS)
-instance MonadJSM m => MonadJSM (ModalT t m)
+instance MonadJSM m => MonadJSM (ModalT t modalM m)
 #endif
 
-instance (Monad m, Routed t r m) => Routed t r (ModalT t m) where
+instance (Monad m, Routed t r m) => Routed t r (ModalT t modalM m) where
   askRoute = lift askRoute
 
-instance (Monad m, RouteToUrl r m) => RouteToUrl r (ModalT t m) where
+instance (Monad m, RouteToUrl r m) => RouteToUrl r (ModalT t modalM m) where
   askRouteToUrl = lift askRouteToUrl
 
-instance (Reflex t, Monad m, SetRoute t r m) => SetRoute t r (ModalT t m) where
+instance (Reflex t, Monad m, SetRoute t r m) => SetRoute t r (ModalT t modalM m) where
   modifyRoute = lift . modifyRoute
 
-instance EventWriter t w m => EventWriter t w (ModalT t m) where
+instance EventWriter t w m => EventWriter t w (ModalT t modalM m) where
   tellEvent = lift . tellEvent
 
-instance MonadTrans (ModalT t) where
+instance MonadTrans (ModalT t modalM) where
   lift = ModalT . lift
 
-instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t m) where
+instance (Adjustable t m, MonadHold t m, MonadFix m) => Adjustable t (ModalT t modalM m) where
   runWithReplace a0 a' = ModalT $ runWithReplace (unModalT a0) (fmapCheap unModalT a')
   traverseDMapWithKeyWithAdjust f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjust (coerce f) dm0 dm'
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = ModalT $ traverseDMapWithKeyWithAdjustWithMove (coerce f) dm0 dm'
   traverseIntMapWithKeyWithAdjust f im0 im' = ModalT $ traverseIntMapWithKeyWithAdjust (coerce f) im0 im'
 
+deriving instance DomRenderHook t m => DomRenderHook t (ModalT t modalM m)
+
+instance (Prerender js t m, Monad m, Reflex t) => Prerender js t (ModalT t modalM m) where
+  type Client (ModalT t modalM m) = ModalT t modalM (Client m)
+  prerender back front = do
+    (a, ev) <- fmap splitDynPure $ lift $ prerender
+      (runEventWriterT $ unModalT back)
+      (runEventWriterT $ unModalT front)
+    ModalT $ tellEvent $ switchDyn ev
+    pure a
+
+-- | Like 'withModals' but with the full convenience of 'ModalT', allowing 'tellModal' to open a modal anywhere.
+--
+-- NB: This must wrap all other DOM building. This is because DOM for the modal
+-- must occur *after* all other DOM in order for the modal to appear on top of it.
 runModalT
-  :: forall m a t. (Monad m, MonadFix m, DomBuilder t m, MonadHold t m, PostBuild t m, MonadJSM m, TriggerEvent t m)
-  => ModalBackdropConfig -> ModalT t m a -> m a
+  :: forall m js t a.
+   ( MonadFix m
+   , DomBuilder t m, MonadHold t m, PostBuild t m, Prerender js t m
+   )
+  => ModalBackdropConfig -> ModalT t m m a -> m a
 runModalT backdropCfg f = do
   rec
     ((a, open), _) <- withModals backdropCfg (getFirst <$> open) $ runEventWriterT (unModalT f)
@@ -103,22 +123,39 @@ newtype ModalBackdropConfig = ModalBackdropConfig
 -- | Set up DOM to support modals.
 --
 -- NB: This must wrap all other DOM building. This is because DOM for the modal
--- must occur *after* all other DOM in order for it to appear on top of it.
+-- must occur *after* all other DOM in order for the modal to appear on top of it.
 withModals
-  :: forall m a b t. (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, MonadJSM m, TriggerEvent t m)
+  :: forall m a b js t.
+   ( MonadFix m
+   , DomBuilder t m, MonadHold t m, PostBuild t m, Prerender js t m
+   )
   => ModalBackdropConfig
   -> Event t (Event t () -> m (Event t a))
   -- ^ Event to trigger a modal to open.
-  -- The event carries a function that takes backdrop click events and builds a modal window
+  -- The event carries a function that takes close events and builds a modal window
   -- which returns a close event.
   -> m b -- ^ Page body
-  -> m (b, Event t a)
-withModals backdropCfg open body = do
-  b <- body
-  document <- DOM.currentDocumentUnchecked
-  escPressed <- wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
-    key <- getKeyEvent
-    pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
+  -> m (b, Event t a) -- ^ Result of page body and an event firing whenever a modal closes
+withModals backdropCfg open body = liftA2 (,) body (modalDom backdropCfg open)
+
+-- | Builds modal-related DOM. Avoid using this and use 'withModals' instead.
+--
+-- NB: This must run after all other DOM building. This is because DOM for the modal
+-- must occur *after* all other DOM in order for the modal to appear on top of it.
+modalDom
+  :: forall a m js t. (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m, Prerender js t m)
+  => ModalBackdropConfig
+  -> Event t (Event t () -> m (Event t a))
+  -- ^ Event to trigger a modal to open.
+  -- The event carries a function that takes close events and builds a modal window
+  -- which returns a close event.
+  -> m (Event t a) -- ^ An event firing whenever the modal closes
+modalDom backdropCfg open = do
+  escPressed :: Event t () <- fmap switchDyn $ prerender (pure never) $ do
+    document <- DOM.currentDocumentUnchecked
+    wrapDomEventMaybe document (`EventM.on` Events.keyDown) $ do
+      key <- getKeyEvent
+      pure $ if keyCodeLookup (fromIntegral key) == Escape then Just () else Nothing
   rec
     isVisible <- holdDyn False $ leftmost [True <$ open, False <$ close]
     (backdropEl, _) <- elDynAttr' "div"
@@ -131,7 +168,7 @@ withModals backdropCfg open body = do
         [ ($ leftmost [escPressed, domEvent Click backdropEl]) <$> open
         , pure never <$ close
         ]
-  pure (b, close)
+  pure close
   where
     existingBackdropStyle = fromMaybe "" $ Map.lookup "style" $ _modalBackdropConfig_attrs backdropCfg
     isVisibleStyle isVis = "display:" <> (if isVis then "block" else "none")

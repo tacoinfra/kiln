@@ -248,8 +248,8 @@ getCurrentHead :: forall e r m.
   )
   => ChainId -> m VeryBlockLike
 getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead chain
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead chain
+  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead (ChainTag_Hash chain)
+  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead (ChainTag_Hash chain)
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
   Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/head"
 
@@ -301,8 +301,8 @@ getBlock ::
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m VeryBlockLike
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader chainId blockHash
+  Nothing                    -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader (ChainTag_Hash chainId) blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike . (,) blockHash <$> rBlockHeader (ChainTag_Hash chainId) blockHash
   Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet

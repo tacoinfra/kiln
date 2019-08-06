@@ -89,6 +89,7 @@ data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger
   | ClientError_LedgerDisconnected
+  | ClientError_Timeout
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError
@@ -675,7 +676,6 @@ instance Semigroup BakeEfficiency where
 
 instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
-  mappend = (<>)
 
 data Notificatee = Notificatee
   { _notificatee_email :: !Email
