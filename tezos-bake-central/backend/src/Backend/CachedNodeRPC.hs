@@ -894,14 +894,15 @@ nodeQueryDataSourceImpl
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC
+nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
 
 nodeQueryImpl
-  :: forall a repr.
-       (BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, QueryHistory repr, QueryBlock repr)
+  :: forall a chain repr.
+   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m c)
+  -> (ChainId -> chain)
   -> ChainId
   -> BlockHash
   -> ProtoInfo
@@ -909,13 +910,13 @@ nodeQueryImpl
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC toChain chainId qBranch _proto ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
     nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
-    nodeRPC' $ rContract contractId chainId branch
+    nodeRPC' $ rContract contractId (toChain chainId) branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
   NodeQuery_Ballot branch pkh -> nodeRPC' $ rBallot chainId branch pkh
   NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
@@ -923,8 +924,8 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ runLo
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch
   NodeQuery_CurrentProposal branch -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
-  NodeQuery_Block branch -> nodeRPC' $ rBlock chainId branch
-  NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader chainId branch
+  NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
+  NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
@@ -932,7 +933,7 @@ nodeQueryImpl doNodeRPC chainId qBranch _proto ctx logger q = runExceptT $ runLo
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure pk
   where
-    nodeRPC' :: forall c. Aeson.FromJSON c => (forall repr1. (BlockType repr1 ~ Block, BlockHeaderType repr1 ~ BlockHeader, QueryHistory repr1, QueryBlock repr1) => repr1 c) -> ExceptT CacheError IO c
+    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO c
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
@@ -953,7 +954,7 @@ nodeQueryOsPubNodeImpl
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either CacheError a)
-nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC
+nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC id
 
 osPublicNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
@@ -967,6 +968,8 @@ data OsNodeQuery a = OsNodeQuery
   { _osNodeQuery_route :: Text
   , _osNodeQuery_params :: [(Text, Text)]
   }
+
+type instance ChainType OsNodeQuery = ChainId
 
 instance QueryChain OsNodeQuery where
   rChain = OsNodeQuery "/v2/chain" []

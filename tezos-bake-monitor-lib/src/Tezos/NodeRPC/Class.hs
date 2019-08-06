@@ -35,16 +35,14 @@ import Tezos.Types
 class QueryChain repr where
   rChain :: repr ChainId
 
-class QueryBlock repr where
+type family ChainType (repr :: * -> *) :: *
+
+class QueryBlock (repr :: * -> *) where
   type BlockType repr
   type BlockHeaderType repr
-  rHead :: ChainId -> repr (BlockType repr)
-  rHead = rHead' . ChainTag_Hash
-  rHead' :: ChainTag -> repr (BlockType repr)
-  rBlock :: ChainId -> BlockHash -> repr (BlockType repr)
-  rBlock = rBlock' . ChainTag_Hash
-  rBlock' :: ChainTag -> BlockHash -> repr (BlockType repr)
-  rBlockHeader :: ChainId -> BlockHash -> repr (BlockHeaderType repr)
+  rHead :: ChainType repr -> repr (BlockType repr)
+  rBlock :: ChainType repr -> BlockHash -> repr (BlockType repr)
+  rBlockHeader :: ChainType repr -> BlockHash -> repr (BlockHeaderType repr)
 
 class QueryHistory repr where -- blockscale
   rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
@@ -52,9 +50,7 @@ class QueryHistory repr where -- blockscale
 
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
   rAnyConstants :: ChainId -> repr ProtoInfo
-  rContract :: ContractId -> ChainId -> BlockHash -> repr Account
-  rContract = (. ChainTag_Hash) . rContract'
-  rContract' :: ContractId -> ChainTag -> BlockHash -> repr Account
+  rContract :: ContractId -> ChainType repr -> BlockHash -> repr Account
 
   rBallots :: ChainId -> BlockHash -> repr Ballots
   rListings :: ChainId -> BlockHash -> repr (Seq VoterDelegate)
@@ -101,13 +97,14 @@ newtype PlainNodeStream a = PlainNodeStream (RpcQuery a)
 instance QueryChain RpcQuery where
   rChain = _block_chainId <$> plainNodeRequest Http.methodGet "/chains/main/blocks/head"
 
+type instance ChainType RpcQuery = ChainTag
+
 instance QueryBlock RpcQuery where
   type BlockType RpcQuery = Block
   type BlockHeaderType RpcQuery = BlockHeader
-  --rComplete (BlockPrefix pfx) = RpcQuery $ nodeRPCImpl methodPost (blockIdToUrl headId <> "/complete/" <> pfx)
-  rHead' = chainAPI' "/blocks/head"
-  rBlock' = blockAPI' ""
-  rBlockHeader = blockAPI "/header"
+  rHead = chainAPI' "/blocks/head"
+  rBlock = blockAPI' ""
+  rBlockHeader = blockAPI' "/header"
 
 instance QueryHistory RpcQuery where
   rBlockPred (RawLevel levelsBack) = blockAPI $ "~" <> T.pack (show levelsBack)
@@ -119,7 +116,7 @@ instance QueryHistory RpcQuery where
       blk2param blkHash = "&head=" <> toBase58Text blkHash
   rProtoConstants = blockAPI "/context/constants"
   rAnyConstants = chainAPI "/blocks/head/context/constants"
-  rContract' contractId = blockAPI' ("/context/contracts/" <> toContractIdText contractId)
+  rContract contractId = blockAPI' ("/context/contracts/" <> toContractIdText contractId)
   rBallots = blockAPI "/votes/ballots/"
   rListings = blockAPI "/votes/listings/"
   rProposals = blockAPI "/votes/proposals/"
