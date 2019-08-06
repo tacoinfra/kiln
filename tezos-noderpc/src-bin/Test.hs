@@ -54,7 +54,7 @@ main = do
 
   runTest ctx $ do
     chainId <- nodeRPC rChain
-    headBlk <- nodeRPC $ rHead chainId
+    headBlk <- nodeRPC $ rHead (ChainTag_Hash chainId)
 
     scanBranch headBlk 50000 50001 $ \blk -> do
       accum chainId blk
@@ -62,7 +62,7 @@ main = do
 
     let (xHash, xPath):_ = Map.toList $ _cachedHistory_blocks b
     let xLevel :: Int = 2000 + fromIntegral (length xPath)
-    xBlk <- nodeRPC $ rBlock chainId xHash
+    xBlk <- nodeRPC $ rBlock (ChainTag_Hash chainId) xHash
     liftIO $ print [toBase58Text xHash, T.pack $ show xLevel, T.pack $ show $ _blockHeader_level $ _block_header xBlk]
     -- let tfBaker5 = "tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r"
     -- liftIO $ putStrLn "bake5"
