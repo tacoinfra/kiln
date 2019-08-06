@@ -1371,9 +1371,16 @@ startNodeWorkflow backWF = Workflow $ do
       divClass "explanation" $ do
         el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
-  contEv <- uiButton "primary" "Add Node"
   let
-    ev = tag (current $ (,) <$> useSnapshot <*> mSelectedSnapshot) contEv
+    selectedMethod :: Dynamic t (Bool, Maybe File.File)
+    selectedMethod = (,) <$> useSnapshot <*> mSelectedSnapshot
+    disabledFlag :: Dynamic t Text
+    disabledFlag = (\m -> if fst m && null (snd m) then "disabled" else "") <$> selectedMethod
+  contEv :: Event t () <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
+
+  let
+    ev :: Event t (Bool, Maybe File.File)
+    ev = tag (current selectedMethod) contEv
     next = ffor ev $ \(b, s) -> if b
       then Left s
       else Right ()
