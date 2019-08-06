@@ -134,8 +134,18 @@ instance ToJSON EmptyMetadata where
   toJSON _ = Object mempty
   toEncoding _ = pairs mempty
 
-
+-- | operation.alpha.operation_with_metadata
+-- { "contents": [ $operation.alpha.operation_contents_and_result ... ],
+--      "signature"?: $Signature }
+--    || { "contents": [ $operation.alpha.contents ... ],
+--         "signature"?: $Signature }
 --
+-- This is the return value of the run_operation RPC.
+data NoContextOperation = NoContextOperation
+  { _noContextOperation_contents :: !(Seq OperationContents)
+  , _noContextOperation_signature :: !(Maybe Signature)
+  } deriving (Eq, Ord, Show, Typeable)
+
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
   = OperationContents_Endorsement                 !OperationContentsEndorsement
@@ -991,6 +1001,7 @@ instance B.TezosBinary (DSum OpsKindTag Op) where
 
 concat <$> traverse deriveTezosJson
   [ ''Operation
+  , ''NoContextOperation
   , ''OperationContentsEndorsement , ''EndorsementMetadata
   , ''OperationContentsSeedNonceRevelation , ''SeedNonceRevelationMetadata
   , ''OperationContentsDoubleEndorsementEvidence , ''DoubleEndorsementEvidenceMetadata
@@ -1034,6 +1045,7 @@ fmap concat $ sequence
     ]
   , concat <$> traverse makeLenses
     [ 'Operation
+    , 'NoContextOperation
     , 'ActivateMetadata
     , 'DoubleBakingEvidenceMetadata
     , 'DoubleEndorsementEvidenceMetadata
