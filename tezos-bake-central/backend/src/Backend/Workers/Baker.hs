@@ -329,7 +329,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
               lvl
       return $ pure action
 
-    -- endorsements *on* this block are *of* the previos block
+    -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
@@ -399,9 +399,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
         isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
 
         insufficientFundAlerts :: mCommit ()
-        insufficientFundAlerts = if isInsufficientFunds
-          then reportInsufficientFunds baker
-          else clearInsufficientFunds baker
+        insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
         updateBakerDataInternal :: mCommit ()
         updateBakerDataInternal = update

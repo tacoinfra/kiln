@@ -834,7 +834,6 @@ instance HasId ErrorLogInsufficientFunds where
 
 data ErrorLogVotingReminder = ErrorLogVotingReminder
   { _errorLogVotingReminder_log :: !(Id ErrorLog)
-  , _errorLogVotingReminder_chainId :: !ChainId
   , _errorLogVotingReminder_baker :: !(Id Baker)
   , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
   , _errorLogVotingReminder_votingPeriod :: !RawLevel
@@ -850,6 +849,7 @@ data ErrorLog = ErrorLog
   , _errorLog_stopped :: !(Maybe UTCTime)
   , _errorLog_lastSeen :: !UTCTime
   , _errorLog_noticeSentAt :: !(Maybe UTCTime)
+  , _errorLog_chainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 

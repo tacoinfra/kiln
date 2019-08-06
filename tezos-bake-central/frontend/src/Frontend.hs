@@ -87,7 +87,7 @@ import Common.Alerts (
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
+import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId, frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -704,6 +704,7 @@ liveErrorsWidget
   => m ()
 liveErrorsWidget = void $ do
   let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+  chainId <- asks (^. frontendConfig . frontendConfig_chainId)
   nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
   filterDyn <- holdUniqDyn <=< el "div" $ radioLabels AlertsFilter_All
@@ -769,6 +770,7 @@ liveErrorsWidget = void $ do
               , _errorLog_stopped = Nothing
               , _errorLog_lastSeen = now
               , _errorLog_noticeSentAt = Nothing
+              , _errorLog_chainId = chainId
               }
     filteredSynthErrors = ffor2 filterDyn synthErrors $ \f errs -> ffilter (passesFilter f . fst) errs
 

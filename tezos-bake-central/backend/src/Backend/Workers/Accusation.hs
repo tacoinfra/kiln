@@ -27,7 +27,7 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
-import Tezos.Types
+import Tezos.Types hiding (hash, level)
 
 import Backend.Alerts (reportAccusation)
 import Backend.CachedNodeRPC
@@ -56,7 +56,16 @@ accusationWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger 
           from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker
           where a.chain = ?chainId
           order by a.level asc
-          |] <&> fmap (\(a,b,c,d,e,f) -> reportAccusation a b (bool RightKind_Endorsing RightKind_Baking c) d e (levelToCycle params e) f (levelToCycle params f))
+          |] <&> fmap (\(hash, blockHash, isBake, baker, occurredLevel, level)
+                       -> reportAccusation
+                          hash
+                          blockHash
+                          (bool RightKind_Endorsing RightKind_Baking isBake)
+                          baker
+                          occurredLevel
+                          (levelToCycle params occurredLevel)
+                          level
+                          (levelToCycle params level))
 
       flip runReaderT appConfig $ sequence_ alertsNeeded
 
