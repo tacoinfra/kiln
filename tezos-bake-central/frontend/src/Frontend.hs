@@ -1936,8 +1936,8 @@ bakersTab =
               then Just $ case ba of
                 BakerAlert_Alert (btag :=> Identity blog) ->
                   (LogTag_Baker btag :=> (Const $ errorLogIdForBakerLogTag btag blog)) :| []
-                BakerAlert_GroupedAlert _ _ _ _ v ->
-                  fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) v
+                BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_logs = elogIds } ->
+                  fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) elogIds
               else Nothing
 
             resolvable = concat . (fmap toList) . concatMap (mapMaybe toLogTag . NEL.toList) . MMap.elems <$> dEbb
@@ -1993,8 +1993,8 @@ bakersTab =
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> Just $ renderBakerError $ bakerInsufficientFundsDescriptions log
                     BakerLogTag_VotingReminder -> Nothing
-                  Right (BakerAlert_GroupedAlert _ _ rightKind _ ls) -> Just $ el "span" $ do
-                    elClass "span" "ui label circular" $ text $ tshow (length ls)
+                  Right (BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_right = rightKind, _bakerAlert_groupedAlert_logs = elogIds }) -> Just $ el "span" $ do
+                    elClass "span" "ui label circular" $ text $ tshow (length elogIds)
                     text nbsp
                     text $ "Missed " <> aRight <> "."
                     where
@@ -2062,11 +2062,11 @@ bakersTab =
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
 
-      BakerAlert_GroupedAlert first' latest' rightKind pkh ls -> do
+      BakerAlert_GroupedAlert first' latest' rightKind (Id pkh) elogIds -> do
         tz <- asks (^. timeZone)
         let
-          ev = fmap (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Const l) ls
-        renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length ls) first' latest' rightKind) pkh
+          ev = fmap (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Const l) elogIds
+        renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length elogIds) first' latest' rightKind) pkh
 
       where
         renderBakerError :: NonEmpty (DSum LogTag (Const (Id ErrorLog))) -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()

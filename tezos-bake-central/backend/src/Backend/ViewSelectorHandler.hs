@@ -523,7 +523,7 @@ getBakerAlert = do
         group ls' = case NEL.nonEmpty ls' of
           Nothing -> []
           Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
-          Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) rightKind pkh $ fmap (_errorLogBakerMissed_log . snd) ls]
+          Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) rightKind (Id pkh) $ fmap (_errorLogBakerMissed_log . snd) ls]
             where
               applyF f = (\(e, elog) -> (_errorLogBakerMissed_level elog, _errorLog_started e)) $ f (comparing fst) ls
               rightKind = _errorLogBakerMissed_right eMissed

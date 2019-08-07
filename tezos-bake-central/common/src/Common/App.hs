@@ -132,10 +132,21 @@ instance ToJSON BakerSummary
 
 data BakerAlert
   = BakerAlert_Alert (DSum BakerLogTag Identity)
-  | BakerAlert_GroupedAlert (RawLevel, UTCTime) (RawLevel, UTCTime) RightKind PublicKeyHash (NonEmpty (Id ErrorLog))
+  | BakerAlert_GroupedAlert
+    { _bakerAlert_groupedAlert_first :: (RawLevel, UTCTime)
+    , _bakerAlert_groupedAlert_latest :: (RawLevel, UTCTime)
+    , _bakerAlert_groupedAlert_right :: RightKind
+    , _bakerAlert_groupedAlert_baker :: Id Baker
+    , _bakerAlert_groupedAlert_logs :: NonEmpty (Id ErrorLog)
+    }
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerAlert
 instance ToJSON BakerAlert
+
+errorLogFromBakerAlert :: BakerAlert -> NonEmpty (Id ErrorLog)
+errorLogFromBakerAlert = \case
+  BakerAlert_Alert (btag :=> Identity blog) -> errorLogIdForBakerLogTag btag blog :| []
+  BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_logs = elogIds } -> elogIds
 
 -- data NodeSummary = Node Node' AlertCount
 
