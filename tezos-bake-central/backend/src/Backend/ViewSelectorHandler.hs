@@ -30,6 +30,7 @@ import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..))
 import Data.List (intersperse, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
+import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
@@ -495,12 +496,12 @@ getBakerAlert = do
 
   let everythingWindow = ClosedInterval LowerInfinity UpperInfinity
 
-  allAlerts <- (traverse (\(This t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe)
+  allAlerts <- traverse (\(This t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
   let
     berrors :: MonoidalMap PublicKeyHash [(ErrorLog, BakerErrorLogView)]
     berrors = MMap.fromListWith (<>)
       [ (k, pure (l, t'))
-      | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- concat $ map MMap.elems allAlerts
+      | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- concatMap MMap.elems allAlerts
       , Just t' <- [bakerErrorViewOnly t]
       , let k = bakerIdForBakerErrorLogView t'
       ]
@@ -530,7 +531,7 @@ getBakerAlert = do
               pkh = unId $ _errorLogBakerMissed_baker eMissed
               eMissed = snd $ NEL.head ls
 
-  pure $ catMaybes $ map (\(k, v) -> (fmap (k,)) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList berrors
+  pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList berrors
 
 
 getAlertCount

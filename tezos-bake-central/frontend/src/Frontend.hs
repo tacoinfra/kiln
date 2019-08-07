@@ -1940,7 +1940,7 @@ bakersTab =
                   fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) elogIds
               else Nothing
 
-            resolvable = concat . (fmap toList) . concatMap (mapMaybe toLogTag . NEL.toList) . MMap.elems <$> dEbb
+            resolvable = concatMap toList . concatMap (mapMaybe toLogTag . NEL.toList) . MMap.elems <$> dEbb
             anyErrors = not . null <$> resolvable
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
@@ -1993,14 +1993,16 @@ bakersTab =
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> Just $ renderBakerError $ bakerInsufficientFundsDescriptions log
                     BakerLogTag_VotingReminder -> Nothing
-                  Right (BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_right = rightKind, _bakerAlert_groupedAlert_logs = elogIds }) -> Just $ el "span" $ do
-                    elClass "span" "ui label circular" $ text $ tshow (length elogIds)
-                    text nbsp
-                    text $ "Missed " <> aRight <> "."
-                    where
-                      aRight = case rightKind of
-                        RightKind_Baking -> "a bake"
-                        RightKind_Endorsing -> "an endorsement"
+                  Right BakerAlert_GroupedAlert
+                    { _bakerAlert_groupedAlert_right = rightKind
+                    , _bakerAlert_groupedAlert_logs = elogIds } -> Just $ el "span" $ do
+                      elClass "span" "ui label circular" $ text $ tshow (length elogIds)
+                      text nbsp
+                      text $ "Missed " <> aRight <> "."
+                      where
+                        aRight = case rightKind of
+                          RightKind_Baking -> "a bake"
+                          RightKind_Endorsing -> "an endorsement"
 
               let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
               titleUniq <- holdUniqDyn title
