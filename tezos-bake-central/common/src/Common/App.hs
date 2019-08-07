@@ -254,7 +254,7 @@ data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty (Id ErrorLog, BakerAlert)) a)
+  , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty BakerAlert) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
@@ -288,7 +288,7 @@ data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
   , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
   , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeView_bakerAlerts :: !(RangeView' PublicKeyHash (NonEmpty (Id ErrorLog, BakerAlert)) a)
+  , _bakeView_bakerAlerts :: !(RangeView' PublicKeyHash (NonEmpty BakerAlert) a)
   , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
   -- TODO: I'm more than a little concerned about this approach for dealing
   -- with deletes in IntervalView.  I think in this particular case, we can get

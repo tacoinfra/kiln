@@ -490,7 +490,7 @@ getBakerAlert
   ( MonadLogger m
   , PersistBackend m
   )
-  => m [(PublicKeyHash, NonEmpty (Id ErrorLog, BakerAlert))]
+  => m [(PublicKeyHash, NonEmpty BakerAlert)]
 getBakerAlert = do
 
   let everythingWindow = ClosedInterval LowerInfinity UpperInfinity
@@ -504,11 +504,6 @@ getBakerAlert = do
       , Just t' <- [bakerErrorViewOnly t]
       , let k = bakerIdForBakerErrorLogView t'
       ]
-
-    g :: BakerAlert -> (Id ErrorLog, BakerAlert)
-    g v = (,v) $ case v of
-      BakerAlert_Alert (t :=> Identity l) -> errorLogIdForBakerLogTag t l
-      BakerAlert_GroupedAlert _ _ _ _ ne -> NEL.head ne
 
     groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
     groupBakerAlerts bs = map BakerAlert_Alert others ++ group bakerMiss ++ group endorseMiss
@@ -535,7 +530,7 @@ getBakerAlert = do
               pkh = unId $ _errorLogBakerMissed_baker eMissed
               eMissed = snd $ NEL.head ls
 
-  pure $ catMaybes $ map (\(k, v) -> (fmap (k,)) . NEL.nonEmpty $ fmap g (groupBakerAlerts v)) $ MMap.toList berrors
+  pure $ catMaybes $ map (\(k, v) -> (fmap (k,)) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList berrors
 
 
 getAlertCount

@@ -174,7 +174,7 @@ watchErrorsByNode alertWindow = do
 
 watchBakerAlerts
   :: MonadRhyoliteFrontendWidget Bake t m
-  => m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (Id ErrorLog, BakerAlert))))
+  => m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerAlert)))
 watchBakerAlerts = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAlerts = viewRangeAll 1

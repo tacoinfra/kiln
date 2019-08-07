@@ -1926,7 +1926,7 @@ bakersTab =
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (Id ErrorLog, BakerAlert))) <- watchBakerAlerts
+      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerAlert)) <- watchBakerAlerts
       dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
@@ -1940,7 +1940,7 @@ bakersTab =
                   fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) v
               else Nothing
 
-            resolvable = concat . (fmap toList) . concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> dEbb
+            resolvable = concat . (fmap toList) . concatMap (mapMaybe toLogTag . NEL.toList) . MMap.elems <$> dEbb
             anyErrors = not . null <$> resolvable
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
@@ -1962,7 +1962,7 @@ bakersTab =
           dyn_ $ ffor bakersBanner mkBakersBanner
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap (fmap snd . NEL.toList) <$> dEbb
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap NEL.toList <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
@@ -1977,7 +1977,7 @@ bakersTab =
                   <$> ffor dCollectiveNodesStatus (\case
                           Left e -> [Left e]
                           Right _ -> [])
-                  <*> (map Right . (fmap snd) <$> unresolvedAlerts)
+                  <*> (map Right <$> unresolvedAlerts)
 
                 withSeverity e = fmap $ \m -> (_alertMetaData_severity $ getAlertMetaData e, m)
                 errorMessages = ffor bakerAlerts $ mapMaybe $ \e -> withSeverity e $ case e of
