@@ -27,7 +27,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.Schema
-import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses, getBakerAlert)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
                    NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
@@ -272,8 +272,17 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
                   MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
               }
             else mempty
+      bakerAlerts <- for (fmap bakerIdForBakerErrorLogView . bakerErrorViewOnly . toView =<< specificLog') $ \logBakerId -> do
+        let bakerAlertsVS = _bakeViewSelector_bakerAlerts aggVS
+        whenM (viewSelects (Bounded logBakerId) bakerAlertsVS) $ do
+          -- This could be further optimized to only fetch logBakerId' alerts
+          bakerAlerts <- toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, v)) <$> getBakerAlert
+          pure mempty
+            { _bakeView_bakerAlerts = bakerAlerts
+            }
       userSupplied <- maybe (pure mempty) k specificLog'
-      return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> userSupplied
+
+      return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> fold bakerAlerts <> userSupplied
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
 
