@@ -32,11 +32,11 @@ import Data.Dependent.Sum (DSum(..), EqTag)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Sum
-import Data.List (intersperse, minimumBy, maximumBy, foldl')
+import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
-import Data.Ord (Down (..), comparing)
+import Data.Ord (Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
@@ -1910,31 +1910,6 @@ data BakersBanner
   | BakersBanner_CannotGather
   deriving (Eq, Ord, Show)
 
-groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
-groupBakerAlerts bs = map BakerAlert_Alert others ++ group bakerMiss ++ group endorseMiss
-  where
-    (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
-    partitionF
-      :: (a ~ (DSum BakerLogTag Identity), c ~ ErrorLogBakerMissed)
-      => ([a], [(b, c)], [(b, c)])
-      -> (b, a)
-      -> ([a], [(b, c)], [(b, c)])
-    partitionF (os, bms, ems) (elog, v@(lTag :=> Identity log)) = case lTag of
-      BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right log of
-        RightKind_Baking -> (os, (elog, log) : bms, ems)
-        RightKind_Endorsing -> (os, bms, (elog, log) : ems)
-      _ -> (v : os, bms, ems)
-
-    group ls' = case NEL.nonEmpty ls' of
-      Nothing -> []
-      Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
-      Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) rightKind pkh $ fmap (_errorLogBakerMissed_log . snd) ls]
-        where
-          applyF f = (\(e, log) -> (_errorLogBakerMissed_level log, _errorLog_started e)) $ f (comparing fst) ls
-          rightKind = _errorLogBakerMissed_right elog
-          pkh = unId $ _errorLogBakerMissed_baker elog
-          elog = snd $ NEL.head ls
-
 bakersTab
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -1951,22 +1926,26 @@ bakersTab =
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
       alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))) <- watchErrorsByBaker alertWindow
+      dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (Id ErrorLog, BakerAlert))) <- watchBakerAlerts
       dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo
           let
-            anyErrors = any isUserResolvable . map snd . concatMap NEL.toList <$> dEbb
+            toLogTag ba = if isUserResolvable ba
+              then Just $ case ba of
+                BakerAlert_Alert (btag :=> Identity blog) ->
+                  (LogTag_Baker btag :=> (Const $ errorLogIdForBakerLogTag btag blog)) :| []
+                BakerAlert_GroupedAlert _ _ _ _ v ->
+                  fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) v
+              else Nothing
+
+            resolvable = concat . (fmap toList) . concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> dEbb
+            anyErrors = not . null <$> resolvable
           resolveAll <- uiDynButton ((<>) "primary right floated " . bool "transition hidden" "" <$> anyErrors) $ do
             icon "icon-check"
             text "Resolve All"
-          let
-            toLogTag l@(f :=> k) = let g = LogTag_Baker f in if isUserResolvable l
-              then Just $ g :=> Const (errorLogIdForErrorLogView $ g :=> k)
-              else Nothing
-            alerts = concatMap (mapMaybe (toLogTag . snd) . NEL.toList) . MMap.elems <$> current dEbb
-          _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) alerts resolveAll
+          _ <- requestingIdentity $ attachWith (\as () -> public $ PublicRequest_ResolveAlerts as) (current resolvable) resolveAll
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
           let
@@ -1983,7 +1962,7 @@ bakersTab =
           dyn_ $ ffor bakersBanner mkBakersBanner
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
-              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap (groupBakerAlerts . NEL.toList) <$> dEbb
+              notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap (fmap snd . NEL.toList) <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
 
           (bakersDetails :: Dynamic t (Map.Map PublicKeyHash
@@ -1998,7 +1977,7 @@ bakersTab =
                   <$> ffor dCollectiveNodesStatus (\case
                           Left e -> [Left e]
                           Right _ -> [])
-                  <*> (map Right . groupBakerAlerts <$> unresolvedAlerts)
+                  <*> (map Right . (fmap snd) <$> unresolvedAlerts)
 
                 withSeverity e = fmap $ \m -> (_alertMetaData_severity $ getAlertMetaData e, m)
                 errorMessages = ffor bakerAlerts $ mapMaybe $ \e -> withSeverity e $ case e of
