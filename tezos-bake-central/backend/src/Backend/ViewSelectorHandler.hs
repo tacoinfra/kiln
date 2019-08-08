@@ -434,6 +434,7 @@ getErrorLogsImpl flt intervalMap = do
           \   , el.stopped AT TIME ZONE 'UTC' \
           \   , el.\"lastSeen\" AT TIME ZONE 'UTC' \
           \   , el.\"noticeSentAt\" AT TIME ZONE 'UTC' \
+          \   , el.\"chainId\" \
           \   " <> foldMap (\fld -> ", t.\"" <> fld <> "\"") sqlFields <> " \
           \ FROM \"ErrorLog\" el \
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
