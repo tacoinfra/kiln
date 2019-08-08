@@ -13,13 +13,16 @@
 module Frontend.Watch where
 
 import qualified Data.List.NonEmpty as NEL
-import Data.Dependent.Map (DMap)
+import Data.Dependent.Map (DMap, DSum(..), Some (..))
+import qualified Data.Dependent.Map as DMap
 import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
 import Data.Semigroup (Min (..))
 import Data.Semigroup.Foldable (fold1)
+import qualified Data.Set as Set
 import Data.Time (UTCTime)
+import Data.Universe (universe)
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Rhyolite.Api (public)
@@ -149,15 +152,37 @@ watchErrors
   => Dynamic t (Maybe AlertsFilter)
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
-watchErrors mAlert intervals = do
-  v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
-    { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
+watchErrors mAlert intervals = watchErrorsByTag mAlert allLogTags intervals
+  where allLogTags = constDyn $ DMap.fromList $ map (\(This l) -> l :=> Const 0) (universe :: [Some LogTag])
+  -- v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
+  --   { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
+  --   }
+  -- -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
+  -- return $ ffor2 mAlert v $ \mAlert' v' ->
+  --   fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ fold $ do
+  --     alert <- mAlert'
+  --     MMap.lookup alert $ _bakeView_errors v'
+
+watchErrorsByTag
+  :: MonadRhyoliteFrontendWidget Bake t m
+  => Dynamic t (Maybe AlertsFilter)
+  -> Dynamic t (DMap LogTag (Const Int))
+  -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
+  -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
+watchErrorsByTag mAlert logSet intervals = do
+  v <- watchViewSelector $ ffor3 mAlert logSet intervals $ \mAlert' logSet' ivals -> flip foldMap mAlert' $ \a -> mempty
+    { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ viewRangeSet (Set.fromList $ DMap.assocs logSet') $ viewIntervalSet ivals 1
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  return $ ffor2 mAlert v $ \mAlert' v' ->
-    fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ fold $ do
-      alert <- mAlert'
-      MMap.lookup alert $ _bakeView_errors v'
+  let
+    v1 = ffor3 mAlert logSet v $ \mAlert' logSet' v' ->
+      let
+        (_, lower) = getComposeView $ fold $ do
+          alert <- mAlert'
+          MMap.lookup alert $ _bakeView_errors v'
+        allTags = fold $ catMaybes $ map (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
+      in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ allTags
+  return v1
 
 watchErrorsByNode
   :: MonadRhyoliteFrontendWidget Bake t m

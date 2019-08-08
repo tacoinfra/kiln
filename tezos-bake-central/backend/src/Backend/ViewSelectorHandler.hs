@@ -348,17 +348,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_bakerRegistered = mempty
     }
 
-getErrorLogs
-  :: forall m a e.
-  ( MonadLogger m
-  , PersistBackend m
-  , Semigroup a
-  )
-  => AlertsFilter
-  ->          IntervalSelector' UTCTime (Id ErrorLog) e a
-  -> m (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
-getErrorLogs flt (IntervalSelector vs0) = fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ getErrorLogsImpl flt vs0
-
 pg :: Proxy Postgresql
 pg = Proxy @Postgresql
 
@@ -384,22 +373,58 @@ getErrorLogsImpl
   , Semigroup a
   )
   => AlertsFilter
-  -> AppendIntervalMap (ClosedInterval (WithInfinity UTCTime)) a
-  -> m (MonoidalMap (Id ErrorLog) (First (ErrorInfo, ClosedInterval (WithInfinity UTCTime))))
-getErrorLogsImpl flt intervalMap = do
-  let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
-  $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
+  -> RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+  -> m [(ErrorRangeSelectorT, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
+getErrorLogsImpl flt logMap = do
+  v <- for universe $ \(This lTag) -> do
+    let
+      selectTag = (lTag :=> Const 0)
+      mV = Common.Vassal.lookup selectTag logMap
+    v <- for mV $ \vs0@(IntervalSelector intervalMap) -> do
+      let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
+      $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
 
-  fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) runQueries
+      v1 <- fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) (runQueries selectTag)
+      pure $ (IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) v1
+      -- pure v1
+-- fmap (IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just))
+    pure $ (,) selectTag <$> v
+  pure (catMaybes v)
   where
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     -- TODO: make every bakeralert work with the Id Baker column, probably
-    runQueries :: ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-    runQueries window = do
-      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) universe
+    runQueries :: ErrorRangeSelectorT -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries (ltag :=> Const _) window = do
+      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
 
     leftBiasedUnions = MMap.unionsWith const
+
+
+getErrorLogs
+  :: forall m a e.
+  ( MonadLogger m
+  , PersistBackend m
+  , Semigroup a
+  )
+  => AlertsFilter
+  ->          Compose (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
+  -> m (View (Compose (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
+getErrorLogs flt sel = do
+  f <- getErrorLogsImpl flt vs0
+  let
+    -- h :: View (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+    -- h = toRangeView s f
+    m :: Compose (MonoidalMap ErrorRangeSelectorT) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
+    m = Compose $ MMap.fromList f
+
+    h :: View (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) a
+    h = k sel
+  pure $ ComposeView h m
+  -- $ fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ g2 $
+  where
+    s = getCompose sel
+    vs0 = s
 
 getErrorLogForTag
   :: forall m e.
