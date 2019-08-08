@@ -20,7 +20,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Logger (LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
@@ -44,6 +44,7 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
+import qualified Rhyolite.Backend.WebSocket as RhyoliteWs
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
@@ -429,7 +430,8 @@ backendImpl cfg serve = do
 
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
-      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsockets db
+      let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
+      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs db
         (requestHandler appConfig upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)

@@ -86,7 +86,6 @@ import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
-
 import ExtraPrelude
 
 viewSelectorHandler
