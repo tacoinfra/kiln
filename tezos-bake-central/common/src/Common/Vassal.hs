@@ -546,7 +546,7 @@ deriveShow1Methods [d|instance (        Show e) => Show1       (RangeSelector e 
 deriveShow1Methods [d|instance (Show i, Show v, Show e) => Show1 (View (IntervalSelector e i v))|]
 deriveShow1Methods [d|instance (                Show e) => Show1       (IntervalSelector e i v) |]
 deriveShow1Methods [d|instance (Show k, Show v) => Show1 (View (MapSelector k v))|]
-deriveShow1Methods [d|instance (Show k, Show v) => Show1       (MapSelector k v) |]
+deriveShow1Methods [d|instance (Show k        ) => Show1       (MapSelector k v) |]
 deriveShow1Methods [d|instance (Show v) => Show1 (View (MaybeSelector v))|]
 deriveShow1Methods [d|instance             Show1       (MaybeSelector v) |]
 
