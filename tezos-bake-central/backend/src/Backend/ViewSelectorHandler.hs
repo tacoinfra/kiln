@@ -365,40 +365,6 @@ traceQuery sql params f = do
   $(logDebugS) "SQL" (tshow $ params [])
   queryRaw False (T.unpack $ decodeUtf8 $ fromUtf8 sql) (params []) $ mapAllRows f
 
-getErrorLogsImpl
-  :: forall m a.
-  ( MonadLogger m
-  , PersistBackend m
-  , Semigroup a
-  )
-  => AlertsFilter
-  -> MapSelector (DSum LogTag (Const ())) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
-  -> m [(DSum LogTag (Const ()), a, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
-getErrorLogsImpl flt logMap = do
-  v <- for universe $ \(This lTag) -> do
-    let
-      selectTag = (lTag :=> Const ())
-      mV = Common.Vassal.lookup selectTag logMap
-    v1 <- for mV $ \(IntervalSelector intervalMap) -> do
-      let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
-      $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
-
-      v1 <- fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) (runQueries selectTag)
-      let ma = sconcat <$> (NEL.nonEmpty $ AppendIMap.elems intervalMap)
-      pure $ (,) ((IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) v1) <$> ma
-    pure $ (\(v, a) -> (selectTag, a, v)) <$> join v1
-  pure (catMaybes v)
-  where
-    --queryClientDaemonAlert sqlTable sqlFields =
-    --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
-    -- TODO: make every bakeralert work with the Id Baker column, probably
-    runQueries :: DSum LogTag (Const ()) -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-    runQueries (ltag :=> Const _) window = do
-      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
-
-    leftBiasedUnions = MMap.unionsWith const
-
-
 getErrorLogs
   :: forall m a .
   ( MonadLogger m
@@ -409,14 +375,41 @@ getErrorLogs
   ->          Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
   -> m (View (Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
 getErrorLogs flt sel = do
-  f <- getErrorLogsImpl flt $ getCompose sel
+  vals <- getErrorLogsImpl flt $ getCompose sel
   let
-    m :: Compose (MonoidalMap (DSum LogTag (Const ()))) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
-    m = Compose $ MMap.fromList $ map (\(k, _, v) -> (k, v)) f
+    l :: Compose (MonoidalMap (DSum LogTag (Const ()))) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
+    l = Compose $ MMap.fromList $ map (\(k, v, _) -> (k, v)) vals
 
-    h :: View (MapSelector (DSum LogTag (Const ())) ()) a
-    h = MapView $ MMap.fromList $ map (\(k, a, _) -> (k, (First (), a))) $ f
-  pure $ ComposeView h m
+    u :: View (MapSelector (DSum LogTag (Const ())) ()) a
+    u = MapView $ MMap.fromList $ map (\(k, _, a) -> (k, (First (), a))) vals
+  pure $ ComposeView u l
+
+getErrorLogsImpl
+  :: forall m a.
+  ( MonadLogger m
+  , PersistBackend m
+  , Semigroup a
+  )
+  => AlertsFilter
+  -> MapSelector (DSum LogTag (Const ())) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+  -> m [(DSum LogTag (Const ()), View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a, a)]
+getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, (IntervalSelector intervalMap)) -> do
+  let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
+  $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
+
+  vals <- fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) (runQueries lTag)
+  let ma = sconcat <$> (NEL.nonEmpty $ AppendIMap.elems intervalMap) :: Maybe a
+  pure $ (,,) lTag ((IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) vals) <$> ma
+  where
+    --queryClientDaemonAlert sqlTable sqlFields =
+    --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
+    -- TODO: make every bakeralert work with the Id Baker column, probably
+    runQueries :: DSum LogTag (Const ()) -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries (ltag :=> Const _) window = do
+      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
+
+    leftBiasedUnions = MMap.unionsWith const
+
 
 getErrorLogForTag
   :: forall m e.

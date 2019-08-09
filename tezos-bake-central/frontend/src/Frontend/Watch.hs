@@ -146,7 +146,6 @@ watchNotificatees = do
     }
   return $ fmap ((fmap . fmap) _mailServerView_notificatees . getMaybeView . _bakeView_mailServer) theView
 
--- TODO: filter by alert type (that is, ErrorLogView constructor, or logical groups of such)
 watchErrors
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Maybe AlertsFilter)
@@ -154,15 +153,8 @@ watchErrors
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrors mAlert intervals = watchErrorsByTag mAlert allLogTags intervals
   where allLogTags = constDyn $ DMap.fromList $ map (\(This l) -> l :=> Const ()) (universe :: [Some LogTag])
-  -- v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
-  --   { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
-  --   }
-  -- -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  -- return $ ffor2 mAlert v $ \mAlert' v' ->
-  --   fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ fold $ do
-  --     alert <- mAlert'
-  --     MMap.lookup alert $ _bakeView_errors v'
 
+-- It is possible to to query each LogTag with different Interval
 watchErrorsByTag
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Maybe AlertsFilter)
@@ -174,15 +166,13 @@ watchErrorsByTag mAlert logSet intervals = do
     { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ MapSelector $ MMap.fromList $ map (,viewIntervalSet ivals 1) $ DMap.assocs logSet'
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
-  let
-    v1 = ffor3 mAlert logSet v $ \mAlert' logSet' v' ->
-      let
-        (_, lower) = getComposeView $ fold $ do
-          alert <- mAlert'
-          MMap.lookup alert $ _bakeView_errors v'
-        allTags = fold $ catMaybes $ map (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
-      in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ allTags
-  return v1
+  pure $ ffor3 mAlert logSet v $ \mAlert' logSet' v' ->
+    let
+      (_, lower) = getComposeView $ fold $ do
+        alert <- mAlert'
+        MMap.lookup alert $ _bakeView_errors v'
+      allTags = fold $ catMaybes $ map (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
+    in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ allTags
 
 watchErrorsByNode
   :: MonadRhyoliteFrontendWidget Bake t m

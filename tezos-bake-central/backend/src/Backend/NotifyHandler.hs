@@ -273,7 +273,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
               tagKey = (tag :=> Const ())
               mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
               ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
-              g = \a errorsIntervalVS -> if viewSelects errorInterval errorsIntervalVS
+              makeBakeView = \a errorsIntervalVS -> if viewSelects errorInterval errorsIntervalVS
                 then mempty
                   { _bakeView_errors = MMap.singleton flt $ ComposeView
                       (MapView $ MMap.singleton tagKey (First (), a)) $
@@ -281,7 +281,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
                       MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
                   }
                 else mempty
-            in fromMaybe mempty $ liftA2 g ma mErrorsIntervalVS
+            in fromMaybe mempty $ liftA2 makeBakeView ma mErrorsIntervalVS
       bakerAlerts <- for (fmap bakerIdForBakerErrorLogView . bakerErrorViewOnly . toView =<< specificLog') $ \logBakerId -> do
         let bakerAlertsVS = _bakeViewSelector_bakerAlerts aggVS
         whenM (viewSelects (Bounded logBakerId) bakerAlertsVS) $ do
