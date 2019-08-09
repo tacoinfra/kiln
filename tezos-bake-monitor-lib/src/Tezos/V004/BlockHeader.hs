@@ -66,6 +66,18 @@ data BlockHeader = BlockHeader
   deriving (Show, Eq, Ord, Generic, Typeable)
 instance NFData BlockHeader
 
+-- Version-specific fragment of the block header.
+-- RPC reference: GET ../<block_id>/header/protocol_data
+data BlockHeaderProto = BlockHeaderProto
+  { _blockHeaderProto_protocol :: !ProtocolHash
+  , _blockHeaderProto_priority :: !Priority
+  , _blockHeaderProto_proofOfWorkNonce :: !(Base16ByteString ByteString)
+  , _blockHeaderProto_seedNonceHash :: !(Maybe NonceHash)
+  , _blockHeaderProto_signature :: !(Maybe Signature)
+  }
+  deriving (Show, Eq, Ord, Generic, Typeable)
+instance NFData BlockHeaderProto
+
 -- This is embedded in other structures like Checkpoint
 data BlockHeaderShell = BlockHeaderShell
   { _blockHeaderShell_level :: !RawLevel
@@ -119,5 +131,5 @@ instance B.TezosBinary BlockHeaderFull where
     sig <- B.get
     pure $ bh { _blockHeaderFull_signature = Just sig }
 
-concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderFull, ''BlockHeaderShell]
-concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderFull, 'BlockHeaderShell ]
+concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderFull, ''BlockHeaderProto, ''BlockHeaderShell]
+concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderFull, 'BlockHeaderProto, 'BlockHeaderShell ]

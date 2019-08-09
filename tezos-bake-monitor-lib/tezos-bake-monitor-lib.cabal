@@ -39,6 +39,7 @@ library
     Tezos.V004.Lenses
     Tezos.V004.Ledger
     Tezos.V004.Level
+    Tezos.V004.Mempool
     Tezos.V004.Micheline
     Tezos.V004.Michelson
     Tezos.V004.NodeRPC.Class
