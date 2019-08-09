@@ -372,8 +372,8 @@ getErrorLogsImpl
   , Semigroup a
   )
   => AlertsFilter
-  -> MapSelector ErrorMapSelectorKey () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
-  -> m [(ErrorMapSelectorKey, a, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
+  -> MapSelector (DSum LogTag (Const ())) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+  -> m [(DSum LogTag (Const ()), a, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
 getErrorLogsImpl flt logMap = do
   v <- for universe $ \(This lTag) -> do
     let
@@ -392,7 +392,7 @@ getErrorLogsImpl flt logMap = do
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     -- TODO: make every bakeralert work with the Id Baker column, probably
-    runQueries :: ErrorMapSelectorKey -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries :: DSum LogTag (Const ()) -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries (ltag :=> Const _) window = do
       leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
 
@@ -406,15 +406,15 @@ getErrorLogs
   , Semigroup a
   )
   => AlertsFilter
-  ->          Compose (MapSelector ErrorMapSelectorKey ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
-  -> m (View (Compose (MapSelector ErrorMapSelectorKey ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
+  ->          Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
+  -> m (View (Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
 getErrorLogs flt sel = do
   f <- getErrorLogsImpl flt $ getCompose sel
   let
-    m :: Compose (MonoidalMap ErrorMapSelectorKey) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
+    m :: Compose (MonoidalMap (DSum LogTag (Const ()))) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
     m = Compose $ MMap.fromList $ map (\(k, _, v) -> (k, v)) f
 
-    h :: View (MapSelector ErrorMapSelectorKey ()) a
+    h :: View (MapSelector (DSum LogTag (Const ())) ()) a
     h = MapView $ MMap.fromList $ map (\(k, a, _) -> (k, (First (), a))) $ f
   pure $ ComposeView h m
 

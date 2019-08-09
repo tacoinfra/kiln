@@ -261,12 +261,8 @@ instance Semigroup VoteState where
     { _voteState_step = _voteState_step s1 <> _voteState_step s2
     }
 
-type ErrorMapSelectorKey = DSum LogTag (Const ())
-type ErrorsViewT a = MonoidalMap AlertsFilter (ComposeView (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
-type ErrorsSelectorT a = MonoidalMap AlertsFilter (ComposeSelector (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
-
-instance FromJSONKey (ErrorMapSelectorKey)
-instance ToJSONKey (ErrorMapSelectorKey)
+instance FromJSONKey (DSum LogTag (Const ()))
+instance ToJSONKey (DSum LogTag (Const ()))
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
@@ -275,7 +271,9 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty BakerAlert) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
-  , _bakeViewSelector_errors :: !(ErrorsSelectorT a)
+  -- what we really need is (SetSelector (Some LogTag)), but using (MapSelector (DSum LogTag (Const ())) ())
+  -- as we dont have a SetSelector in Vassal, and (Some LogTag) does not have ToJSON/Generic
+  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
@@ -314,7 +312,7 @@ data BakeView a = BakeView
   -- relevant selection window should *eventually* roll off for the resolved
   -- things and be dropped anyway.  In other cases, this approach is likely to
   -- leak memory in Reflex (deletes never really get to go away)
-  , _bakeView_errors :: !(ErrorsViewT a)
+  , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
