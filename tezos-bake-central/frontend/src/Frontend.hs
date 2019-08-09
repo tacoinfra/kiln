@@ -511,7 +511,7 @@ globalAlerts = do
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   mNetworkAlert <- for mchain $ \chain -> do
     let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
-    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton LogTag_NetworkUpdate (Const ())) everythingWindow
     mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
       (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
         guard $ _errorLogNetworkUpdate_namedChain ua == chain
