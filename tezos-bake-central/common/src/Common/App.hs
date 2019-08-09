@@ -261,12 +261,12 @@ instance Semigroup VoteState where
     { _voteState_step = _voteState_step s1 <> _voteState_step s2
     }
 
-type ErrorRangeSelectorT = DSum LogTag (Const Int)
-type ErrorsViewT a = MonoidalMap AlertsFilter (ComposeView (RangeSelector (ErrorRangeSelectorT) (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
-type ErrorsSelectorT a = MonoidalMap AlertsFilter (ComposeSelector (RangeSelector (ErrorRangeSelectorT) (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+type ErrorMapSelectorKey = DSum LogTag (Const Int)
+type ErrorsViewT a = MonoidalMap AlertsFilter (ComposeView (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+type ErrorsSelectorT a = MonoidalMap AlertsFilter (ComposeSelector (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
 
-instance FromJSONKey (ErrorRangeSelectorT)
-instance ToJSONKey (ErrorRangeSelectorT)
+instance FromJSONKey (ErrorMapSelectorKey)
+instance ToJSONKey (ErrorMapSelectorKey)
 
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)

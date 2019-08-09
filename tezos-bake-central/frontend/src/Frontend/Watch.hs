@@ -6,6 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -20,7 +21,6 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
 import Data.Semigroup (Min (..))
 import Data.Semigroup.Foldable (fold1)
-import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.Universe (universe)
 import Prelude hiding (log)
@@ -171,7 +171,7 @@ watchErrorsByTag
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrorsByTag mAlert logSet intervals = do
   v <- watchViewSelector $ ffor3 mAlert logSet intervals $ \mAlert' logSet' ivals -> flip foldMap mAlert' $ \a -> mempty
-    { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ viewRangeSet (Set.fromList $ DMap.assocs logSet') $ viewIntervalSet ivals 1
+    { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ MapSelector $ MMap.fromList $ map (,viewIntervalSet ivals 1) $ DMap.assocs logSet'
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
   let

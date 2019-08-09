@@ -36,7 +36,7 @@ import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (comparing)
 import Data.Pool (Pool)
-import Data.Semigroup (Max(..))
+import Data.Semigroup (Max(..), sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
@@ -84,7 +84,7 @@ import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
-import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
+import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig)
 import Common.Schema
@@ -373,28 +373,27 @@ getErrorLogsImpl
   , Semigroup a
   )
   => AlertsFilter
-  -> RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
-  -> m [(ErrorRangeSelectorT, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
+  -> MapSelector ErrorMapSelectorKey () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+  -> m [(ErrorMapSelectorKey, a, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)]
 getErrorLogsImpl flt logMap = do
   v <- for universe $ \(This lTag) -> do
     let
       selectTag = (lTag :=> Const 0)
       mV = Common.Vassal.lookup selectTag logMap
-    v <- for mV $ \vs0@(IntervalSelector intervalMap) -> do
+    v1 <- for mV $ \(IntervalSelector intervalMap) -> do
       let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
       $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
 
       v1 <- fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) (runQueries selectTag)
-      pure $ (IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) v1
-      -- pure v1
--- fmap (IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just))
-    pure $ (,) selectTag <$> v
+      let ma = sconcat <$> (NEL.nonEmpty $ AppendIMap.elems intervalMap)
+      pure $ (,) ((IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) v1) <$> ma
+    pure $ (\(v, a) -> (selectTag, a, v)) <$> join v1
   pure (catMaybes v)
   where
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     -- TODO: make every bakeralert work with the Id Baker column, probably
-    runQueries :: ErrorRangeSelectorT -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries :: ErrorMapSelectorKey -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries (ltag :=> Const _) window = do
       leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
 
@@ -402,29 +401,23 @@ getErrorLogsImpl flt logMap = do
 
 
 getErrorLogs
-  :: forall m a e.
+  :: forall m a .
   ( MonadLogger m
   , PersistBackend m
   , Semigroup a
   )
   => AlertsFilter
-  ->          Compose (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
-  -> m (View (Compose (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
+  ->          Compose (MapSelector ErrorMapSelectorKey ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
+  -> m (View (Compose (MapSelector ErrorMapSelectorKey ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
 getErrorLogs flt sel = do
-  f <- getErrorLogsImpl flt vs0
+  f <- getErrorLogsImpl flt $ getCompose sel
   let
-    -- h :: View (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
-    -- h = toRangeView s f
-    m :: Compose (MonoidalMap ErrorRangeSelectorT) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
-    m = Compose $ MMap.fromList f
+    m :: Compose (MonoidalMap ErrorMapSelectorKey) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
+    m = Compose $ MMap.fromList $ map (\(k, _, v) -> (k, v)) f
 
-    h :: View (RangeSelector ErrorRangeSelectorT (Deletable ErrorInfo)) a
-    h = k sel
+    h :: View (MapSelector ErrorMapSelectorKey ()) a
+    h = MapView $ MMap.fromList $ map (\(k, a, _) -> (k, (First (), a))) $ f
   pure $ ComposeView h m
-  -- $ fmap (IntervalView vs0 . (fmap.fmap.first) (First . Just)) $ g2 $
-  where
-    s = getCompose sel
-    vs0 = s
 
 getErrorLogForTag
   :: forall m e.
