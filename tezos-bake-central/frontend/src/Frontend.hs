@@ -221,6 +221,7 @@ appMain = do
     appSidebar
 
     let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
+    sideBarOpened <- holdDyn SemUi.Out $ fmapMaybe id openness
     (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
       (def
         & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
@@ -239,7 +240,7 @@ appMain = do
           e <- divClass "sidebar-title" $ do
             divClass "ui left floated header" $ text "Notifications"
             divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-          liveErrorsWidget
+          dyn_ $ ffor sideBarOpened $ \o -> when (o == SemUi.In) liveErrorsWidget
           pure e)
       -- Accompanying content
       $ do
