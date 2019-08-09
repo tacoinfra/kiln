@@ -273,7 +273,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
               tagKey = (tag :=> Const ())
               mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
               ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
-              makeBakeView = \a errorsIntervalVS -> if viewSelects errorInterval errorsIntervalVS
+              makeBakeView a errorsIntervalVS = if viewSelects errorInterval errorsIntervalVS
                 then mempty
                   { _bakeView_errors = MMap.singleton flt $ ComposeView
                       (MapView $ MMap.singleton tagKey (First (), a)) $

@@ -171,8 +171,8 @@ watchErrorsByTag mAlert logSet intervals = do
       (_, lower) = getComposeView $ fold $ do
         alert <- mAlert'
         MMap.lookup alert $ _bakeView_errors v'
-      allTags = fold $ catMaybes $ map (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
-    in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements $ allTags
+      allTags = fold $ mapMaybes (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
+    in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements allTags
 
 watchErrorsByNode
   :: MonadRhyoliteFrontendWidget Bake t m

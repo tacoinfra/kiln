@@ -393,12 +393,12 @@ getErrorLogsImpl
   => AlertsFilter
   -> MapSelector (DSum LogTag (Const ())) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
   -> m [(DSum LogTag (Const ()), View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a, a)]
-getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, (IntervalSelector intervalMap)) -> do
+getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, IntervalSelector intervalMap) -> do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
 
   vals <- fmap getErrorInterval . leftBiasedUnions <$> for (AppendIMap.keys flattenedIntervalMap) (runQueries lTag)
-  let ma = sconcat <$> (NEL.nonEmpty $ AppendIMap.elems intervalMap) :: Maybe a
+  let ma = sconcat <$> NEL.nonEmpty (AppendIMap.elems intervalMap) :: Maybe a
   pure $ (,,) lTag ((IntervalView flattenedIntervalMap . (fmap.fmap.first) (First . Just)) vals) <$> ma
   where
     --queryClientDaemonAlert sqlTable sqlFields =
