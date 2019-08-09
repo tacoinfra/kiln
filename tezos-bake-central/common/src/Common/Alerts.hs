@@ -249,10 +249,10 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerError
       [ "This baker has missed " <> errorEmphasis (tshow count <> " " <> opportunity) <> "."
       , "The first " <> theRight <> " missed was for "
         <> errorEmphasis ("block level " <> tshow (unRawLevel fb))
-        <> (maybe "" (\t -> " on " <> errorEmphasis (localTime t)) ft) <> "."
+        <> maybe "" (\t -> " on " <> errorEmphasis (localTime t)) ft <> "."
       , "The latest " <> theRight <> " missed was for "
         <> errorEmphasis ("block level " <> tshow (unRawLevel lb))
-        <> (maybe "" (\t -> " on " <> errorEmphasis (localTime t)) lt) <> "."
+        <> maybe "" (\t -> " on " <> errorEmphasis (localTime t)) lt <> "."
       ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
