@@ -377,7 +377,7 @@ getErrorLogsImpl
 getErrorLogsImpl flt logMap = do
   v <- for universe $ \(This lTag) -> do
     let
-      selectTag = (lTag :=> Const 0)
+      selectTag = (lTag :=> Const ())
       mV = Common.Vassal.lookup selectTag logMap
     v1 <- for mV $ \(IntervalSelector intervalMap) -> do
       let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap

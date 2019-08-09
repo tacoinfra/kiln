@@ -153,7 +153,7 @@ watchErrors
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrors mAlert intervals = watchErrorsByTag mAlert allLogTags intervals
-  where allLogTags = constDyn $ DMap.fromList $ map (\(This l) -> l :=> Const 0) (universe :: [Some LogTag])
+  where allLogTags = constDyn $ DMap.fromList $ map (\(This l) -> l :=> Const ()) (universe :: [Some LogTag])
   -- v <- watchViewSelector $ ffor2 mAlert intervals $ \mAlert' ivals -> flip foldMap mAlert' $ \a -> mempty
   --   { _bakeViewSelector_errors = MMap.singleton a $ viewIntervalSet ivals 1
   --   }
@@ -166,7 +166,7 @@ watchErrors mAlert intervals = watchErrorsByTag mAlert allLogTags intervals
 watchErrorsByTag
   :: MonadRhyoliteFrontendWidget Bake t m
   => Dynamic t (Maybe AlertsFilter)
-  -> Dynamic t (DMap LogTag (Const Int))
+  -> Dynamic t (DMap LogTag (Const ()))
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrorsByTag mAlert logSet intervals = do

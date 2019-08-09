@@ -261,7 +261,7 @@ instance Semigroup VoteState where
     { _voteState_step = _voteState_step s1 <> _voteState_step s2
     }
 
-type ErrorMapSelectorKey = DSum LogTag (Const Int)
+type ErrorMapSelectorKey = DSum LogTag (Const ())
 type ErrorsViewT a = MonoidalMap AlertsFilter (ComposeView (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
 type ErrorsSelectorT a = MonoidalMap AlertsFilter (ComposeSelector (MapSelector (ErrorMapSelectorKey) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
 
@@ -761,25 +761,25 @@ instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
 
-instance EqTag LogTag (Const Int) where
+instance (Eq a) => EqTag LogTag (Const a) where
   eqTagged t _ = logAssumeConst t (==)
-instance OrdTag LogTag (Const Int) where
+instance (Ord a) => OrdTag LogTag (Const a) where
   compareTagged t _ = logAssumeConst t compare
-instance ShowTag LogTag (Const Int) where
+instance (Show a) => ShowTag LogTag (Const a) where
   showTaggedPrec t = logAssumeConst t showsPrec
 
-instance EqTag NodeLogTag (Const Int) where
+instance (Eq a) => EqTag NodeLogTag (Const a) where
   eqTagged t _ = nodeLogAssumeConst t (==)
-instance OrdTag NodeLogTag (Const Int) where
+instance (Ord a) => OrdTag NodeLogTag (Const a) where
   compareTagged t _ = nodeLogAssumeConst t compare
-instance ShowTag NodeLogTag (Const Int) where
+instance (Show a) => ShowTag NodeLogTag (Const a) where
   showTaggedPrec t = nodeLogAssumeConst t showsPrec
 
-instance EqTag BakerLogTag (Const Int) where
+instance (Eq a) => EqTag BakerLogTag (Const a) where
   eqTagged t _ = bakerLogAssumeConst t (==)
-instance OrdTag BakerLogTag (Const Int) where
+instance (Ord a) => OrdTag BakerLogTag (Const a) where
   compareTagged t _ = bakerLogAssumeConst t compare
-instance ShowTag BakerLogTag (Const Int) where
+instance (Show a) => ShowTag BakerLogTag (Const a) where
   showTaggedPrec t = bakerLogAssumeConst t showsPrec
 
 nodeLogAssumeConst :: NodeLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
