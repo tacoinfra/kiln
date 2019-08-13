@@ -172,18 +172,14 @@ watchErrorsByNode alertWindow = do
     , let k = nodeIdForNodeErrorLogView t'
     ]
 
-watchErrorsByBaker
+watchBakerAlerts
   :: MonadRhyoliteFrontendWidget Bake t m
-  => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
-  -> m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty (ErrorLog, BakerErrorLogView))))
-watchErrorsByBaker alertWindow = do
-  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
-  pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
-    [ (k, pure (l, t'))
-    | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
-    , Just t' <- [bakerErrorViewOnly t]
-    , let k = bakerIdForBakerErrorLogView t'
-    ]
+  => m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerAlert)))
+watchBakerAlerts = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_bakerAlerts = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' ->  getRangeView' (_bakeView_bakerAlerts v')
 
 data CollectiveNodesFailure
   = CollectiveNodesFailure_NoNodes
