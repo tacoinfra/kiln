@@ -509,8 +509,8 @@ getBakerAlert = do
 
   allAlerts <- traverse (\(This t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
   let
-    berrors :: MonoidalMap PublicKeyHash [(ErrorLog, BakerErrorLogView)]
-    berrors = MMap.fromListWith (<>)
+    bakerErrors :: MonoidalMap PublicKeyHash [(ErrorLog, BakerErrorLogView)]
+    bakerErrors = MMap.fromListWith (<>)
       [ (k, pure (l, t'))
       | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- concatMap MMap.elems allAlerts
       , Just t' <- [bakerErrorViewOnly t]
@@ -522,10 +522,10 @@ getBakerAlert = do
       where
         (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
         partitionF
-          :: (a ~ (DSum BakerLogTag Identity), c ~ ErrorLogBakerMissed)
-          => ([a], [(b, c)], [(b, c)])
-          -> (b, a)
-          -> ([a], [(b, c)], [(b, c)])
+          :: (bakerErrorLogView ~ (DSum BakerLogTag Identity), errorLogBakerMissed ~ ErrorLogBakerMissed)
+          => ([bakerErrorLogView], [(errorLog, errorLogBakerMissed)], [(errorLog, errorLogBakerMissed)])
+          -> (errorLog, bakerErrorLogView)
+          -> ([bakerErrorLogView], [(errorLog, errorLogBakerMissed)], [(errorLog, errorLogBakerMissed)])
         partitionF (os, bms, ems) (elog, v@(lTag :=> Identity blog)) = case lTag of
           BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right blog of
             RightKind_Baking -> (os, (elog, blog) : bms, ems)
@@ -542,7 +542,7 @@ getBakerAlert = do
               pkh = unId $ _errorLogBakerMissed_baker eMissed
               eMissed = snd $ NEL.head ls
 
-  pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList berrors
+  pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList bakerErrors
 
 
 getAlertCount
