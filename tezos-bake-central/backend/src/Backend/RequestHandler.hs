@@ -93,7 +93,6 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldSetHWM = Nothing
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
-            , _ledgerAccount_checkIfRegistered = Nothing
             }
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -101,8 +100,6 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
         update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_CheckIfRegistered sk pkh -> inDb $ do
-        update [LedgerAccount_checkIfRegisteredField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_StartBaking pkh -> inDb $ startBaking pkh
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)

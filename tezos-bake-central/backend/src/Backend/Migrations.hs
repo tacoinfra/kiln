@@ -60,6 +60,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "checkIfRegistered"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"

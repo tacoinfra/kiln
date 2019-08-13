@@ -215,7 +215,7 @@ authorizeLedger
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
 authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
-  isRegisteredD <- watchBakerRegistered sk pkh
+  isRegisteredD <- watchBakerRegistered pkh
   let (err, ok) = fanEither e
       isRegistered = fmap (== Just True) $ tag (current isRegisteredD) ok
   _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ fforMaybe isRegistered (\r -> if r then Just () else Nothing)

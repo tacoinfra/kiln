@@ -102,11 +102,14 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           inDb (selectSingle $ LedgerAccount_shouldSetupToBakeField ==. True &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
-            setupLedgerToBake appConfig chain >>= \i -> inDb $ do
-              update
-                [LedgerAccount_shouldSetupToBakeField =. False]
-                (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-              notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First i })
+            setupLedgerToBake appConfig chain >>= \i -> do
+              -- Before notifying check. As the FE flow expects this value.
+              _ <- traverse (checkIfRegistered logger db nds) $ _ledgerAccount_publicKeyHash la
+              inDb $ do
+                update
+                  [LedgerAccount_shouldSetupToBakeField =. False]
+                  (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+                notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First i })
 
           -- register
           inDb (selectSingle $
@@ -179,16 +182,6 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                 setHighWaterMark appConfig chain sk hwm >>= \i -> inDb $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
-
-          -- check if the baker is already registered, start baking if already registered
-          inDb (selectSingle $ LedgerAccount_checkIfRegisteredField /=. (Nothing :: Maybe PublicKeyHash)) >>= \mla ->
-            for_ mla $ \la -> case _ledgerAccount_checkIfRegistered la of
-              Nothing -> pure () -- shouldn't happen
-              Just pkh -> do
-                isReg <- checkIfRegistered nds pkh
-                inDb $ do
-                  update [LedgerAccount_checkIfRegisteredField =. (Nothing :: Maybe PublicKeyHash)] CondEmpty
-                  notify NotifyTag_BakerRegistered (pkh, isReg)
 
           -- do any voting
           let selectProposal = [queryQ|
@@ -417,14 +410,17 @@ setupLedgerToBake appConfig chain = do
     | otherwise -> Left SetupLedgerToBakeStep_Failed
   pure $ either id (const SetupLedgerToBakeStep_Done) e
 
-checkIfRegistered :: MonadIO m => NodeDataSource -> PublicKeyHash -> m Bool
-checkIfRegistered nds pkh = do
+checkIfRegistered :: MonadIO m => LoggingEnv -> Pool Postgresql -> NodeDataSource -> PublicKeyHash -> m Bool
+checkIfRegistered logger db nds pkh = do
   mDelegateInfo <- runMaybeT $ do
     headBlock <- MaybeT $ liftIO $ atomically $ dataSourceHead nds
     MaybeT $ runMaybe $ nodeQueryDataSource $ NodeQuery_DelegateInfo (headBlock ^. hash) (headBlock ^. level) pkh
-  pure $ case mDelegateInfo of
-    Just delegateInfo | not (_cacheDelegateInfo_deactivated delegateInfo) -> True
-    _ -> False
+  let isReg = case mDelegateInfo of
+        Just delegateInfo | not (_cacheDelegateInfo_deactivated delegateInfo) -> True
+        _ -> False
+  liftIO $ runLoggingEnv logger $ runDb (Identity db) $
+    notify NotifyTag_BakerRegistered (pkh, isReg)
+  pure isReg
   where
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) Just) . flip runReaderT nds . runExceptT
@@ -436,7 +432,7 @@ registerKeyAsDelegate
   => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> Either NamedChain BinaryPaths -> Tez -> m RegisterStep
 registerKeyAsDelegate logger db nds sk pkh appConfig chain fee
   | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
-  | otherwise = checkIfRegistered nds pkh >>= \case
+  | otherwise = checkIfRegistered logger db nds pkh >>= \case
     True -> pure RegisterStep_AlreadyRegistered
     False -> do
       -- withCreateProcess will close these automatically
