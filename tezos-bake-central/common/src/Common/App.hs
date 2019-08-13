@@ -18,6 +18,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -30,8 +32,13 @@ module Common.App
   ) where
 
 import Control.Lens.TH (makeLenses)
+import Data.Aeson
+import Data.Constraint.Forall
+import Data.Constraint.Extras
+import Data.Some (Some)
+import qualified Data.Some as Some
 import Data.Dependent.Sum
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Dependent.Map (DMap)
@@ -261,6 +268,15 @@ instance Semigroup VoteState where
     { _voteState_step = _voteState_step s1 <> _voteState_step s2
     }
 
+instance FromJSONKey (DSum LogTag (Const ()))
+instance ToJSONKey (DSum LogTag (Const ()))
+
+instance FromJSONKey (Some LogTag)
+instance ToJSONKey (Some LogTag)
+
+instance (ForallF ToJSON f) => ToJSON (Some f) where
+ toJSON (Some.This (tag :: f a)) = whichever @ToJSON @f @a (toJSON tag)
+
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
@@ -268,7 +284,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty BakerAlert) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
-  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
+  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
@@ -307,7 +323,7 @@ data BakeView a = BakeView
   -- relevant selection window should *eventually* roll off for the resolved
   -- things and be dropped anyway.  In other cases, this approach is likely to
   -- leak memory in Reflex (deletes never really get to go away)
-  , _bakeView_errors :: !(MonoidalMap AlertsFilter (IntervalView' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a))
+  , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
@@ -754,25 +770,25 @@ instance HasView Bake where
   type View Bake = BakeView
   type ViewSelector Bake = BakeViewSelector
 
-instance EqTag LogTag (Const Int) where
+instance (Eq a) => EqTag LogTag (Const a) where
   eqTagged t _ = logAssumeConst t (==)
-instance OrdTag LogTag (Const Int) where
+instance (Ord a) => OrdTag LogTag (Const a) where
   compareTagged t _ = logAssumeConst t compare
-instance ShowTag LogTag (Const Int) where
+instance (Show a) => ShowTag LogTag (Const a) where
   showTaggedPrec t = logAssumeConst t showsPrec
 
-instance EqTag NodeLogTag (Const Int) where
+instance (Eq a) => EqTag NodeLogTag (Const a) where
   eqTagged t _ = nodeLogAssumeConst t (==)
-instance OrdTag NodeLogTag (Const Int) where
+instance (Ord a) => OrdTag NodeLogTag (Const a) where
   compareTagged t _ = nodeLogAssumeConst t compare
-instance ShowTag NodeLogTag (Const Int) where
+instance (Show a) => ShowTag NodeLogTag (Const a) where
   showTaggedPrec t = nodeLogAssumeConst t showsPrec
 
-instance EqTag BakerLogTag (Const Int) where
+instance (Eq a) => EqTag BakerLogTag (Const a) where
   eqTagged t _ = bakerLogAssumeConst t (==)
-instance OrdTag BakerLogTag (Const Int) where
+instance (Ord a) => OrdTag BakerLogTag (Const a) where
   compareTagged t _ = bakerLogAssumeConst t compare
-instance ShowTag BakerLogTag (Const Int) where
+instance (Show a) => ShowTag BakerLogTag (Const a) where
   showTaggedPrec t = bakerLogAssumeConst t showsPrec
 
 nodeLogAssumeConst :: NodeLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
