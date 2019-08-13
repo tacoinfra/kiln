@@ -221,6 +221,7 @@ appMain = do
     appSidebar
 
     let openness = leftmost [Just SemUi.Out <$ eHide, Just SemUi.In <$ eShow]
+    sideBarOpened <- holdDyn SemUi.Out $ fmapMaybe id openness
     (eHide, eShow) <- SemUi.sidebar (pure SemUi.Side_Right) SemUi.Out openness
       (def
         & SemUi.sidebarConfig_transition .~ pure SemUi.SidebarTransition_Overlay
@@ -239,7 +240,7 @@ appMain = do
           e <- divClass "sidebar-title" $ do
             divClass "ui left floated header" $ text "Notifications"
             divClass "ui right floated header" $ domEvent Click <$> SemUi.icon' "icon-arrow-right blue" def
-          liveErrorsWidget
+          dyn_ $ ffor sideBarOpened $ \o -> when (o == SemUi.In) liveErrorsWidget
           pure e)
       -- Accompanying content
       $ do
@@ -257,7 +258,7 @@ appSidebar
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
-     , HasFrontendConfig r, HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
+     , HasFrontendConfig r, MonadReader r m, HasModal t m
      , RouteConstraints t AppRoute m
      )
   => m ()
@@ -312,7 +313,7 @@ appGutter
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
-     , HasModal t m, HasTimer t r, MonadReader r m, MonadReader r (ModalM m)
+     , HasModal t m
      )
   => m ()
 appGutter =
@@ -360,8 +361,7 @@ appHeader
     )
   => m (Event t ())
 appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ do
-  alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-  collectedNodesStatus <- watchCollectiveNodesStatus alertWindow
+  collectedNodesStatus <- watchCollectiveNodesStatus everythingWindow
   let disconnected = ffor collectedNodesStatus $ \case
         Left CollectiveNodesFailure_NoNodes -> True
         Left (CollectiveNodesFailure_AllNodesDownSince _) -> True
@@ -501,6 +501,9 @@ nodesTabOrWelcome = do
       when haveBakers bakersTab
       when haveNodes nodesTab
 
+everythingWindow :: Applicative f => f (Set (ClosedInterval (WithInfinity a)))
+everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
+
 globalAlerts
   :: forall r m t.
     ( MonadRhyoliteFrontendWidget Bake t m
@@ -510,8 +513,7 @@ globalAlerts
 globalAlerts = do
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   mNetworkAlert <- for mchain $ \chain -> do
-    let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
-    dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) everythingWindow
+    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton LogTag_NetworkUpdate (Const ())) everythingWindow
     mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
       (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
         guard $ _errorLogNetworkUpdate_namedChain ua == chain
@@ -702,7 +704,6 @@ liveErrorsWidget
     )
   => m ()
 liveErrorsWidget = void $ do
-  let everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
   chainId <- asks (^. frontendConfig . frontendConfig_chainId)
   nodesDyn <- watchNodeAddresses
   alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
@@ -992,9 +993,7 @@ bakerStatus = \case
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
-  ( MonadReader r m, HasTimer t r
-  , MonadReader r (ModalM m)
-  , MonadRhyoliteFrontendWidget Bake t m
+  ( MonadRhyoliteFrontendWidget Bake t m
   , MonadRhyoliteFrontendWidget Bake t (ModalM m)
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
@@ -1003,8 +1002,7 @@ bakersList ::
   )
   => m ()
 bakersList = do
-  alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-  dCollectedNodesStatus <- watchCollectiveNodesStatus alertWindow
+  dCollectedNodesStatus <- watchCollectiveNodesStatus everythingWindow
   bakerAddrs <- watchBakerAddresses
   let bakers = ffor2 dCollectedNodesStatus bakerAddrs
         $ \collectiveNodeStatus -> imap $ \pkh b ->
@@ -1014,9 +1012,8 @@ bakersList = do
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: forall t m r.
+addBakerModal :: forall t m .
   ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
-  , MonadReader r m, HasTimer t r
   , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
@@ -1028,7 +1025,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         start <- startBaking
         close' <- connectBaker
         ebn :: Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView)))
-          <- watchErrorsByNode . fmap Set.singleton =<< thirtySixHoursToInfinity
+          <- watchErrorsByNode everythingWindow
         node <- watchInternalNode
         nodeDetails <- fmap join $ holdDyn (constDyn Nothing) <=< dyn $ ffor node $ \case
           Nothing -> pure $ constDyn Nothing
@@ -1553,8 +1550,6 @@ nodesTab =
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
-      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
-
       kilnNodeStateD <- holdUniqDyn kilnNodeState
       -- Node alerts
       let
@@ -1602,7 +1597,7 @@ nodesTab =
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
-          ebn <- snd <$$$$> watchErrorsByNode alertWindow
+          ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
           let
             withSeverity e m = (_alertMetaData_severity $ getAlertMetaData e, m)
@@ -1935,9 +1930,8 @@ bakersTab =
     tilesWidget :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> m ()
     tilesWidget tilesDyn = do
       useBlocker <- holdUniqDyn $ MMap.null <$> tilesDyn
-      alertWindow <- fmap Set.singleton <$> thirtySixHoursToInfinity
       dEbb :: Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerAlert)) <- watchBakerAlerts
-      dCollectiveNodesStatus <- watchCollectiveNodesStatus alertWindow
+      dCollectiveNodesStatus <- watchCollectiveNodesStatus everythingWindow
       dyn_ $ ffor useBlocker $ \case
         True -> waitingForResponse
         False -> mdo

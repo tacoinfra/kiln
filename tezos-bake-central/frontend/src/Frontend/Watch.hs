@@ -179,7 +179,8 @@ watchErrorsByNode
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView))))
 watchErrorsByNode alertWindow = do
-  dXs <- watchErrors (pure $ Just AlertsFilter_UnresolvedOnly) alertWindow
+  let nodeTags = DMap.fromList $ map (\(This t) -> LogTag_Node t :=> Const ()) universe
+  dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (constDyn nodeTags) alertWindow
   pure $ ffor dXs $ \xs -> MMap.fromListWith (<>)
     [ (k, pure (l, t'))
     | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
