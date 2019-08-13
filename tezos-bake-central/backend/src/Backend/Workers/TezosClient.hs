@@ -103,7 +103,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
             setupLedgerToBake appConfig chain >>= \i -> do
-              -- Before notifying check. As the FE flow expects this value.
+              -- Before notifying FE, check if already registered, as the baker setup flow expects this value.
               _ <- traverse (checkIfRegistered logger db nds) $ _ledgerAccount_publicKeyHash la
               inDb $ do
                 update
