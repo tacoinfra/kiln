@@ -284,8 +284,6 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty BakerAlert) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
-  -- what we really need is (SetSelector (Some LogTag)), but using (MapSelector (DSum LogTag (Const ())) ())
-  -- as we dont have a SetSelector in Vassal, and (Some LogTag) does not have ToJSON/Generic
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
