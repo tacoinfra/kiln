@@ -163,7 +163,7 @@ watchErrorsByTag
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
 watchErrorsByTag mAlert logSet intervals = do
   v <- watchViewSelector $ ffor3 mAlert logSet intervals $ \mAlert' logSet' ivals -> flip foldMap mAlert' $ \a -> mempty
-    { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ MapSelector $ MMap.fromList $ map (,viewIntervalSet ivals 1) $ DMap.assocs logSet'
+    { _bakeViewSelector_errors = MMap.singleton a $ viewCompose $ MapSelector $ MMap.fromList $ map (,viewIntervalSet ivals 1) $ DMap.keys logSet'
     }
   -- TOOD: maybe we should just fix up IntervalSelector to operate on some semigroup instead of Set
   pure $ ffor3 mAlert logSet v $ \mAlert' logSet' v' ->
@@ -171,7 +171,7 @@ watchErrorsByTag mAlert logSet intervals = do
       (_, lower) = getComposeView $ fold $ do
         alert <- mAlert'
         MMap.lookup alert $ _bakeView_errors v'
-      allTags = fold $ mapMaybe (\ltag -> MMap.lookup ltag lower) (DMap.assocs logSet')
+      allTags = fold $ mapMaybe (\ltag -> MMap.lookup ltag lower) (DMap.keys logSet')
     in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements allTags
 
 watchErrorsByNode

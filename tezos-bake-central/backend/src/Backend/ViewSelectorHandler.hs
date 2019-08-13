@@ -372,15 +372,15 @@ getErrorLogs
   , Semigroup a
   )
   => AlertsFilter
-  ->          Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
-  -> m (View (Compose (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
+  ->          Compose (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
+  -> m (View (Compose (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
 getErrorLogs flt sel = do
   vals <- getErrorLogsImpl flt $ getCompose sel
   let
-    l :: Compose (MonoidalMap (DSum LogTag (Const ()))) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
+    l :: Compose (MonoidalMap (Some LogTag)) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
     l = Compose $ MMap.fromList $ map (\(k, v, _) -> (k, v)) vals
 
-    u :: View (MapSelector (DSum LogTag (Const ())) ()) a
+    u :: View (MapSelector (Some LogTag) ()) a
     u = MapView $ MMap.fromList $ map (\(k, _, a) -> (k, (First (), a))) vals
   pure $ ComposeView u l
 
@@ -391,8 +391,8 @@ getErrorLogsImpl
   , Semigroup a
   )
   => AlertsFilter
-  -> MapSelector (DSum LogTag (Const ())) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
-  -> m [(DSum LogTag (Const ()), View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a, a)]
+  -> MapSelector (Some LogTag) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
+  -> m [(Some LogTag, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a, a)]
 getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, IntervalSelector intervalMap) -> do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
@@ -404,9 +404,9 @@ getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs 
     --queryClientDaemonAlert sqlTable sqlFields =
     --  queryAlert sqlTable sqlFields (Just ("Client", "id", "client"))
     -- TODO: make every bakeralert work with the Id Baker column, probably
-    runQueries :: DSum LogTag (Const ()) -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-    runQueries (ltag :=> Const _) window = do
-      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [This ltag]
+    runQueries :: Some LogTag -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+    runQueries ltag window = do
+      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [ltag]
 
     leftBiasedUnions = MMap.unionsWith const
 
