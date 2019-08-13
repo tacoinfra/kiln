@@ -18,6 +18,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -30,6 +32,11 @@ module Common.App
   ) where
 
 import Control.Lens.TH (makeLenses)
+import Data.Aeson
+import Data.Constraint.Forall
+import Data.Constraint.Extras
+import Data.Some (Some)
+import qualified Data.Some as Some
 import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.Align (Align (alignWith, nil))
@@ -264,6 +271,12 @@ instance Semigroup VoteState where
 instance FromJSONKey (DSum LogTag (Const ()))
 instance ToJSONKey (DSum LogTag (Const ()))
 
+instance FromJSONKey (Some LogTag)
+instance ToJSONKey (Some LogTag)
+
+instance (ForallF ToJSON f) => ToJSON (Some f) where
+ toJSON (Some.This (tag :: f a)) = whichever @ToJSON @f @a (toJSON tag)
+
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
@@ -271,9 +284,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (NonEmpty BakerAlert) a)
   -- TODO don't need `Deletable` around `BakerDetails`.
   , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
-  -- what we really need is (SetSelector (Some LogTag)), but using (MapSelector (DSum LogTag (Const ())) ())
-  -- as we dont have a SetSelector in Vassal, and (Some LogTag) does not have ToJSON/Generic
-  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
+  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
@@ -312,7 +323,7 @@ data BakeView a = BakeView
   -- relevant selection window should *eventually* roll off for the resolved
   -- things and be dropped anyway.  In other cases, this approach is likely to
   -- leak memory in Reflex (deletes never really get to go away)
-  , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (DSum LogTag (Const ())) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
+  , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)

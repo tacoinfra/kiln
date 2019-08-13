@@ -1057,7 +1057,8 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         Nothing -> uiButton "primary fluid" "Start Baking"
         Just bid -> do
           kilnLogo
-          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ \case
+          let spacing = " "
+          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ (spacing <>) . \case
             True -> "A Kiln baker is running."
             False -> "A Kiln baker is configured, but is stopped."
           pure never

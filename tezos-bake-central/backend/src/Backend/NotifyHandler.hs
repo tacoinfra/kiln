@@ -11,7 +11,7 @@ import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
-import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Map (DSum(..), Some (..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
@@ -270,7 +270,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
           pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt (Compose errorsVS) ->
             let
-              tagKey = (tag :=> Const ())
+              tagKey = This tag
               mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
               ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
               makeBakeView a errorsIntervalVS = if viewSelects errorInterval errorsIntervalVS
