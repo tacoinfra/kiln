@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -66,6 +67,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC.Sources (PublicNode (..), publicNodeShortName, tzScanUri)
 import Tezos.NodeRPC.Types
+import Tezos.ProtocolConstants (predictFutureTimestamp)
 import Tezos.Types
 
 import Common (humanBytes)
@@ -87,6 +89,7 @@ import Common.Alerts (
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId, frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
@@ -370,7 +373,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
   divClass "topbar" $ do
     divClass "ui horizontal list" $ do
-      latestHead <- watchLatestHead
+      (latestHead, knownProto) <- watchHeadWithProtocol
       let infoItem faded title body = divClass "item" $
             elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
               divClass "header" $ text title
@@ -379,9 +382,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
       protoInfo' <- watchProtoInfo
-      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-        text $ tshow $ unCycle c
+        text $ either ("Error: " <>) (tshow . unCycle) c
 
       whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
         text $ tshow (unRawLevel $ b ^. level)
@@ -389,9 +392,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
       amendments <- watchAmendment
-      mProtoInfo <- maybeDyn protoInfo'
+      mKnownProto <- maybeDyn knownProto
       mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+        whenJustDyn (liftA2 . (,,) <$> disconnected <*> mKnownProto <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
         let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
         tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
           kind <- holdUniqDyn $ _amendment_period <$> amendment
@@ -761,7 +764,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
+          keys1 <- NEL.nonEmpty $ fmapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -872,7 +875,7 @@ liveErrorsWidget = void $ do
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header "Too few peers."
+              header "Node has too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -2224,7 +2227,7 @@ bakersTab =
               latestHead <- maybeDyn =<< watchLatestHead
               dyn_ $ ffor latestHead $ \case
                 Nothing -> pure () -- no head to set high water mark
-                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
+                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
               if _bakerInternalData_running bid
               then do
                 let stopModal = warningModal "Stop Baker?"
@@ -2277,8 +2280,7 @@ bakersTab =
         divClass "divider" blank
 
         el "dl" $ do
-          latestHead <- watchLatestHead
-          dparameters <- watchProtoInfo
+          (latestHead, knownProto) <- watchHeadWithProtocol
           el "div" $ do
             el "dt" (text "Next")
             el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
@@ -2289,7 +2291,7 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 

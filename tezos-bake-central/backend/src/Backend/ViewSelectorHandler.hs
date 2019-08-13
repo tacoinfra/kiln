@@ -17,7 +17,9 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
+import Control.Exception.Safe (MonadMask)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
@@ -77,8 +79,8 @@ import Tezos.PublicKeyHash
 import Tezos.Types
 
 import Backend.CachedNodeRPC
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
 import Backend.Schema
-import Backend.STM (atomicallyWith)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInfinity (..))
@@ -89,7 +91,7 @@ import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => FrontendConfig
   -> Maybe NamedChain
   -> NodeDataSource
@@ -105,8 +107,15 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     maybeViewHandler getVS xs = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> xs
 
-  parameters <- maybeViewHandler _bakeViewSelector_parameters $
-    fmap _parameters_protoInfo <$> selectSingle (Parameters_chainField ==. _nodeDataSource_chain nds)
+  let paramsVS = _bakeViewSelector_parameters vs
+  parameters <- whenM (not $ null paramsVS) $ do
+    let selectedProtocols :: [ProtocolHash] =
+          map (\(ClosedInterval l r) -> if l == r then r else error "Protocols don't actually support range")
+          <$> AppendIMap.keys $ unRangeSelector paramsVS
+    protocols :: [ProtocolIndex] <- select
+      ( ProtocolIndex_hashField `in_` selectedProtocols &&.
+        ProtocolIndex_chainIdField ==. _nodeDataSource_chain nds)
+    pure $ toRangeView paramsVS [(_protocolIndex_hash x, x) | x <- protocols]
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
@@ -520,7 +529,7 @@ getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
       pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> u)) vus
 
 getBakerAddresses
-  :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m)
+  :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)
   => NodeDataSource
   -> Maybe PublicKeyHash
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
@@ -587,25 +596,31 @@ getBakerAddresses nds bid = do
   -- we need to do this *here* instead of, say, on bakerdetails, because we
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
-  rightsInfoAndFriends :: (Maybe RawLevel, Maybe RawLevel, [RightsCycleInfo]) <- flip runReaderT nds $ atomicallyWith $
-    withCache nds (Nothing, Nothing, []) $ \protoInfo -> do
-      nds' <- ask
-      headM <- dataSourceHead nds'
-      rightsInfo <- fromMaybe [] . join <$> traverse (cycleStartHashes . view hash) headM
-
-      return (view level <$> headM, Just (firstLevelInCycle protoInfo (_protoInfo_preservedCycles protoInfo + 1) - 1), rightsInfo)
+  latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
+  maxProgress_rightsInfo :: Either CacheError (Maybe (Maybe RawLevel, [RightsCycleInfo])) <- case latestHead' of
+    Nothing -> pure $ Left CacheError_NotEnoughHistory
+    Just latestHead -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
+      rightsInfo <- cycleStartHashes $ latestHead ^. hash
+      -- WARNING: We're looking up information in the future which might be wrong. We assume the following
+      -- protocol constants won't ever change, even with a new protocol:
+      --    $PRESERVED_CYCLES
+      --    $BLOCKS_PER_CYCLE
+      headProtoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ latestHead ^. hash
+      maxProgress <- for (maximumMay $ _rightsCycleInfo_cycle <$> rightsInfo) $ \highestRightsCycle ->
+        lastLevelInCycle (latestHead ^. hash) $ highestRightsCycle + headProtoInfo ^. protoInfo_preservedCycles + 1
+      pure (maxProgress, rightsInfo)
 
   let
-    (headLevelM, rightsLookAheadM, rightsInfo) = rightsInfoAndFriends
+    maxProgress = maxProgress_rightsInfo ^? _Right . _Just . _1 . _Just
+    rightsInfo = fromMaybe [] $ maxProgress_rightsInfo ^? _Right . _Just . _2
     rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
     chainId = _nodeDataSource_chain nds
-    maxProgress :: Maybe RawLevel = (+) <$> rightsLookAheadM <*> maximumMay (_rightsCycleInfo_maxLevel <$> rightsInfo)
 
-  nextBakeRightsL <- case headLevelM of
+  nextBakeRightsL <- case latestHead' ^? _Just . level of
     Nothing -> pure []
     Just headLevel -> [queryQ|
       SELECT brcp."publicKeyHash",
@@ -638,7 +653,7 @@ getBakerAddresses nds bid = do
         -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) nextBakeRightsL
-    result =  fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
+    result = fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
         (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)

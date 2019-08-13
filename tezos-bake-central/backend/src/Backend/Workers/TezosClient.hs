@@ -79,7 +79,7 @@ tezosClientWorker
   -> IO (IO ())
 tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
-    $(logDebug) "Tezos client worker"
+    -- $(logDebug) "Tezos client worker"
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     case mConnectedLedger of

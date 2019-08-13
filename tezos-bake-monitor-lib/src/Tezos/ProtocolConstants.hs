@@ -82,6 +82,7 @@ instance ToJSON ProtoInfo where
   toJSON = $(Aeson.mkToJSON tezosJsonOptions ''ProtoInfo)
   toEncoding = $(Aeson.mkToEncoding tezosJsonOptions ''ProtoInfo)
 
+-- TODO: DELETE
 -- | Convert a level to the cycle that contains it.
 --
 -- We subtract 1 because the first cycle begins after the genesis block. Yet
@@ -90,6 +91,8 @@ instance ToJSON ProtoInfo where
 levelToCycle :: ProtoInfo -> RawLevel -> Cycle
 levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (params ^. protoInfo_blocksPerCycle)
 
+
+-- TODO: DELETE
 -- | Convert a cycle to the level of the first block in that cycle.
 --
 -- We add 1 because we do not consider the genesis block as part of the first
@@ -98,14 +101,7 @@ levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (param
 firstLevelInCycle :: ProtoInfo -> Cycle -> RawLevel
 firstLevelInCycle params cycl = 1 + fromIntegral cycl * params ^. protoInfo_blocksPerCycle
 
--- | We don't want the first block of the next cycle behind the fog of
--- blockchain, but rather the last block we can see (which is the previous
--- cycle). Hence, the '- 1'.
-maxRightsLevel :: ProtoInfo -> RawLevel -> RawLevel
-maxRightsLevel params lvl = firstLevelInCycle params nextCycle - 1
-  where
-    nextCycle = levelToCycle params lvl + params ^. protoInfo_preservedCycles
-
+-- TODO: DELETE
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
 rightsContextLevel :: ProtoInfo -> RawLevel -> RawLevel

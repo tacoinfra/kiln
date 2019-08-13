@@ -76,11 +76,10 @@ amendmentPopup
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
   -- ^ All periods we know about (past + current)
-  -> Dynamic t ProtoInfo
+  -> Dynamic t ProtocolIndex
   -- ^ Protocol information
   -> m ()
-amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
-  let periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
+amendmentPopup amendment amendments knownProto = divClass "amendment-popup" $ do
   rec
     chosenPeriod <- holdDyn Nothing $ Just <$> choosePeriod
     selectedPeriod <- holdUniqDyn $ fromMaybe . _amendment_period <$> amendment <*> chosenPeriod
@@ -133,6 +132,9 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
 
   pure ()
+  where
+    periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
+    protoInfo = view protocolIndex_constants <$> knownProto
 
 -- | Display a natural number with comma separation
 textWithCommas :: Int -> Text

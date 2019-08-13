@@ -9,7 +9,7 @@
 
 module Backend.WebApi where
 
-import Control.Concurrent.STM (atomically, readTVarIO)
+import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as Aeson
@@ -31,11 +31,11 @@ import Tezos.PublicKey
 import Tezos.Types
 
 import Backend.CachedNodeRPC
-import Backend.STM (atomicallyWith)
+import Backend.STM (atomicallyWith, atomicallyWithTime)
 import Common.Schema (CacheDelegateInfo(..), CacheError)
 import ExtraPrelude
 
-snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
+snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text (WithProtocolHash VeryBlockLike))
 snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds
@@ -69,7 +69,7 @@ v2PublicApi dataSrc = route $ fmap (first ("api/v2/" <>))
 
     writeJSON :: forall a. Aeson.ToJSON a => (ProtoInfo -> ReaderT NodeDataSource m (Either Text a)) -> m ()
     writeJSON x = do
-      liftIO (readTVarIO (_nodeDataSource_parameters dataSrc)) >>= \case
+      liftIO (atomicallyWithTime undefined) >>= \case
         Nothing -> Snap.modifyResponse (Snap.setResponseCode 503) *> Snap.writeLBS "Cache Not Ready"
         Just ps -> either sulk (Snap.writeLBS . Aeson.encode) =<< runReaderT (x ps) dataSrc
 
@@ -276,6 +276,7 @@ withCacheIO
   :: forall a r m. (MonadIO m, MonadReader r m, HasNodeDataSource r)
   => a -> (ProtoInfo -> m a) -> m a
 withCacheIO dft action = do
-  dsrc <- asks (^. nodeDataSource)
-  protoInfo <- liftIO $ readTVarIO $ _nodeDataSource_parameters dsrc
+  _dsrc <- asks (^. nodeDataSource)
+  protoInfo <- liftIO $ atomicallyWithTime undefined
   fromMaybe dft <$> traverse action protoInfo
+

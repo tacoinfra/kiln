@@ -106,6 +106,7 @@ data CacheError
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException
   | CacheError_UnrevealedPublicKey !ContractId
+  | CacheError_UnknownProtocol !ProtocolHash
   deriving (Show, Generic, Typeable)
 instance Exception CacheError
 makePrisms ''CacheError
@@ -144,13 +145,6 @@ mkErr err = Error
   { _error_time = _event_time err
   , _error_text = _errorEvent_message $ _event_detail err
   }
-
--- TODO: move to ~-lib
-knownProtocols :: [ProtocolHash]
-knownProtocols =
-  [ "PrihK96nBAFSxVL1GLJTVhu9YnzkMFiBeuJRPA8NwuZVZCE1L6i" -- GENESIS
-  , "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -- MAINNET
-  ]
 
 data BlockBaker = BlockBaker
   { _blockBaker_publicKeyHash :: !PublicKeyHash
@@ -382,6 +376,20 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
+data ProtocolIndex = ProtocolIndex
+  { _protocolIndex_chainId :: !ChainId
+  , _protocolIndex_hash :: !ProtocolHash
+  , _protocolIndex_constants :: !ProtoInfo
+  , _protocolIndex_firstBlockHash :: !BlockHash
+  , _protocolIndex_firstBlockPredecessor :: !BlockHash
+  , _protocolIndex_firstBlockLevel :: !RawLevel
+  , _protocolIndex_firstBlockFitness :: !Fitness
+  , _protocolIndex_firstBlockTimestamp :: !UTCTime
+  , _protocolIndex_firstBlockCycle :: !Cycle
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId ProtocolIndex where
+  type IdData ProtocolIndex = (ChainId, ProtocolHash, BlockHash)
+
 data PublicNodeConfig = PublicNodeConfig
   { _publicNodeConfig_source :: !PublicNode
   , _publicNodeConfig_enabled :: !Bool
@@ -394,14 +402,9 @@ data PublicNodeHead = PublicNodeHead
   , _publicNodeHead_chain :: !NamedChainOrChainId
   , _publicNodeHead_headBlock :: !VeryBlockLike
   , _publicNodeHead_updated :: !UTCTime
+  , _publicNodeHead_protocolHash :: !ProtocolHash
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
-
-data Parameters = Parameters
-  { _parameters_chain :: !ChainId
-  , _parameters_protoInfo :: !ProtoInfo
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId Parameters
 
 data BakedEventOperation = BakedEventOperation
   { _bakedEventOperation_branch :: !BlockHash
@@ -703,7 +706,6 @@ data SmtpProtocol
   | SmtpProtocol_Ssl
   | SmtpProtocol_Starttls
   deriving (Bounded, Enum, Eq, Generic, Ord, Read, Show)
-
 instance Universe SmtpProtocol where universe = universeDef
 instance Finite SmtpProtocol
 
@@ -852,14 +854,6 @@ data ErrorLog = ErrorLog
   , _errorLog_chainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
-
-data CachedProtocolConstants = CachedProtocolConstants
-  { _cachedProtocolConstants_chainId :: !ChainId
-  , _cachedProtocolConstants_protocol :: !ProtocolHash
-  , _cachedProtocolConstants_blocksPerCycle :: !RawLevel
-  , _cachedProtocolConstants_preservedCycles :: !Cycle
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId CachedProtocolConstants
 
 data GenericCacheEntry = GenericCacheEntry
   { _genericCacheEntry_chainId :: !ChainId
@@ -1014,6 +1008,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   , ''Event
+  , ''ProtocolIndex
   , ''MailServerConfig
   , ''Node
   , ''NodeDetails
@@ -1022,11 +1017,10 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeExternalData
   , ''NodeInternal
   , ''NodeProcessState
-  , ''Parameters
-  , ''PeriodTestingVote
   , ''PeriodPromotionVote
   , ''PeriodProposal
   , ''PeriodTesting
+  , ''PeriodTestingVote
   , ''PeriodVote
   , ''ProcessControl
   , ''ProcessData
@@ -1060,7 +1054,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
-  , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent
   , 'Error
@@ -1086,13 +1079,13 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'NodeExternal
   , 'NodeExternalData
   , 'NodeInternal
-  , 'Parameters
-  , 'PeriodTestingVote
   , 'PeriodPromotionVote
   , 'PeriodProposal
   , 'PeriodTesting
+  , 'PeriodTestingVote
   , 'PeriodVote
   , 'ProcessData
+  , 'ProtocolIndex
   , 'PublicNodeConfig
   , 'PublicNodeHead
   , 'Report
@@ -1159,6 +1152,18 @@ instance BlockLike PublicNodeHead where
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
 
+instance HasProtocolHash PublicNodeHead where
+  protocolHash = publicNodeHead_protocolHash
+
+instance BlockLike ProtocolIndex where
+  hash = protocolIndex_firstBlockHash
+  predecessor = protocolIndex_firstBlockPredecessor
+  fitness = protocolIndex_firstBlockFitness
+  level = protocolIndex_firstBlockLevel
+  timestamp = protocolIndex_firstBlockTimestamp
+
+instance HasProtocolHash ProtocolIndex where
+  protocolHash = protocolIndex_hash
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =

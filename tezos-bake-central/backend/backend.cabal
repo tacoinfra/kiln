@@ -44,6 +44,7 @@ library
     , groundhog
     , groundhog-postgresql
     , groundhog-th
+    , here
     , hashable
     , http-client
     , http-client-tls
@@ -102,6 +103,7 @@ library
     , unordered-containers
     , uri-encode
     , vector
+    , witherable
 
   exposed-modules:
     Backend
@@ -116,6 +118,7 @@ library
     Backend.Config
     --Backend.Graphs
     Backend.Http
+    Backend.IndexQueries
     Backend.Migrations
     Backend.NodeCmd
     Backend.NotifyHandler

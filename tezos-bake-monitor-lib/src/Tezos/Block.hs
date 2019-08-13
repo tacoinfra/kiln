@@ -2,6 +2,7 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -9,14 +10,14 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', iso, (^.), _1, _2)
+import Control.Lens (Lens', coerced, iso, (^.), _1, _2)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
-import Data.Coerce (coerce)
+import qualified Data.HashMap.Strict as HashMap
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import qualified Data.Text as T
@@ -174,6 +175,36 @@ data VeryBlockLike = VeryBlockLike
 instance NFData VeryBlockLike
 
 
+-- | Simple wrapper for adding a protocol hash to some other value.
+--
+-- The Aeson instances are smart (too smart). If the underlying type
+-- is not an object or an object with a conflicting key with the one
+-- added by this type, the JSON encoding will be two-layered.
+-- Otherwise, the JSON encoding will simply add an additional key
+-- for the protocol information.
+data WithProtocolHash a = WithProtocolHash
+  { _withProtocolHash_value :: !a
+  , _withProtocolHash_protocolHash :: !ProtocolHash
+  } deriving (Eq, Ord, Show, Read, Generic, Typeable)
+instance NFData a => NFData (WithProtocolHash a)
+
+instance ToJSON a => ToJSON (WithProtocolHash a) where
+  toJSON (WithProtocolHash a protoHash) = case Aeson.toJSON a of
+    v@(Aeson.Object o)
+      | "protocol" `HashMap.member` o -> fallback v
+      | otherwise -> Aeson.Object $ HashMap.insert "protocol" (Aeson.toJSON protoHash) o
+    v -> fallback v
+    where
+      fallback v = Aeson.object ["value" Aeson..= v, "protocol" Aeson..= Aeson.toJSON protoHash]
+
+instance FromJSON a => FromJSON (WithProtocolHash a) where
+  parseJSON json = Aeson.withObject "WithProtocolHash" (\o -> do
+    protoHash <- o Aeson..: "protocol"
+    (if HashMap.size o == 2 then o Aeson..:? "value" else pure Nothing) >>= \case
+      Nothing -> WithProtocolHash <$> Aeson.parseJSON json <*> pure protoHash
+      Just val -> pure $ WithProtocolHash val protoHash) json
+
+
 concat <$> traverse deriveTezosJson
   [ ''Block
   , ''BlockMetadata
@@ -195,6 +226,7 @@ concat <$> traverse makeLenses
   , 'TzScanBlock
   , 'TzScanProtocol
   , 'VeryBlockLike
+  , 'WithProtocolHash
   ]
 
 class BlockLike b where
@@ -205,12 +237,17 @@ class BlockLike b where
   fitness :: Lens' b Fitness
   timestamp :: Lens' b UTCTime
 
+class HasProtocolHash a where
+  protocolHash :: Lens' a ProtocolHash
+
 instance BlockLike Block where
   hash = block_hash
   predecessor = block_header . blockHeader_predecessor
   level = block_header . blockHeader_level
   fitness = block_header . blockHeader_fitness
   timestamp = block_header . blockHeader_timestamp
+instance HasProtocolHash Block where
+  protocolHash = block_protocol
 
 instance BlockLike (BlockHash, BlockHeader) where
   hash = _1
@@ -230,8 +267,10 @@ instance BlockLike TzScanBlock where
   hash = tzScanBlock_hash
   predecessor = tzScanBlock_predecessorHash
   level = tzScanBlock_level
-  fitness = tzScanBlock_fitness . iso coerce coerce
+  fitness = tzScanBlock_fitness . coerced
   timestamp = tzScanBlock_timestamp
+instance HasProtocolHash TzScanBlock where
+  protocolHash = tzScanBlock_protocol . coerced
 
 instance BlockLike VeryBlockLike where
   hash = veryBlockLike_hash
@@ -240,6 +279,17 @@ instance BlockLike VeryBlockLike where
   level = veryBlockLike_level
   timestamp = veryBlockLike_timestamp
 
+instance HasProtocolHash BlockMetadata where
+  protocolHash = blockMetadata_protocol
+
+instance BlockLike a => BlockLike (WithProtocolHash a) where
+  hash = withProtocolHash_value . hash
+  predecessor = withProtocolHash_value . predecessor
+  fitness = withProtocolHash_value . fitness
+  level = withProtocolHash_value . level
+  timestamp = withProtocolHash_value . timestamp
+instance HasProtocolHash (WithProtocolHash a) where
+  protocolHash = withProtocolHash_protocolHash
 
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'

@@ -9,13 +9,14 @@ module Backend.NotifyHandler where
 
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Control.Monad.Catch (MonadMask)
 import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Sum (DSum(..))
 import qualified Data.Map.Monoidal as MMap
-import Database.Groundhog.Postgresql (PersistBackend, get, Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend, get, (&&.), (==.), Cond(..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, selectMap')
+import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -41,7 +42,7 @@ import Common.Vassal
 import ExtraPrelude
 
 notifyHandler
-  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => NodeDataSource
   -> DbNotification NotifyTag
   -> BakeViewSelector a
@@ -54,12 +55,12 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_BakerRightsProgress :=> Identity (_x, y, _z) -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
+    NotifyTag_ProtocolIndex :=> Identity eid -> handleParameters eid
     NotifyTag_MailServerConfig :=> Identity (_eid, cfg) -> handleMailServer cfg
     NotifyTag_NodeExternal :=> Identity (eid, ent) -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
     NotifyTag_NodeInternal :=> Identity (eid, ent) -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
     NotifyTag_NodeDetails :=> Identity (eid, ent) -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
     NotifyTag_Notificatee :=> _eid -> handleNotificatee
-    NotifyTag_Parameters :=> Identity (_eid, ent) -> handleParameters ent
     NotifyTag_PublicNodeConfig :=> Identity (_eid, ent) -> handlePublicNodeConfig ent
     NotifyTag_PublicNodeHead :=> Identity (eid, ent) -> handlePublicNodeHead eid ent
     NotifyTag_SnapshotMeta :=> Identity ent -> handleSnapshotMeta ent
@@ -116,15 +117,15 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     paramsVS = _bakeViewSelector_parameters aggVS
 
-    handleParameters :: Applicative m' => Parameters -> m' (BakeView a)
-    handleParameters params =
-      -- bakerStatsV iew <- flip runReaderT nds $ withCache mempty $ \_protoInfo ->
-      --   calculateBakerStats (_bakeViewSelector_bakerStats aggVS)
-      whenM (viewSelects () paramsVS) $
-        pure $ mempty
-          { _bakeView_parameters = toMaybeView paramsVS $ Just $ _parameters_protoInfo params
-          -- , _bakeView_bakerStats = bakerStatsView
-          }
+    handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
+    handleParameters (Id (chainId, protoHash, firstBlockHash)) = whenM (viewSelects protoHash paramsVS) $ do
+      newProto :: Maybe ProtocolIndex <- selectSingle $
+        ProtocolIndex_hashField ==. protoHash &&.
+        ProtocolIndex_chainIdField ==. chainId &&.
+        ProtocolIndex_firstBlockHashField ==. firstBlockHash
+      pure mempty
+        { _bakeView_parameters = toRangeView1 paramsVS protoHash newProto
+        }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
@@ -167,7 +168,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
 
-    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
+    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
                 => Id Baker -> Maybe BakerData -> m' (BakeView a)
     handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
       case mBaker of
@@ -177,14 +178,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
         Just _ -> handleBakerAddress pkh
 
-    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m')
+    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
                        => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
       bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
 
     -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
-    alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m') => m' (BakeView a)
+    alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => m' (BakeView a)
     alsoEveryBakerSummary = do
       bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddressesVS) $
         toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
@@ -219,14 +220,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         }
 
     handleErrorLog
-      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
       => (e -> Id ErrorLog) -> LogTag e -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
       :: forall e m2
-      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2)
+      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
       => (e -> m2 (BakeView a))
       -> (e -> Id ErrorLog)
       -> LogTag e
