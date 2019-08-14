@@ -570,8 +570,8 @@ reportMissedBake
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ do
+  => UTCTime -> Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
     Nothing -> do
@@ -581,6 +581,7 @@ reportMissedBake f right pkh lvl = when' (bakerNotDeleted pkh) $ do
         , _errorLogBakerMissed_right = right
         , _errorLogBakerMissed_level = lvl
         , _errorLogBakerMissed_fitness = f
+        , _errorLogBakerMissed_bakeTime = bakeTime
         }
       project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
         Nothing -> queueAlert (Just eid) $ alert lvl
