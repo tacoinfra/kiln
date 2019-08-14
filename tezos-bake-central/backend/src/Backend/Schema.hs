@@ -547,6 +547,8 @@ instance PersistField ProtocolKilnId where
   fromPersistValues = primFromPersistValue
   dbType p (ProtocolKilnId x) = dbType p x
 
+instance NeverNull ProtocolKilnId
+
 instance PrimitivePersistField ProtocolKilnId where
   toPrimitivePersistValue x (ProtocolKilnId v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = ProtocolKilnId $ fromPrimitivePersistValue x v

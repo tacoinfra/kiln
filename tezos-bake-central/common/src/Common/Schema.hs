@@ -988,7 +988,7 @@ data BlockShellIndex = BlockShellIndex
   , _blockShellIndex_fitness :: !Fitness
   , _blockShellIndex_level :: !RawLevel
   , _blockShellIndex_timestamp :: !UTCTime
-  , _blockShellIndex_protocolKilnId :: !ProtocolKilnId
+  , _blockShellIndex_protocolKilnId :: !(Maybe ProtocolKilnId)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId BlockShellIndex
 

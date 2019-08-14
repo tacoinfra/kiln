@@ -92,7 +92,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
               , _blockShellIndex_fitness = headBlockInfo ^. fitness
               , _blockShellIndex_level = headBlockInfo ^. level
               , _blockShellIndex_timestamp = headBlockInfo ^. timestamp
-              , _blockShellIndex_protocolKilnId = ProtocolKilnId 4
+              , _blockShellIndex_protocolKilnId = Nothing
              })
 
   newBlock <- do
