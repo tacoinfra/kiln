@@ -322,12 +322,11 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
-            bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
+            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
               lvl
-              (thisBlock ^. timestamp)
       return $ pure action
 
     -- endorsements *on* this block are *of* the previous block
@@ -336,12 +335,11 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
-      let action = bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
+      let action = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
                    (headBlock ^. fitness)
                    RightKind_Endorsing
                    (baker ^. baker_publicKeyHash)
                    (lvl - 1)
-                   (predBlock ^. timestamp)
       return $ pure action
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts

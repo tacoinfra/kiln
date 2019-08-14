@@ -570,8 +570,8 @@ reportMissedBake
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
      , MonadLogger m)
-  => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> UTCTime -> m ()
-reportMissedBake f right pkh lvl bakeTime = when' (bakerNotDeleted pkh) $ do
+  => UTCTime -> Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
     Nothing -> do
@@ -667,8 +667,8 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
       RightKind_Baking -> "baked"
       RightKind_Endorsing -> "endorsed"
 
-clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> UTCTime -> m ()
-clearMissedBake f right pkh lvl _bakeTime = do
+clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake f right pkh lvl = do
   chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
       UPDATE "ErrorLog" el SET stopped = NOW()
