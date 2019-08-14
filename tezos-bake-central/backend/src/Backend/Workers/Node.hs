@@ -86,13 +86,13 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let db = _nodeDataSource_pool nds
   runDb (Identity db) $ do
-    insert (CacheBlockHash {
-                _cacheBlockHash_hash = headBlockInfo ^. hash
-              , _cacheBlockHash_predecessor = headBlockInfo ^. predecessor
-              , _cacheBlockHash_fitness = headBlockInfo ^. fitness
-              , _cacheBlockHash_level = headBlockInfo ^. level
-              , _cacheBlockHash_timestamp = headBlockInfo ^. timestamp
-              , _cacheBlockHash_protocolKilnId = ProtocolKilnId 5
+    insert (BlockShellIndex {
+                _blockShellIndex_hash = headBlockInfo ^. hash
+              , _blockShellIndex_predecessor = headBlockInfo ^. predecessor
+              , _blockShellIndex_fitness = headBlockInfo ^. fitness
+              , _blockShellIndex_level = headBlockInfo ^. level
+              , _blockShellIndex_timestamp = headBlockInfo ^. timestamp
+              , _blockShellIndex_protocolKilnId = ProtocolKilnId 4
              })
 
   newBlock <- do

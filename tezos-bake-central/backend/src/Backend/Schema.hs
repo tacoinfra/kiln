@@ -1118,14 +1118,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: CacheEndorsingRights_context
             type: primary
             fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
-  - entity: CacheBlockHash
+  - entity: BlockShellIndex
     autoKey: null
     constructors:
-      - name: CacheBlockHash
+      - name: BlockShellIndex
         uniques:
-          - name: CacheBlockHashId
+          - name: BlockShellIndexId
             type: primary
-            fields: [_cacheBlockHash_hash]
+            fields: [_blockShellIndex_hash]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
