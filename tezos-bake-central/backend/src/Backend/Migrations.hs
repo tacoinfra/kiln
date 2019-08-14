@@ -76,6 +76,7 @@ preMigrate chainId =
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
   >=> migrateChainIdToErrorLog chainId
+  >=> migrateErrorLogBakerMissedTimestamp
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -456,6 +457,22 @@ migrateChainIdToErrorLog currentChainId ta = do
 
               ALTER TABLE "ErrorLog" ALTER COLUMN "chainId" SET NOT NULL;
               ALTER TABLE "ErrorLogVotingReminder" DROP COLUMN "chainId";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateErrorLogBakerMissedTimestamp :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerMissedTimestamp ta = do
+  let table = (Nothing, "ErrorLogBakerMissed")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "bakeTime") . colName) $ tableColumns analyzedTable
+      -> do
+          -- Using the ErrorLog.started as Block's timestamp is not correct, but mostly a good approximation
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "bakeTime" TIMESTAMP WITHOUT TIME ZONE NULL;
+              UPDATE "ErrorLogBakerMissed" e SET "bakeTime" = (SELECT started FROM "ErrorLog" l WHERE l.id = e.log);
+              ALTER TABLE "ErrorLogBakerMissed" ALTER COLUMN "bakeTime" SET NOT NULL;
             |]
           getTableAnalysis
     _ -> pure ta

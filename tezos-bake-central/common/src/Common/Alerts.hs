@@ -240,7 +240,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
 
-bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, Maybe UTCTime) -> (RawLevel, Maybe UTCTime) -> RightKind -> BakerErrorDescriptions
+bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> RightKind -> BakerErrorDescriptions
 bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
@@ -249,10 +249,10 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerError
       [ "This baker has missed " <> errorEmphasis (tshow count <> " " <> opportunity) <> "."
       , "The first " <> theRight <> " missed was for "
         <> errorEmphasis ("block level " <> tshow (unRawLevel fb))
-        <> maybe "" (\t -> " on " <> errorEmphasis (localTime t)) ft <> "."
+        <> " on " <> errorEmphasis (localTime ft) <> "."
       , "The latest " <> theRight <> " missed was for "
         <> errorEmphasis ("block level " <> tshow (unRawLevel lb))
-        <> maybe "" (\t -> " on " <> errorEmphasis (localTime t)) lt <> "."
+        <> " on " <> errorEmphasis (localTime lt) <> "."
       ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"

@@ -820,7 +820,7 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   , _errorLogBakerMissed_right :: !RightKind
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
-  , _errorLogBakerMissed_bakeTime :: !(Maybe UTCTime) -- Maybe because of migrations
+  , _errorLogBakerMissed_bakeTime :: !UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog

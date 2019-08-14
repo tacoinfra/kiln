@@ -133,8 +133,8 @@ instance ToJSON BakerSummary
 data BakerAlert
   = BakerAlert_Alert (DSum BakerLogTag Identity)
   | BakerAlert_GroupedAlert
-    { _bakerAlert_groupedAlert_first :: (RawLevel, Maybe UTCTime)
-    , _bakerAlert_groupedAlert_latest :: (RawLevel, Maybe UTCTime)
+    { _bakerAlert_groupedAlert_first :: (RawLevel, UTCTime)
+    , _bakerAlert_groupedAlert_latest :: (RawLevel, UTCTime)
     , _bakerAlert_groupedAlert_right :: RightKind
     , _bakerAlert_groupedAlert_baker :: Id Baker
     , _bakerAlert_groupedAlert_logs :: NonEmpty (Id ErrorLog)

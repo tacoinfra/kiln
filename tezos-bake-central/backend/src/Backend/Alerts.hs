@@ -581,7 +581,7 @@ reportMissedBake f right pkh lvl bakeTime = when' (bakerNotDeleted pkh) $ do
         , _errorLogBakerMissed_right = right
         , _errorLogBakerMissed_level = lvl
         , _errorLogBakerMissed_fitness = f
-        , _errorLogBakerMissed_bakeTime = Just bakeTime
+        , _errorLogBakerMissed_bakeTime = bakeTime
         }
       project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
         Nothing -> queueAlert (Just eid) $ alert lvl
