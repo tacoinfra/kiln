@@ -1133,6 +1133,7 @@ authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e
           next = fforMaybe changed $ \case
             Just ss | Just (First setupStep) <- _setupState_setup ss -> case setupStep of
               SetupLedgerToBakeStep_Done -> Just authorized
+              SetupLedgerToBakeStep_DoneAndRegistered -> Just authorized
               SetupLedgerToBakeStep_Disconnected -> Just $ handleClientErrorWorkflow waiting ClientError_LedgerDisconnected
               SetupLedgerToBakeStep_Declined -> Just $ handleClientErrorWorkflow waiting ClientError_RequestDeclinedByLedger
               SetupLedgerToBakeStep_Failed -> Just $ handleClientErrorWorkflow waiting $ ClientError_Other "unknown"

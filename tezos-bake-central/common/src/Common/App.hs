@@ -186,6 +186,7 @@ instance ToJSON ImportSecretKeyStep
 data SetupLedgerToBakeStep
   = SetupLedgerToBakeStep_Prompting
   | SetupLedgerToBakeStep_Done
+  | SetupLedgerToBakeStep_DoneAndRegistered
   | SetupLedgerToBakeStep_Declined
   | SetupLedgerToBakeStep_Disconnected
   | SetupLedgerToBakeStep_Failed -- Anything else

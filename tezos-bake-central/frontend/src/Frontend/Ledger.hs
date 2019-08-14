@@ -215,11 +215,9 @@ authorizeLedger
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
 authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
-  isRegisteredD <- watchBakerRegistered pkh
+  isRegisteredD <- fmap ((== Just SetupLedgerToBakeStep_DoneAndRegistered) . (fmap getFirst) . join . (fmap _setupState_setup)) <$> watchPrompting sk
   let (err, ok) = fanEither e
-      isRegistered = fmap (== Just True) $ tag (current isRegisteredD) ok
-  _ <- requestingIdentity $ public (PublicRequest_StartBaking pkh) <$ fforMaybe isRegistered (\r -> if r then Just () else Nothing)
-  pure $ leftmost [Left <$> err, ffor isRegistered $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
+  pure $ leftmost [Left <$> err, ffor (tagPromptlyDyn isRegisteredD ok) $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
       text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
@@ -228,6 +226,7 @@ authorizeLedger (sk, pkh) = do
     handleStep ss
       | Just (First setupStep) <- _setupState_setup ss = case setupStep of
         SetupLedgerToBakeStep_Done -> Just $ PromptResult_Success ==> ()
+        SetupLedgerToBakeStep_DoneAndRegistered -> Just $ PromptResult_Success ==> ()
         SetupLedgerToBakeStep_Disconnected -> Just $ PromptResult_ClientError ==> ClientError_LedgerDisconnected
         SetupLedgerToBakeStep_Declined -> Just $ PromptResult_RecoverableError ==> declinedError
         SetupLedgerToBakeStep_Failed -> Just $ PromptResult_RecoverableError ==> failedError

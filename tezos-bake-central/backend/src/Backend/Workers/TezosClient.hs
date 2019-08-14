@@ -103,13 +103,15 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
             setupLedgerToBake appConfig chain >>= \i -> do
-              -- Before notifying FE, check if already registered, as the baker setup flow expects this value.
-              _ <- traverse (checkIfRegistered logger db nds) $ _ledgerAccount_publicKeyHash la
+              isReg <- if i == SetupLedgerToBakeStep_Done
+                then (fromMaybe False <$>) $ traverse (checkIfRegistered logger db nds) $ _ledgerAccount_publicKeyHash la
+                else pure False
               inDb $ do
+                when isReg $ void $ traverse startBaking $ _ledgerAccount_publicKeyHash la
                 update
                   [LedgerAccount_shouldSetupToBakeField =. False]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First i })
+                notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First $ bool i SetupLedgerToBakeStep_DoneAndRegistered isReg })
 
           -- register
           inDb (selectSingle $
