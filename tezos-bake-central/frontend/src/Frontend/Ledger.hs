@@ -217,7 +217,9 @@ authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
   isRegisteredD <- fmap ((== Just SetupLedgerToBakeStep_DoneAndRegistered) . fmap getFirst . (_setupState_setup =<<)) <$> watchPrompting sk
   let (err, ok) = fanEither e
-  pure $ leftmost [Left <$> err, ffor (tagPromptlyDyn isRegisteredD ok) $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
+      -- Since 'ok' is also derived from same Dynamic, we need tagPromptlyDyn here
+      isRegEv = tagPromptlyDyn isRegisteredD ok
+  pure $ leftmost [Left <$> err, ffor isRegEv $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
       text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
