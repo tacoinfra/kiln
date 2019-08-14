@@ -76,13 +76,25 @@ import ExtraPrelude
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
-haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
+haveNewHead :: (MonadIO m, MonadBaseNoPureAborts IO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
     historyVar = _nodeDataSource_history nds
   (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
+
+  let db = _nodeDataSource_pool nds
+  runDb (Identity db) $ do
+    insert (CacheBlockHash {
+                _cacheBlockHash_hash = headBlockInfo ^. hash
+              , _cacheBlockHash_predecessor = headBlockInfo ^. predecessor
+              , _cacheBlockHash_fitness = headBlockInfo ^. fitness
+              , _cacheBlockHash_level = headBlockInfo ^. level
+              , _cacheBlockHash_timestamp = headBlockInfo ^. timestamp
+              , _cacheBlockHash_protocolKilnId = ProtocolKilnId 5
+             })
+
   newBlock <- do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either PublicNodeError () <- runExceptT $

@@ -541,6 +541,16 @@ instance PersistField PublicKeyHash where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
 
+instance PersistField ProtocolKilnId where
+  persistName _ = "ProtocolKilnId"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p (ProtocolKilnId x) = dbType p x
+
+instance PrimitivePersistField ProtocolKilnId where
+  toPrimitivePersistValue x (ProtocolKilnId v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = ProtocolKilnId $ fromPrimitivePersistValue x v
+
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
   where
@@ -1108,6 +1118,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: CacheEndorsingRights_context
             type: primary
             fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
+  - entity: CacheBlockHash
+    autoKey: null
+    constructors:
+      - name: CacheBlockHash
+        uniques:
+          - name: CacheBlockHashId
+            type: primary
+            fields: [_cacheBlockHash_hash]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)

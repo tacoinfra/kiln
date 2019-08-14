@@ -59,7 +59,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
 import Data.Some (Some(..))
 import Data.Text (Text)
-import Data.Int (Int64)
+import Data.Int (Int64,Int16)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
@@ -978,6 +978,21 @@ deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
+-- | Short Protocol Id internal to Kiln.   Probably should not be exposed to the outside world.
+
+newtype ProtocolKilnId = ProtocolKilnId Int16
+  deriving (Eq, Ord, Show, Typeable, Generic)
+
+data CacheBlockHash = CacheBlockHash
+  { _cacheBlockHash_hash :: !BlockHash
+  , _cacheBlockHash_predecessor :: !BlockHash
+  , _cacheBlockHash_fitness :: !Fitness
+  , _cacheBlockHash_level :: !RawLevel
+  , _cacheBlockHash_timestamp :: !UTCTime
+  , _cacheBlockHash_protocolKilnId :: !ProtocolKilnId
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId CacheBlockHash
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
@@ -996,6 +1011,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
+  , ''CacheBlockHash
   , ''CacheDelegateInfo
   , ''DeletableRow
   , ''EndorseEvent
@@ -1031,6 +1047,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
+  , ''ProtocolKilnId
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report
@@ -1060,6 +1077,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
+  , 'CacheBlockHash
   , 'CachedProtocolConstants
   , 'DeletableRow
   , 'EndorseEvent
@@ -1159,6 +1177,12 @@ instance BlockLike PublicNodeHead where
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
 
+instance BlockLike CacheBlockHash where
+  hash = cacheBlockHash_hash
+  predecessor = cacheBlockHash_predecessor
+  fitness = cacheBlockHash_fitness
+  level = cacheBlockHash_level
+  timestamp = cacheBlockHash_timestamp
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =
