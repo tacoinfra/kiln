@@ -95,11 +95,10 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
       INSERT INTO "BlockShellIndex"
                   ( "hash" , "predecessor" , "fitness" , "level" , "timestamp" , "protocolKilnId" )
            VALUES ( ?nHash , ?nPredecessor , ?nFitness , ?nLevel , ?nTimestamp , null )
-      ON CONFLICT ("hash") DO
-        UPDATE "BlockShellIndex"
-           SET "fitness" = COALESCE("fitness",EXCLUDED."fitness"),
-               "timestamp" = COALESCE("timestamp",EXCLUDED."timestamp")
-         WHERE "hash"=EXCLUDED."hash" AND ("fitness" IS NULL OR "timestamp" IS NULL)
+      ON CONFLICT ("hash") DO UPDATE
+              SET "fitness" = EXCLUDED."fitness"
+                  "timestamp" = EXCLUDED."timestamp"
+            WHERE ("fitness" IS NULL OR "timestamp" IS NULL)
      |]
 
   newBlock <- do
