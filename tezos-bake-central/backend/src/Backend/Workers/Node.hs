@@ -96,8 +96,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either (Either PublicNodeError CacheError) Block <- runExceptT $ do
       headBlockFull <- withExceptT Right $ do
-        focusedNds <- mkNdsFocusedOnThisNode
-        flip runReaderT focusedNds $ do
+        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
           nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
 
       withExceptT Left $
@@ -123,11 +122,6 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
           else
             pure Nothing
       for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
-
-  where
-    mkNdsFocusedOnThisNode = do
-      nodeMap <- liftIO $ newTVarIO (Map.singleton nodeAddr $ Just $ mkVeryBlockLike headBlockInfo)
-      pure $ nds { _nodeDataSource_nodes = nodeMap }
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe RawLevel -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
