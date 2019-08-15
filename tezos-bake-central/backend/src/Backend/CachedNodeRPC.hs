@@ -200,6 +200,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
   , _nodeDataSource_osPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
+  , _nodeDataSource_nodeForQuery :: !(Maybe URI) -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -277,10 +278,13 @@ instance MonadNodeQuery NodeQueryQueued where
   nodeRPCOrBust qBranch q = do
     $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
     dsrc <- askNodeDataSource
-    nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
-    mNodesToTry <- NodeQueryQueued $ atomicallyWith (validNodes nodes q >>= \case
-      Left e -> pure $ Left e
-      Right nodes' -> Right . maybeToList <$> pickNode qBranch nodes')
+    mNodesToTry <- case _nodeDataSource_nodeForQuery dsrc of
+      Just n -> pure $ Right [n]
+      Nothing -> do
+        nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
+        NodeQueryQueued $ atomicallyWith (validNodes nodes q >>= \case
+          Left e -> pure $ Left e
+          Right nodes' -> Right . maybeToList <$> pickNode qBranch nodes')
     result <- case mNodesToTry of
       Left e -> pure $ Left e
       Right [] -> case _nodeDataSource_osPublicNode dsrc of
@@ -617,6 +621,7 @@ blankNodeDataSource db chain mgr logger minLevel obsidianURI kilnNodeUri = do
     , _nodeDataSource_ioQueue = ioQueue
     , _nodeDataSource_osPublicNode = obsidianURI
     , _nodeDataSource_kilnNodeUri = kilnNodeUri
+    , _nodeDataSource_nodeForQuery = Nothing
     }
 {-
 
