@@ -86,14 +86,21 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let db = _nodeDataSource_pool nds
   runDb (Identity db) $ do
-    insert (BlockShellIndex {
-                _blockShellIndex_hash = headBlockInfo ^. hash
-              , _blockShellIndex_predecessor = headBlockInfo ^. predecessor
-              , _blockShellIndex_fitness = headBlockInfo ^. fitness
-              , _blockShellIndex_level = headBlockInfo ^. level
-              , _blockShellIndex_timestamp = headBlockInfo ^. timestamp
-              , _blockShellIndex_protocolKilnId = Nothing
-             })
+    let nHash        = headBlockInfo ^. hash
+        nPredecessor = headBlockInfo ^. predecessor
+        nFitness     = headBlockInfo ^. fitness
+        nLevel       = headBlockInfo ^. level
+        nTimestamp   = headBlockInfo ^. timestamp
+    void [executeQ|
+      INSERT INTO "BlockShellIndex"
+                  ( "hash" , "predecessor" , "fitness" , "level" , "timestamp" , "protocolKilnId" )
+           VALUES ( ?nHash , ?nPredecessor , ?nFitness , ?nLevel , ?nTimestamp , null )
+      ON CONFLICT ("hash") DO
+        UPDATE "BlockShellIndex"
+           SET "fitness" = COALESCE("fitness",EXCLUDED."fitness"),
+               "timestamp" = COALESCE("timestamp",EXCLUDED."timestamp")
+         WHERE "hash"=EXCLUDED."hash" AND ("fitness" IS NULL OR "timestamp" IS NULL)
+     |]
 
   newBlock <- do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)

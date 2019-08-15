@@ -985,9 +985,9 @@ newtype ProtocolKilnId = ProtocolKilnId Int16
 data BlockShellIndex = BlockShellIndex
   { _blockShellIndex_hash :: !BlockHash
   , _blockShellIndex_predecessor :: !BlockHash
-  , _blockShellIndex_fitness :: !Fitness
+  , _blockShellIndex_fitness :: !(Maybe Fitness)
   , _blockShellIndex_level :: !RawLevel
-  , _blockShellIndex_timestamp :: !UTCTime
+  , _blockShellIndex_timestamp :: !(Maybe UTCTime)
   , _blockShellIndex_protocolKilnId :: !(Maybe ProtocolKilnId)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId BlockShellIndex
@@ -1175,13 +1175,6 @@ instance BlockLike PublicNodeHead where
   fitness = publicNodeHead_headBlock . fitness
   level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
-
-instance BlockLike BlockShellIndex where
-  hash = blockShellIndex_hash
-  predecessor = blockShellIndex_predecessor
-  fitness = blockShellIndex_fitness
-  level = blockShellIndex_level
-  timestamp = blockShellIndex_timestamp
 
 aliasedIdentification :: (a -> Maybe Text) -> (a -> Text) -> a -> (Text, Maybe Text)
 aliasedIdentification getMain getFallback x =
