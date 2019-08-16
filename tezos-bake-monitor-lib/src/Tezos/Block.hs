@@ -10,7 +10,7 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', coerced, (^.), _1, _2)
+import Control.Lens (Lens', coerced, (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
@@ -48,7 +48,7 @@ data Block = Block
   { _block_protocol :: !ProtocolHash --  "protocol": { "type": "string", "enum": [ "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" ] },
   , _block_chainId :: !ChainId --  "chain_id": { "$ref": "#/definitions/Chain_id" },
   , _block_hash :: !BlockHash -- "hash": { "$ref": "#/definitions/block_hash" },
-  , _block_header :: !BlockHeader --  "header": { "$ref": "#/definitions/raw_block_header" },
+  , _block_header :: !BlockHeaderFull --  "header": { "$ref": "#/definitions/raw_block_header" }, (we actually get $block_header.alpha.full_header)
   , _block_metadata :: !BlockMetadata --  "metadata": { "$ref": "#/definitions/block_header_metadata" },
   , _block_operations :: !(Seq (Seq Operation)) --  "operations": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/operation" } } }
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -174,6 +174,25 @@ data VeryBlockLike = VeryBlockLike
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance NFData VeryBlockLike
 
+toBlockHeader :: Block -> BlockHeader
+toBlockHeader blk = BlockHeader
+  { _blockHeader_level = _blockHeaderFull_level blkH
+  , _blockHeader_hash = _block_hash blk
+  , _blockHeader_proto = _blockHeaderFull_proto blkH
+  , _blockHeader_protocol = _block_protocol blk
+  , _blockHeader_chainId = _block_chainId blk
+  , _blockHeader_predecessor = _blockHeaderFull_predecessor blkH
+  , _blockHeader_timestamp = _blockHeaderFull_timestamp blkH
+  , _blockHeader_validationPass = _blockHeaderFull_validationPass blkH
+  , _blockHeader_operationsHash = _blockHeaderFull_operationsHash blkH
+  , _blockHeader_fitness = _blockHeaderFull_fitness blkH
+  , _blockHeader_context = _blockHeaderFull_context blkH
+  , _blockHeader_priority = _blockHeaderFull_priority blkH
+  , _blockHeader_proofOfWorkNonce = _blockHeaderFull_proofOfWorkNonce blkH
+  , _blockHeader_seedNonceHash = _blockHeaderFull_seedNonceHash blkH
+  , _blockHeader_signature = _blockHeaderFull_signature blkH
+  }
+  where blkH = _block_header blk
 
 -- | Simple wrapper for adding a protocol hash to some other value.
 --
@@ -242,19 +261,20 @@ class HasProtocolHash a where
 
 instance BlockLike Block where
   hash = block_hash
-  predecessor = block_header . blockHeader_predecessor
-  level = block_header . blockHeader_level
-  fitness = block_header . blockHeader_fitness
-  timestamp = block_header . blockHeader_timestamp
+  predecessor = block_header . blockHeaderFull_predecessor
+  level = block_header . blockHeaderFull_level
+  fitness = block_header . blockHeaderFull_fitness
+  timestamp = block_header . blockHeaderFull_timestamp
+
 instance HasProtocolHash Block where
   protocolHash = block_protocol
 
-instance BlockLike (BlockHash, BlockHeader) where
-  hash = _1
-  predecessor = _2 . blockHeader_predecessor
-  level = _2 . blockHeader_level
-  fitness = _2 . blockHeader_fitness
-  timestamp = _2 . blockHeader_timestamp
+instance BlockLike BlockHeader where
+  hash = blockHeader_hash
+  predecessor = blockHeader_predecessor
+  level = blockHeader_level
+  fitness = blockHeader_fitness
+  timestamp = blockHeader_timestamp
 
 instance BlockLike MonitorBlock where
   hash = monitorBlock_hash

@@ -155,7 +155,7 @@ data BlockBaker = BlockBaker
 getBakerFromBlock :: Block -> BlockBaker
 getBakerFromBlock block = BlockBaker
   { _blockBaker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
-  , _blockBaker_priority = block ^. block_header . blockHeader_priority
+  , _blockBaker_priority = block ^. block_header . blockHeaderFull_priority
   , _blockBaker_endorsements = block ^. block_operations
     . traverse
     . traverse

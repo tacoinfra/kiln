@@ -50,6 +50,7 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.Block (toBlockHeader)
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
@@ -460,7 +461,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
-      nodeHead <- (,) nodeHeadHash <$> nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
+      nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
@@ -480,8 +481,8 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
                  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
                  let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
                      uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
-                 latestParent <- (,) parentHash <$> nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
-                 latestUncle <- (,) uncleHash <$> nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
+                 latestParent <- nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
+                 latestUncle <- nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
@@ -685,7 +686,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure (latestBlock ^. hash, _block_header latestBlock)
+        else pure (toBlockHeader latestBlock)
       updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -699,7 +700,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
   where
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
-    getBlockHeader hash' = nodeQueryDataSource (NodeQuery_BlockHeader hash') >>= pure . (hash',)
+    getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError

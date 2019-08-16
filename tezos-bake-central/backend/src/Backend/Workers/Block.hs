@@ -99,12 +99,12 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
           for_ mightBeAccusations $ \op -> do
             let
               opHash = _operation_hash op
-              blockLevel = _blockHeader_level (_block_header block)
+              blockLevel = block ^. level
             for_ (_operation_contents op) $ \case
               OperationContents_DoubleBakingEvidence ev -> do
                 let
-                  accusedLevel = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_level
-                  accusedPriority = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeader_priority
+                  accusedLevel = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeaderFull_level
+                  accusedPriority = ev ^. operationContentsDoubleBakingEvidence_bh1 . blockHeaderFull_priority
                 baker <- fmap _bakingRights_delegate $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
                 void [executeQ|
                   insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")

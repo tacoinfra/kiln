@@ -26,11 +26,31 @@ import Tezos.Json
 import Tezos.Level
 import Tezos.Signature
 
--- TODO: split this into ShellHeader/AlphaProtoHeader/etc
--- AKA: raw_block_header, "block_header.alpha.full_header"
+-- This is the JSON embedded in Block
+data BlockHeaderFull = BlockHeaderFull
+  { _blockHeaderFull_level :: !RawLevel
+  , _blockHeaderFull_proto :: !Word8
+  , _blockHeaderFull_predecessor :: !BlockHash
+  , _blockHeaderFull_timestamp :: !UTCTime
+  , _blockHeaderFull_validationPass :: !Word8
+  , _blockHeaderFull_operationsHash :: !OperationListListHash
+  , _blockHeaderFull_fitness :: !Fitness
+  , _blockHeaderFull_context :: !ContextHash
+  , _blockHeaderFull_priority :: !Priority
+  , _blockHeaderFull_proofOfWorkNonce :: !(Base16ByteString ByteString)
+  , _blockHeaderFull_seedNonceHash :: !(Maybe NonceHash)
+  , _blockHeaderFull_signature :: !(Maybe Signature)
+  }
+  deriving (Show, Eq, Ord, Generic, Typeable)
+instance NFData BlockHeaderFull
+
+-- This is JSON we get from /block/header RPC
 data BlockHeader = BlockHeader
   { _blockHeader_level :: !RawLevel
+  , _blockHeader_hash :: !BlockHash
   , _blockHeader_proto :: !Word8
+  , _blockHeader_protocol :: !ProtocolHash
+  , _blockHeader_chainId :: !ChainId
   , _blockHeader_predecessor :: !BlockHash
   , _blockHeader_timestamp :: !UTCTime
   , _blockHeader_validationPass :: !Word8
@@ -45,6 +65,7 @@ data BlockHeader = BlockHeader
   deriving (Show, Eq, Ord, Generic, Typeable)
 instance NFData BlockHeader
 
+-- This is embedded in other structures like Checkpoint
 data BlockHeaderShell = BlockHeaderShell
   { _blockHeaderShell_level :: !RawLevel
   , _blockHeaderShell_proto :: !Word8
@@ -61,18 +82,18 @@ instance NFData BlockHeaderShell
 newtype Priority = Priority { unPriority :: Word16 }
   deriving (Eq, Ord, Generic, Typeable, Show, FromJSON, ToJSON, NFData, Hashable, Enum, Num, Integral, Real, Bits, B.TezosBinary)
 
-instance B.TezosUnsignedBinary BlockHeader where
+instance B.TezosUnsignedBinary BlockHeaderFull where
   putUnsigned = shellHeaderEncoding <** contentsEncoding
     where
-      shellHeaderEncoding = B.puts _blockHeader_level <** B.puts _blockHeader_proto
-        <** B.puts _blockHeader_predecessor <** B.puts _blockHeader_timestamp
-        <** B.puts _blockHeader_validationPass <** B.puts _blockHeader_operationsHash
-        <** B.puts _blockHeader_fitness <** B.puts _blockHeader_context
-      contentsEncoding = B.puts _blockHeader_priority <** B.puts _blockHeader_proofOfWorkNonce
-        <** B.puts _blockHeader_seedNonceHash
+      shellHeaderEncoding = B.puts _blockHeaderFull_level <** B.puts _blockHeaderFull_proto
+        <** B.puts _blockHeaderFull_predecessor <** B.puts _blockHeaderFull_timestamp
+        <** B.puts _blockHeaderFull_validationPass <** B.puts _blockHeaderFull_operationsHash
+        <** B.puts _blockHeaderFull_fitness <** B.puts _blockHeaderFull_context
+      contentsEncoding = B.puts _blockHeaderFull_priority <** B.puts _blockHeaderFull_proofOfWorkNonce
+        <** B.puts _blockHeaderFull_seedNonceHash
   getUnsigned = thenContentsDecoding shellHeaderDecoding
     where
-      shellHeaderDecoding = pure BlockHeader
+      shellHeaderDecoding = pure BlockHeaderFull
         <*> B.get -- level
         <*> B.get -- proto
         <*> B.get -- predecessor
@@ -90,12 +111,12 @@ instance B.TezosUnsignedBinary BlockHeader where
         <*> B.get -- seedNonceHash
         <*> pure Nothing -- no signature yet, because it's unsigned
 
-instance B.TezosBinary BlockHeader where
-  put bh = B.putUnsigned bh *> traverse_ B.put (_blockHeader_signature bh)
+instance B.TezosBinary BlockHeaderFull where
+  put bh = B.putUnsigned bh *> traverse_ B.put (_blockHeaderFull_signature bh)
   get = do
     bh <- B.getUnsigned
     sig <- B.get
-    pure $ bh { _blockHeader_signature = Just sig }
+    pure $ bh { _blockHeaderFull_signature = Just sig }
 
-concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderShell]
-concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderShell ]
+concat <$> traverse deriveTezosJson [ ''BlockHeader, ''BlockHeaderFull, ''BlockHeaderShell]
+concat <$> traverse makeLenses [ 'BlockHeader, 'BlockHeaderFull, 'BlockHeaderShell ]
