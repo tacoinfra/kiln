@@ -111,6 +111,7 @@ getProtocolIndex branch protoHash = do
               pure ProtocolIndex
                 { _protocolIndex_chainId = chainId
                 , _protocolIndex_hash = firstBlock ^. protocolHash
+                , _protocolIndex_proto = firstBlock ^. block_header . blockHeader_proto
                 , _protocolIndex_constants = constants
                 , _protocolIndex_firstBlockHash = firstBlock ^. hash
                 , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor

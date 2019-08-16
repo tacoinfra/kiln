@@ -380,6 +380,7 @@ data ProtocolIndex = ProtocolIndex
   { _protocolIndex_chainId :: !ChainId
   , _protocolIndex_hash :: !ProtocolHash
   , _protocolIndex_constants :: !ProtoInfo
+  , _protocolIndex_proto :: !Word8
   , _protocolIndex_firstBlockHash :: !BlockHash
   , _protocolIndex_firstBlockPredecessor :: !BlockHash
   , _protocolIndex_firstBlockLevel :: !RawLevel
