@@ -37,7 +37,6 @@ import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 
 import Tezos.Base58Check
-import Tezos.Block (VeryBlockLike (..))
 import Tezos.History
 import Tezos.ShortByteString (toShort)
 import Tezos.Types
@@ -199,10 +198,9 @@ importSnapshotData appConfig nds chain sm smId = do
             mBlkHash = completeBlockHash blkHashPrefix hist
 
           mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
-            header <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
-            pure $ mkVeryBlockLike (blkHash, header)
+            nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
           let
-            blkDetails :: (# Text | BlockHash | VeryBlockLike #)
+            blkDetails :: (# Text | BlockHash | BlockHeader #)
             blkDetails = case either (const Nothing) Just =<< mBlk of
               Just blk -> (# | | blk #)
               Nothing -> case mBlkHash of
@@ -214,8 +212,8 @@ importSnapshotData appConfig nds chain sm smId = do
     ExitFailure _ -> inDb $ importFailed $ "importSnapshotData failed: " <> stderr
 
 updateSnapshotMeta
-  :: (PersistBackend m)
-  => (# Text | BlockHash | VeryBlockLike #)
+  :: (PersistBackend m, BlockLike blk)
+  => (# Text | BlockHash | blk #)
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 updateSnapshotMeta blkDetails smId = do

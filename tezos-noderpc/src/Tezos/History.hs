@@ -207,7 +207,7 @@ scanBranch ::
   )
   => Block -> RawLevel -> RawLevel -> (Block -> m a) -> m ()
 scanBranch branch start stop k = do
-  let headLvl = _blockHeader_level $ _block_header branch
+  let headLvl = _blockHeaderFull_level $ _block_header branch
   for_ [start .. stop] $ \n -> do
     blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
     void $ k blk
