@@ -19,12 +19,13 @@ module Backend.Workers.Node where
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, newTVarIO, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
+import Data.IORef
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -53,9 +54,10 @@ import qualified Text.URI as Uri
 import Tezos.Block (toBlockHeader)
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat, rCheckpoint)
+                      rMonitorHeads, rNetworkStat, rProtoConstants, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
+import qualified Tezos.ProtocolConstants as ProtocolConstants
 import Tezos.Types
 import qualified Tezos.TestChainStatus as Tezos
 
@@ -290,6 +292,8 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
+      protoDataVar <- liftIO $ newIORef Nothing
+      lastBlkVar <- liftIO $ newIORef Nothing
       let
         reconnectDelay = 5
 
@@ -299,26 +303,50 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        updateCheckpoint :: (BlockLike blk, MonadIO m, MonadLogger m) => blk -> Maybe RawLevel -> m (Maybe RawLevel)
+        updateCheckpoint :: (MonadIO m, MonadLogger m) => MonitorBlock -> Maybe RawLevel -> m (Maybe RawLevel)
         updateCheckpoint blk mSp = do
-          mParams <- liftIO $ readTVarIO $ _nodeDataSource_parameters nds
-          let
-            shouldUpdate = maybe True checkCycle mParams
-            checkCycle protoInfo = mSp == Nothing || thisCycle /= predCycle
-              where
-                thisCycle = levelToCycle protoInfo (blk ^. level)
-                predCycle = levelToCycle protoInfo $ pred (blk ^. level)
+          mLastBlk <- liftIO $ do
+            b <- readIORef lastBlkVar
+            writeIORef lastBlkVar (Just blk)
+            pure b
+          mProtoInfo <- do
+            mOldProtoInfo <- liftIO $ readIORef protoDataVar
+            let protoChanged = maybe True (\lblk -> (_monitorBlock_proto lblk)  /= (_monitorBlock_proto blk)) mLastBlk
+            if mOldProtoInfo == Nothing || protoChanged
+              then do
+                $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
+                pr :: Either CacheError ProtoInfo <- runExceptT $ do
+                  flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+                    nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
+                case pr of
+                  Left e -> do
+                    $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}|]
+                    pure Nothing
+                  Right v -> do
+                    liftIO $ writeIORef protoDataVar $ Just v
+                    pure $ Just v
+              else pure mOldProtoInfo
 
-          if not shouldUpdate
+          let
+            skipUpdate = mLastBlk `isInSameCycleAs` blk
+            isInSameCycleAs l thisBlk = case liftA2 (,) l mProtoInfo of
+              Nothing -> False
+              Just (lblk, protoInfo) -> lvl2Cycle (blk ^. level) == lvl2Cycle (lblk ^. level)
+                where lvl2Cycle = ProtocolConstants.levelToCycle protoInfo
+
+          if skipUpdate
             then pure Nothing
             else do
-              $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+              $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
                 Left e ->
                   case e of
                     RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
-                    _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
-                Right checkpoint ->
+                    _ -> do
+                      liftIO $ writeIORef lastBlkVar Nothing -- Try again for next blk
+                      $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
+                      pure Nothing
+                Right checkpoint -> do
                   pure $ Just $ _checkpoint_savePoint checkpoint
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
