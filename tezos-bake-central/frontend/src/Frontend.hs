@@ -2205,7 +2205,7 @@ bakersTab =
                   False -> do
                     open <- tileMenuEntry "Vote"
                     let amendment = snd <$> periodKind_amendment
-                    mProtoInfo <- maybeDyn =<< watchProtoInfo
+                    mProtoInfo <- maybeDyn =<< watchLatestProtoInfo
                     let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
                           Left _ -> Nothing
                           Right b -> Just (pkh, _bakerInternalData_secretKey b)
@@ -2401,7 +2401,7 @@ withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFron
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
 withAmendmentPeriodProgress expectedVotingPeriod w = do
   currentTime <- asks (^. timer)
-  mProtoInfo <- maybeDyn =<< watchProtoInfo
+  mProtoInfo <- maybeDyn =<< watchLatestProtoInfo
   amendments <- watchAmendment
   mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
   dyn_ $ ffor ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \case

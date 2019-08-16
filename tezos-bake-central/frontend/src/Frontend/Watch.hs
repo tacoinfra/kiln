@@ -69,6 +69,11 @@ watchHeadWithProtocol = do
   protoConstants <- join <$> holdDyn (pure Nothing) protoConstantsEvt
   pure (latestHead, protoConstants)
 
+watchLatestProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
+watchLatestProtoInfo = do
+  (_, knownProto) <- watchHeadWithProtocol
+  pure $ fmap _protocolIndex_constants <$> knownProto
+
 watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
 watchLatestHead =
   (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
