@@ -269,6 +269,9 @@ instance BlockLike Block where
 instance HasProtocolHash Block where
   protocolHash = block_protocol
 
+instance HasProtocolHash BlockHeader where
+  protocolHash = blockHeader_protocol
+
 instance BlockLike BlockHeader where
   hash = blockHeader_hash
   predecessor = blockHeader_predecessor

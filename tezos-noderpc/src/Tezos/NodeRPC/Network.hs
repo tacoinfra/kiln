@@ -295,12 +295,12 @@ getBlock ::
   , MonadReader r m, HasPublicNodeContext r
   ) => ChainId -> BlockHash -> m (WithProtocolHash VeryBlockLike)
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mk <$> rBlock (ChainTag_Hash chainId) blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlock (ChainTag_Hash chainId) blockHash
+  Nothing                    -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
   Just PublicNode_TzScan     -> nodeRPC $ mk @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
-    ("/v2/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
+    ("/v2/" <> toBase58Text chainId <> "/block-header/?hash=" <> toBase58Text blockHash)
   where
     mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
     mk blk = WithProtocolHash
