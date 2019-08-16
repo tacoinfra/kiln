@@ -534,11 +534,12 @@ amendmentProcessWorker
   -> Pool Postgresql
   -> IO (IO ())
 amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (latestBlock, blocksPerVotingPeriod) <- throwing $ liftA2 (,)
+  (latestBlock, protoInfo) <- throwing $ liftA2 (,)
     (getBlock (latestHead ^. hash))
-    (fmap _protoInfo_blocksPerVotingPeriod $ nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash)
+    (nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash)
   history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
   let
+    blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo
     chainId = _nodeDataSource_chain nds
     minLevel = _cachedHistory_minLevel history
 

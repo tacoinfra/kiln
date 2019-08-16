@@ -76,7 +76,7 @@ import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource(..))
+import Backend.CachedNodeRPC (NodeDataSource(..), blankNodeDataSource)
 import Backend.Common (workerWithDelay, worker')
 import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
 import Backend.Http (runHttpT)
@@ -357,8 +357,6 @@ backendImpl cfg serve = do
             , PublicNodeConfig_updatedField =. now
             ]
 
-    params <- runLoggingEnv logger $ runDb (Identity db) $
-      listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
     let
       minLevel :: RawLevel
       minLevel = case maybeNamedChain of
@@ -376,7 +374,7 @@ backendImpl cfg serve = do
         }
       obsidianURI = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
 
-    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger minLevel obsidianApi (kilnNodeRpcURI appConfig)
+    dataSrc <- liftIO $ blankNodeDataSource db chainId httpMgr logger minLevel obsidianURI (kilnNodeRpcURI appConfig)
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
@@ -426,7 +424,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 1000000 {- 0.3 -}dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
-      addFinalizer =<< amendmentProcessWorker dataSrc db
+      addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 

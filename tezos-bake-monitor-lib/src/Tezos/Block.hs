@@ -10,7 +10,7 @@
 module Tezos.Block where
 
 import Control.Applicative ((<|>))
-import Control.Lens (Lens', coerced, iso, (^.), _1, _2)
+import Control.Lens (Lens', coerced, (^.), _1, _2)
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson

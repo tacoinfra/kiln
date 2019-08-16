@@ -105,7 +105,6 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (toId)
 import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
 import Rhyolite.Request.TH (makeRequestForData)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
@@ -866,6 +865,7 @@ validNodes
   :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
   => [(URI, Maybe VeryBlockLike, Maybe RawLevel)] -> NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
 validNodes nodes q = case q of
+  NodeQuery_ProtocolConstants ctx -> findNode =<< getLvl ctx
   NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_Block ctx -> findNode =<< getLvl ctx
@@ -999,7 +999,6 @@ instance QueryHistory OsNodeQuery where
   rManagerKey = error "rManagerKey NYI for OsNodeQuery"
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
 
-  rAnyConstants = chainApi1 "/params"
   rBallots = blockApi1 "/ballots"
   rContract contractId = case contractId of
     Implicit pkh -> chainApi2 "/account" $ \block ->
@@ -1146,8 +1145,8 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
       . toList
 
     makeBlanks :: V.Vector BakingRights
-    makeBlanks = V.generate priorityChunkSize $ \i ->
-      throw $ NoRightsException ctx lvl $ prio + fromIntegral i
+    makeBlanks = V.generate priorityChunkSize $ \i' ->
+      throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
 
   maybe (nqThrowError $ CacheError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
 

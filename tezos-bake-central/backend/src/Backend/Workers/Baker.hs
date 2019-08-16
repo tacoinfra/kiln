@@ -159,7 +159,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
       for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
-        (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
+        (reqBakers, reqEndorsers) <- liftA2 (,)
           (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl)
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
         let
