@@ -85,11 +85,10 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = headBlock ^. hash
     protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants headHash
-    (_, headCycle) <- getPositionOfBlockFaster headHash
-    rightsLookAhead <- lastLevelInCycle headHash $ headCycle + protoInfo ^. protoInfo_preservedCycles
     cycleHashes :: [RightsCycleInfo] <- cycleStartHashes headHash
 
     let
+      rightsLookAhead = RawLevel $ (unCycle $ _protoInfo_preservedCycles protoInfo) * (unRawLevel $ _protoInfo_blocksPerCycle protoInfo)
       minCycle = minimumDef 0 $ fmap _rightsCycleInfo_cycle cycleHashes
       maxCycle = maximumDef (-1) $ fmap _rightsCycleInfo_cycle cycleHashes
       -- well just swizzle these around
