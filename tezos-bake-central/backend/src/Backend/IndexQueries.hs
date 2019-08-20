@@ -52,15 +52,14 @@ import ExtraPrelude
 import Safe (headMay)
 
 
-getLatestBlockWithProtocol
+getLatestProtocolConstants
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
-  => NodeQueryT m (Block, ProtocolIndex)
-getLatestBlockWithProtocol = do
+  => NodeQueryT m (WithProtocolHash VeryBlockLike, ProtoInfo)
+getLatestProtocolConstants = do
   histVar <- asksNodeDataSource _nodeDataSource_history
   hist <- nqAtomically $ readTVar' histVar
   branchBlock <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $ fittestBranchInHistory hist
-  branchBlockFull <- nodeQueryDataSourceSafe $ NodeQuery_Block $ branchBlock ^. hash
-  (branchBlockFull,) <$> getProtocolIndex (branchBlock ^. hash) (branchBlockFull ^. block_protocol)
+  (branchBlock,) . _protocolIndex_constants <$> getProtocolIndex (branchBlock ^. hash) (branchBlock ^. protocolHash)
 
 -- TODO: Pass history in
 getProtocolIndex
@@ -212,7 +211,7 @@ levelToCycle
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
   => RawLevel -> NodeQueryT m Cycle
 levelToCycle lvl = do
-  (_, protoIx) <- getLatestBlockWithProtocolConstants
+  (_, protoIx) <- getLatestProtocolConstants
   -- XXX We cheat here, as we dont expect the blocks/cycle to change
   pure $ Tezos.ProtocolConstants.levelToCycle protoIx lvl
 
