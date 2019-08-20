@@ -201,6 +201,7 @@ instance HasDefaultNotify (DSum BakerLogTag Id) where
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
+instance HasDefaultNotify (Id ErrorLogBakerLedgerDisconnected)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogBakerAccused)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
@@ -220,6 +221,8 @@ instance HasNotification NotifyTag ErrorLogBadNodeHead where
 instance HasNotification NotifyTag ErrorLogInaccessibleNode where
   notification _ = mkNodeNotify NodeLogTag_InaccessibleNode
 
+instance HasNotification NotifyTag ErrorLogBakerLedgerDisconnected where
+  notification _ = mkBakerNotify BakerLogTag_BakerLedgerDisconnected
 instance HasNotification NotifyTag ErrorLogBakerAccused where
   notification _ = mkBakerNotify BakerLogTag_BakerAccused
 instance HasNotification NotifyTag ErrorLogBakerDeactivated where
@@ -945,6 +948,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerNoHeartbeatId
             type: primary
             fields: [_errorLogBakerNoHeartbeat_log]
+  - entity: ErrorLogBakerLedgerDisconnected
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerLedgerDisconnectedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerLedgerDisconnected
+        uniques:
+          - name: ErrorLogBakerLedgerDisconnectedId
+            type: primary
+            fields: [_errorLogBakerLedgerDisconnected_log]
   - entity: ErrorLogInaccessibleNode
     autoKey: null
     keys:
@@ -1160,6 +1174,9 @@ instance DefaultKeyId ErrorLogBadNodeHead where
 instance DefaultKeyId ErrorLogBakerNoHeartbeat where
   toIdData _ (ErrorLogBakerNoHeartbeatIdKey eid) = eid
   fromIdData _ = ErrorLogBakerNoHeartbeatIdKey
+instance DefaultKeyId ErrorLogBakerLedgerDisconnected where
+  toIdData _ (ErrorLogBakerLedgerDisconnectedIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerLedgerDisconnectedIdKey
 instance DefaultKeyId ErrorLogInaccessibleNode where
   toIdData _ (ErrorLogInaccessibleNodeIdKey eid) = eid
   fromIdData _ = ErrorLogInaccessibleNodeIdKey
@@ -1233,6 +1250,7 @@ nodeLogAssume = \case
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
+  BakerLogTag_BakerLedgerDisconnected -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
@@ -1301,6 +1319,7 @@ nodeLogDep = \case
 
 bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
 bakerLogDep = \case
+  BakerLogTag_BakerLedgerDisconnected -> depBakerAlert' ErrorLogBakerLedgerDisconnected_bakerField
   BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
@@ -1326,6 +1345,7 @@ instance ArgDict NotifyTag where
     , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
     , c (Id ErrorLogNetworkUpdate)
     , c (Id ErrorLogBakerNoHeartbeat)
+    , c (Id ErrorLogBakerLedgerDisconnected)
     , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogNodeInvalidPeerCount)
@@ -1375,6 +1395,7 @@ instance ArgDict NotifyTag where
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
       LogTag_Baker t -> case t of
+        BakerLogTag_BakerLedgerDisconnected -> Dict
         BakerLogTag_BakerMissed -> Dict
         BakerLogTag_BakerDeactivated -> Dict
         BakerLogTag_BakerDeactivationRisk -> Dict

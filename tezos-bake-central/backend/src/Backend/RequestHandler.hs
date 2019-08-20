@@ -301,6 +301,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
 
               onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
               onTag (This tag) = case tag of
+                BakerLogTag_BakerLedgerDisconnected -> deleteLogsId tag ErrorLogBakerLedgerDisconnected_bakerField
                 BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
                 BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField

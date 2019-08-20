@@ -78,6 +78,7 @@ import Common.Alerts (
     bakerDeactivationRiskDescriptions,
     bakerGroupedMissedDescriptions,
     bakerInsufficientFundsDescriptions,
+    bakerLedgerDisconnectedDescriptions,
     bakerMissedDescriptions,
     bakerVotingReminderDescriptions,
     networkUpdateDescription,
@@ -669,6 +670,11 @@ instance HasAlertMetaData (DSum BakerLogTag a) where
 
 instance HasAlertMetaData (BakerLogTag a) where
   getAlertMetaData = \case
+    BakerLogTag_BakerLedgerDisconnected ->
+      def { _alertMetaData_isEventBased = True
+          , _alertMetaData_isUserResolvable = True
+          , _alertMetaData_severity = AlertSeverity_Warning
+          }
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
@@ -878,6 +884,9 @@ liveErrorsWidget = void $ do
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
         LogTag_Baker blt -> case blt of
+          BakerLogTag_BakerLedgerDisconnected -> renderBakerError
+            (bakerLedgerDisconnectedDescriptions log)
+            pkh
           BakerLogTag_BakerDeactivated -> renderBakerError
             (bakerDeactivatedDescriptions log)
             pkh
@@ -1993,6 +2002,7 @@ bakersTab =
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
+                    BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
@@ -2060,6 +2070,7 @@ bakersTab =
           pkh = bakerIdForBakerErrorLogView errorView
           ev = (LogTag_Baker bTag :=> (Const $ errorLogIdForBakerLogTag bTag log)) :| []
         in case bTag of
+          BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh

@@ -390,6 +390,7 @@ bakerIdForBakerErrorLogView (tag :=> Identity v) = bakerIdForBakerLogTag tag v
 
 bakerIdForBakerLogTag :: BakerLogTag t -> t -> PublicKeyHash
 bakerIdForBakerLogTag = \case
+  BakerLogTag_BakerLedgerDisconnected -> unId . _errorLogBakerLedgerDisconnected_baker
   BakerLogTag_BakerMissed -> unId . _errorLogBakerMissed_baker
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
@@ -399,6 +400,7 @@ bakerIdForBakerLogTag = \case
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
+  BakerLogTag_BakerLedgerDisconnected -> _errorLogBakerLedgerDisconnected_log
   BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
@@ -801,6 +803,7 @@ nodeLogAssumeConst = \case
 
 bakerLogAssumeConst :: BakerLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
 bakerLogAssumeConst = \case
+  BakerLogTag_BakerLedgerDisconnected -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
