@@ -158,6 +158,13 @@ data NodeQueryIx a where
   NodeQueryIx_EndorsingRights :: BlockHash -> RawLevel -> NodeQueryIx (Seq EndorsingRights)
 deriving instance Show (NodeQueryIx a)
 
+-- | Simple write-through cache stored in postgres.
+
+data NodeQueryPg a where
+  NodeQueryPg_BlockAncestors  :: BlockHash -> Int -> NodeQueryPg [(BlockHash,RawLevel)]   {- ? -}
+  NodeQueryPg_BlockShell      :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
+deriving instance Show (NodeQueryPg a)
+
 toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
   { _cacheDelegateInfo_balance = _delegateInfo_balance di
@@ -169,8 +176,6 @@ toCacheDelegateInfo di = CacheDelegateInfo
   , _cacheDelegateInfo_deactivated = _delegateInfo_deactivated di
   , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
   }
-
-
 
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
@@ -1115,6 +1120,17 @@ nodeQueryIx q = do
       |]
       where result = Json $ Aeson.toJSON result'
 
+nodeQueryPg
+  :: forall a m.
+    ( MonadNodeQuery (NodeQueryT m)
+    , MonadMask m
+    , PostgresRaw m
+    , Aeson.FromJSON a, Aeson.ToJSON a
+    )
+  => NodeQueryPg a -> NodeQueryT m a
+nodeQueryPg q = do
+  $(logDebugSH) ("nodeQueryPg called" :: Text,q)
+
 
 nodeQueryIxBakingRights1
   :: forall m.
@@ -1278,6 +1294,12 @@ deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
 makeRequestForData ''NodeQueryIx
+
+deriveGEq ''NodeQueryPg
+deriveGCompare ''NodeQueryPg
+deriveGShow ''NodeQueryPg
+makeRequestForData ''NodeQueryPg
+
 
 instance Hashable (NodeQuery a) where
   hashWithSalt s = hashWithSalt s . requestToJSON
