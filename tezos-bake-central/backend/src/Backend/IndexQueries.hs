@@ -221,48 +221,9 @@ firstLevelInCycle
      , PersistBackend m
      )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
-firstLevelInCycle branch c = do
-  branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
-  protocolIndex <- getProtocolIndex (branchBlock ^. hash) (branchBlock ^. block_protocol)
-  let
-    branchProtocolConstants = protocolIndex ^. protocolIndex_constants
-    firstLevelInBranchCycle = branchBlock ^. level - branchBlock ^. block_metadata . blockMetadata_level . level_cyclePosition -- TODO: Check for off-by-one
-    cycl = block_metadata . blockMetadata_level . level_cycle
-  case branchBlock ^. cycl of
-    branchCycle
-      | branchCycle == c ->
-          -- The branch is on the cycle we're looking for so we can calculate the offset to
-          -- the first block of that cycle.
-          pure firstLevelInBranchCycle
-      | branchCycle > c ->
-          -- TODO: Get rid of the WARNING. If the desired cycle is in the future, we can
-          -- know for certain which level it will be as long as it's not beyond the point
-          -- of a possible protocol transition. Past that point we're just guessing and
-          -- assuming that the protocol doesn't change or that $BLOCKS_PER_CYCLE doesn't
-          -- change with the next protocol. We could return a sum type to encode
-          -- "guessing" to let caller decide how certain they need to be.
-          -- WARNING: We assume $BLOCKS_PER_CYCLE doesn't change in the future!
-          pure $
-            firstLevelInBranchCycle + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ branchCycle - c)
-      | otherwise -> do
-          -- TODO: Using the same logic as the TODO above we can optimize this to avoid
-          -- some RPC calls if we can determine that the desired cycle is within the
-          -- range of blocks that must certainly be on the same protocol as the one
-          -- we have in hand already.
-
-          -- See if going all the way back to the beginning of this protocol is enough.
-          -- If not, we'll have to recurse starting with the block that preceeds the
-          -- first block of this protocol.
-          case protocolIndex ^. protocolIndex_firstBlockCycle < c of
-            True ->
-              -- We can use the protocol constants of this block to calculate.
-              pure $ protocolIndex ^. level + branchProtocolConstants ^. protoInfo_blocksPerCycle * RawLevel (unCycle $ c - protocolIndex ^. protocolIndex_firstBlockCycle)
-            False -> do
-              -- We can't use the protocol constants of this block so recurse backward starting
-              -- with the last block in the previous protocol.
-              history <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_history
-              maybe (nqThrowError CacheError_NotEnoughHistory) (`firstLevelInCycle` c) $
-                levelAncestor history (protocolIndex ^. level - 1) (protocolIndex ^. hash)
+firstLevelInCycle _branch c = do
+  (_, protoIx) <- getLatestProtocolConstants
+  pure $ Tezos.ProtocolConstants.firstLevelInCycle protoIx c
 
 lastLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
