@@ -56,7 +56,7 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, getPositionOfBlockFaster, lastLevelInCycle)
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle)
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
@@ -240,7 +240,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
   res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
     (bakerInt, protoInfo, headCycle, currentState :: [(Baker, Maybe BakerDetails)]) <- runNodeQueryT $ do
       protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ headBlock ^. hash
-      (_, headCycle) <- getPositionOfBlockFaster $ headBlock ^. hash
+      headCycle <- levelToCycle $ headBlock ^. level
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
           (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)

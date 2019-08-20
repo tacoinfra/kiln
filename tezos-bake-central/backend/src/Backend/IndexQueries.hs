@@ -28,6 +28,7 @@ import Data.Witherable (mapMaybe)
 import Database.Groundhog.Postgresql (PersistBackend, insert, select, (&&.), (==.))
 import Named
 import Tezos.History
+import qualified Tezos.ProtocolConstants
 import Tezos.Types
 
 import Rhyolite.Schema (Id (..))
@@ -208,27 +209,12 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
             | otherwise -> pure Nothing
 
 levelToCycle
-  :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
+  :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
   => RawLevel -> NodeQueryT m Cycle
 levelToCycle lvl = do
-  histVar <- asksNodeDataSource _nodeDataSource_history
-  hist <- nqAtomically $ readTVar' histVar
-  lvlBlockHash <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $
-    levelAncestor hist lvl . view hash =<< fittestBranchInHistory hist
-  fmap (view _2) $ getPositionOfBlockFaster lvlBlockHash
-
--- | Tries to be more efficient about finding the level and cycle of a block by using
--- protocol data from the latest head block before resorting to querying the
--- block itself.
--- TODO: Actually write the faster version of this.
-getPositionOfBlockFaster
-  :: (MonadNodeQuery (NodeQueryT m), MonadMask m)
-  => BlockHash -> NodeQueryT m (RawLevel, Cycle)
-getPositionOfBlockFaster blkHash =
-  -- NOTE: Level can always be calculated from history, but we're querying the block anyway
-  -- so might as well get it this way.
-  (view level &&& view (block_metadata . blockMetadata_level . level_cycle)) <$>
-    nodeQueryDataSourceSafe (NodeQuery_Block blkHash)
+  (_, protoIx) <- getLatestBlockWithProtocolConstants
+  -- XXX We cheat here, as we dont expect the blocks/cycle to change
+  pure $ Tezos.ProtocolConstants.levelToCycle protoIx lvl
 
 firstLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
