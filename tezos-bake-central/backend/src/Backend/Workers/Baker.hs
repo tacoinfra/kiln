@@ -79,13 +79,15 @@ bakerRightsWorker
 bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   headM <- liftIO $ atomically $ dataSourceHead nds
 
-  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> runNodeQueryT $ do
+  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
     $(logDebug) "Update baker cycle."
     let
+      db = _nodeDataSource_pool nds
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = headBlock ^. hash
-    protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants headHash
-    cycleHashes :: [RightsCycleInfo] <- cycleStartHashes headHash
+    (protoInfo, cycleHashes) <- runNodeQueryT $ liftA2 (,)
+      (nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants headHash)
+      (cycleStartHashes headHash)
 
     let
       rightsLookAhead = RawLevel $ (unCycle $ _protoInfo_preservedCycles protoInfo) * (unRawLevel $ _protoInfo_blocksPerCycle protoInfo)
@@ -98,7 +100,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
-    needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- do
+    needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project Baker_publicKeyHashField (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
@@ -158,7 +160,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
       for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
-        (reqBakers, reqEndorsers) <- liftA2 (,)
+        (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
           (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl)
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
         let
@@ -191,7 +193,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
               ]
 
         when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
-        for_ pkhs $ \pkh -> do
+        lift @(ExceptT CacheError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
           let
             newProgress = bakerRightCycleInfo pkh
           progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
