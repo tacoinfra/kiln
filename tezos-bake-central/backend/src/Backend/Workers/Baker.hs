@@ -56,7 +56,7 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle)
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
@@ -77,17 +77,15 @@ bakerRightsWorker
   => NodeDataSource
   -> m (IO ())
 bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headM <- liftIO $ atomically $ dataSourceHead nds
+  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
+    (headBlock, protoInfo) <- runNodeQueryT getLatestProtocolConstants
+    cycleHashes <- runNodeQueryT $ cycleStartHashes headBlock
 
-  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
     $(logDebug) "Update baker cycle."
     let
       db = _nodeDataSource_pool nds
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = headBlock ^. hash
-    (protoInfo, cycleHashes) <- runNodeQueryT $ liftA2 (,)
-      (nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants headHash)
-      (cycleStartHashes headBlock)
 
     let
       rightsLookAhead = RawLevel $ (unCycle $ _protoInfo_preservedCycles protoInfo) * (unRawLevel $ _protoInfo_blocksPerCycle protoInfo)
@@ -235,13 +233,11 @@ bakerWorker
   -> NodeDataSource
   -> m (IO ())
 bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headM <- liftIO $ atomically $ dataSourceHead nds
-
   let db = _nodeDataSource_pool nds
 
-  res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
-    (bakerInt, protoInfo, headCycle, currentState :: [(Baker, Maybe BakerDetails)]) <- runNodeQueryT $ do
-      protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ headBlock ^. hash
+  res <- flip runReaderT nds $ runExceptT $ do
+    (bakerInt, protoInfo, headCycle, headBlock, currentState :: [(Baker, Maybe BakerDetails)]) <- runNodeQueryT $ do
+      (headBlock, protoInfo) <- getLatestProtocolConstants
       headCycle <- levelToCycle $ headBlock ^. level
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
@@ -249,7 +245,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
         (BakerDetails_publicKeyHashField `in_` Map.keys bakers)
-      return $ (bakerInt, protoInfo, headCycle,) $ catMaybes $ toList $
+      return $ (bakerInt, protoInfo, headCycle, headBlock,) $ catMaybes $ toList $
         alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
