@@ -68,6 +68,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
+import Backend.IndexQueries
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -397,7 +398,7 @@ publicNodesWorker nds = foldMap workerForSource
           mLastBlock <- project1 PublicNodeHead_headBlockField $
             PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
           for mLastBlock $ \lastBlock -> do
-            protoConstants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ lastBlock ^. hash
+            protoConstants <- getProtocolConstants $ Left $ lastBlock ^. hash
             now <- getTime
             let
               timeBetweenBlocks = calcTimeBetweenBlocks protoConstants
@@ -563,9 +564,9 @@ amendmentProcessWorker
   -> Pool Postgresql
   -> IO (IO ())
 amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (latestBlock, protoInfo) <- throwing $ liftA2 (,)
-    (getBlock (latestHead ^. hash))
-    (nodeQueryDataSource $ NodeQuery_ProtocolConstants $ latestHead ^. hash)
+  (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
+    (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
+    (getProtocolConstants $ Left $ latestHead ^. hash)
   history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
   let
     blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo

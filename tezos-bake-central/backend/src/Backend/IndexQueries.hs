@@ -47,6 +47,7 @@ import Backend.CachedNodeRPC
 
   -- Protocol constant
   , getProtocolIndex
+  , getProtocolConstants
   )
 import Backend.Schema
 import Backend.STM (readTVar')
@@ -112,7 +113,7 @@ cycleStartHashes branchBlock = do
   history <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_history
 
   let branchBlockHash = branchBlock ^. hash
-  branchProtocolConstants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants branchBlockHash
+  branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
   cycle <- levelToCycle $ branchBlock ^. level
   let
     minLvl = _cachedHistory_minLevel history

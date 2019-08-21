@@ -672,7 +672,7 @@ getBakerAddresses nds bid = do
       -- protocol constants won't ever change, even with a new protocol:
       --    $PRESERVED_CYCLES
       --    $BLOCKS_PER_CYCLE
-      headProtoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants $ latestHead ^. hash
+      headProtoInfo <- getProtocolConstants $ Left $ latestHead ^. hash
       maxProgress <- for (maximumMay $ _rightsCycleInfo_cycle <$> rightsInfo) $ \highestRightsCycle ->
         lastLevelInCycle (latestHead ^. hash) $ highestRightsCycle + headProtoInfo ^. protoInfo_preservedCycles + 1
       pure (maxProgress, rightsInfo)

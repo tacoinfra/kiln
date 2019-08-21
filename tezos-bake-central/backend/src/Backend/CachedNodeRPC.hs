@@ -1044,13 +1044,19 @@ nodeQueryIx
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
     , PostgresRaw m
+    , PersistBackend m
     , Aeson.FromJSON a, Aeson.ToJSON a
     )
   => NodeQueryIx a -> NodeQueryT m a
 nodeQueryIx q = do
   $(logDebugSH) ("nodeQueryIx called" :: Text,q)
   dsrc <- askNodeDataSource
-  protoInfo <- nqAtomically (maybe retry' pure =<< readTVar' (_nodeDataSource_parameters dsrc))
+  let
+    ctx :: BlockHash
+    ctx = case q of
+      NodeQueryIx_BakingRights ctx _lvl -> ctx
+      NodeQueryIx_EndorsingRights ctx _lvl -> ctx
+  protoInfo <- getProtocolConstants $ Left ctx
   hist <- do
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
@@ -1131,6 +1137,7 @@ nodeQueryIxBakingRights1
   :: forall m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , PersistBackend m
     , PostgresRaw m
     )
   => BlockHash -> RawLevel -> Priority -> NodeQueryT m BakingRights
@@ -1282,6 +1289,26 @@ getActiveNodeDetails kilnNodeUri = do
 
 -- Protocol Constants
 
+getProtocolConstants
+  :: forall m
+   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
+  => Either BlockHash ProtocolHash -> NodeQueryT m ProtoInfo
+getProtocolConstants ct = do
+  protoHash <- case ct of
+    Right p -> pure p
+    Left hash -> view protocolHash <$> (nodeQueryDataSourceSafe $ NodeQuery_BlockHeader hash)
+  (chainId, historyVar) <- asksNodeDataSource (_nodeDataSource_chain &&& _nodeDataSource_history)
+  existingEntries :: [ProtocolIndex] <- select $
+    ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
+
+  _protocolIndex_constants <$> case headMay existingEntries of
+    Just existing -> pure existing
+    Nothing -> do
+      hash <- case ct of
+        Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
+          >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view hash)
+        Left hash -> pure hash
+      getProtocolIndex hash protoHash
 
 -- TODO: Pass history in
 getProtocolIndex
