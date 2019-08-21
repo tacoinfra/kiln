@@ -667,7 +667,7 @@ getBakerAddresses nds bid = do
   maxProgress_rightsInfo :: Either CacheError (Maybe (Maybe RawLevel, [RightsCycleInfo])) <- case latestHead' of
     Nothing -> pure $ Left CacheError_NotEnoughHistory
     Just latestHead -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
-      rightsInfo <- cycleStartHashes $ latestHead ^. hash
+      rightsInfo <- cycleStartHashes latestHead
       -- WARNING: We're looking up information in the future which might be wrong. We assume the following
       -- protocol constants won't ever change, even with a new protocol:
       --    $PRESERVED_CYCLES

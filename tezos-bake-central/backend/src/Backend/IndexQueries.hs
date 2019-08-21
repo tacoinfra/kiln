@@ -243,33 +243,29 @@ data RightsCycleInfo = RightsCycleInfo
 
 -- produce the list of the first blocks in the cycle for the previous 7 cycles ending on $blkHash$
 cycleStartHashes
-  :: forall m
+  :: forall m blk
    . ( MonadNodeQuery (NodeQueryT m)
      , MonadMask m
      , PersistBackend m
+     , BlockLike blk
      )
-  => BlockHash -> NodeQueryT m [RightsCycleInfo]
-cycleStartHashes blkHash = do
+  => blk -> NodeQueryT m [RightsCycleInfo]
+cycleStartHashes branchBlock = do
   history <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_history
-  -- TODO: Partial match
-  let Just (branch, branchBlockHash) = do
-        b <- blkHash `Map.lookup` _cachedHistory_blocks history
-        branchHash <- case LCA.view b of
-          LCA.Root -> Nothing
-          LCA.Node bBlockHash _ _ -> Just bBlockHash
-        pure (b, branchHash)
 
-  branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branchBlockHash
+  let branchBlockHash = branchBlock ^. hash
   branchProtocolConstants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants branchBlockHash
+  cycle <- levelToCycle $ branchBlock ^. level
   let
     minLvl = _cachedHistory_minLevel history
-    cycle = branchBlock ^. block_metadata . blockMetadata_level . level_cycle
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
     (firstLevelInCycle branchBlockHash c)
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
-  let branches = fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels
+  let
+    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels) mbranch
+    mbranch = branchBlockHash `Map.lookup` _cachedHistory_blocks history
   return $ getZipList $ RightsCycleInfo
     <$> ZipList branches
     <*> ZipList cycles

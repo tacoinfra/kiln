@@ -87,7 +87,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
       headHash :: BlockHash = headBlock ^. hash
     (protoInfo, cycleHashes) <- runNodeQueryT $ liftA2 (,)
       (nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants headHash)
-      (cycleStartHashes headHash)
+      (cycleStartHashes headBlock)
 
     let
       rightsLookAhead = RawLevel $ (unCycle $ _protoInfo_preservedCycles protoInfo) * (unRawLevel $ _protoInfo_blocksPerCycle protoInfo)
