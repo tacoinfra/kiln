@@ -161,9 +161,17 @@ deriving instance Show (NodeQueryIx a)
 -- | Simple write-through cache stored in postgres.
 
 data NodeQueryPg a where
-  NodeQueryPg_BlockAncestors  :: BlockHash -> Int -> NodeQueryPg [(BlockHash,RawLevel)]   {- ? -}
-  NodeQueryPg_BlockShell      :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
+  NodeQueryPg_BlockAncestors :: BlockHash -> Int -> NodeQueryPg (Maybe BlockAncestors)
+  NodeQueryPg_BlockShell     :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
 deriving instance Show (NodeQueryPg a)
+
+data BlockAncestors = BlockAncestors
+   { _blockAncestors_level           :: !RawLevel
+   , _blockAncestors_blockAncestors  :: !(V.Vector BlockHash)
+   } deriving (Eq, Ord, Generic, Typeable, Show)
+makeLenses 'BlockAncestors
+instance Aeson.FromJSON BlockAncestors
+instance Aeson.ToJSON   BlockAncestors
 
 toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
@@ -1120,6 +1128,7 @@ nodeQueryIx q = do
       |]
       where result = Json $ Aeson.toJSON result'
 
+{-
 nodeQueryPg
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
@@ -1130,7 +1139,7 @@ nodeQueryPg
   => NodeQueryPg a -> NodeQueryT m a
 nodeQueryPg q = do
   $(logDebugSH) ("nodeQueryPg called" :: Text,q)
-
+-}
 
 nodeQueryIxBakingRights1
   :: forall m.

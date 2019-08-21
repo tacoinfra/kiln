@@ -29,7 +29,7 @@ convQN :: QualifiedIdentifier -> QualifiedName
 convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
 migrateKiln :: Migrate m => ChainId -> m ()
-migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> extraIndexes
+migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> postMigrate
 
 autoMigrate :: Migrate m => TableAnalysis m -> m ()
 autoMigrate tableAnalysis = runMigration $ do
@@ -76,6 +76,11 @@ preMigrate chainId =
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
   >=> migrateChainIdToErrorLog chainId
+
+postMigrate :: Migrate m => m ()
+postMigrate = do
+  extraIndexes
+  createFunctionBlockShellAncestors
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -459,3 +464,21 @@ migrateChainIdToErrorLog currentChainId ta = do
             |]
           getTableAnalysis
     _ -> pure ta
+
+createFunctionBlockShellAncestors :: Migrate m => m () 
+createFunctionBlockShellAncestors = do
+  void [traceExecuteQ|
+    CREATE OR REPLACE FUNCTION "blockShellAncestors" ("blockHash" bytea)
+    RETURNS SETOF "BlockShellIndex" AS $$
+    DECLARE
+      blockshell "BlockShellIndex";
+    BEGIN
+      LOOP
+        SELECT INTO blockshell * FROM "BlockShellIndex" WHERE hash = "blockHash";
+        EXIT WHEN NOT FOUND;
+        "blockHash" := blockshell."predecessor";
+        RETURN NEXT blockshell;
+      END LOOP;
+    END;
+    $$ LANGUAGE 'plpgsql' STABLE;
+  |]
