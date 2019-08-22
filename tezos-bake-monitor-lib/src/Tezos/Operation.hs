@@ -640,17 +640,17 @@ instance B.TezosBinary (Some OpKindTag) where
     OpKindTag_Manager OpKindManagerTag_Origination -> B.put @Word8 9
     OpKindTag_Manager OpKindManagerTag_Delegation -> B.put @Word8 10
   get = B.get @Word8 >>= \case
-    0 -> pure $ This OpKindTag_Endorsement
-    1 -> pure $ This OpKindTag_SeedNonceRevelation
-    2 -> pure $ This OpKindTag_DoubleEndorsementEvidence
-    3 -> pure $ This OpKindTag_DoubleBakingEvidence
-    4 -> pure $ This OpKindTag_ActivateAccount
-    5 -> pure $ This OpKindTag_Proposals
-    6 -> pure $ This OpKindTag_Ballot
-    7 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Reveal)
-    8 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Transaction)
-    9 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Origination)
-    10 -> pure $ This (OpKindTag_Manager OpKindManagerTag_Delegation)
+    0 -> pure $ Some OpKindTag_Endorsement
+    1 -> pure $ Some OpKindTag_SeedNonceRevelation
+    2 -> pure $ Some OpKindTag_DoubleEndorsementEvidence
+    3 -> pure $ Some OpKindTag_DoubleBakingEvidence
+    4 -> pure $ Some OpKindTag_ActivateAccount
+    5 -> pure $ Some OpKindTag_Proposals
+    6 -> pure $ Some OpKindTag_Ballot
+    7 -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Reveal)
+    8 -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Transaction)
+    9 -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Origination)
+    10 -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Delegation)
     x -> fail $ "unknown operation tag: " <> show x
 
 instance B.TezosBinary OpContentsEndorsement where
@@ -809,7 +809,7 @@ instance B.TezosBinary (OpContents 'OpKind_Endorsement) where
     _ -> fail "not an endorsement"
 
 instance B.TezosBinary (DSum OpKindTag OpContents) where
-  put (t :=> op) = B.put (This t) *>
+  put (t :=> op) = B.put (Some t) *>
     case op of
       OpContents_Endorsement opc -> B.put opc
       OpContents_SeedNonceRevelation opc -> B.put opc
@@ -823,7 +823,7 @@ instance B.TezosBinary (DSum OpKindTag OpContents) where
       OpContents_Origination opc -> B.put opc
       OpContents_Delegation opc -> B.put opc
   get = B.get >>= \case
-    This t -> (t :=>) <$> case t of
+    Some t -> (t :=>) <$> case t of
       OpKindTag_Endorsement -> OpContents_Endorsement <$> B.get
       OpKindTag_SeedNonceRevelation -> OpContents_SeedNonceRevelation <$> B.get
       OpKindTag_DoubleEndorsementEvidence -> OpContents_DoubleEndorsementEvidence <$> B.get
@@ -838,30 +838,30 @@ instance B.TezosBinary (DSum OpKindTag OpContents) where
 
 instance ToJSON (Some OpKindTag) where
   toJSON = \case
-    This OpKindTag_Endorsement -> String "endorsement"
-    This OpKindTag_SeedNonceRevelation -> String "seed_nonce_revelation"
-    This OpKindTag_DoubleEndorsementEvidence -> String "double_endorsement_evidence"
-    This OpKindTag_DoubleBakingEvidence -> String "double_baking_evidence"
-    This OpKindTag_ActivateAccount -> String "activate_account"
-    This OpKindTag_Proposals -> String "proposals"
-    This OpKindTag_Ballot -> String "ballot"
-    This (OpKindTag_Manager OpKindManagerTag_Reveal) -> String "reveal"
-    This (OpKindTag_Manager OpKindManagerTag_Transaction) -> String "transaction"
-    This (OpKindTag_Manager OpKindManagerTag_Origination) -> String "origination"
-    This (OpKindTag_Manager OpKindManagerTag_Delegation) -> String "delegation"
+    Some OpKindTag_Endorsement -> String "endorsement"
+    Some OpKindTag_SeedNonceRevelation -> String "seed_nonce_revelation"
+    Some OpKindTag_DoubleEndorsementEvidence -> String "double_endorsement_evidence"
+    Some OpKindTag_DoubleBakingEvidence -> String "double_baking_evidence"
+    Some OpKindTag_ActivateAccount -> String "activate_account"
+    Some OpKindTag_Proposals -> String "proposals"
+    Some OpKindTag_Ballot -> String "ballot"
+    Some (OpKindTag_Manager OpKindManagerTag_Reveal) -> String "reveal"
+    Some (OpKindTag_Manager OpKindManagerTag_Transaction) -> String "transaction"
+    Some (OpKindTag_Manager OpKindManagerTag_Origination) -> String "origination"
+    Some (OpKindTag_Manager OpKindManagerTag_Delegation) -> String "delegation"
 
 instance FromJSON (Some OpKindTag) where
   parseJSON = \case
-    String "endorsement" -> pure $ This OpKindTag_Endorsement
-    String "seed_nonce_revelation" -> pure $ This OpKindTag_SeedNonceRevelation
-    String "reveal" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Reveal)
-    String "transaction" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Transaction)
-    String "origination" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Origination)
-    String "delegation" -> pure $ This (OpKindTag_Manager OpKindManagerTag_Delegation)
+    String "endorsement" -> pure $ Some OpKindTag_Endorsement
+    String "seed_nonce_revelation" -> pure $ Some OpKindTag_SeedNonceRevelation
+    String "reveal" -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Reveal)
+    String "transaction" -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Transaction)
+    String "origination" -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Origination)
+    String "delegation" -> pure $ Some (OpKindTag_Manager OpKindManagerTag_Delegation)
     _ -> fail "not a supported operation kind"
 
 instance ToJSON (DSum OpKindTag OpContents) where
-  toJSON (t :=> op) = jsonAddKeys [ "kind" .= This t ] $ case op of
+  toJSON (t :=> op) = jsonAddKeys [ "kind" .= Some t ] $ case op of
     OpContents_Endorsement c -> toJSON c
     OpContents_SeedNonceRevelation c -> toJSON c
     OpContents_DoubleEndorsementEvidence c -> toJSON c
@@ -878,17 +878,17 @@ instance FromJSON (DSum OpKindTag OpContents) where
   parseJSON v = do
     tt <- withObject "operation contents" (.: "kind") v
     case tt of
-      This t@OpKindTag_Endorsement -> (t :=>) . OpContents_Endorsement <$> parseJSON v
-      This t@OpKindTag_SeedNonceRevelation -> (t :=>) . OpContents_SeedNonceRevelation <$> parseJSON v
-      This t@OpKindTag_DoubleEndorsementEvidence -> (t :=>) . OpContents_DoubleEndorsementEvidence <$> parseJSON v
-      This t@OpKindTag_DoubleBakingEvidence -> (t :=>) . OpContents_DoubleBakingEvidence <$> parseJSON v
-      This t@OpKindTag_ActivateAccount -> (t :=>) . OpContents_ActivateAccount <$> parseJSON v
-      This t@OpKindTag_Proposals -> (t :=>) . OpContents_Proposals <$> parseJSON v
-      This t@OpKindTag_Ballot -> (t :=>) . OpContents_Ballot <$> parseJSON v
-      This t@(OpKindTag_Manager OpKindManagerTag_Reveal) -> (t :=>) . OpContents_Reveal <$> parseJSON v
-      This t@(OpKindTag_Manager OpKindManagerTag_Transaction) -> (t :=>) . OpContents_Transaction <$> parseJSON v
-      This t@(OpKindTag_Manager OpKindManagerTag_Origination) -> (t :=>) . OpContents_Origination <$> parseJSON v
-      This t@(OpKindTag_Manager OpKindManagerTag_Delegation) -> (t :=>) . OpContents_Delegation <$> parseJSON v
+      Some t@OpKindTag_Endorsement -> (t :=>) . OpContents_Endorsement <$> parseJSON v
+      Some t@OpKindTag_SeedNonceRevelation -> (t :=>) . OpContents_SeedNonceRevelation <$> parseJSON v
+      Some t@OpKindTag_DoubleEndorsementEvidence -> (t :=>) . OpContents_DoubleEndorsementEvidence <$> parseJSON v
+      Some t@OpKindTag_DoubleBakingEvidence -> (t :=>) . OpContents_DoubleBakingEvidence <$> parseJSON v
+      Some t@OpKindTag_ActivateAccount -> (t :=>) . OpContents_ActivateAccount <$> parseJSON v
+      Some t@OpKindTag_Proposals -> (t :=>) . OpContents_Proposals <$> parseJSON v
+      Some t@OpKindTag_Ballot -> (t :=>) . OpContents_Ballot <$> parseJSON v
+      Some t@(OpKindTag_Manager OpKindManagerTag_Reveal) -> (t :=>) . OpContents_Reveal <$> parseJSON v
+      Some t@(OpKindTag_Manager OpKindManagerTag_Transaction) -> (t :=>) . OpContents_Transaction <$> parseJSON v
+      Some t@(OpKindTag_Manager OpKindManagerTag_Origination) -> (t :=>) . OpContents_Origination <$> parseJSON v
+      Some t@(OpKindTag_Manager OpKindManagerTag_Delegation) -> (t :=>) . OpContents_Delegation <$> parseJSON v
 
 instance B.TezosBinary (OpContentsList 'OpKind_Endorsement) where
   put = \case
