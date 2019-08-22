@@ -102,7 +102,7 @@ import Named
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -1371,8 +1371,13 @@ getProtocolIndex branch protoHash = do
                 }
 
           for_ protoIndexes $ \protoIndex -> do
-            insert protoIndex
-            notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
+            mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+              ( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash
+                &&. ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash
+              )
+            when (mp == Nothing) $ do
+              insert protoIndex
+              notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
 
           maybe (nqThrowError CacheError_NotEnoughHistory) pure $
             find ((protoHash ==) . view protocolHash) protoIndexes
