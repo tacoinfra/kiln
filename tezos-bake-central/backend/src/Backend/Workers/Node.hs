@@ -330,10 +330,10 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               else pure mOldProtoInfo
 
           let
-            skipUpdate = mLastBlk `isInSameCycleAs` blk
-            isInSameCycleAs l thisBlk = case liftA2 (,) l mProtoInfo of
+            skipUpdate = mSp /= Nothing && mLastBlk `isInSameCycleAs` blk
+            isInSameCycleAs mBlk thisBlk = case liftA2 (,) mBlk mProtoInfo of
               Nothing -> False
-              Just (lblk, protoInfo) -> lvl2Cycle (blk ^. level) == lvl2Cycle (lblk ^. level)
+              Just (lblk, protoInfo) -> lvl2Cycle (thisBlk ^. level) == lvl2Cycle (lblk ^. level)
                 where lvl2Cycle = ProtocolConstants.levelToCycle protoInfo
 
           if skipUpdate
