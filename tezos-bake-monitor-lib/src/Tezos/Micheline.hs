@@ -117,7 +117,7 @@ annotToText = \case
   Annotation_Field n -> T.cons '%' n
 
 instance FromJSON Annotation where
-  parseJSON = withText "Annotation" $ annotFromText
+  parseJSON = withText "Annotation" annotFromText
 
 instance ToJSON Annotation where
   toJSON = toJSON . annotToText
@@ -153,7 +153,7 @@ instance ToJSON Expression where
 putAnnotationSeq :: Seq Annotation -> Const Builder ()
 putAnnotationSeq = B.put . B.DynamicSize . T.unwords . toList . fmap annotToText
 getAnnotationSeq :: Get (Seq Annotation)
-getAnnotationSeq = sequence . (fmap annotFromText . Seq.fromList . T.words . B.unDynamicSize) =<< B.get @(B.DynamicSize Text)
+getAnnotationSeq = mapM annotFromText . Seq.fromList . T.words . B.unDynamicSize =<< B.get @(B.DynamicSize Text)
 
 instance B.TezosBinary Expression where
   put = \case
@@ -175,7 +175,7 @@ instance B.TezosBinary Expression where
     2 -> Expression_Seq . B.unDynamicSize <$> B.get
     3 -> Expression_Prim . (\pn -> MichelinePrimAp pn Seq.Empty Seq.Empty) <$> B.get
     4 -> Expression_Prim <$> (flip MichelinePrimAp Seq.Empty <$> B.get <*> getAnnotationSeq)
-    5 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.singleton <$> B.get) <*> (pure Seq.empty))
+    5 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.singleton <$> B.get) <*> pure Seq.empty)
     6 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> (Seq.singleton <$> B.get) <*> getAnnotationSeq)
     7 -> Expression_Prim <$> ((\n a->MichelinePrimAp n a Seq.empty) <$> B.get <*> Seq.replicateA 2 B.get)
     8 -> Expression_Prim <$> (MichelinePrimAp <$> B.get <*> Seq.replicateA 2 B.get <*> getAnnotationSeq)
