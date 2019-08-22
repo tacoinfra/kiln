@@ -14,7 +14,7 @@ import qualified Tezos.Binary as B
 import Tezos.Micheline (Expression(..), MichelinePrimAp(..), MichelinePrimitive(..))
 
 pattern Prim :: T.Text -> Seq Expression -> Expression
-pattern Prim p a = Expression_Prim (MichelinePrimAp (MichelinePrimitive p) a)
+pattern Prim p a = Expression_Prim (MichelinePrimAp (MichelinePrimitive p) a Empty)
 
 pattern Prim0 :: T.Text -> Expression
 pattern Prim0 p = Prim p Empty
