@@ -469,6 +469,7 @@ instance (MonadMask m, PostgresLargeObject m, HasPgConn m, MonadIO m) => Postgre
       genericLiftWithConn :: (PG.Connection -> IO a) -> m a
       genericLiftWithConn f = liftIO . f =<< askPgConn
 
+-- This is required for queueEmail
 -- Would much rather write this instance for any @PostgresLargeObject m@ but neither
 -- 'PostgresLargeObject' nor 'PostgresRaw' have a way to get the @Connection@ directly
 -- so it's impossible to write this instance without a more precise stack.
@@ -1301,11 +1302,11 @@ getProtocolConstants ct = do
   _protocolIndex_constants <$> case headMay existingEntries of
     Just existing -> pure existing
     Nothing -> do
-      hash <- case ct of
+      hash' <- case ct of
         Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
           >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view hash)
-        Left hash -> pure hash
-      getProtocolIndex hash protoHash
+        Left hash' -> pure hash'
+      getProtocolIndex hash' protoHash
 
 -- TODO: Pass history in
 getProtocolIndex
