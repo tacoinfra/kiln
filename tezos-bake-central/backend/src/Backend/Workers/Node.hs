@@ -18,6 +18,7 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, newTVarIO, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -906,17 +907,21 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
-  waitTillNextCycle nds
+  waitTillEndOfCycle nds latestHead
 
-waitTillNextCycle :: MonadIO m => NodeDataSource -> m ()
-waitTillNextCycle nds = liftIO $ do
-  v <- atomically $ (liftA2 . liftA2) (,)
-    (readTVar $ _nodeDataSource_latestHead nds)
-    (readTVar $ _nodeDataSource_parameters nds)
-  for_ v $ \(blk, protoInfo) -> do
-    let
-      nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
-      nextCycleLvl = firstLevelInCycle protoInfo nextCycle
-    atomically $ do
+waitTillEndOfCycle
+  :: ( MonadIO m
+     , MonadLogger m
+     , BlockLike blk
+     , MonadBaseNoPureAborts IO m
+     , MonadMask m
+     )
+  => NodeDataSource -> blk -> m ()
+waitTillEndOfCycle nds blk = do
+  lastLevel :: Either CacheError RawLevel <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
+    c <- levelToCycle $ blk ^. level
+    lastLevelInCycle (blk ^. hash) c
+  for_ lastLevel $ \lvl -> do
+    liftIO $ atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
-      when (newHead ^. level < pred nextCycleLvl) retry
+      when (newHead ^. level < lvl) retry
