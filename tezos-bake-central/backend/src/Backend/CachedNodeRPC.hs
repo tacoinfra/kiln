@@ -1051,12 +1051,9 @@ nodeQueryIx
 nodeQueryIx q = do
   $(logDebugSH) ("nodeQueryIx called" :: Text,q)
   dsrc <- askNodeDataSource
-  let
-    ctx :: BlockHash
-    ctx = case q of
-      NodeQueryIx_BakingRights ctx _lvl -> ctx
-      NodeQueryIx_EndorsingRights ctx _lvl -> ctx
-  protoInfo <- getProtocolConstants $ Left ctx
+  protoInfo <- getProtocolConstants $ Left $ case q of
+    NodeQueryIx_BakingRights ctx _lvl -> ctx
+    NodeQueryIx_EndorsingRights ctx _lvl -> ctx
   hist <- do
       histVar <- asksNodeDataSource _nodeDataSource_history
       nqAtomically $ readTVar' histVar
@@ -1296,8 +1293,8 @@ getProtocolConstants
 getProtocolConstants ct = do
   protoHash <- case ct of
     Right p -> pure p
-    Left hash -> view protocolHash <$> (nodeQueryDataSourceSafe $ NodeQuery_BlockHeader hash)
-  (chainId, historyVar) <- asksNodeDataSource (_nodeDataSource_chain &&& _nodeDataSource_history)
+    Left h -> view protocolHash <$> (nodeQueryDataSourceSafe $ NodeQuery_BlockHeader h)
+  chainId <- asksNodeDataSource _nodeDataSource_chain
   existingEntries :: [ProtocolIndex] <- select $
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 

@@ -17,7 +17,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, newTVarIO, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
@@ -55,7 +55,7 @@ import qualified Text.URI as Uri
 import Tezos.Block (toBlockHeader)
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat, rProtoConstants, rCheckpoint)
+                      rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import qualified Tezos.ProtocolConstants as ProtocolConstants
@@ -322,7 +322,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
                     nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
                 case pr of
                   Left e -> do
-                    $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}|]
+                    $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}, Error: ${e}|]
                     pure Nothing
                   Right v -> do
                     liftIO $ writeIORef protoDataVar $ Just v
