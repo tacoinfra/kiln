@@ -647,9 +647,8 @@ waitForNewHeadWithTimeout nds = do
   case headBlock' of
     Nothing -> pure () -- We've already waited for a while so return immediately.
     Just headBlock -> do
-      -- This should be cached most of the time so this request should be fast.
-      params' <- flip runReaderT (nds ^. nodeDataSource) $ runExceptT @CacheError $
-        nodeQueryDataSource $ NodeQuery_ProtocolConstants $ headBlock ^. hash
+      params' <- runLoggingEnv (nds ^. nodeDataSource . nodeDataSource_logger) $ flip runReaderT (nds ^. nodeDataSource) $ runExceptT @CacheError $ runNodeQueryT $
+        getProtocolConstants $ Right $ headBlock ^. protocolHash
       let timeLimit = either (const defaultTimeLimit) calcTimeBetweenBlocks params'
       void $ timeout' timeLimit $ waitForNewHead nds
   where
