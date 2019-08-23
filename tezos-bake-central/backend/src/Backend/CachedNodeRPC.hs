@@ -1370,8 +1370,8 @@ getProtocolIndex branch protoHash = do
 
           for_ protoIndexes $ \protoIndex -> do
             mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
-              ( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash
-                &&. ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash
+              (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
+                &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
               )
             when (mp == Nothing) $ do
               insert protoIndex
