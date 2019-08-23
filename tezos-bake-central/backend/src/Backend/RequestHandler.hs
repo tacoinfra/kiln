@@ -76,6 +76,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
           { _connectedLedger_bakingAppVersion = Nothing
           , _connectedLedger_ledgerIdentifier = Nothing
           , _connectedLedger_updated = Nothing
+          , _connectedLedger_forceConnectivityCheck = True
           , _connectedLedger_walletAppVersion = Nothing
           }
       PublicRequest_ShowLedger sk -> inDb $ do

@@ -259,6 +259,7 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
               { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
               , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
               , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
+              , _connectedLedger_forceConnectivityCheck = False
               , _connectedLedger_updated = Just now
               }
         deleteAll' @ConnectedLedger Proxy

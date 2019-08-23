@@ -203,6 +203,7 @@ data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
   , _connectedLedger_bakingAppVersion :: !(Maybe Text)
   , _connectedLedger_walletAppVersion :: !(Maybe Text)
+  , _connectedLedger_forceConnectivityCheck :: !Bool
   , _connectedLedger_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
