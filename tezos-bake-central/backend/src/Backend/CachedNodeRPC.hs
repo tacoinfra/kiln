@@ -1294,7 +1294,7 @@ getProtocolConstants
 getProtocolConstants ct = do
   protoHash <- case ct of
     Right p -> pure p
-    Left h -> view protocolHash <$> (nodeQueryDataSourceSafe $ NodeQuery_BlockHeader h)
+    Left h -> view protocolHash <$> nodeQueryDataSourceSafe (NodeQuery_BlockHeader h)
   chainId <- asksNodeDataSource _nodeDataSource_chain
   existingEntries :: [ProtocolIndex] <- select $
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash

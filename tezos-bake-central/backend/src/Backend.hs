@@ -15,7 +15,7 @@
 module Backend where
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar)
-import Control.Concurrent.STM (atomically, readTQueue, newTQueueIO, newTVarIO)
+import Control.Concurrent.STM (atomically, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -71,7 +71,6 @@ import qualified Text.URI as URI
 
 import Backend.Db (gargoyleSupported, withDb)
 import Tezos.Chain (mainnetChainId)
-import Tezos.History (emptyCache)
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types

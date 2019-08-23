@@ -313,7 +313,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             pure b
           mProtoInfo <- do
             mOldProtoInfo <- liftIO $ readIORef protoDataVar
-            let protoChanged = maybe True (\lblk -> (_monitorBlock_proto lblk)  /= (_monitorBlock_proto blk)) mLastBlk
+            let protoChanged = maybe True (\lblk -> _monitorBlock_proto lblk  /= _monitorBlock_proto blk) mLastBlk
             if mOldProtoInfo == Nothing || protoChanged
               then do
                 $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
@@ -330,7 +330,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               else pure mOldProtoInfo
 
           let
-            skipUpdate = mSp /= Nothing && mLastBlk `isInSameCycleAs` blk
+            skipUpdate = isJust mSp && mLastBlk `isInSameCycleAs` blk
             isInSameCycleAs mBlk thisBlk = case liftA2 (,) mBlk mProtoInfo of
               Nothing -> False
               Just (lblk, protoInfo) -> lvl2Cycle (thisBlk ^. level) == lvl2Cycle (lblk ^. level)
