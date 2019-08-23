@@ -162,7 +162,7 @@ deriving instance Show (NodeQueryIx a)
 
 data NodeQueryPg a where
   NodeQueryPg_BlockAncestors :: BlockHash -> Int -> NodeQueryPg (Maybe BlockAncestors)
-  NodeQueryPg_BlockShell     :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
+--   NodeQueryPg_BlockShell     :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
 deriving instance Show (NodeQueryPg a)
 
 data BlockAncestors = BlockAncestors
@@ -1128,18 +1128,36 @@ nodeQueryIx q = do
       |]
       where result = Json $ Aeson.toJSON result'
 
-{-
 nodeQueryPg
   :: forall a m.
-    ( MonadNodeQuery (NodeQueryT m)
-    , MonadMask m
-    , PostgresRaw m
-    , Aeson.FromJSON a, Aeson.ToJSON a
+    ( MonadNodeQuery m
     )
-  => NodeQueryPg a -> NodeQueryT m a
+  => NodeQueryPg a -> m a
 nodeQueryPg q = do
   $(logDebugSH) ("nodeQueryPg called" :: Text,q)
--}
+  case q of
+    -- use join so that we can control the scope of 'nqInDB' better
+    (NodeQueryPg_BlockAncestors blockHash maxLevels) -> join $ nqInDB $ do
+      let
+       getLevel = do
+        [queryQ| SELECT level FROM "BlockShellIndex" WHERE hash = ?blockHash |] >>= \case
+          [] -> do
+            [queryQ| SELECT level FROM "BlockShellIndex" WHERE predecessor = ?blockHash) |] >>= \case
+              [] -> pure Nothing
+              (Only lvlPlusOne:_) -> let !lvl = lvlPlusOne - 1 in pure $! Just $! (False, lvl)
+          (Only lvl:_) -> pure $ Just $! (True, lvl)
+      getLevel >>= \case
+        Nothing -> do
+          pure $ pure $! Nothing
+        Just (havePgAnswer, lvl) -> do
+          if havePgAnswer
+          then do
+            -- here, because of the unadorned 'do', we are inside 'nqInDB' for our next query
+            as <- [queryQ| SELECT predecessor FROM "blockShellAncestors"(?blockHash) LIMIT ?maxLevels |]
+            pure $ pure $! Just $! BlockAncestors lvl (V.fromList (map (\(Only x) -> x) as))
+          else pure $ do
+            -- here, thanks to the 'pure $ do',  we are outside 'nqInDB' for our NodeRPC call
+            pure Nothing   -- FIXME
 
 nodeQueryIxBakingRights1
   :: forall m.
