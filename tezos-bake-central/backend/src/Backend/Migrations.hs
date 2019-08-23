@@ -96,10 +96,10 @@ migratePublicNodeHead :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migratePublicNodeHead ta = do
   let table = QualifiedIdentifier Nothing "PublicNodeHead"
   hasHeadBlockHash <- fmap (any ((== "headBlock#hash") . colName) . tableColumns) <$> analyzeTable ta (convQN table)
-  case hasHeadBlockHash of
-    Nothing -> pure ta
-    Just False -> dropTable table False *> getTableAnalysis
-    Just True -> pure ta
+  hasProtocolHash <- fmap (any ((== "protocolHash") . colName) . tableColumns) <$> analyzeTable ta (convQN table)
+  if hasProtocolHash == Just False || hasHeadBlockHash == Just False
+    then dropTable table False *> getTableAnalysis
+    else pure ta
 
 renameColumnIfExists :: Migrate m => QualifiedIdentifier -> Identifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 renameColumnIfExists table columnFrom columnTo ta = do
