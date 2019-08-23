@@ -244,12 +244,15 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
 
+withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
+
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Either NamedChain BinaryPaths -> LoggingT IO ()
 updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
   getConnectedLedger appConfig chain >>= \case
     Left err -> $(logError) (tshow err)
     Right mliv -> do
-      inDb $ do
+      withDbAndConfig db appConfig $ do
         $(logDebug) ("Updating connectedledger: " <> tshow mliv)
         now <- getTime
         let connectedLedger = ConnectedLedger
@@ -261,9 +264,6 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
         deleteAll' @ConnectedLedger Proxy
         insert connectedLedger
         notify NotifyTag_ConnectedLedger $ Just connectedLedger
-  where
-    inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
-    inDb = runDb (Identity db) . flip runReaderT appConfig
 
 
 -- TODO XXX OBVIOUSLY BAD
