@@ -127,7 +127,8 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         ProtocolIndex_chainIdField ==. chainId &&.
         ProtocolIndex_firstBlockHashField ==. firstBlockHash
       pure mempty
-        { _bakeView_parameters = toRangeView1 paramsVS protoHash newProto
+        { _bakeView_parameters = MapView $ mempty $
+          liftA2 (\v p -> MMap.singleton protoHash (First p, v)) (MMap.lookup protoHash $ unMapSelector paramsVS) newProto
         }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a

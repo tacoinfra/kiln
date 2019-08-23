@@ -288,7 +288,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
-  , _bakeViewSelector_parameters :: !(RangeSelector ProtocolHash ProtocolIndex a)
+  , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
   , _bakeViewSelector_latestHead :: !(MaybeSelector (WithProtocolHash VeryBlockLike) a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
   , _bakeViewSelector_proposals :: !(RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
@@ -327,7 +327,7 @@ data BakeView a = BakeView
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
-  , _bakeView_parameters :: !(RangeView ProtocolHash ProtocolIndex a)
+  , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
   , _bakeView_latestHead :: !(MaybeView (WithProtocolHash VeryBlockLike) a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
   , _bakeView_proposals :: !(RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)

@@ -51,12 +51,12 @@ watchFrontendConfig =
 
 watchProtocolConstants :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe ProtocolIndex))
 watchProtocolConstants protocol = do
-  mmap <- (fmap . fmap) (getRangeView . _bakeView_parameters) $
+  mmap <- (fmap . fmap) (unMapView . _bakeView_parameters) $
     watchViewSelector $
       ffor protocol $ \protoHash -> mempty
-        { _bakeViewSelector_parameters = viewRangeExactly protoHash 1
+        { _bakeViewSelector_parameters = MapSelector $ MMap.singleton protoHash 1
         }
-  pure $ liftA2 MMap.lookup protocol mmap
+  pure $ liftA2 (\p m -> getFirst . fst <$> MMap.lookup p m) protocol mmap
 
 watchHeadWithProtocol
   :: forall t m. MonadRhyoliteFrontendWidget Bake t m

@@ -112,13 +112,12 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let paramsVS = _bakeViewSelector_parameters vs
   parameters <- whenM (not $ null paramsVS) $ do
-    let selectedProtocols :: [ProtocolHash] =
-          map (\(ClosedInterval l r) -> if l == r then r else error "Protocols don't actually support range")
-          <$> AppendIMap.keys $ unRangeSelector paramsVS
+    let selectedProtocols :: [ProtocolHash] = MMap.keys $ unMapSelector paramsVS
     protocols :: [ProtocolIndex] <- select
       ( ProtocolIndex_hashField `in_` selectedProtocols &&.
         ProtocolIndex_chainIdField ==. _nodeDataSource_chain nds)
-    pure $ toRangeView paramsVS [(_protocolIndex_hash x, x) | x <- protocols]
+    let findProtocol k a = fmap (\v -> (First v, a)) $ Prelude.lookup k $ map (\p -> (_protocolIndex_hash p, p)) protocols
+    pure $ MapView $ MMap.mapMaybeWithKey (\k a -> findProtocol k a ) $ unMapSelector paramsVS
 
   let nodeAddrVS = _bakeViewSelector_nodeAddresses vs
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
