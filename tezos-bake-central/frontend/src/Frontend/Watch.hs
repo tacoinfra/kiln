@@ -403,10 +403,8 @@ watchVotePrompting sk = do
     { _bakeViewSelector_votePrompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
     }
 
-watchBakerRegistered :: MonadRhyoliteFrontendWidget Bake t m => SecretKey -> PublicKeyHash -> m (Dynamic t (Maybe Bool))
-watchBakerRegistered sk pkh = do
-  pb <- getPostBuild
-  _ <- requestingIdentity $ public (PublicRequest_CheckIfRegistered sk pkh) <$ pb
+watchBakerRegistered :: MonadRhyoliteFrontendWidget Bake t m => PublicKeyHash -> m (Dynamic t (Maybe Bool))
+watchBakerRegistered pkh = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerRegistered = viewRangeExactly (Bounded pkh) 1
     }

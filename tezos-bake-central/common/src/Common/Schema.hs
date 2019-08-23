@@ -213,7 +213,6 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
   , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
   , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
-  , _ledgerAccount_checkIfRegistered :: !(Maybe PublicKeyHash)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -823,6 +822,7 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   , _errorLogBakerMissed_right :: !RightKind
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
+  , _errorLogBakerMissed_bakeTime :: !UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog

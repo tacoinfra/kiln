@@ -69,6 +69,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
       frontend = checkHlint (hsOnly super.frontend);
       markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
+      memory = dontCheck (self.callHackage "memory" "0.14.17" {});
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
       silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
