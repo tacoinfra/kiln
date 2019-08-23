@@ -671,9 +671,9 @@ instance HasAlertMetaData (DSum BakerLogTag a) where
 instance HasAlertMetaData (BakerLogTag a) where
   getAlertMetaData = \case
     BakerLogTag_BakerLedgerDisconnected ->
-      def { _alertMetaData_isEventBased = True
-          , _alertMetaData_isUserResolvable = True
-          , _alertMetaData_severity = AlertSeverity_Warning
+      def { _alertMetaData_isEventBased = False
+          , _alertMetaData_isUserResolvable = False
+          , _alertMetaData_severity = AlertSeverity_Error
           }
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
