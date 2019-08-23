@@ -119,6 +119,7 @@ import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Types
 import Tezos.Operation (Ballot)
+import Tezos.ProtocolConstants
 import Tezos.PublicKey
 import Tezos.Types
 
@@ -708,7 +709,7 @@ levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromInteg
 -- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> (RawLevel, Maybe BlockHash)
 rightsContext params hist ctx lvl = (ctxLvl, levelAncestor hist ctxLvl ctx)
-  where ctxLvl = rightsContextLevel params lvl
+  where ctxLvl = Tezos.ProtocolConstants.rightsContextLevel params lvl
 
 -- | Round the second argument to the next lower multiple of the first
 floorBy :: Integral a => a -> a -> a

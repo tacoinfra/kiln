@@ -92,6 +92,15 @@ lastLevelInCycle
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 lastLevelInCycle branch c = fmap pred $ firstLevelInCycle branch (c + 1)
 
+rightsContextLevel
+  :: ( MonadNodeQuery (NodeQueryT m)
+     , MonadMask m
+     , PersistBackend m
+     )
+  => BlockHash -> RawLevel -> NodeQueryT m RawLevel
+rightsContextLevel ctx lvl = do
+  protoInfo <- getProtocolConstants $ Left ctx
+  pure $ Tezos.ProtocolConstants.rightsContextLevel protoInfo lvl
 
 data RightsCycleInfo = RightsCycleInfo
   { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle
