@@ -6,50 +6,34 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeFamilies #-}
+
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.IndexQueries where
 
 import Control.Applicative (ZipList (..))
 import Control.Monad.Catch (MonadMask)
-import Control.Monad.Logger (logDebug)
 import qualified Data.LCA.Online.Polymorphic as LCA
-import Data.Ord (Down (..))
 import qualified Data.Map as Map
-import Data.Map (Map)
-import Data.List (sortOn)
-import qualified Data.List.NonEmpty as NE
-import Data.String.Here.Interpolated (i)
-import Data.Witherable (mapMaybe)
-import Database.Groundhog.Postgresql (PersistBackend, insert, select, (&&.), (==.))
-import Named
+import Database.Groundhog.Postgresql (PersistBackend)
 import Tezos.History
 import qualified Tezos.ProtocolConstants
 import Tezos.Types
 
-import Rhyolite.Schema (Id (..))
-
 import Backend.CachedNodeRPC
-  ( CachedHistory'
-  , MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
+  ( MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
   , NodeDataSource(..)
-  , NodeQuery(..)
   , NodeQueryT
-  , branchPointPure
   , fittestBranchInHistory
-  , levelAncestor
-  , nodeQueryDataSourceSafe
-  , nqTry
 
   -- Protocol constant
   , getProtocolIndex
   , getProtocolConstants
   )
-import Backend.Schema
 import Backend.STM (readTVar')
 import Common.Schema
 import ExtraPrelude
-import Safe (headMay)
-
 
 getLatestProtocolConstants
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
@@ -118,11 +102,11 @@ cycleStartHashes branchBlock = do
 
   let branchBlockHash = branchBlock ^. hash
   branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
-  cycle <- levelToCycle $ branchBlock ^. level
+  cycle' <- levelToCycle $ branchBlock ^. level
   let
     minLvl = _cachedHistory_minLevel history
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
-    cycles = [max 0 (cycle - (1 + preservedCycles)) .. cycle - 1] -- ignore the unconfirmed "current" cycle.
+    cycles = [max 0 (cycle' - (1 + preservedCycles)) .. cycle' - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
     (firstLevelInCycle branchBlockHash c)
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
