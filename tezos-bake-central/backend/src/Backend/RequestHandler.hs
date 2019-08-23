@@ -89,7 +89,6 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldImport = False
             , _ledgerAccount_imported = False
             , _ledgerAccount_shouldSetupToBake = False
-            , _ledgerAccount_checkConnectivityNow = False
             , _ledgerAccount_shouldRegisterFee = Nothing
             , _ledgerAccount_shouldSetHWM = Nothing
             , _ledgerAccount_shouldDoVoteProtocol = Nothing

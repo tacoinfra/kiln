@@ -82,9 +82,9 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
     $(logDebug) "Tezos client worker"
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
-    inDb (selectSingle $ LedgerAccount_checkConnectivityNowField ==. True) >>= \mla -> for_ mla $ \_ -> do
-      updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-      inDb $ update [LedgerAccount_checkConnectivityNowField =. False] CondEmpty
+    -- inDb (selectSingle $ LedgerAccount_checkConnectivityNowField ==. True) >>= \mla -> for_ mla $ \_ -> do
+    --   updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+    --   inDb $ update [LedgerAccount_checkConnectivityNowField =. False] CondEmpty
 
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     case mConnectedLedger of
