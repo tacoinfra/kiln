@@ -81,6 +81,11 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logDebug) "Tezos client worker"
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
+
+    _ <- inDb (selectSingle $ LedgerAccount_checkConnectivityNowField ==. True) >>= \mla -> for_ mla $ \_ -> do
+      updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+      inDb $ update [LedgerAccount_checkConnectivityNowField =. False] CondEmpty
+
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     case mConnectedLedger of
       Just cl
@@ -233,25 +238,33 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
         -- If there is a ConnectedLedger row but the updated field is null
         -- (marked for update)
         | isNothing (_connectedLedger_updated cl) ->
-          getConnectedLedger appConfig chain >>= \case
-        Left err -> $(logError) (tshow err)
-        Right mliv -> do
-          inDb $ do
-            $(logDebug) ("Updating connectedledger: " <> tshow mliv)
-            now <- getTime
-            let connectedLedger = ConnectedLedger
-                  { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
-                  , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
-                  , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
-                  , _connectedLedger_updated = Just now
-                  }
-            deleteAll' @ConnectedLedger Proxy
-            insert connectedLedger
-            notify NotifyTag_ConnectedLedger $ Just connectedLedger
+          updateConnectedLedgerViaGetConnectedLedger appConfig db chain
       _ -> pure ()
+    where
+      inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+      inDb = runDb (Identity db) . flip runReaderT appConfig
+
+updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Either NamedChain BinaryPaths -> LoggingT IO ()
+updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
+  getConnectedLedger appConfig chain >>= \case
+    Left err -> $(logError) (tshow err)
+    Right mliv -> do
+      inDb $ do
+        $(logDebug) ("Updating connectedledger: " <> tshow mliv)
+        now <- getTime
+        let connectedLedger = ConnectedLedger
+              { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
+              , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
+              , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
+              , _connectedLedger_updated = Just now
+              }
+        deleteAll' @ConnectedLedger Proxy
+        insert connectedLedger
+        notify NotifyTag_ConnectedLedger $ Just connectedLedger
   where
     inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
     inDb = runDb (Identity db) . flip runReaderT appConfig
+
 
 -- TODO XXX OBVIOUSLY BAD
 clientPath :: Either NamedChain BinaryPaths -> FilePath
