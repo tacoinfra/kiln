@@ -26,7 +26,7 @@ import Control.Monad.Trans.Maybe (MaybeT(..))
 import Data.Maybe (mapMaybe)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
 import Rhyolite.Backend.DB
@@ -49,6 +49,7 @@ import qualified System.Process as Process
 import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
+import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
@@ -86,6 +87,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
       updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
+    currentTime <- inDb getTime
     case mConnectedLedger of
       Just cl
         -- If we think the ledger is connected
@@ -234,10 +236,18 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                 notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
             _ -> pure () -- shouldn't happen
 
-        -- If there is a ConnectedLedger row but the updated field is null
-        -- (marked for update)
-        | isNothing (_connectedLedger_updated cl) ->
-          updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+        -- If we want to immediately do the connectivity check
+        | (_connectedLedger_forceConnectivityCheck cl) ->
+            updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+
+        -- Otherwise, we might want to do the connectivity check because some time has passed
+        | otherwise ->
+            case _connectedLedger_updated cl of
+              Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+              Just upd ->
+                if (currentTime `diffUTCTime` upd > 15)
+                then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+                else pure ()
       _ -> pure ()
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
@@ -249,8 +259,17 @@ withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Either NamedChain BinaryPaths -> LoggingT IO ()
 updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
   getConnectedLedger appConfig chain >>= \case
-    Left err -> $(logError) (tshow err)
+    Left err -> do
+      $(logError) (tshow err)
+      reportLedgerDisconnection db appConfig
     Right mliv -> do
+      case mliv of
+        Nothing -> do
+          reportLedgerDisconnection db appConfig
+          $(logDebug) "The connectedledger is Nothing"
+        Just _ -> do
+          clearLedgerDisconnection db appConfig
+
       withDbAndConfig db appConfig $ do
         $(logDebug) ("Updating connectedledger: " <> tshow mliv)
         now <- getTime
@@ -265,6 +284,19 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
         insert connectedLedger
         notify NotifyTag_ConnectedLedger $ Just connectedLedger
 
+reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
+reportLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      reportBakerLedgerDisconnected pkh
+
+clearLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
+clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      clearBakerLedgerDisconnected pkh
 
 -- TODO XXX OBVIOUSLY BAD
 clientPath :: Either NamedChain BinaryPaths -> FilePath
