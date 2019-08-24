@@ -197,9 +197,8 @@ reportBakerLedgerDisconnected
   :: ( Monad m, MonadIO m, MonadReader a m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Baker -> m ()
-reportBakerLedgerDisconnected baker = do
-  let pkh = _baker_publicKeyHash baker
+  => PublicKeyHash -> m ()
+reportBakerLedgerDisconnected pkh = do
   chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
@@ -222,9 +221,8 @@ clearBakerLedgerDisconnected
   :: ( Monad m, MonadIO m, MonadReader a m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
-  => Baker -> m ()
-clearBakerLedgerDisconnected baker = do
-  let pkh = _baker_publicKeyHash baker
+  => PublicKeyHash -> m ()
+clearBakerLedgerDisconnected pkh = do
   chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerLedgerDisconnected] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
