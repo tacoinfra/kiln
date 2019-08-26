@@ -38,7 +38,7 @@ import qualified System.Process as Process
 
 import Tezos.Base58Check
 import Tezos.Block (VeryBlockLike (..))
-import Tezos.History
+import Backend.History
 import Tezos.ShortByteString (toShort)
 import Tezos.Types
 

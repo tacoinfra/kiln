@@ -115,6 +115,7 @@ library
     Backend.Common
     Backend.Config
     --Backend.Graphs
+    Backend.History
     Backend.Http
     Backend.Migrations
     Backend.NodeCmd
