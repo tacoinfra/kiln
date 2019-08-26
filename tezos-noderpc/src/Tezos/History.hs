@@ -73,7 +73,7 @@ getHistoryIncremental :: forall blk e r m a.
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsPublicNodeError e
   , MonadReader r m, HasPublicNodeContext r
-  , BlockLike blk
+  , BlockSpine blk
   )
   => IO (Map BlockHash a) -> RawLevel -> ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
 getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
@@ -93,17 +93,15 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
         else do
           let
             lastButOneHash = Seq.index prefix (prefixLen - 2) -- 3
-            stepBlock = VeryBlockLike
-              { _veryBlockLike_hash = lastButOneHash
-              , _veryBlockLike_predecessor = lastHash
-              , _veryBlockLike_level = blk ^. level - RawLevel (fromIntegral prefixLen) + 1
+            stepBlock = VeryBlockSpine
+              { _veryBlockSpine_hash = lastButOneHash
+              , _veryBlockSpine_predecessor = lastHash
+              , _veryBlockSpine_level = blk ^. level - RawLevel (fromIntegral prefixLen) + 1
                 -- this is usually maxBatch-2 levels below blk.  Theoretically it could
                 --   run into genesis and be less far, and maybe with the new history
                 --   trimming stuff it could run out at higher levels.  However, if
                 --   that ever happens, we're violating assumptions that accumHistory is
                 --   making.
-              , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
-              , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
               }
             remainingLevels = numLevels - RawLevel (fromIntegral prefixLen) + 1
           -- -- Sanity check for debugging
