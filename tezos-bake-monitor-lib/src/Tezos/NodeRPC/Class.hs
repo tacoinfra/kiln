@@ -9,6 +9,7 @@
 module Tezos.NodeRPC.Class where
 
 import Control.Lens (uncons)
+import Data.Aeson
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Semigroup ((<>))
@@ -28,8 +29,9 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPos
 
 import Tezos.Chain (ChainTag(ChainTag_Hash))
 import Tezos.NodeRPC.Types (NetworkStat)
-import Tezos.Operation (Ballot)
+import Tezos.Operation (Ballot, OperationContents)
 import Tezos.Types
+import Tezos.Signature
 
 
 class QueryChain repr where
@@ -69,6 +71,9 @@ class QueryHistory repr where -- blockscale
   rEndorsingRights :: Set (Either RawLevel Cycle) -> ChainId -> BlockHash -> repr (Seq EndorsingRights)
 
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr DelegateInfo
+
+  rRunOperation :: ChainId -> BlockHash -> Seq OperationContents -> Maybe Signature -> repr ()
+
 
 class QueryNode repr where -- my node
   rConnections :: repr Word64 -- just a count for now, but there's more data there we may someday be interested in
@@ -132,6 +137,10 @@ instance QueryHistory RpcQuery where
   rEndorsingRights params = blockAPI $ "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
+  rRunOperation chainId blockHash contents maybeSignature =
+    postNodeRequest
+      (object $ [ "branch" .= blockHash, "contents" .= toJSON contents, "signature" .= maybeSignature])
+      (chainBlockUrl chainId blockHash <> "/helpers/scripts/run_operation")
 
 chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a
 chainAPI = (. ChainTag_Hash) . chainAPI'
